@@ -1,0 +1,159 @@
+#!/bin/bash
+# chomper — openproject-bug-chomper
+# Clone this repo and run this script. That's it.
+
+set -euo pipefail
+BOLD=$'\033[1m'
+CYAN=$'\033[36m'
+GRAY=$'\033[37m'
+RESET=$'\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+STATE="$SCRIPT_DIR/.chomper"
+CONFIG="$STATE/config"
+BACKLOG_JSON="$STATE/backlog.json"
+PROGRESS="$STATE/progress.txt"
+CLOG="$STATE/chomp.log"
+CLAUDE_IMAGE="${CLAUDE_IMAGE:-chomper-claude}"
+CLAUDE_AUTH="$STATE/claude-auth"
+CLAUDE_CONTAINER=""
+
+mkdir -p "$STATE" "$CLAUDE_AUTH"
+touch "$PROGRESS"
+
+_cleanup() {
+  trap - INT TERM
+  printf '%s' "$RESET" > /dev/tty
+  if [ "${BASH_SUBSHELL:-0}" = "0" ]; then
+    echo ""
+    echo "Interrupted — cleaning up..."
+    rm -f "$STATE/new_items.json" "$STATE/response.json" "$STATE/tmp.json" \
+          "$STATE/triage_input.json" "$STATE/triage_output.json"
+    [ -n "$CLAUDE_CONTAINER" ] && docker rm -f "$CLAUDE_CONTAINER" &>/dev/null || true
+    echo "Run ./chomper to resume."
+  fi
+  kill -INT "$$"
+}
+trap _cleanup INT TERM
+
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/helpers.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/pull.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/triage.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/fix.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/publish.sh"
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/lib/ui.sh"
+
+# ══════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════
+_main() {
+  local CMD="${1:-}"
+  shift 2>/dev/null || true
+  local IDS=("$@")
+
+  # ── Command dispatch ──────────────────────────────────
+  # Handled before Docker checks so these respond instantly.
+  case "$CMD" in
+    ""|--help|-h)
+      _usage
+      exit 0
+      ;;
+
+    status)
+      _status
+      exit 0
+      ;;
+
+    reset)
+      _reset
+      exit 0
+      ;;
+
+    publish)
+      _first_run_setup
+      # shellcheck source=/dev/null
+      source "$CONFIG"
+      WORKTREE_HOST="$STATE/worktree"
+      WORKTREE_CONTAINER="/repo"
+      STATE_CONTAINER="/state"
+      _publish_stage "${IDS[@]+"${IDS[@]}"}"
+      exit 0
+      ;;
+
+    fix|plan) ;;
+
+    *)
+      echo "Unknown argument: $CMD" >&2
+      _usage
+      exit 1
+      ;;
+  esac
+
+  echo "" >> "$CLOG"
+  echo "=== Session $(date '+%Y-%m-%dT%H:%M:%S') ===" >> "$CLOG"
+
+  _first_run_setup
+  _ensure_docker
+  # shellcheck source=/dev/null
+  source "$CONFIG"
+  WORKTREE_HOST="$STATE/worktree"
+  WORKTREE_CONTAINER="/repo"
+  STATE_CONTAINER="/state"
+
+  _ensure_worktree
+  _start_claude_container
+
+  # ── Stage 1: pull or fetch specific IDs ──────────────
+  if [ ${#IDS[@]} -gt 0 ]; then
+    _log_script "Stage 1: FETCH — loading WPs ${IDS[*]}"
+    _fetch_ids_stage "${IDS[@]}"
+    _log_script "Stage 1 complete: ${#IDS[@]} WPs loaded"
+  else
+    _log_script "Stage 1: PULL — fetching backlog from $OP_URL"
+    _pull_stage
+    _log_script "Stage 1 complete: $(jq '.items | length' "$BACKLOG_JSON") bugs in backlog"
+  fi
+
+  # ── Stage 2: triage (skipped when IDs given) ─────────
+  if [ ${#IDS[@]} -eq 0 ]; then
+    _log_script "Stage 2: TRIAGE"
+    _triage_stage
+    _log_script "Stage 2 complete: $(jq '[.items[] | select(.passes == false)] | length' "$BACKLOG_JSON") issues triaged"
+  fi
+
+  local PENDING
+  PENDING=$(jq '[.items[] | select(.passes == false)] | length' "$BACKLOG_JSON")
+
+  if [ "$PENDING" -eq 0 ]; then
+    echo "=== Nothing left to do. All issues resolved. ==="
+    exit 0
+  fi
+
+  # ── Stage 3: fix/plan loop ────────────────────────────
+  _log_script "Stage 3: ${CMD:-FIX} — $PENDING pending items"
+  local ITEM_ID
+  for ITEM_ID in $(jq -r '.items[] | select(.passes == false) | .id' "$BACKLOG_JSON"); do
+    _log_script "Item #$ITEM_ID — start  ($STATE/items/$ITEM_ID)"
+    _fix_item "$ITEM_ID" "$CMD" || true
+    _log_script "Item #$ITEM_ID — end  ($STATE/items/$ITEM_ID)"
+  done
+  _log_script "Stage 3 complete"
+
+  if [ "$CMD" = "plan" ]; then
+    echo "=== Plan complete — plans in .chomper/items/<id>/plan.md ==="
+    echo "Run ./chomper fix [ids...] to implement."
+  else
+    echo "=== Session complete ==="
+    echo "Branches: $(git -C "$WORKTREE_HOST" branch | grep -c 'fix/' || true) fix/* commits"
+    echo "Push when ready."
+  fi
+  printf '%s' "$RESET" > /dev/tty
+  [ -n "$CLAUDE_CONTAINER" ] && docker rm -f "$CLAUDE_CONTAINER" &>/dev/null || true
+}
+
+_main "$@"
