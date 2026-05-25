@@ -13,32 +13,73 @@ git clone → ./chomper → answer a few questions → watch it work
 ## Requirements
 
 - **Docker** (used to run Claude Code in an isolated container)
-- `jq` and `curl` on the host (`brew install jq` / `apt install jq curl`)
-- `gh` CLI for publishing plans as gists and opening PRs (`brew install gh`)
+- `jq` and `curl` on the host
+- `gh` CLI for publishing plans as gists and opening PRs 
 - A checked-out `openproject` repo somewhere on disk
-- An OpenProject API token scoped to **View work packages (read-only)**
+- An OpenProject API token (preferably scoped only to reading your target WPs)
 
 ---
+
+
 
 ## Quick start
 
 ```bash
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
+# Pull packages, generate plans, prepare commits
 ./chomper fix
+# See what progress has been made
+./chomper status
+# Publish draft GitHub PRs
+./chomper publish
 ```
 
-On first run you'll be asked four questions:
-
+## Bird's-eye view
 ```
-OpenProject URL [https://community.openproject.org]:
-API token (read-only, View work packages only):
-Project identifier [communicator-stream]:
-Path to your product repo [../openproject]:
+  ┌─ HOST ─────────────────────────────────────────────────────────────────-─┐
+  │                                                                          │
+  │   ./chomper fix                                                          │
+  │        │                                                                 │
+  │        │ # Stage 1: Pull WP data                                         │
+  │        │                           ┌─────────────────────────────────┐   │
+  │        │  curl ───────────────────►│  OpenProject API                │   │
+  │        │                           │  GET /api/v3/projects/:id/      │   │ 
+  │        │  ◄── work packages ───────│       work_packages             │   │
+  │        │  ◄── activities ──────────│  GET /api/v3/work_packages/:id/ │   │
+  │        │  ◄── emoji reactions ─────│       activities                │   │
+  │        │                           └─────────────────────────────────┘   │
+  │        │                                                                 │
+  │        │  ...writes data into .chomper/...                               │
+  │        │                                                                 │
+  │        │ # Stage 2 & 3: Triage + Fix using Claude                        │
+  │        │                                                                 │  
+  │        │  git worktree add --detach .chomper/worktree                    │
+  │        │  docker exec -i $CLAUDE_CONTAINER" claude                       │
+  │        │                                                                 │    
+  │        │              ┌─ Docker container ───────────────────┐           │
+  │        │   prompt     │                                      │           │
+  │        │  ───────────►│  claude -p                           │           │
+  │        │              │                                      │           │
+  │        │  ◄───────────│                                      │           │
+  │        │   streamed   │  volumes:                            │           │
+  │        │   JSON       │   .chomper/worktree → /repo   (rw)   │           │
+  │        │              │   .chomper/         → /state  (rw)   │           │
+  │        │              │   claude-auth/      → /root/.claude  │           │
+  │        │              └──────────────────────────────────────┘           │
+  │        └─────────────────────────────────────────────────────────────────│
+  │                                                                          │
+  │  ./chomper publish                                                       │
+  │        │                                                                 │
+  │        │  # Stage 4: Publish                                             │
+  │        │                                                                 │
+  │        │                     ┌─────────────────────────────────┐         │
+  │        ├── gist create ─────►│  GitHub                         │         │
+  │        └── pr create ───────►│  secret gist  → plan URL        │         │
+  │                              │  draft PR     → pr_url.txt      │         │
+  │                              └─────────────────────────────────┘         │
+  └──────────────────────────────────────────────────────────────────────────┘
 ```
-
-The token is entered silently. Answers are saved to `.chomper/config` (`chmod 600`, gitignored) and never asked again. After setup the script builds the Docker image (one-time, ~1 min) and authenticates Claude inside the container.
-
 ---
 
 ## Commands
