@@ -5,7 +5,7 @@
 Automated bug-fixing loop for OpenProject backlogs. Fetches open bugs, triages them by complexity, then has Claude plan, write tests, implement fixes, and commit — all inside a Docker container. You review and push when you're happy.
 
 ```
-git clone → ./chomper → answer a few questions → watch it work
+git clone → ./chomper fix → answer a few questions → have a coffee and wait for PRs
 ```
 
 ---
