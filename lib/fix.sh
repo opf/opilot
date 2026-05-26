@@ -62,7 +62,7 @@ Flag: wrong file paths, missing edge cases, unnecessary complexity, blast radius
             git -C "$WORKTREE_HOST" checkout --detach origin/dev
             git -C "$REPO_PATH" branch -D "$BRANCH" 2>/dev/null || true
             echo "$(date '+%Y-%m-%dT%H:%M')|$ITEM_ID|-|REJECTED" >> "$PROGRESS"
-            rm -f "$REVIEW_FILE"
+            _safe_rm "$REVIEW_FILE"
             return 1
             ;;
         REVISE)
@@ -77,7 +77,7 @@ Print the complete revised plan to stdout only — do not write or edit any file
             ;;
     esac
     _publish_plan_gist
-    rm -f "$REVIEW_FILE"
+    _safe_rm "$REVIEW_FILE"
 }
 
 # Write failing tests and confirm they are red.

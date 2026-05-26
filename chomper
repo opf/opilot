@@ -26,8 +26,11 @@ _cleanup() {
   if [ "${BASH_SUBSHELL:-0}" = "0" ]; then
     echo ""
     echo "Interrupted — cleaning up..."
-    rm -f "$STATE/new_items.json" "$STATE/response.json" "$STATE/tmp.json" \
-          "$STATE/triage_input.json" "$STATE/triage_output.json"
+    _safe_rm "$STATE/new_items.json"
+    _safe_rm "$STATE/response.json"
+    _safe_rm "$STATE/tmp.json"
+    _safe_rm "$STATE/triage_input.json"
+    _safe_rm "$STATE/triage_output.json"
     [ -n "$CLAUDE_CONTAINER" ] && docker rm -f "$CLAUDE_CONTAINER" &>/dev/null || true
     echo "Run ./chomper to resume."
   fi

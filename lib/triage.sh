@@ -59,7 +59,8 @@ Set passes to false (not null) — this marks the item as triaged."
 
     if [ ! -s "$TRIAGE_OUTPUT" ]; then
       echo "  Warning: no JSON extracted for batch $BATCH_NUM — skipping merge."
-      rm -f "$TRIAGE_INPUT" "$TRIAGE_OUTPUT"
+      _safe_rm "$TRIAGE_INPUT"
+    _safe_rm "$TRIAGE_OUTPUT"
       continue
     fi
 
@@ -74,7 +75,8 @@ Set passes to false (not null) — this marks the item as triaged."
       ))}
     ' "$BACKLOG_JSON" "$TRIAGE_OUTPUT"
 
-    rm -f "$TRIAGE_INPUT" "$TRIAGE_OUTPUT"
+    _safe_rm "$TRIAGE_INPUT"
+    _safe_rm "$TRIAGE_OUTPUT"
   done
 
   _update_backlog '.items |= sort_by([
