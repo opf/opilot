@@ -236,6 +236,8 @@ REPO_PATH="../openproject"
 * Manual plan approvals for script mode
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
+* Correctly set the target branch for release-specific fixes
+  * Might not be trivial to determine this automatically -- solve this with a prompt for now
 
 ### Fixes & Hardening
 * Do not allow empty OP token
