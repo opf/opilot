@@ -227,5 +227,7 @@ REPO_PATH="../openproject"
     * Creating a dedicate sub-WP (type "AI Workflow")
     * Tagging the WP with a relevant Category (or even Label, once we port them over from JIRA)
     * Tagging the AI workflow user in Activity
-* Introduce manual plan approvals, both interactive and non-interactive.
+* Manual plan approvals for script mode
+* Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
+* Fix PR title: shorter and with ID in bracked at the beginning
