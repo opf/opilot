@@ -226,6 +226,7 @@ REPO_PATH="../openproject"
   * Make sure the LLM integration is treated as a _swappable adapter_. We are likely to move away from Claude. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
 * Keep `backlog.json` compact (ID + subject + URL + scoring) and store the other WP data in its item folder
 * Replace the clumsy `passes` field with some proper status indicator
+* Use separate agents for development and review to clearly split domain ownership
 
 ### Features
 * Introduce a background mode: Script continually polls for new interactions on the OP instance and then picks up new work to chomp through.
