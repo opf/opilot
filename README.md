@@ -10,6 +10,20 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 
 ---
 
+## Table of Contents
+
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Bird's-eye view](#birds-eye-view)
+- [Commands](#commands)
+- [Reviewing & pushing](#reviewing--pushing)
+- [Repo layout](#repo-layout)
+- [Environment variables](#environment-variables)
+- [Reference](#reference)
+- [TODO](#todo)
+
+---
+
 ## Requirements
 
 - **Docker** (used to run Claude Code in an isolated container)
