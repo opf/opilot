@@ -98,42 +98,6 @@ cd openproject-chomper
 
 ---
 
-## Three automatic stages
-
-Every `./chomper fix` run checks three conditions in order:
-
-| Stage | Condition | What runs |
-|---|---|---|
-| **1 · Pull** | Always on a full run | Interactive filter prompt (project, type, status, version), then fetches matching work packages from the OpenProject API, paginated. Merges into existing backlog — triage and fix progress is preserved. |
-| **2 · Triage** | Any item has `passes == null` | Claude reads each issue and assigns `locality_group`, `complexity`, `files_touched`, `ai_category`; backlog sorted trivial→complex |
-| **3 · Fix** | Always | Works through pending issues in order |
-
-When specific IDs are passed (`./chomper fix 123 456`), stages 1 and 2 are skipped — the named issues are loaded directly and fixed immediately.
-
----
-
-## The fix loop
-
-Issues already assigned to a developer are skipped automatically.
-
-Each issue follows this pipeline, fully automated:
-
-| Step | What happens |
-|---|---|
-| **Writer** | Claude reads the issue JSON and source files, produces a plan (`items/<id>/plan.md`), published as a secret GitHub gist |
-| **Reviewer** | A second Claude call critiques the plan — wrong paths, missing edge cases, blast radius. Verdicts: `PROCEED` / `REVISE` / `REJECT` |
-| **REVISE** | Claude rewrites the plan incorporating the review, then proceeds |
-| **REJECT** | Branch is deleted, item logged as `REJECTED`, loop moves to next issue |
-| **Failing tests** | For `moderate` and `complex` issues only: Claude writes tests that must fail before any implementation exists (RSpec for Ruby, Vitest for TypeScript) |
-| **Implement** | Claude implements the fix according to the approved plan |
-| **Test gate** | Script runs tests directly via `bin/compose`; up to 3 attempts. Between failures Claude reads the output and tries again |
-| **Auto-commit** | On green: `git commit -m "fix(<group>): <title> (WP #<id>)"` + PR description written to `items/<id>/pr.md` |
-| **Blocked** | After 3 failed attempts the branch is deleted and the item marked `"blocked"` |
-
-In `plan` mode (`./chomper plan`), the pipeline stops after the reviewer approves the plan — no tests, no implementation.
-
----
-
 ## Reviewing & pushing
 
 All commits are local until you push. Use the `publish` command to push branches and open draft PRs in one step:
@@ -203,6 +167,7 @@ openproject-chomper/
 ## Reference
 
 **`.chomper/config`**
+If these are not specified, the scripts asks for them interactively at the beginning of the run.
 
 ```bash
 OP_URL="https://community.openproject.org"
@@ -240,17 +205,13 @@ REPO_PATH="../openproject"
 
 `passes` values: `null` → untriaged · `false` → pending · `true` → committed · `"blocked"` → failed after 3 attempts
 
-**`progress.txt`**
-
-```
-2026-05-24T10:12|42|fix/42-null-check-userservice|committed
-2026-05-24T10:31|9|fix/9-type-mismatch-api|BLOCKED
-2026-05-24T10:45|17|-|REJECTED
-2026-05-24T11:00|42|fix/42-null-check-userservice|published
-```
-
----
-
-## API token scoping
-
-Create a dedicated token in OpenProject under *My Account → Access Tokens*. It needs exactly one permission: **View work packages** on the target project. No write access, no admin, no other projects. The token is stored locally in `.chomper/config` and is never committed.
+## TODO
+* Rewrite to Ruby!
+  * Make sure the LLM integration is treated as a _swappable adapter_. We are likely to move away from Claude. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
+* Introduce a background mode: Script continually polls for new interactions on the OP instance and then picks up new work to chomp through.
+  * The interactions can have multiple forms. Here are the ideas so far, in order of descending preference:
+    * Creating a dedicate sub-WP (type "AI Workflow")
+    * Tagging the WP with a relevant Category (or even Label, once we port them over from JIRA)
+    * Tagging the AI workflow user in Activity
+* Introduce manual plan approvals, both interactive and non-interactive.
+* Skip extensive planning for very simple tickets.
