@@ -11,3 +11,6 @@ RUN git config --global --add safe.directory '*' \
 
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMIUM_FLAGS="--no-sandbox --headless --disable-gpu"
+
+COPY server.js /app/server.js
+CMD ["node", "/app/server.js"]

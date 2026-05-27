@@ -2,7 +2,7 @@
 
 # openproject-chomper
 
-Automated bug-fixing loop for OpenProject backlogs. Fetches open bugs, triages them by complexity, then has Claude plan, write tests, implement fixes, and commit — all inside a Docker container. You review and push when you're happy.
+Automated bug-fixing loop for OpenProject backlogs. Fetches open bugs, triages them by complexity, then has Claude plan, implement fixes, and commit — all inside a Docker container. You review and push when you're happy.
 
 ```
 git clone → ./chomper fix → answer a few questions → have a coffee and wait for PRs
@@ -19,6 +19,7 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 - [Reviewing & pushing](#reviewing--pushing)
 - [Repo layout](#repo-layout)
 - [Environment variables](#environment-variables)
+- [Development](#development)
 - [Reference](#reference)
 - [TODO](#todo)
 
@@ -26,15 +27,12 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 
 ## Requirements
 
-- **Docker** (used to run Claude Code in an isolated container)
-- `jq` and `curl` on the host
-- `gh` CLI for publishing plans as gists and opening PRs 
+- **Docker** (runs both the Ruby runner and the Claude Code container)
+- `gh` CLI for publishing plans as gists and opening PRs
 - A checked-out `openproject` repo somewhere on disk
 - An OpenProject API token (preferably scoped only to reading your target WPs)
 
 ---
-
-
 
 ## Quick start
 
@@ -50,50 +48,49 @@ cd openproject-chomper
 ```
 
 ## Bird's-eye view
+
 ```
-  ┌─ HOST ─────────────────────────────────────────────────────────────────-─┐
-  │                                                                          │
-  │   ./chomper fix                                                          │
-  │        │                                                                 │
-  │        │ # Stage 1: Pull WP data                                         │
-  │        │                           ┌─────────────────────────────────┐   │
-  │        │  curl ───────────────────►│  OpenProject API                │   │
-  │        │                           │  GET /api/v3/projects/:id/      │   │ 
-  │        │  ◄── work packages ───────│       work_packages             │   │
-  │        │  ◄── activities ──────────│  GET /api/v3/work_packages/:id/ │   │
-  │        │  ◄── emoji reactions ─────│       activities                │   │
-  │        │                           └─────────────────────────────────┘   │
-  │        │                                                                 │
-  │        │  ...writes data into .chomper/...                               │
-  │        │                                                                 │
-  │        │ # Stage 2 & 3: Triage + Fix using Claude                        │
-  │        │                                                                 │  
-  │        │  git worktree add --detach .chomper/worktree                    │
-  │        │  docker exec -i $CLAUDE_CONTAINER" claude                       │
-  │        │                                                                 │    
-  │        │              ┌─ Docker container ───────────────────┐           │
-  │        │   prompt     │                                      │           │
-  │        │  ───────────►│  claude -p                           │           │
-  │        │              │                                      │           │
-  │        │  ◄───────────│                                      │           │
-  │        │   streamed   │  volumes:                            │           │
-  │        │   JSON       │   .chomper/worktree → /repo   (rw)   │           │
-  │        │              │   .chomper/         → /state  (rw)   │           │
-  │        │              │   claude-auth/      → /root/.claude  │           │
-  │        │              └──────────────────────────────────────┘           │
-  │        └─────────────────────────────────────────────────────────────────│
-  │                                                                          │
-  │  ./chomper publish                                                       │
-  │        │                                                                 │
-  │        │  # Stage 4: Publish                                             │
-  │        │                                                                 │
-  │        │                     ┌─────────────────────────────────┐         │
-  │        ├── gist create ─────►│  GitHub                         │         │
-  │        └── pr create ───────►│  secret gist  → plan URL        │         │
-  │                              │  draft PR     → pr_url.txt      │         │
-  │                              └─────────────────────────────────┘         │
-  └──────────────────────────────────────────────────────────────────────────┘
+  ┌─ HOST ───────────────────────────────────────────────────────────────────────┐
+  │                                                                              │
+  │   ./chomper fix  (bash wrapper)                                              │
+  │        │                                                                     │
+  │        │  writes .env, ensures worktree exists                               │
+  │        │  docker compose run --rm runner ruby bin/chomper fix                │
+  │        │                                                                     │
+  │        │         ┌─ runner container (Ruby 4.0) ──────────────────────┐      │
+  │        │         │                                                    │      │
+  │        │         │  Stage 1: Pull                                     │      │
+  │        │         │    HTTP → OpenProject API (work packages,          │      │
+  │        │         │            activities, reactions)                  │      │
+  │        │         │    writes .chomper/backlog.json                    │      │
+  │        │         │                                                    │      │
+  │        │         │  Stage 2: Triage / Stage 3: Fix                    │      │
+  │        │         │    HTTP POST http://claude:3000  ◄─────────────────┼───┐  │
+  │        │         │                                                    │   │  │
+  │        │         │                                                    │   │  │
+  │        │         └────────────────────────────────────────────────────┘   │  │
+  │        │                                                                  │  │
+  │        │         ┌─ claude container (Node.js + Claude Code) ──────────┐  │  │
+  │        │         │  server.js  listens on :3000                 ◄──────┼──┘  │
+  │        │         │  POST /  →  claude -p --output-format stream-json   │     │
+  │        │         │                                                     │     │
+  │        │         │  volumes:                                           │     │
+  │        │         │    .chomper/worktree → /repo   (rw)                 │     │
+  │        │         │    .chomper/         → /state  (rw)                 │     │
+  │        │         │    claude-auth/      → /root/.claude                │     │
+  │        │         └─────────────────────────────────────────────────────┘     │
+  │                                                                              │
+  │   ./chomper publish                                                          │
+  │        │                                                                     │
+  │        │  Stage 4: Publish                                                   │
+  │        │                     ┌─────────────────────────────────┐             │
+  │        ├── gist create ─────►│  GitHub                         │             │
+  │        └── pr create ───────►│  secret gist  → plan URL        │             │
+  │                              │  draft PR     → pr_url.txt      │             │
+  │                              └─────────────────────────────────┘             │
+  └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
 ---
 
 ## Commands
@@ -135,15 +132,36 @@ All commits are local until you push. Use the `publish` command to push branches
 
 ```
 openproject-chomper/
-├── chomper         ← entry point
-├── lib/
-│   ├── helpers.sh  ← claude wrappers, test runners, utilities
-│   ├── pull.sh     ← fetch from OpenProject
-│   ├── triage.sh   ← AI triage stage
-│   ├── fix.sh      ← plan → test → impl → commit
-│   ├── publish.sh  ← push branches, open PRs
-│   └── ui.sh       ← status, setup, docker, usage
-├── Dockerfile      ← Claude Code container image
+├── chomper                  ← bash entry point (sets up Docker, runs runner)
+├── bin/chomper              ← Ruby CLI (runs inside the runner container)
+├── lib/chomper/
+│   ├── cli.rb              ← command dispatch
+│   ├── context.rb          ← shared config and paths
+│   ├── backlog.rb          ← backlog.json read/write
+│   ├── http.rb             ← thin HTTP wrapper
+│   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
+│   ├── pull.rb             ← fetch from OpenProject API
+│   ├── triage.rb           ← AI triage stage
+│   ├── fix.rb              ← plan → impl → commit
+│   ├── publish.rb          ← push branches, open PRs
+│   ├── claude.rb           ← HTTP client for the Claude container
+│   └── ui.rb               ← status display, setup wizard
+├── test/
+│   ├── test_helper.rb
+│   └── chomper/
+│       ├── backlog_test.rb
+│       ├── context_test.rb
+│       ├── fix_test.rb
+│       ├── helpers_test.rb
+│       ├── http_test.rb
+│       ├── pull_test.rb
+│       └── triage_test.rb
+├── server.js                ← Node.js HTTP wrapper around `claude -p`
+├── Dockerfile.runner        ← Ruby 4.0 image
+├── Dockerfile.claude        ← Node.js + Claude Code image
+├── compose.yml
+├── Gemfile / Gemfile.lock
+├── Rakefile
 └── README.md
 ```
 
@@ -173,15 +191,43 @@ openproject-chomper/
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAUDE_IMAGE` | `chomper-claude` | Docker image name (rebuilt automatically if missing) |
-| `ANTHROPIC_API_KEY` | — | Passed into the container if set; otherwise Claude uses its stored auth |
+| `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
+| `GITHUB_TOKEN` | — | Used by publish to create gists and open PRs via the GitHub API |
+
+---
+
+## Development
+
+The test suite runs inside the runner container so the Ruby version and gem environment match production exactly.
+
+**Run all tests:**
+
+```bash
+docker compose run --no-deps --rm runner bundle exec rake
+```
+
+**Run a single file:**
+
+```bash
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/backlog_test.rb
+```
+
+**After changing `Gemfile`**, regenerate the lockfile and rebuild the image:
+
+```bash
+docker compose run --no-deps --rm runner bundle lock
+docker compose build runner
+```
+
+The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network calls are made during the test run.
 
 ---
 
 ## Reference
 
 **`.chomper/config`**
-If these are not specified, the scripts asks for them interactively at the beginning of the run.
+
+Written by the first-run setup wizard; values are shell-quoted so tokens containing `"` round-trip safely.
 
 ```bash
 OP_URL="https://community.openproject.org"
@@ -219,13 +265,14 @@ REPO_PATH="../openproject"
 
 `passes` values: `null` → untriaged · `false` → pending · `true` → committed · `"blocked"` → failed after 3 attempts
 
+---
+
 ## TODO
 
 ### Architecture & Refactoring
-* Rewrite to Ruby!
-  * Make sure the LLM integration is treated as a _swappable adapter_. We are likely to move away from Claude. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
+* Explore alternatives to Claude Code. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
+  * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :3000
 * Keep `backlog.json` compact (ID + subject + URL + scoring) and store the other WP data in its item folder
-* Replace the clumsy `passes` field with some proper status indicator
 * Use separate agents for development and review to clearly split domain ownership
 
 ### Features
@@ -241,11 +288,14 @@ REPO_PATH="../openproject"
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it.
+* Use worktree of an existing OP repo only when there is one present, otherwise just clone your own copy
+  * Local repo operations do not need auth, but Octokit calls (PRs + gists) do require a GitHub token
 
 ### Fixes & Hardening
-* Do not allow empty OP token
+* Do not re-fetch WPs if they haven't been updated since the last pull
 * Fix PR title: shorter and with ID in bracket at the beginning
 * Fix PR template: Reinstate the Screenshots section after approach section
 * Fix inconsistent handling of chomping queues
   * Right now, items are usually appended, but when the script is ran in single-WP mode, the queue gets wiped out
   * Make sure items are always appended and add the possibility to purge them from the queue
+* Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite

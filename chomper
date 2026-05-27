@@ -1,162 +1,69 @@
 #!/bin/bash
-# chomper — openproject-bug-chomper
-# Clone this repo and run this script. That's it.
-
+# chomper — setup, auth, then runs the Compose stack.
 set -euo pipefail
-BOLD=$'\033[1m'
-CYAN=$'\033[36m'
-GRAY=$'\033[37m'
-RESET=$'\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-STATE="$SCRIPT_DIR/.chomper"
-CONFIG="$STATE/config"
-BACKLOG_JSON="$STATE/backlog.json"
-PROGRESS="$STATE/progress.txt"
-CLOG="$STATE/chomp.log"
-CLAUDE_IMAGE="${CLAUDE_IMAGE:-chomper-claude}"
-CLAUDE_AUTH="$STATE/claude-auth"
-CLAUDE_CONTAINER=""
+export SCRIPT_DIR
+ENV_FILE="$SCRIPT_DIR/.env"
 
-mkdir -p "$STATE" "$CLAUDE_AUTH"
-touch "$PROGRESS"
-
-_cleanup() {
-  trap - INT TERM
-  printf '%s' "$RESET" > /dev/tty
-  if [ "${BASH_SUBSHELL:-0}" = "0" ]; then
-    echo ""
-    echo "Interrupted — cleaning up..."
-    _safe_rm "$STATE/new_items.json"
-    _safe_rm "$STATE/response.json"
-    _safe_rm "$STATE/tmp.json"
-    _safe_rm "$STATE/triage_input.json"
-    _safe_rm "$STATE/triage_output.json"
-    [ -n "$CLAUDE_CONTAINER" ] && docker rm -f "$CLAUDE_CONTAINER" &>/dev/null || true
-    echo "Run ./chomper to resume."
-  fi
-  kill -INT "$$"
-}
-trap _cleanup INT TERM
-
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/helpers.sh"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/pull.sh"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/triage.sh"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/fix.sh"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/publish.sh"
-# shellcheck source=/dev/null
-source "$SCRIPT_DIR/lib/ui.sh"
-
-# ══════════════════════════════════════════════════════════
-# MAIN
-# ══════════════════════════════════════════════════════════
-_main() {
-  local CMD="${1:-}"
-  shift 2>/dev/null || true
-  local IDS=("$@")
-
-  # ── Command dispatch ──────────────────────────────────
-  # Handled before Docker checks so these respond instantly.
-  case "$CMD" in
-    ""|--help|-h)
-      _usage
-      exit 0
-      ;;
-
-    status)
-      _status
-      exit 0
-      ;;
-
-    reset)
-      _reset
-      exit 0
-      ;;
-
-    publish)
-      _first_run_setup
-      # shellcheck source=/dev/null
-      source "$CONFIG"
-      WORKTREE_HOST="$STATE/worktree"
-      WORKTREE_CONTAINER="/repo"
-      STATE_CONTAINER="/state"
-      _publish_stage "${IDS[@]+"${IDS[@]}"}"
-      exit 0
-      ;;
-
-    fix|plan) ;;
-
-    *)
-      echo "Unknown argument: $CMD" >&2
-      _usage
-      exit 1
-      ;;
-  esac
-
-  echo "" >> "$CLOG"
-  echo "=== Session $(date '+%Y-%m-%dT%H:%M:%S') ===" >> "$CLOG"
-
-  _first_run_setup
-  _ensure_docker
-  # shellcheck source=/dev/null
-  source "$CONFIG"
-  WORKTREE_HOST="$STATE/worktree"
-  WORKTREE_CONTAINER="/repo"
-  STATE_CONTAINER="/state"
-
-  _ensure_worktree
-  _start_claude_container
-
-  # ── Stage 1: pull or fetch specific IDs ──────────────
-  if [ ${#IDS[@]} -gt 0 ]; then
-    _log_script "Stage 1: FETCH — loading WPs ${IDS[*]}"
-    _fetch_ids_stage "${IDS[@]}"
-    _log_script "Stage 1 complete: ${#IDS[@]} WPs loaded"
-  else
-    _log_script "Stage 1: PULL — fetching backlog from $OP_URL"
-    _pull_stage
-    _log_script "Stage 1 complete: $(jq '.items | length' "$BACKLOG_JSON") bugs in backlog"
-  fi
-
-  # ── Stage 2: triage (skipped when IDs given) ─────────
-  if [ ${#IDS[@]} -eq 0 ]; then
-    _log_script "Stage 2: TRIAGE"
-    _triage_stage
-    _log_script "Stage 2 complete: $(jq '[.items[] | select(.passes == false)] | length' "$BACKLOG_JSON") issues triaged"
-  fi
-
-  local PENDING
-  PENDING=$(jq '[.items[] | select(.passes == false)] | length' "$BACKLOG_JSON")
-
-  if [ "$PENDING" -eq 0 ]; then
-    echo "=== Nothing left to do. All issues resolved. ==="
-    exit 0
-  fi
-
-  # ── Stage 3: fix/plan loop ────────────────────────────
-  _log_script "Stage 3: ${CMD:-FIX} — $PENDING pending items"
-  local ITEM_ID
-  for ITEM_ID in $(jq -r '.items[] | select(.passes == false) | .id' "$BACKLOG_JSON"); do
-    _log_script "Item #$ITEM_ID — start  ($STATE/items/$ITEM_ID)"
-    _fix_item "$ITEM_ID" "$CMD" || true
-    _log_script "Item #$ITEM_ID — end  ($STATE/items/$ITEM_ID)"
+# ── First-run setup ───────────────────────────────────────────────────────
+if ! grep -q "^OP_URL=" "$ENV_FILE" 2>/dev/null; then
+  mkdir -p "$SCRIPT_DIR/.chomper"
+  echo ""
+  echo "=== First run — quick setup ==="
+  echo ""
+  printf "  OpenProject URL [https://community.openproject.org]: "
+  read -r OP_URL; OP_URL="${OP_URL:-https://community.openproject.org}"
+  TOKEN=""
+  while [ -z "$TOKEN" ]; do
+    printf "  API token (read-only, View work packages only): "
+    read -rs TOKEN; echo ""
+    [ -z "$TOKEN" ] && echo "  Token is required — please enter a value."
   done
-  _log_script "Stage 3 complete"
+  printf "  Path to your product repo [../openproject]: "
+  read -r REPO_PATH_INPUT; REPO_PATH_INPUT="${REPO_PATH_INPUT:-../openproject}"
+  REPO_PATH="$REPO_PATH_INPUT"
+  {
+    printf 'REPO_PATH=%s\n' "$REPO_PATH"
+    printf 'OP_URL=%s\n' "$OP_URL"
+    printf 'TOKEN=%s\n' "$TOKEN"
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE"
+  echo ""
+  echo "  ✓ Saved to .env (gitignored, chmod 600)"
+  echo ""
+fi
 
-  if [ "$CMD" = "plan" ]; then
-    echo "=== Plan complete — plans in .chomper/items/<id>/plan.md ==="
-    echo "Run ./chomper fix [ids...] to implement."
-  else
-    echo "=== Session complete ==="
-    echo "Branches: $(git -C "$WORKTREE_HOST" branch | grep -c 'fix/' || true) fix/* commits"
-    echo "Push when ready."
+# ── Load config ───────────────────────────────────────────────────────────
+REPO_PATH="$(cd "$SCRIPT_DIR" && cd "$(grep '^REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)" && pwd)"
+export REPO_PATH
+mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
+
+# ── Git identity — passed into the runner container so commits are authored
+#    by the host user rather than the container's default identity.
+GIT_AUTHOR_NAME="$(git config user.name 2>/dev/null || true)"
+GIT_AUTHOR_EMAIL="$(git config user.email 2>/dev/null || true)"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+
+# ── Run ───────────────────────────────────────────────────────────────────
+CMD="${1:-}"
+if [[ "$CMD" == "fix" || "$CMD" == "plan" ]]; then
+  WORKTREE="$SCRIPT_DIR/.chomper/worktree"
+  git -C "$REPO_PATH" fetch origin dev
+  if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
+    echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
+    git -C "$REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
+    echo "  ✓ Worktree at $WORKTREE"
+    echo ""
   fi
-  printf '%s' "$RESET" > /dev/tty
-  [ -n "$CLAUDE_CONTAINER" ] && docker rm -f "$CLAUDE_CONTAINER" &>/dev/null || true
-}
-
-_main "$@"
+  if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
+      claude claude auth status &>/dev/null; then
+    echo "[ Claude auth required — follow the prompts below ]"
+    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
+      claude claude auth login
+    echo ""
+  fi
+  docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait claude
+  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude 2>/dev/null || true' EXIT INT TERM
+fi
+docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm runner ruby "$SCRIPT_DIR/bin/chomper" "$@"

@@ -1,0 +1,53 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "rainbow"
+require "git"
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "chomper/context"
+require "chomper/backlog"
+require "chomper/http"
+require "chomper/helpers"
+require "chomper/claude"
+require "chomper/ui"
+require "chomper/pull"
+require "chomper/triage"
+require "chomper/fix"
+require "chomper/publish"
+require "chomper/cli"
+
+Rainbow.enabled = $stdout.tty?
+
+ctx = Chomper::Context.build
+
+def cleanup(ctx)
+  $stdout.print(Rainbow("").reset)
+  $stdout.flush
+  %w[new_items.json response.json tmp.json triage_input.json triage_output.json].each do |f|
+    path = ctx.state_dir / f
+    path.delete if path.exist? && path.to_s.start_with?(ctx.script_dir.to_s)
+  end
+end
+
+Signal.trap("INT") do
+  cleanup(ctx)
+  puts ""
+  puts "Interrupted — cleaning up..."
+  puts "Run ./chomper to resume."
+  exit 130
+end
+
+Signal.trap("TERM") do
+  cleanup(ctx)
+  exit 143
+end
+
+begin
+  Chomper::CLI.new(ctx).run(ARGV)
+rescue Chomper::FatalError => e
+  $stderr.puts "Error: #{e.message}" unless e.message.nil? || e.message == e.class.name
+  exit 1
+end
