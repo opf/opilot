@@ -231,3 +231,6 @@ REPO_PATH="../openproject"
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
 * Fix PR title: shorter and with ID in bracked at the beginning
+* Fix inconsistent handling of chomping queues
+  * Right now, items are usually appended, but when the script is ran in single-WP mode, the queue gets wiped out
+  * Make sure items are always appended and add the possibility to purge them from the queue
