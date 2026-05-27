@@ -220,8 +220,14 @@ REPO_PATH="../openproject"
 `passes` values: `null` → untriaged · `false` → pending · `true` → committed · `"blocked"` → failed after 3 attempts
 
 ## TODO
+
+### Architecture & Refactoring
 * Rewrite to Ruby!
   * Make sure the LLM integration is treated as a _swappable adapter_. We are likely to move away from Claude. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
+* Keep `backlog.json` compact (ID + subject + URL + scoring) and store the other WP data in its item folder
+* Replace the clumsy `passes` field with some proper status indicator
+
+### Features
 * Introduce a background mode: Script continually polls for new interactions on the OP instance and then picks up new work to chomp through.
   * The interactions can have multiple forms. Here are the ideas so far, in order of descending preference:
     * Creating a dedicate sub-WP (type "AI Workflow")
@@ -230,7 +236,10 @@ REPO_PATH="../openproject"
 * Manual plan approvals for script mode
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
-* Fix PR title: shorter and with ID in bracked at the beginning
+
+### Fixes & Hardening
+* Do not allow empty OP token
+* Fix PR title: shorter and with ID in bracket at the beginning
 * Fix inconsistent handling of chomping queues
   * Right now, items are usually appended, but when the script is ran in single-WP mode, the queue gets wiped out
   * Make sure items are always appended and add the possibility to purge them from the queue
