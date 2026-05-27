@@ -243,6 +243,7 @@ REPO_PATH="../openproject"
 ### Fixes & Hardening
 * Do not allow empty OP token
 * Fix PR title: shorter and with ID in bracket at the beginning
+* Fix PR template: Reinstate the Screenshots section after approach section
 * Fix inconsistent handling of chomping queues
   * Right now, items are usually appended, but when the script is ran in single-WP mode, the queue gets wiped out
   * Make sure items are always appended and add the possibility to purge them from the queue
