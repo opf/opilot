@@ -237,6 +237,7 @@ REPO_PATH="../openproject"
 * Manual plan approvals for script mode
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
+* Add an "in-progress" state for the status command
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it.
