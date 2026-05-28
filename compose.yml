@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.runner
     volumes:
       - ${SCRIPT_DIR}:${SCRIPT_DIR}
-      - ${REPO_PATH}:${REPO_PATH}
+      - ${OP_REPO_PATH}:${OP_REPO_PATH}
     environment:
       - ANTHROPIC_API_KEY
       - GITHUB_TOKEN
@@ -16,7 +16,7 @@ services:
       - GIT_COMMITTER_EMAIL
       - OP_URL=${OP_URL}
       - TOKEN=${TOKEN}
-      - REPO_PATH
+      - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR}
     stdin_open: true
     tty: true
@@ -27,7 +27,7 @@ services:
       dockerfile: Dockerfile.claude
     volumes:
       - ${SCRIPT_DIR}/.chomper/claude-auth:/root/.claude
-      - ${SCRIPT_DIR}/.chomper/worktree:/repo
+      - ${SCRIPT_DIR}/.chomper/openproject:/repo
       - ${SCRIPT_DIR}/.chomper:/state
     environment:
       - CLAUDE_CONFIG_DIR=/root/.claude

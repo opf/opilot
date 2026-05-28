@@ -75,7 +75,7 @@ cd openproject-chomper
   │        │         │  POST /  →  claude -p --output-format stream-json   │     │
   │        │         │                                                     │     │
   │        │         │  volumes:                                           │     │
-  │        │         │    .chomper/worktree → /repo   (rw)                 │     │
+  │        │         │    .chomper/openproject → /repo   (rw)              │     │
   │        │         │    .chomper/         → /state  (rw)                 │     │
   │        │         │    claude-auth/      → /root/.claude                │     │
   │        │         └─────────────────────────────────────────────────────┘     │
@@ -174,7 +174,7 @@ openproject-chomper/
 ├── progress.txt     ← session log
 ├── chomp.log        ← full prompt + response log
 ├── claude-auth/     ← persisted Claude container auth
-├── worktree/        ← isolated git worktree (your repo checkout is untouched)
+├── openproject/     ← isolated git worktree (your repo checkout is untouched)
 └── items/
     └── <id>/
         ├── item.json    ← issue snapshot
@@ -233,7 +233,7 @@ Written by the first-run setup wizard; values are shell-quoted so tokens contain
 OP_URL="https://community.openproject.org"
 TOKEN="your_readonly_token"
 PROJECT_ID="your-project-slug"
-REPO_PATH="../openproject"
+OP_REPO_PATH="../openproject"
 ```
 
 **`backlog.json` item schema**

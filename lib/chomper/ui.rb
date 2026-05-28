@@ -80,7 +80,7 @@ module Chomper
       end
 
       if @ctx.repo_path
-        wt = @ctx.state_dir / "worktree"
+        wt = @ctx.worktree_host
         list = IO.popen(
           ["git", "-C", @ctx.repo_path.to_s, "worktree", "list"],
           err: IO::NULL, &:read
@@ -123,7 +123,7 @@ module Chomper
           config          OpenProject URL, token, project, repo path
           backlog.json    Fetched + triaged bugs
           items/<id>/     Per-WP folder: item.json, plan.md, review.txt, pr.md, gist.txt
-          worktree/       Isolated git worktree for fixes
+          openproject/    Isolated git worktree for fixes
           progress.txt    Fix log
           claude-auth/    Persisted claude container auth (delete to re-authenticate)
           chomp.log       Full prompt + response log

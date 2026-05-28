@@ -23,20 +23,20 @@ module Chomper
       @log_file           = @state_dir / "chomp.log"
       @github_token       = ENV["GITHUB_TOKEN"]
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:3000")
-      @worktree_host      = @state_dir / "worktree"
+      @worktree_host      = @state_dir / "openproject"
       @worktree_container = "/repo"
       @state_container    = "/state"
       @anthropic_api_key  = ENV["ANTHROPIC_API_KEY"]
       @op_url             = ENV["OP_URL"]
       @token              = ENV["TOKEN"]
-      @repo_path          = ENV["REPO_PATH"] ? Pathname(ENV["REPO_PATH"]) : nil
+      @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
 
       @state_dir.mkpath
       @progress_file.open("a") {} # touch
     end
 
     def load_config!
-      raise FatalError, "Config not found — add OP_URL, TOKEN, REPO_PATH to .env and re-run." \
+      raise FatalError, "Config not found — add OP_URL, TOKEN, OP_REPO_PATH to .env and re-run." \
         unless @op_url && @token && @repo_path
     end
   end

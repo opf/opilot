@@ -20,7 +20,7 @@ module Chomper
     end
 
     def test_worktree_host_under_state_dir
-      assert_equal @ctx.state_dir / "worktree", @ctx.worktree_host
+      assert_equal @ctx.state_dir / "openproject", @ctx.worktree_host
     end
 
     def test_container_paths_are_fixed
@@ -29,7 +29,7 @@ module Chomper
     end
 
     def test_load_config_raises_when_env_vars_missing
-      saved = %w[OP_URL TOKEN REPO_PATH].map { |k| [k, ENV.delete(k)] }
+      saved = %w[OP_URL TOKEN OP_REPO_PATH].map { |k| [k, ENV.delete(k)] }
       ctx = Context.build(@tmpdir)
       assert_raises(Chomper::FatalError) { ctx.load_config! }
     ensure

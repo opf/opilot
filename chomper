@@ -19,11 +19,7 @@ if ! grep -q "^OP_URL=" "$ENV_FILE" 2>/dev/null; then
     read -rs TOKEN; echo ""
     [ -z "$TOKEN" ] && echo "  Token is required — please enter a value."
   done
-  printf "  Path to your product repo [../openproject]: "
-  read -r REPO_PATH_INPUT; REPO_PATH_INPUT="${REPO_PATH_INPUT:-../openproject}"
-  REPO_PATH="$REPO_PATH_INPUT"
   {
-    printf 'REPO_PATH=%s\n' "$REPO_PATH"
     printf 'OP_URL=%s\n' "$OP_URL"
     printf 'TOKEN=%s\n' "$TOKEN"
   } > "$ENV_FILE"
@@ -33,9 +29,31 @@ if ! grep -q "^OP_URL=" "$ENV_FILE" 2>/dev/null; then
   echo ""
 fi
 
+if ! grep -q "^OP_REPO_PATH=" "$ENV_FILE" 2>/dev/null; then
+  printf "  Do you have a local OpenProject repo to reuse? [Y/n]: "
+  read -r HAS_REPO
+  if [[ "${HAS_REPO:-Y}" =~ ^[Nn] ]]; then
+    OP_REPO_PATH_ENTRY="false"
+    echo "  Will clone opf/openproject when first needed (no auth required)."
+  else
+    printf "  Path to your product repo [../openproject]: "
+    read -r OP_REPO_PATH_INPUT; OP_REPO_PATH_INPUT="${OP_REPO_PATH_INPUT:-../openproject}"
+    OP_REPO_PATH_ENTRY="$OP_REPO_PATH_INPUT"
+  fi
+  printf 'OP_REPO_PATH=%s\n' "$OP_REPO_PATH_ENTRY" >> "$ENV_FILE"
+  echo ""
+fi
+
 # ── Load config ───────────────────────────────────────────────────────────
-REPO_PATH="$(cd "$SCRIPT_DIR" && cd "$(grep '^REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)" && pwd)"
-export REPO_PATH
+_OP_REPO_PATH_RAW="$(grep '^OP_REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)"
+if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then
+  OP_REPO_PATH="$SCRIPT_DIR/.chomper/openproject"
+  _CLONE_REPO=true
+else
+  OP_REPO_PATH="$(cd "$SCRIPT_DIR" && cd "$_OP_REPO_PATH_RAW" && pwd)"
+  _CLONE_REPO=false
+fi
+export OP_REPO_PATH
 mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
 
 # ── Git identity — passed into the runner container so commits are authored
@@ -48,13 +66,24 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # ── Run ───────────────────────────────────────────────────────────────────
 CMD="${1:-}"
 if [[ "$CMD" == "fix" || "$CMD" == "plan" ]]; then
-  WORKTREE="$SCRIPT_DIR/.chomper/worktree"
-  git -C "$REPO_PATH" fetch origin dev
-  if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
-    echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
-    git -C "$REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
-    echo "  ✓ Worktree at $WORKTREE"
-    echo ""
+  WORKTREE="$SCRIPT_DIR/.chomper/openproject"
+  if [[ "$_CLONE_REPO" == "true" ]]; then
+    if [ ! -d "$WORKTREE/.git" ]; then
+      echo "[ Cloning opf/openproject — this may take a few minutes ]"
+      git clone https://github.com/opf/openproject.git "$WORKTREE"
+      echo "  ✓ Cloned to $WORKTREE"
+      echo ""
+    else
+      git -C "$WORKTREE" fetch origin dev
+    fi
+  else
+    git -C "$OP_REPO_PATH" fetch origin dev
+    if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
+      echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
+      git -C "$OP_REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
+      echo "  ✓ Worktree at $WORKTREE"
+      echo ""
+    fi
   fi
   if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
       claude claude auth status &>/dev/null; then
