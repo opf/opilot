@@ -67,8 +67,7 @@ module Chomper
       system("git", "-C", @ctx.worktree_host.to_s, "push", push_url, "#{branch}:#{branch}") or
         raise "git push failed for branch #{branch}"
 
-      group = item["locality_group"] || "fix"
-      title = "fix(#{group}): #{item["subject"]} (WP ##{item_id})"
+      title = "[##{item_id}] #{item["subject"]}"
       pr = octokit.create_pull_request(
         github_repo, "dev", branch, title, pr_body,
         draft: true

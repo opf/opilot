@@ -293,6 +293,5 @@ REPO_PATH="../openproject"
 
 ### Fixes & Hardening
 * Do not re-fetch WPs if they haven't been updated since the last pull
-* Fix PR title: shorter and with ID in bracket at the beginning
 * Fix PR template: Reinstate the Screenshots section after approach section
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
