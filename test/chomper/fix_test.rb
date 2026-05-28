@@ -96,5 +96,66 @@ module Chomper
       fs = @fix.send(:build_fix_state, "42", ITEM)
       assert_equal "https://example.com/work_packages/42", fs.url
     end
+
+    # ── request_approval ──────────────────────────────────────────────────────
+
+    def with_stdin(input)
+      old = $stdin
+      $stdin = StringIO.new(input)
+      yield
+    ensure
+      $stdin = old
+    end
+
+    FakeBacklog = Struct.new(:last_id, :last_state) do
+      def set_state(id, state)
+        self.last_id    = id
+        self.last_state = state
+      end
+    end
+
+    def approval_fixture
+      fs = @fix.send(:build_fix_state, "42", ITEM)
+      fs.item_dir.mkpath
+      fs.plan_file.write("## Plan\nDo the thing.\n")
+      backlog = FakeBacklog.new
+      fix = Fix.new(@ctx, backlog, nil)
+      [fix, fs, backlog]
+    end
+
+    def test_request_approval_returns_approved_on_y
+      fix, fs, _backlog = approval_fixture
+      with_stdin("y\n") { assert_equal :approved, fix.send(:request_approval, fs) }
+    end
+
+    def test_request_approval_returns_approved_on_enter
+      fix, fs, _backlog = approval_fixture
+      with_stdin("\n") { assert_equal :approved, fix.send(:request_approval, fs) }
+    end
+
+    def test_request_approval_reprompts_on_gibberish_then_approves
+      fix, fs, _backlog = approval_fixture
+      with_stdin("what?\ny\n") { assert_equal :approved, fix.send(:request_approval, fs) }
+    end
+
+    def test_request_approval_returns_rejected_on_n
+      fix, fs, backlog = approval_fixture
+      with_stdin("n\n") do
+        result = fix.send(:request_approval, fs)
+        assert_equal :rejected, result
+        refute fs.plan_file.exist?
+        assert_equal Backlog::STATE_PENDING, backlog.last_state
+      end
+    end
+
+    def test_request_approval_returns_skipped_on_skip
+      fix, fs, backlog = approval_fixture
+      with_stdin("skip\n") do
+        result = fix.send(:request_approval, fs)
+        assert_equal :skipped, result
+        assert fs.plan_file.exist?
+        assert_equal Backlog::STATE_PLANNED, backlog.last_state
+      end
+    end
   end
 end

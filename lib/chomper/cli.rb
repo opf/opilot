@@ -88,11 +88,16 @@ module Chomper
       log_script "Stage 3 complete"
 
       if cmd == "plan"
-        puts "=== Plan complete — plans in .chomper/items/<id>/plan.md ==="
-        puts "Run ./chomper fix [ids...] to implement."
+        planned = backlog.planned
+        if planned.any?
+          puts "=== #{planned.length} plan(s) saved — .chomper/items/<id>/plan.md ==="
+          puts "Run ./chomper fix [ids...] to implement."
+        else
+          puts "=== No plans saved. ==="
+        end
       else
-        puts "=== Session complete ==="
-        puts "Push when ready."
+        committed = backlog.committed
+        puts committed.any? ? "=== Session complete — push when ready. ===" : "=== Nothing committed. ==="
       end
     end
   end

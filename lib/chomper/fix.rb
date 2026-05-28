@@ -43,6 +43,11 @@ module Chomper
         puts "  ↩ Resuming: branch has commits, skipping plan + impl."
       else
         return if fix_plan(fs) == :rejected
+        if @ctx.require_plan_approval
+          case request_approval(fs)
+          when :rejected, :skipped then return
+          end
+        end
         if cmd == "plan"
           @backlog.set_state(fs.item_id, Backlog::STATE_PLANNED)
           puts "  ✓ Plan saved — plan mode, skipping implementation."
@@ -56,6 +61,34 @@ module Chomper
     end
 
     private
+
+    def request_approval(fs)
+      puts ""
+      puts "  ── Plan: ##{fs.item_id} — #{fs.title}"
+      puts ""
+      puts fs.plan_file.read.lines.map { |l| "  #{l}" }.join
+      puts ""
+      loop do
+        print "  Approve plan? [Y/n/skip] "
+        response = $stdin.gets&.chomp&.downcase || ""
+        case response
+        when "", "y", "yes"
+          log_script "Plan approved by user for ##{fs.item_id}."
+          return :approved
+        when "n", "no"
+          log_script "Plan rejected by user for ##{fs.item_id} — resetting to pending."
+          safe_rm(fs.plan_file)
+          @backlog.set_state(fs.item_id, Backlog::STATE_PENDING)
+          return :rejected
+        when "s", "skip"
+          log_script "Plan skipped for ##{fs.item_id} — saved as planned."
+          @backlog.set_state(fs.item_id, Backlog::STATE_PLANNED)
+          return :skipped
+        else
+          puts "  Please enter Y to approve, n to reject, or skip."
+        end
+      end
+    end
 
     def fix_plan(fs)
       if fs.plan_file.exist? && fs.plan_file.size > 0

@@ -79,11 +79,16 @@ module Chomper
       puts "=== Search filters ==="
       puts ""
 
-      print "  Project: "
-      project_id = $stdin.gets.chomp
-      raise Chomper::FatalError, "Project identifier is required." if project_id.empty?
-
-      _code, types_data = HTTP.get_json!("#{@ctx.op_url}/api/v3/projects/#{project_id}/types", token: @ctx.token)
+      project_id = nil
+      types_data = nil
+      loop do
+        print "  Project [communicator-stream]: "
+        project_id = $stdin.gets.chomp
+        project_id = "communicator-stream" if project_id.empty?
+        code, types_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}/types", token: @ctx.token)
+        break if code == 200
+        puts "  Project '#{project_id}' not found (HTTP #{code}) — please try again."
+      end
       type_names = types_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
       puts "  Types available: #{type_names}"
       print "  Type(s), comma-separated [bug]: "

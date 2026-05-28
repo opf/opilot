@@ -8,7 +8,7 @@ module Chomper
     attr_reader :script_dir, :state_dir, :backlog_json, :progress_file,
                 :log_file, :claude_url, :github_token,
                 :worktree_host, :worktree_container, :state_container,
-                :anthropic_api_key, :op_url, :token, :repo_path
+                :anthropic_api_key, :op_url, :token, :repo_path, :require_plan_approval
 
     def self.build(script_dir = nil)
       script_dir = Pathname(script_dir || File.expand_path("../../..", __FILE__))
@@ -30,6 +30,7 @@ module Chomper
       @op_url             = ENV["OP_URL"]
       @token              = ENV["TOKEN"]
       @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
+      @require_plan_approval = ENV["REQUIRE_PLAN_APPROVAL"] != "false"
 
       @state_dir.mkpath
       @progress_file.open("a") {} # touch

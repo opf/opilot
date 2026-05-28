@@ -98,8 +98,8 @@ cd openproject-chomper
 
 | Invocation | Behaviour |
 |---|---|
-| `./chomper fix` | Pull → triage → fix all pending issues |
-| `./chomper fix 123 456` | Load only those WP IDs and fix them (skips pull + triage) |
+| `./chomper fix` | Pull → triage → show plan → prompt for approval → fix all pending issues |
+| `./chomper fix 123 456` | Load only those WP IDs, show plan, prompt for approval, fix them (skips pull + triage) |
 | `./chomper plan` | Pull + triage + generate plans only, no implementation |
 | `./chomper plan 123` | Generate a plan for one specific issue |
 | `./chomper publish` | Push all committed fix branches and open draft PRs |
@@ -292,7 +292,6 @@ GITHUB_TOKEN=ghp_...
     * Creating a dedicate sub-WP (type "AI Workflow")
     * Tagging the WP with a relevant Category (or even Label, once we port them over from JIRA)
     * Tagging the AI workflow user in Activity
-* Manual plan approvals for script mode
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
 * Correctly set the target branch for release-specific fixes
