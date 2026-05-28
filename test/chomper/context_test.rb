@@ -28,39 +28,12 @@ module Chomper
       assert_equal "/state",  @ctx.state_container
     end
 
-    def test_load_config_raises_without_file
-      assert_raises(RuntimeError) { @ctx.load_config! }
-    end
-
-    def test_write_and_load_config_round_trip
-      @ctx.write_config!(
-        op_url:     "https://community.openproject.org",
-        token:      "secret123",
-        project_id: "my-project",
-        repo_path:  "/repos/openproject"
-      )
-      @ctx.load_config!
-      assert_equal "https://community.openproject.org", @ctx.op_url
-      assert_equal "secret123",   @ctx.token
-      assert_equal "my-project",  @ctx.project_id
-      assert_equal Pathname("/repos/openproject"), @ctx.repo_path
-    end
-
-    def test_write_config_escapes_double_quotes_in_token
-      @ctx.write_config!(
-        op_url:     "https://example.com",
-        token:      'abc"def',
-        project_id: "proj",
-        repo_path:  "/repos/foo"
-      )
-      @ctx.load_config!
-      assert_equal 'abc"def', @ctx.token
-    end
-
-    def test_config_file_is_chmod_600
-      @ctx.write_config!(op_url: "u", token: "t", project_id: "p", repo_path: "/r")
-      mode = @ctx.config_file.stat.mode & 0o777
-      assert_equal 0o600, mode
+    def test_load_config_raises_when_env_vars_missing
+      saved = %w[OP_URL TOKEN REPO_PATH].map { |k| [k, ENV.delete(k)] }
+      ctx = Context.build(@tmpdir)
+      assert_raises(Chomper::FatalError) { ctx.load_config! }
+    ensure
+      saved.each { |k, v| ENV[k] = v if v }
     end
   end
 end

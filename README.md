@@ -295,7 +295,4 @@ REPO_PATH="../openproject"
 * Do not re-fetch WPs if they haven't been updated since the last pull
 * Fix PR title: shorter and with ID in bracket at the beginning
 * Fix PR template: Reinstate the Screenshots section after approach section
-* Fix inconsistent handling of chomping queues
-  * Right now, items are usually appended, but when the script is ran in single-WP mode, the queue gets wiped out
-  * Make sure items are always appended and add the possibility to purge them from the queue
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
