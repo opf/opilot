@@ -4,11 +4,12 @@ require "pathname"
 
 module Chomper
   class Backlog
-    STATE_UNTRIAGED = "untriaged"
-    STATE_PENDING   = "pending"
-    STATE_PLANNED   = "planned"
-    STATE_COMMITTED = "committed"
-    STATE_BLOCKED   = "blocked"
+    STATE_UNTRIAGED   = "untriaged"
+    STATE_PENDING     = "pending"
+    STATE_PLANNED     = "planned"
+    STATE_IN_PROGRESS = "in_progress"
+    STATE_COMMITTED   = "committed"
+    STATE_BLOCKED     = "blocked"
 
     def initialize(path)
       @path = Pathname(path)
@@ -41,6 +42,10 @@ module Chomper
 
     def planned
       items.select { |i| i["state"] == STATE_PLANNED }
+    end
+
+    def in_progress
+      items.select { |i| i["state"] == STATE_IN_PROGRESS }
     end
 
     def committed
@@ -93,6 +98,13 @@ module Chomper
     def remove_items(ids)
       id_set = ids.map(&:to_s).to_set
       atomic_write("items" => items.reject { |i| id_set.include?(i["id"]) })
+    end
+
+    def reset_in_progress!
+      updated = items.map do |i|
+        i["state"] == STATE_IN_PROGRESS ? i.merge("state" => STATE_PENDING) : i
+      end
+      atomic_write("items" => updated)
     end
 
     # Stage 2: patch locality_group, complexity, files_touched, ai_category, state.

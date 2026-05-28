@@ -35,23 +35,26 @@ module Chomper
       refute_nil @triage.send(:extract_json_block, text)
     end
 
-    def test_build_prompt_includes_input_path
-      prompt = @triage.send(:build_prompt, "/state/triage_input.json")
-      assert_includes prompt, "/state/triage_input.json"
+    BATCH = [{ "id" => "1" }, { "id" => "2" }].freeze
+
+    def test_build_prompt_includes_item_paths
+      prompt = @triage.send(:build_prompt, BATCH)
+      assert_includes prompt, "/state/items/1/item.json"
+      assert_includes prompt, "/state/items/2/item.json"
     end
 
     def test_build_prompt_includes_begin_json_delimiter
-      prompt = @triage.send(:build_prompt, "/state/triage_input.json")
+      prompt = @triage.send(:build_prompt, BATCH)
       assert_includes prompt, "---BEGIN JSON---"
     end
 
     def test_build_prompt_includes_end_json_delimiter
-      prompt = @triage.send(:build_prompt, "/state/triage_input.json")
+      prompt = @triage.send(:build_prompt, BATCH)
       assert_includes prompt, "---END JSON---"
     end
 
     def test_build_prompt_includes_schema_fields
-      prompt = @triage.send(:build_prompt, "/path")
+      prompt = @triage.send(:build_prompt, BATCH)
       assert_includes prompt, "locality_group"
       assert_includes prompt, "complexity"
       assert_includes prompt, "files_touched"
@@ -59,7 +62,7 @@ module Chomper
     end
 
     def test_build_prompt_includes_complexity_levels
-      prompt = @triage.send(:build_prompt, "/path")
+      prompt = @triage.send(:build_prompt, BATCH)
       assert_includes prompt, "trivial"
       assert_includes prompt, "simple"
       assert_includes prompt, "moderate"

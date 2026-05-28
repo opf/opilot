@@ -23,18 +23,18 @@ module Chomper
       }
     }.freeze
 
-    def test_build_item_maps_id_as_string
-      item = @pull.send(:build_item, WP, [])
+    def test_build_full_item_maps_id_as_string
+      item = @pull.send(:build_full_item, WP, [])
       assert_equal "42", item["id"]
     end
 
-    def test_build_item_maps_subject
-      item = @pull.send(:build_item, WP, [])
+    def test_build_full_item_maps_subject
+      item = @pull.send(:build_full_item, WP, [])
       assert_equal "Fix login bug", item["subject"]
     end
 
-    def test_build_item_maps_embedded_fields
-      item = @pull.send(:build_item, WP, [])
+    def test_build_full_item_maps_embedded_fields
+      item = @pull.send(:build_full_item, WP, [])
       assert_equal "New",    item["status"]
       assert_equal "High",   item["priority"]
       assert_equal "Alice",  item["assignee"]
@@ -43,31 +43,58 @@ module Chomper
       assert_equal "Core",   item["category"]
     end
 
-    def test_build_item_defaults_state_to_pending
-      item = @pull.send(:build_item, WP, [])
+    def test_build_full_item_has_no_state_field
+      item = @pull.send(:build_full_item, WP, [])
+      refute item.key?("state")
+    end
+
+    def test_build_full_item_has_no_scoring_fields
+      item = @pull.send(:build_full_item, WP, [])
+      refute item.key?("locality_group")
+      refute item.key?("complexity")
+      refute item.key?("files_touched")
+      refute item.key?("ai_category")
+    end
+
+    def test_build_backlog_entry_contains_pointer_and_scoring_fields
+      item = @pull.send(:build_backlog_entry, WP)
+      assert_equal %w[ai_category complexity files_touched id locality_group state subject url],
+                   item.keys.sort
+    end
+
+    def test_build_backlog_entry_defaults_state_to_pending
+      item = @pull.send(:build_backlog_entry, WP)
       assert_equal Backlog::STATE_PENDING, item["state"]
     end
 
-    def test_build_item_nil_assignee_becomes_unassigned
+    def test_build_backlog_entry_has_no_metadata_fields
+      item = @pull.send(:build_backlog_entry, WP)
+      refute item.key?("description")
+      refute item.key?("comments")
+      refute item.key?("status")
+      refute item.key?("assignee")
+    end
+
+    def test_build_full_item_nil_assignee_becomes_unassigned
       wp = WP.merge("_embedded" => WP["_embedded"].merge("assignee" => nil))
-      item = @pull.send(:build_item, wp, [])
+      item = @pull.send(:build_full_item, wp, [])
       assert_equal "unassigned", item["assignee"]
     end
 
-    def test_build_item_empty_description_becomes_empty_string
+    def test_build_full_item_empty_description_becomes_empty_string
       wp = WP.merge("description" => nil)
-      item = @pull.send(:build_item, wp, [])
+      item = @pull.send(:build_full_item, wp, [])
       assert_equal "", item["description"]
     end
 
-    def test_build_item_attaches_comments
+    def test_build_full_item_attaches_comments
       comments = [{ "user" => "Alice", "text" => "Hello" }]
-      item = @pull.send(:build_item, WP, comments)
+      item = @pull.send(:build_full_item, WP, comments)
       assert_equal comments, item["comments"]
     end
 
-    def test_build_item_url_uses_op_url
-      item = @pull.send(:build_item, WP, [])
+    def test_build_full_item_url_uses_op_url
+      item = @pull.send(:build_full_item, WP, [])
       assert_equal "https://example.com/work_packages/42", item["url"]
     end
 

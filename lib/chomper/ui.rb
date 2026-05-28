@@ -15,22 +15,24 @@ module Chomper
         return
       end
 
-      done      = @backlog.committed.length
-      pending   = @backlog.pending.length
-      planned   = @backlog.planned.length
-      blk       = @backlog.blocked.length
-      untriaged = @backlog.untriaged.length
+      done        = @backlog.committed.length
+      in_progress = @backlog.in_progress.length
+      pending     = @backlog.pending.length
+      planned     = @backlog.planned.length
+      blk         = @backlog.blocked.length
+      untriaged   = @backlog.untriaged.length
       puts ""
       summary = "  #{pending} pending"
-      summary += "  ✎ #{planned} planned"      if planned   > 0
-      summary += "  ✓ #{done} done"            if done      > 0
-      summary += "  ✗ #{blk} blocked"          if blk       > 0
-      summary += "  ? #{untriaged} untriaged"  if untriaged > 0
+      summary += "  ▶ #{in_progress} in progress" if in_progress > 0
+      summary += "  ✎ #{planned} planned"          if planned      > 0
+      summary += "  ✓ #{done} done"                if done         > 0
+      summary += "  ✗ #{blk} blocked"              if blk          > 0
+      summary += "  ? #{untriaged} untriaged"       if untriaged    > 0
       puts summary
 
-      { "Pending" => @backlog.pending, "Planned" => @backlog.planned,
-        "Done" => @backlog.committed, "Blocked" => @backlog.blocked,
-        "Untriaged" => @backlog.untriaged }.each do |label, list|
+      { "In progress" => @backlog.in_progress, "Pending" => @backlog.pending,
+        "Planned" => @backlog.planned, "Done" => @backlog.committed,
+        "Blocked" => @backlog.blocked, "Untriaged" => @backlog.untriaged }.each do |label, list|
         next if list.empty?
         puts ""
         puts "  #{label}:"

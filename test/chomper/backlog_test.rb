@@ -3,10 +3,11 @@ require_relative "../test_helper"
 module Chomper
   class BacklogTest < Minitest::Test
     SEED_ITEMS = [
-      { "id" => "1", "subject" => "Alpha", "state" => Backlog::STATE_UNTRIAGED, "locality_group" => "auth", "complexity" => "simple",   "files_touched" => [], "ai_category" => nil },
-      { "id" => "2", "subject" => "Beta",  "state" => Backlog::STATE_PENDING,   "locality_group" => "ui",   "complexity" => "trivial",  "files_touched" => [], "ai_category" => nil },
-      { "id" => "3", "subject" => "Gamma", "state" => Backlog::STATE_COMMITTED, "locality_group" => "api",  "complexity" => "moderate", "files_touched" => [], "ai_category" => nil },
-      { "id" => "4", "subject" => "Delta", "state" => Backlog::STATE_BLOCKED,   "locality_group" => "db",   "complexity" => "complex",  "files_touched" => [], "ai_category" => nil },
+      { "id" => "1", "subject" => "Alpha",   "state" => Backlog::STATE_UNTRIAGED,   "locality_group" => "auth", "complexity" => "simple",   "files_touched" => [], "ai_category" => nil },
+      { "id" => "2", "subject" => "Beta",    "state" => Backlog::STATE_PENDING,     "locality_group" => "ui",   "complexity" => "trivial",  "files_touched" => [], "ai_category" => nil },
+      { "id" => "3", "subject" => "Gamma",   "state" => Backlog::STATE_COMMITTED,   "locality_group" => "api",  "complexity" => "moderate", "files_touched" => [], "ai_category" => nil },
+      { "id" => "4", "subject" => "Delta",   "state" => Backlog::STATE_BLOCKED,     "locality_group" => "db",   "complexity" => "complex",  "files_touched" => [], "ai_category" => nil },
+      { "id" => "5", "subject" => "Epsilon", "state" => Backlog::STATE_IN_PROGRESS, "locality_group" => "auth", "complexity" => "simple",   "files_touched" => [], "ai_category" => nil },
     ].freeze
 
     def setup
@@ -35,7 +36,7 @@ module Chomper
 
     def test_items_returns_all
       seed
-      assert_equal 4, @backlog.items.length
+      assert_equal 5, @backlog.items.length
     end
 
     def test_untriaged_returns_untriaged_state
@@ -56,6 +57,18 @@ module Chomper
     def test_blocked_returns_blocked_state
       seed
       assert_equal ["4"], @backlog.blocked.map { |i| i["id"] }
+    end
+
+    def test_in_progress_returns_in_progress_state
+      seed
+      assert_equal ["5"], @backlog.in_progress.map { |i| i["id"] }
+    end
+
+    def test_reset_in_progress_moves_items_to_pending
+      seed
+      @backlog.reset_in_progress!
+      assert_empty @backlog.in_progress
+      assert_includes @backlog.pending.map { |i| i["id"] }, "5"
     end
 
     def test_find_by_string_id
@@ -91,11 +104,11 @@ module Chomper
     def test_merge_new_items_sets_untriaged_state_for_new_items
       seed
       new_items = [
-        { "id" => "5", "subject" => "New", "state" => Backlog::STATE_PENDING, "locality_group" => nil,
+        { "id" => "6", "subject" => "New", "state" => Backlog::STATE_PENDING, "locality_group" => nil,
           "complexity" => nil, "files_touched" => [], "ai_category" => nil },
       ]
       @backlog.merge_new_items(new_items)
-      assert_equal Backlog::STATE_UNTRIAGED, @backlog.find("5")["state"]
+      assert_equal Backlog::STATE_UNTRIAGED, @backlog.find("6")["state"]
     end
 
     def test_replace_with_new_items_discards_old
@@ -107,7 +120,7 @@ module Chomper
     def test_merge_fetched_items_preserves_existing_items_not_in_list
       seed
       @backlog.merge_fetched_items([{ "id" => "9", "subject" => "New", "state" => Backlog::STATE_PENDING }])
-      assert_equal %w[1 2 3 4 9], @backlog.items.map { |i| i["id"] }.sort
+      assert_equal %w[1 2 3 4 5 9], @backlog.items.map { |i| i["id"] }.sort
     end
 
     def test_merge_fetched_items_upserts_existing_item_as_pending
@@ -123,7 +136,7 @@ module Chomper
     def test_remove_items_drops_specified_ids
       seed
       @backlog.remove_items(["1", "3"])
-      assert_equal %w[2 4], @backlog.items.map { |i| i["id"] }
+      assert_equal %w[2 4 5], @backlog.items.map { |i| i["id"] }
     end
 
     def test_remove_items_preserves_unspecified_ids
@@ -155,7 +168,7 @@ module Chomper
     def test_sort_by_complexity_orders_trivial_to_complex
       seed
       @backlog.sort_by_complexity!
-      assert_equal %w[trivial simple moderate complex], @backlog.items.map { |i| i["complexity"] }
+      assert_equal %w[trivial simple simple moderate complex], @backlog.items.map { |i| i["complexity"] }
     end
 
     def test_set_state_committed

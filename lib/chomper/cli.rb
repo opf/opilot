@@ -67,7 +67,9 @@ module Chomper
         log_script "Stage 2 complete: #{backlog.pending.length} issues triaged"
       end
 
+      backlog.reset_in_progress!
       pending = backlog.pending + backlog.planned
+      pending = pending.select { |item| ids.map(&:to_s).include?(item["id"]) } if ids.any?
       if pending.empty?
         puts "=== Nothing left to do. All issues resolved. ==="
         return

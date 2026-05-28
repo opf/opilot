@@ -236,34 +236,45 @@ PROJECT_ID="your-project-slug"
 OP_REPO_PATH="../openproject"
 ```
 
-**`backlog.json` item schema**
+**`backlog.json` item schema** (pointers + scoring only)
 
 ```json
 {
   "id":             "42",
   "subject":        "Null check in UserService",
   "url":            "https://community.openproject.org/work_packages/42",
-  "status":         "New",
-  "priority":       "Normal",
-  "assignee":       "unassigned",
-  "author":         "Jane Smith",
-  "version":        "14.0",
-  "category":       "auth",
-  "created_at":     "2024-01-15T10:00:00Z",
-  "updated_at":     "2024-01-20T14:30:00Z",
-  "description":    "Raw description text...",
-  "comments": [
-    {"user": "John Doe", "created_at": "2024-01-16T09:00:00Z", "text": "I can reproduce this..."}
-  ],
+  "state":          "pending",
   "locality_group": "auth",
   "complexity":     "trivial",
   "files_touched":  ["src/services/UserService.ts"],
-  "ai_category":    "null-safety",
-  "passes":         false
+  "ai_category":    "null-safety"
 }
 ```
 
-`passes` values: `null` → untriaged · `false` → pending · `true` → committed · `"blocked"` → failed after 3 attempts
+`state` values: `untriaged` · `pending` · `planned` · `in_progress` · `committed` · `blocked`
+
+**`items/<id>/item.json` schema** (full WP metadata, written at pull time)
+
+```json
+{
+  "id":          "42",
+  "subject":     "Null check in UserService",
+  "url":         "https://community.openproject.org/work_packages/42",
+  "status":      "New",
+  "priority":    "Normal",
+  "assignee":    "unassigned",
+  "responsible": "unassigned",
+  "author":      "Jane Smith",
+  "version":     "14.0",
+  "category":    "auth",
+  "created_at":  "2024-01-15T10:00:00Z",
+  "updated_at":  "2024-01-20T14:30:00Z",
+  "description": "Raw description text...",
+  "comments": [
+    {"user": "John Doe", "created_at": "2024-01-16T09:00:00Z", "text": "I can reproduce this..."}
+  ]
+}
+```
 
 ---
 
@@ -284,12 +295,9 @@ OP_REPO_PATH="../openproject"
 * Manual plan approvals for script mode
 * Manual plan approvals for background mode
 * Skip extensive planning for very simple tickets.
-* Add an "in-progress" state for the status command
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it.
-* Use worktree of an existing OP repo only when there is one present, otherwise just clone your own copy
-  * Local repo operations do not need auth, but Octokit calls (PRs + gists) do require a GitHub token
 
 ### Fixes & Hardening
 * Do not re-fetch WPs if they haven't been updated since the last pull

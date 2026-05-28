@@ -32,28 +32,21 @@ module Chomper
       untriaged.each_slice(BATCH_SIZE).with_index(1) do |batch, batch_num|
         puts "  Batch #{batch_num} / #{total_batches}"
 
-        triage_input = @ctx.state_dir / "triage_input.json"
-        triage_input.write(JSON.generate(batch))
-
-        input_c = "#{@ctx.state_container}/triage_input.json"
-        text = @claude.run(build_prompt(input_c))
+        text = @claude.run(build_prompt(batch))
 
         json_block = extract_json_block(text)
         if json_block.nil? || json_block.strip.empty?
           puts "  Warning: no JSON extracted for batch #{batch_num} — skipping."
-          safe_rm(triage_input)
           next
         end
 
         triaged = JSON.parse(json_block) rescue nil
         unless triaged.is_a?(Array)
           puts "  Warning: invalid JSON in batch #{batch_num} — skipping."
-          safe_rm(triage_input)
           next
         end
 
         @backlog.merge_triage_results(triaged)
-        safe_rm(triage_input)
       end
 
       @backlog.sort_by_complexity!
@@ -61,10 +54,13 @@ module Chomper
 
     private
 
-    def build_prompt(input_container_path)
+    def build_prompt(batch)
+      paths = batch.map { |item| "#{@ctx.state_container}/items/#{item["id"]}/item.json" }.join("\n")
       <<~PROMPT
-        Read #{input_container_path} — a JSON array of Bug work packages.
-        Each item has: id, subject, description, comments[], version, category, priority.
+        Read each of these work package files:
+        #{paths}
+
+        Each file has: id, subject, description, comments[], version, category, priority.
 
         For each item print one line:
           #<id> <subject> → <locality_group> / <complexity>

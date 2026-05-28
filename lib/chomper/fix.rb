@@ -24,10 +24,10 @@ module Chomper
 
       fs = build_fix_state(item_id, item)
 
+      @backlog.set_state(fs.item_id, Backlog::STATE_IN_PROGRESS)
       log_script "##{item_id} — #{fs.title}\n  Group: #{fs.group} | Complexity: #{fs.complexity}\n  #{fs.url}"
 
       fs.item_dir.mkpath
-      fs.item_file.write(JSON.generate(item))
 
       if local_branch_exists?(worktree, fs.branch)
         worktree.checkout(fs.branch)

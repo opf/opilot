@@ -144,7 +144,12 @@ module Chomper
         rxns.dig("_embedded", "elements") || []
       )
 
-      build_item(wp, comments)
+      full = build_full_item(wp, comments)
+      item_dir = @ctx.state_dir / "items" / full["id"]
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate(full))
+
+      build_backlog_entry(wp)
     end
 
     def build_comments(activities, reactions)
@@ -164,27 +169,35 @@ module Chomper
         end
     end
 
-    def build_item(wp, comments)
+    def build_full_item(wp, comments)
+      {
+        "id"          => wp["id"].to_s,
+        "subject"     => wp["subject"],
+        "url"         => "#{@ctx.op_url}/work_packages/#{wp["id"]}",
+        "status"      => wp.dig("_embedded", "status", "name"),
+        "priority"    => wp.dig("_embedded", "priority", "name"),
+        "assignee"    => wp.dig("_embedded", "assignee", "name") || "unassigned",
+        "responsible" => wp.dig("_embedded", "responsible", "name") || "unassigned",
+        "author"      => wp.dig("_embedded", "author", "name"),
+        "version"     => wp.dig("_embedded", "version", "name"),
+        "category"    => wp.dig("_embedded", "category", "name"),
+        "created_at"  => wp["createdAt"],
+        "updated_at"  => wp["updatedAt"],
+        "description" => wp.dig("description", "raw") || "",
+        "comments"    => comments
+      }
+    end
+
+    def build_backlog_entry(wp)
       {
         "id"             => wp["id"].to_s,
         "subject"        => wp["subject"],
         "url"            => "#{@ctx.op_url}/work_packages/#{wp["id"]}",
-        "status"         => wp.dig("_embedded", "status", "name"),
-        "priority"       => wp.dig("_embedded", "priority", "name"),
-        "assignee"       => wp.dig("_embedded", "assignee", "name") || "unassigned",
-        "responsible"    => wp.dig("_embedded", "responsible", "name") || "unassigned",
-        "author"         => wp.dig("_embedded", "author", "name"),
-        "version"        => wp.dig("_embedded", "version", "name"),
-        "category"       => wp.dig("_embedded", "category", "name"),
-        "created_at"     => wp["createdAt"],
-        "updated_at"     => wp["updatedAt"],
-        "description"    => wp.dig("description", "raw") || "",
-        "comments"       => comments,
+        "state"          => Backlog::STATE_PENDING,
         "locality_group" => nil,
         "complexity"     => nil,
         "files_touched"  => [],
-        "ai_category"    => nil,
-        "state"          => Backlog::STATE_PENDING
+        "ai_category"    => nil
       }
     end
 
