@@ -28,9 +28,9 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 ## Requirements
 
 - **Docker** (runs both the Ruby runner and the Claude Code container)
-- `gh` CLI for publishing plans as gists and opening PRs
-- A checked-out `openproject` repo somewhere on disk
+- A GitHub token with repo + gist write access (for publishing PRs and plan gists)
 - An OpenProject API token (preferably scoped only to reading your target WPs)
+- Optionally, a local `openproject` repo — chomper can clone one automatically if you don't have it
 
 ---
 
@@ -54,7 +54,7 @@ cd openproject-chomper
   │                                                                              │
   │   ./chomper fix  (bash wrapper)                                              │
   │        │                                                                     │
-  │        │  writes .env, ensures worktree exists                               │
+  │        │  reads .env (writes on first run), ensures openproject exists        │
   │        │  docker compose run --rm runner ruby bin/chomper fix                │
   │        │                                                                     │
   │        │         ┌─ runner container (Ruby 4.0) ──────────────────────┐      │
@@ -63,6 +63,7 @@ cd openproject-chomper
   │        │         │    HTTP → OpenProject API (work packages,          │      │
   │        │         │            activities, reactions)                  │      │
   │        │         │    writes .chomper/backlog.json                    │      │
+  │        │         │    writes .chomper/items/<id>/item.json            │      │
   │        │         │                                                    │      │
   │        │         │  Stage 2: Triage / Stage 3: Fix                    │      │
   │        │         │    HTTP POST http://claude:3000  ◄─────────────────┼───┐  │
@@ -85,7 +86,7 @@ cd openproject-chomper
   │        │  Stage 4: Publish                                                   │
   │        │                     ┌─────────────────────────────────┐             │
   │        ├── gist create ─────►│  GitHub                         │             │
-  │        └── pr create ───────►│  secret gist  → plan URL        │             │
+  │        └── pr create ───────►│  public gist  → plan URL        │             │
   │                              │  draft PR     → pr_url.txt      │             │
   │                              └─────────────────────────────────┘             │
   └──────────────────────────────────────────────────────────────────────────────┘
@@ -103,6 +104,7 @@ cd openproject-chomper
 | `./chomper plan 123` | Generate a plan for one specific issue |
 | `./chomper publish` | Push all committed fix branches and open draft PRs |
 | `./chomper publish 123` | Push and open PR for one specific issue |
+| `./chomper purge <id ...>` | Remove specific items from the queue |
 | `./chomper status` | Show per-issue status with OpenProject URL, plan gist, and PR link |
 | `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
@@ -122,7 +124,7 @@ All commits are local until you push. Use the `publish` command to push branches
 
 `./chomper status` shows each issue with its OpenProject link, plan gist URL, and PR link so you can track what's been published at a glance.
 
-**Retry a blocked item:** set `passes` back to `false` in `.chomper/backlog.json` and re-run.
+**Retry a blocked item:** set `state` back to `"pending"` in `.chomper/backlog.json` and re-run.
 
 ---
 
@@ -145,7 +147,7 @@ openproject-chomper/
 │   ├── fix.rb              ← plan → impl → commit
 │   ├── publish.rb          ← push branches, open PRs
 │   ├── claude.rb           ← HTTP client for the Claude container
-│   └── ui.rb               ← status display, setup wizard
+│   └── ui.rb               ← status display, usage, reset
 ├── test/
 │   ├── test_helper.rb
 │   └── chomper/
@@ -169,17 +171,16 @@ openproject-chomper/
 
 ```
 .chomper/
-├── config           ← credentials & settings (chmod 600)
-├── backlog.json     ← source of truth: API data + triage + fix state
+├── backlog.json     ← lightweight index: id, subject, url, state, scoring fields
 ├── progress.txt     ← session log
 ├── chomp.log        ← full prompt + response log
 ├── claude-auth/     ← persisted Claude container auth
-├── openproject/     ← isolated git worktree (your repo checkout is untouched)
+├── openproject/     ← git worktree or fresh clone of openproject
 └── items/
     └── <id>/
-        ├── item.json    ← issue snapshot
+        ├── item.json    ← full WP metadata (written at pull time)
         ├── plan.md      ← Writer's implementation plan
-        ├── review.txt   ← Reviewer's critique (deleted after merge)
+        ├── review.txt   ← Reviewer's critique (deleted after plan review)
         ├── pr.md        ← generated PR description
         ├── gist.txt     ← plan gist URL
         └── pr_url.txt   ← PR URL (written by publish)
@@ -225,15 +226,15 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 
 ## Reference
 
-**`.chomper/config`**
+**`.env`**
 
-Written by the first-run setup wizard; values are shell-quoted so tokens containing `"` round-trip safely.
+Written by the first-run setup wizard (chmod 600, gitignored).
 
 ```bash
-OP_URL="https://community.openproject.org"
-TOKEN="your_readonly_token"
-PROJECT_ID="your-project-slug"
-OP_REPO_PATH="../openproject"
+OP_URL=https://community.openproject.org
+TOKEN=your_readonly_token
+OP_REPO_PATH=../openproject   # or "false" to have chomper clone automatically
+GITHUB_TOKEN=ghp_...
 ```
 
 **`backlog.json` item schema** (pointers + scoring only)
@@ -283,7 +284,6 @@ OP_REPO_PATH="../openproject"
 ### Architecture & Refactoring
 * Explore alternatives to Claude Code. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :3000
-* Keep `backlog.json` compact (ID + subject + URL + scoring) and store the other WP data in its item folder
 * Use separate agents for development and review to clearly split domain ownership
 
 ### Features
