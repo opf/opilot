@@ -108,6 +108,7 @@ module Chomper
           fix [id id ...]     Fix all pending bugs, or only the specified ticket IDs
           plan [id id ...]    Generate plans only — no implementation
           publish [id id ...] Push branches and open draft PRs (all committed, or specific IDs)
+          purge <id id ...>   Remove specific items from the queue
           status              Show backlog counts and recent progress
           reset               De-register the worktree and delete .chomper/ (fresh start)
 

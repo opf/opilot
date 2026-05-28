@@ -69,7 +69,7 @@ module Chomper
         new_items << item
         printf_item(item["id"], item["subject"])
       end
-      @backlog.replace_with_new_items(new_items)
+      @backlog.merge_fetched_items(new_items)
     end
 
     private

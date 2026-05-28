@@ -29,6 +29,14 @@ module Chomper
         @ctx.load_config!
         Publish.new(@ctx, backlog).run_publish_stage(ids)
         return
+      when "purge"
+        if ids.empty?
+          $stderr.puts "purge requires at least one ID. To wipe everything, use: ./chomper reset"
+          raise Chomper::FatalError
+        end
+        backlog.remove_items(ids)
+        puts "Purged #{ids.length} item(s) from the queue."
+        return
       when "fix", "plan"
         # handled below
       else

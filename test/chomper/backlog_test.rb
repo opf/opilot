@@ -104,6 +104,35 @@ module Chomper
       assert_equal ["9"], @backlog.items.map { |i| i["id"] }
     end
 
+    def test_merge_fetched_items_preserves_existing_items_not_in_list
+      seed
+      @backlog.merge_fetched_items([{ "id" => "9", "subject" => "New", "state" => Backlog::STATE_PENDING }])
+      assert_equal %w[1 2 3 4 9], @backlog.items.map { |i| i["id"] }.sort
+    end
+
+    def test_merge_fetched_items_upserts_existing_item_as_pending
+      seed
+      updated = { "id" => "1", "subject" => "Alpha Updated", "state" => Backlog::STATE_PENDING,
+                  "locality_group" => nil, "complexity" => nil, "files_touched" => [], "ai_category" => nil }
+      @backlog.merge_fetched_items([updated])
+      item = @backlog.find("1")
+      assert_equal "Alpha Updated",         item["subject"]
+      assert_equal Backlog::STATE_PENDING,  item["state"]
+    end
+
+    def test_remove_items_drops_specified_ids
+      seed
+      @backlog.remove_items(["1", "3"])
+      assert_equal %w[2 4], @backlog.items.map { |i| i["id"] }
+    end
+
+    def test_remove_items_preserves_unspecified_ids
+      seed
+      @backlog.remove_items(["2"])
+      assert_equal "Alpha", @backlog.find("1")["subject"]
+      assert_equal "Gamma", @backlog.find("3")["subject"]
+    end
+
     def test_merge_triage_results_patches_fields
       seed
       @backlog.merge_triage_results([

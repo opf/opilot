@@ -80,6 +80,21 @@ module Chomper
       atomic_write("items" => new_items)
     end
 
+    # Stage 1 fetch-ids (append mode): upsert fetched items as PENDING, preserve everything else.
+    def merge_fetched_items(new_items)
+      existing  = items.each_with_object({}) { |i, h| h[i["id"]] = i }
+      new_by_id = new_items.each_with_object({}) { |i, h| h[i["id"]] = i }
+
+      kept  = existing.values.map { |item| new_by_id[item["id"]] || item }
+      added = new_items.reject { |item| existing[item["id"]] }
+      atomic_write("items" => kept + added)
+    end
+
+    def remove_items(ids)
+      id_set = ids.map(&:to_s).to_set
+      atomic_write("items" => items.reject { |i| id_set.include?(i["id"]) })
+    end
+
     # Stage 2: patch locality_group, complexity, files_touched, ai_category, state.
     def merge_triage_results(triaged)
       index = triaged.each_with_object({}) { |t, h| h[t["id"]] = t }
