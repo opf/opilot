@@ -177,6 +177,8 @@ module Chomper
         DIFF:
         #{diff_stat}
         #{template_section}
+        Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
+        even if empty (write "N/A" or "No visual changes").
         Output only the PR description — no preamble.
       PROMPT
 
