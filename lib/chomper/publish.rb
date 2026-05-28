@@ -86,7 +86,7 @@ module Chomper
 
       gist = octokit.create_gist(
         description: "Bug chomper plan: ##{item_id} — #{subject}",
-        public: false,
+        public: true,
         files: { "wp-#{item_id}-plan.md" => { content: plan_file.read } }
       )
       gist_file.write(gist.html_url)
