@@ -126,6 +126,47 @@ module Chomper
             end
           end
 
+          backlog.items.each do |item|
+            chat_file = @ctx.state_dir / "items" / item["id"] / "chat_message.txt"
+            next unless chat_file.exist?
+
+            message = chat_file.read.strip
+            chat_file.delete
+
+            puts "  [@chomper] Chat on ##{item["id"]} — #{item["subject"][0, 50]}: #{message[0, 60]}"
+
+            plan_file = @ctx.state_dir / "items" / item["id"] / "plan.md"
+            plan_text = plan_file.exist? ? plan_file.read : "(no plan yet)"
+
+            prompt = <<~PROMPT
+              You are chomper, an AI code assistant working on OpenProject work package ##{item["id"]}: #{item["subject"]}
+
+              CURRENT PLAN:
+              #{plan_text}
+
+              AVAILABLE COMMANDS (mention these when relevant):
+              - @chomper plan       — generate an implementation plan
+              - @chomper revise ... — revise the plan with feedback
+              - @chomper proceed    — approve the plan and trigger implementation
+
+              USER: #{message}
+
+              Reply helpfully and concisely. Your response will be posted as an internal note.
+            PROMPT
+
+            response = claude.run(prompt, tools: Claude::TOOLS_READ)
+            next if response.strip.empty?
+
+            code, = HTTP.post_json(
+              "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
+              { "comment" => { "raw" => response.strip }, "internal" => true },
+              token: @ctx.token
+            )
+            puts "  [@chomper] " + (code == 201 ? "Chat reply posted to WP ##{item["id"]}" : "Reply failed (HTTP #{code})")
+          rescue => e
+            puts "  [@chomper] Chat error on ##{item["id"]}: #{e.message}"
+          end
+
           sleep 10
         end
         return

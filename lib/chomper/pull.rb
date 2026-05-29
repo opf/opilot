@@ -110,6 +110,7 @@ module Chomper
       triggered_ids = []
       refinement_ids = []
       fix_approved_ids = []
+      chat_ids = []
       page = 1; page_size = 50; total_written = 0; total = 0
 
       loop do
@@ -138,15 +139,20 @@ module Chomper
             if trigger
               react_eyes(trigger["id"])
               mark_chomper_acted(item["id"], trigger["created_at"])
-              if trigger["text"].to_s.match?(/\A@chomper\s+proceed\b/i)
-                plan_file = @ctx.state_dir / "items" / item["id"].to_s / "plan.md"
-                fix_approved_ids << item["id"] if plan_file.exist? && plan_file.size > 0
-              elsif (@ctx.state_dir / "items" / item["id"].to_s / "gist.txt").exist?
-                feedback = trigger["text"].to_s.sub(/@chomper\s*/i, "").strip
+              text = trigger["text"].to_s
+              if text.match?(/\A@chomper\s+plan\b/i)
+                triggered_ids << item["id"]
+              elsif text.match?(/\A@chomper\s+revise\b/i)
+                feedback = text.sub(/@chomper\s+revise\s*/i, "").strip
                 (@ctx.state_dir / "items" / item["id"].to_s / "feedback.txt").write(feedback)
                 refinement_ids << item["id"]
+              elsif text.match?(/\A@chomper\s+proceed\b/i)
+                plan_file = @ctx.state_dir / "items" / item["id"].to_s / "plan.md"
+                fix_approved_ids << item["id"] if plan_file.exist? && plan_file.size > 0
               else
-                triggered_ids << item["id"]
+                message = text.sub(/@chomper\s*/i, "").strip
+                (@ctx.state_dir / "items" / item["id"].to_s / "chat_message.txt").write(message)
+                chat_ids << item["id"]
               end
             end
           end
