@@ -99,6 +99,23 @@ module Chomper
       filters
     end
 
+    def load_or_prompt_agent_emails
+      emails_path = @ctx.state_dir / "agent_emails.txt"
+      if emails_path.exist?
+        saved = emails_path.read.strip.split(",").map { |e| e.strip.downcase }.reject(&:empty?)
+        unless saved.empty?
+          puts "  Saved allowed emails: #{saved.join(", ")}"
+          print "  Reuse saved emails? [Y/n]: "
+          return saved unless $stdin.gets.chomp.downcase == "n"
+        end
+      end
+      print "  Allowed emails for @chomper triggers, comma-separated: "
+      input = $stdin.gets.chomp
+      emails = input.split(",").map { |e| e.strip.downcase }.reject(&:empty?)
+      emails_path.write(emails.join(", "))
+      emails
+    end
+
     def run_agent_poll(filters)
       version_filter = filters.version_ids.empty? ? "" :
         %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
@@ -137,6 +154,12 @@ module Chomper
           unless cached
             trigger = chomper_trigger_comment(item["id"], comments)
             if trigger
+              email = resolve_user_email(trigger)
+              unless @ctx.allowed_emails.include?(email.to_s)
+                puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
+                mark_chomper_acted(item["id"], trigger["created_at"])
+                next
+              end
               react_eyes(trigger["id"])
               mark_chomper_acted(item["id"], trigger["created_at"])
               text = trigger["text"].to_s
@@ -296,6 +319,7 @@ module Chomper
           {
             "id"         => a["id"].to_s,
             "user"       => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
+            "user_href"  => a.dig("_links", "user", "href"),
             "created_at" => a["createdAt"],
             "text"       => a.dig("comment", "raw"),
             "reactions"  => rxn_index[a["id"].to_s] || {}
@@ -355,6 +379,17 @@ module Chomper
     rescue
       tmp&.unlink
       raise
+    end
+
+    def resolve_user_email(comment)
+      href = comment["user_href"].to_s
+      return nil if href.empty?
+      user_id = href.split("/").last
+      _, user = HTTP.get_json("#{@ctx.op_url}/api/v3/users/#{user_id}", token: @ctx.token)
+      user&.dig("email")&.downcase
+    rescue => e
+      puts "  Warning: could not resolve email for #{comment["user"]}: #{e.message}"
+      nil
     end
 
     def react_eyes(activity_id)

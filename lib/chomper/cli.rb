@@ -45,6 +45,7 @@ module Chomper
         fix     = Fix.new(@ctx, backlog, claude)
         publish = Publish.new(@ctx, backlog)
         filters = pull.load_or_prompt_agent_filters
+        @ctx.allowed_emails = pull.load_or_prompt_agent_emails if @ctx.allowed_emails.empty?
         puts "  Agent started — polling every 10s. Ctrl-C to stop."
         loop do
           puts "\n=== Poll #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ==="

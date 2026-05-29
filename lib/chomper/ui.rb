@@ -126,6 +126,7 @@ module Chomper
           config          OpenProject URL, token, project, repo path
           backlog.json        Fetched + triaged bugs
           agent_filters.json  Saved search filters for agent mode (created on first agent run)
+          agent_emails.txt    Saved allowed emails for agent mode (created on first agent run)
           agent_filters.json  Saved search filters for agent mode
           items/<id>/     Per-WP folder: item.json, plan.md, review.txt, pr.md, gist.txt
           openproject/    Isolated git worktree for fixes

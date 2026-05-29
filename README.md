@@ -194,6 +194,7 @@ openproject-chomper/
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
 | `GITHUB_TOKEN` | — | Used by publish to create gists and open PRs via the GitHub API |
+| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated list of emails authorised to trigger the agent via `@chomper` comments. If unset or empty, **all triggers are denied**. |
 
 ---
 
