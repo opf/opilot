@@ -252,7 +252,7 @@ GITHUB_TOKEN=ghp_...
 }
 ```
 
-`state` values: `untriaged` · `pending` · `planned` · `in_progress` · `committed` · `blocked`
+`state` values: `untriaged` · `requested` · `refinement_requested` · `fix_approved` · `pending` · `planned` · `in_progress` · `committed` · `blocked`
 
 **`items/<id>/item.json` schema** (full WP metadata, written at pull time)
 

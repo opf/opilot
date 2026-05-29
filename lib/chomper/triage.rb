@@ -23,13 +23,22 @@ module Chomper
     end
 
     def run_triage_stage
-      untriaged = @backlog.untriaged
-      return if untriaged.empty?
+      triage_items(@backlog.untriaged)
+    end
 
-      total_batches = (untriaged.length.to_f / BATCH_SIZE).ceil
-      puts "  #{untriaged.length} issues · #{total_batches} batches of #{BATCH_SIZE}"
+    def run_triage_for_requested
+      triage_items(@backlog.requested)
+    end
 
-      untriaged.each_slice(BATCH_SIZE).with_index(1) do |batch, batch_num|
+    private
+
+    def triage_items(items)
+      return if items.empty?
+
+      total_batches = (items.length.to_f / BATCH_SIZE).ceil
+      puts "  #{items.length} issues · #{total_batches} batches of #{BATCH_SIZE}"
+
+      items.each_slice(BATCH_SIZE).with_index(1) do |batch, batch_num|
         puts "  Batch #{batch_num} / #{total_batches}"
 
         text = @claude.run(build_prompt(batch))
@@ -51,8 +60,6 @@ module Chomper
 
       @backlog.sort_by_complexity!
     end
-
-    private
 
     def build_prompt(batch)
       paths = batch.map { |item| "#{@ctx.state_container}/items/#{item["id"]}/item.json" }.join("\n")

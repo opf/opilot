@@ -35,6 +35,38 @@ module Chomper
       [code, parsed]
     end
 
+    def self.post_json(url, body, token:)
+      uri = URI(url)
+      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                      read_timeout: 30, open_timeout: 10) do |http|
+        req = Net::HTTP::Post.new(uri)
+        req.basic_auth("apikey", token)
+        req["Content-Type"] = "application/json"
+        req.body = JSON.generate(body)
+        res = http.request(req)
+        parsed = JSON.parse(res.body) rescue nil
+        [res.code.to_i, parsed]
+      end
+    rescue => e
+      raise Error, "HTTP request failed for #{url}: #{e.message}"
+    end
+
+    def self.patch_json(url, body, token:)
+      uri = URI(url)
+      Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                      read_timeout: 30, open_timeout: 10) do |http|
+        req = Net::HTTP::Patch.new(uri)
+        req.basic_auth("apikey", token)
+        req["Content-Type"] = "application/json"
+        req.body = JSON.generate(body)
+        res = http.request(req)
+        parsed = JSON.parse(res.body) rescue nil
+        [res.code.to_i, parsed]
+      end
+    rescue => e
+      raise Error, "HTTP request failed for #{url}: #{e.message}"
+    end
+
     def self.encode_filters(filters_json)
       URI.encode_www_form_component(filters_json)
     end

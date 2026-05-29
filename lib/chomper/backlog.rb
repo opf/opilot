@@ -5,7 +5,10 @@ require "pathname"
 module Chomper
   class Backlog
     STATE_UNTRIAGED   = "untriaged"
-    STATE_PENDING     = "pending"
+    STATE_REQUESTED              = "requested"
+    STATE_REFINEMENT_REQUESTED   = "refinement_requested"
+    STATE_FIX_APPROVED           = "fix_approved"
+    STATE_PENDING                = "pending"
     STATE_PLANNED     = "planned"
     STATE_IN_PROGRESS = "in_progress"
     STATE_COMMITTED   = "committed"
@@ -34,6 +37,18 @@ module Chomper
 
     def untriaged
       items.select { |i| i["state"] == STATE_UNTRIAGED }
+    end
+
+    def requested
+      items.select { |i| i["state"] == STATE_REQUESTED }
+    end
+
+    def refinement_requested
+      items.select { |i| i["state"] == STATE_REFINEMENT_REQUESTED }
+    end
+
+    def fix_approved
+      items.select { |i| i["state"] == STATE_FIX_APPROVED }
     end
 
     def pending

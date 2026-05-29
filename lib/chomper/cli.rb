@@ -39,13 +39,94 @@ module Chomper
         return
       when "agent"
         @ctx.load_config!
-        pull = Pull.new(@ctx, backlog)
+        pull    = Pull.new(@ctx, backlog)
+        claude  = Claude.new(@ctx)
+        triage  = Triage.new(@ctx, backlog, claude)
+        fix     = Fix.new(@ctx, backlog, claude)
+        publish = Publish.new(@ctx, backlog)
         filters = pull.load_or_prompt_agent_filters
-        puts "  Agent started — polling every 20s. Ctrl-C to stop."
+        puts "  Agent started — polling every 10s. Ctrl-C to stop."
         loop do
           puts "\n=== Poll #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ==="
           pull.run_agent_poll(filters)
-          sleep 20
+
+          requested = backlog.requested
+          unless requested.empty?
+            puts "\n  [@chomper] #{requested.length} item(s) requested — triaging..."
+            triage.run_triage_for_requested
+            requested.each do |item|
+              puts "  [@chomper] Planning ##{item["id"]} — #{item["subject"]}..."
+              fix.fix_item(item["id"], "plan", require_approval: false)
+
+              gist_url = publish.upload_plan_gist(item["id"], item["subject"])
+              if gist_url
+                note_body = {
+                  "comment"  => { "raw" => "Plan ready for review: #{gist_url}" },
+                  "internal" => true
+                }
+                code, = HTTP.post_json(
+                  "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
+                  note_body,
+                  token: @ctx.token
+                )
+                puts "  [@chomper] " + (code == 201 ? "Internal note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
+              end
+            rescue => e
+              puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
+            end
+          end
+
+          refinement = backlog.refinement_requested
+          unless refinement.empty?
+            puts "\n  [@chomper] #{refinement.length} item(s) need re-planning with feedback..."
+            refinement.each do |item|
+              puts "  [@chomper] Re-planning ##{item["id"]} — #{item["subject"]}..."
+              fix.fix_item(item["id"], "plan", require_approval: false)
+
+              gist_url = publish.upload_plan_gist(item["id"], item["subject"])
+              if gist_url
+                note_body = {
+                  "comment"  => { "raw" => "Revised plan ready for review: #{gist_url}" },
+                  "internal" => true
+                }
+                code, = HTTP.post_json(
+                  "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
+                  note_body,
+                  token: @ctx.token
+                )
+                puts "  [@chomper] " + (code == 201 ? "Revised note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
+              end
+            rescue => e
+              puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
+            end
+          end
+
+          fix_approved = backlog.fix_approved
+          unless fix_approved.empty?
+            puts "\n  [@chomper] #{fix_approved.length} item(s) approved — implementing..."
+            fix_approved.each do |item|
+              puts "  [@chomper] Implementing ##{item["id"]} — #{item["subject"]}..."
+              fix.fix_item(item["id"], "fix", require_approval: false)
+              publish.run_publish_stage([item["id"]])
+
+              branch      = branch_slug(item["id"], item["subject"])
+              pr_url_file = @ctx.state_dir / "items" / item["id"] / "pr_url.txt"
+              pr_url      = pr_url_file.exist? ? pr_url_file.read.strip : nil
+              note_text   = "Implementation complete. Branch: `#{branch}`"
+              note_text  += " | PR: #{pr_url}" if pr_url
+
+              code, = HTTP.post_json(
+                "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
+                { "comment" => { "raw" => note_text }, "internal" => true },
+                token: @ctx.token
+              )
+              puts "  [@chomper] " + (code == 201 ? "Note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
+            rescue => e
+              puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
+            end
+          end
+
+          sleep 10
         end
         return
       when "fix", "plan"

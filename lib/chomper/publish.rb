@@ -26,6 +26,26 @@ module Chomper
       end
     end
 
+    def upload_plan_gist(item_id, subject)
+      gist_file = @ctx.state_dir / "items" / item_id.to_s / "gist.txt"
+      return gist_file.read.chomp if gist_file.exist?
+
+      plan_file = @ctx.state_dir / "items" / item_id.to_s / "plan.md"
+      return nil unless plan_file.exist?
+
+      gist = octokit.create_gist(
+        description: "Bug chomper plan: ##{item_id} — #{subject}",
+        public: true,
+        files: { "wp-#{item_id}-plan.md" => { content: plan_file.read } }
+      )
+      gist_file.write(gist.html_url)
+      puts "  ✓ Plan gist → #{gist.html_url}"
+      gist.html_url
+    rescue Octokit::Error => e
+      puts "  Warning: could not create plan gist: #{e.message}"
+      nil
+    end
+
     private
 
     def publish_item(item_id)
@@ -75,26 +95,6 @@ module Chomper
       puts "  ✓ #{pr.html_url}"
       (@ctx.state_dir / "items" / item_id.to_s / "pr_url.txt").write(pr.html_url)
       @ctx.progress_file.open("a") { |f| f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{item_id}|#{branch}|published" }
-    end
-
-    def upload_plan_gist(item_id, subject)
-      gist_file = @ctx.state_dir / "items" / item_id.to_s / "gist.txt"
-      return gist_file.read.chomp if gist_file.exist?
-
-      plan_file = @ctx.state_dir / "items" / item_id.to_s / "plan.md"
-      return nil unless plan_file.exist?
-
-      gist = octokit.create_gist(
-        description: "Bug chomper plan: ##{item_id} — #{subject}",
-        public: true,
-        files: { "wp-#{item_id}-plan.md" => { content: plan_file.read } }
-      )
-      gist_file.write(gist.html_url)
-      puts "  ✓ Plan gist → #{gist.html_url}"
-      gist.html_url
-    rescue Octokit::Error => e
-      puts "  Warning: could not create plan gist: #{e.message}"
-      nil
     end
 
     def existing_pr_url(branch)

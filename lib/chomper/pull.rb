@@ -1,7 +1,8 @@
 require "json"
 
 module Chomper
-  FilterSet = Struct.new(:project_id, :type_ids, :status_ids, :version_ids, keyword_init: true)
+  FilterSet = Struct.new(:project_id, :type_ids, :status_ids, :version_ids,
+                         :type_names, :status_names, :version_names, keyword_init: true)
 
   class Pull
     def initialize(ctx, backlog)
@@ -77,13 +78,21 @@ module Chomper
     def load_or_prompt_agent_filters
       if agent_filters_path.exist?
         data = JSON.parse(agent_filters_path.read)
-        puts "  Using saved filters (agent_filters.json)"
-        return FilterSet.new(
-          project_id:  data["project_id"],
-          type_ids:    data["type_ids"],
-          status_ids:  data["status_ids"],
-          version_ids: data["version_ids"]
-        )
+        if data["type_names"] && data["status_names"]
+          saved = FilterSet.new(
+            project_id:    data["project_id"],
+            type_ids:      data["type_ids"],
+            status_ids:    data["status_ids"],
+            version_ids:   data["version_ids"],
+            type_names:    data["type_names"],
+            status_names:  data["status_names"],
+            version_names: data["version_names"]
+          )
+          version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
+          puts "  Saved filters: project=[#{saved.project_id}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
+          print "  Reuse saved filters? [Y/n]: "
+          return saved unless $stdin.gets.chomp.downcase == "n"
+        end
       end
       filters = prompt_search_filters
       save_agent_filters(filters)
@@ -98,6 +107,9 @@ module Chomper
       sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
 
       new_items = []
+      triggered_ids = []
+      refinement_ids = []
+      fix_approved_ids = []
       page = 1; page_size = 50; total_written = 0; total = 0
 
       loop do
@@ -120,6 +132,24 @@ module Chomper
           printf_item(item["id"], item["subject"], cached: cached)
           print_comments(comments)
           page_all_cached = false unless cached
+
+          unless cached
+            trigger = chomper_trigger_comment(item["id"], comments)
+            if trigger
+              react_eyes(trigger["id"])
+              mark_chomper_acted(item["id"], trigger["created_at"])
+              if trigger["text"].to_s.match?(/\A@chomper\s+proceed\b/i)
+                plan_file = @ctx.state_dir / "items" / item["id"].to_s / "plan.md"
+                fix_approved_ids << item["id"] if plan_file.exist? && plan_file.size > 0
+              elsif (@ctx.state_dir / "items" / item["id"].to_s / "gist.txt").exist?
+                feedback = trigger["text"].to_s.sub(/@chomper\s*/i, "").strip
+                (@ctx.state_dir / "items" / item["id"].to_s / "feedback.txt").write(feedback)
+                refinement_ids << item["id"]
+              else
+                triggered_ids << item["id"]
+              end
+            end
+          end
         end
 
         total_written += count
@@ -135,27 +165,12 @@ module Chomper
       end
 
       @backlog.merge_new_items(new_items) unless new_items.empty?
-    end
-
-    private
-
-    def agent_filters_path
-      @ctx.state_dir / "agent_filters.json"
-    end
-
-    def save_agent_filters(filters)
-      tmp = Tempfile.new("agent_filters", @ctx.state_dir)
-      tmp.write(JSON.generate(
-        "project_id"  => filters.project_id,
-        "type_ids"    => filters.type_ids,
-        "status_ids"  => filters.status_ids,
-        "version_ids" => filters.version_ids
-      ))
-      tmp.close
-      File.rename(tmp.path, agent_filters_path.to_s)
-    rescue
-      tmp&.unlink
-      raise
+      triggered_ids.each { |id| @backlog.set_state(id, Backlog::STATE_REQUESTED) }
+      refinement_ids.each do |id|
+        (@ctx.state_dir / "items" / id / "gist.txt").delete rescue nil
+        @backlog.set_state(id, Backlog::STATE_REFINEMENT_REQUESTED)
+      end
+      fix_approved_ids.each { |id| @backlog.set_state(id, Backlog::STATE_FIX_APPROVED) }
     end
 
     def prompt_search_filters
@@ -166,9 +181,9 @@ module Chomper
       project_id = nil
       types_data = nil
       loop do
-        print "  Project [communicator-stream]: "
+        print "  Project [TTP2]: "
         project_id = $stdin.gets.chomp
-        project_id = "communicator-stream" if project_id.empty?
+        project_id = "TTP2" if project_id.empty?
         code, types_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}/types", token: @ctx.token)
         break if code == 200
         puts "  Project '#{project_id}' not found (HTTP #{code}) — please try again."
@@ -198,7 +213,7 @@ module Chomper
         .map { |e| e["id"].to_s }
       raise Chomper::FatalError, "None of the specified statuses found: #{sel_status_names.join(", ")}" if status_ids.empty?
 
-      version_ids = []
+      version_ids = []; sel_ver_names = []
       ver_code, versions_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}/versions", token: @ctx.token)
       if ver_code == 200
         ver_names = versions_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
@@ -217,8 +232,18 @@ module Chomper
       end
 
       puts ""
-      FilterSet.new(project_id: project_id, type_ids: type_ids, status_ids: status_ids, version_ids: version_ids)
+      FilterSet.new(
+        project_id:    project_id,
+        type_ids:      type_ids,
+        status_ids:    status_ids,
+        version_ids:   version_ids,
+        type_names:    sel_names.join(", "),
+        status_names:  sel_status_names.join(", "),
+        version_names: sel_ver_names.empty? ? nil : sel_ver_names.join(", ")
+      )
     end
+
+    private
 
     def fetch_work_package_item(wp)
       wp_id = wp["id"]
@@ -244,6 +269,10 @@ module Chomper
       )
 
       full = build_full_item(wp, comments)
+      if item_path.exist?
+        prev = JSON.parse(item_path.read) rescue {}
+        full["last_acted_comment_at"] = prev["last_acted_comment_at"] if prev.key?("last_acted_comment_at")
+      end
       item_dir.mkpath
       item_path.write(JSON.generate(full))
 
@@ -259,6 +288,7 @@ module Chomper
         .select { |a| a.dig("comment", "raw").to_s.strip != "" }
         .map do |a|
           {
+            "id"         => a["id"].to_s,
             "user"       => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
             "created_at" => a["createdAt"],
             "text"       => a.dig("comment", "raw"),
@@ -297,6 +327,56 @@ module Chomper
         "files_touched"  => [],
         "ai_category"    => nil
       }
+    end
+
+    def agent_filters_path
+      @ctx.state_dir / "agent_filters.json"
+    end
+
+    def save_agent_filters(filters)
+      tmp = Tempfile.new("agent_filters", @ctx.state_dir)
+      tmp.write(JSON.generate(
+        "project_id"    => filters.project_id,
+        "type_ids"      => filters.type_ids,
+        "status_ids"    => filters.status_ids,
+        "version_ids"   => filters.version_ids,
+        "type_names"    => filters.type_names,
+        "status_names"  => filters.status_names,
+        "version_names" => filters.version_names
+      ))
+      tmp.close
+      File.rename(tmp.path, agent_filters_path.to_s)
+    rescue
+      tmp&.unlink
+      raise
+    end
+
+    def react_eyes(activity_id)
+      return unless activity_id.to_s.length > 0
+      HTTP.patch_json(
+        "#{@ctx.op_url}/api/v3/activities/#{activity_id}/emoji_reactions",
+        { "reaction" => "eyes" },
+        token: @ctx.token
+      )
+    rescue => e
+      puts "  Warning: could not post 👀 reaction: #{e.message}"
+    end
+
+    def chomper_trigger_comment(wp_id, comments)
+      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
+      last_acted = item_path.exist? ? (JSON.parse(item_path.read)["last_acted_comment_at"] rescue nil) : nil
+      comments
+        .select { |c| c["text"].to_s.downcase.include?("@chomper") }
+        .select { |c| last_acted.nil? || c["created_at"] > last_acted }
+        .max_by { |c| c["created_at"] }
+    end
+
+    def mark_chomper_acted(wp_id, created_at)
+      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
+      return unless item_path.exist?
+      data = JSON.parse(item_path.read)
+      data["last_acted_comment_at"] = created_at
+      item_path.write(JSON.generate(data))
     end
 
     def printf_item(wp_id, subject, cached: false)

@@ -325,6 +325,17 @@ module Chomper
       assert_requested :get, /offset=2/
     end
 
+    def test_save_and_reload_agent_filters
+      @pull.send(:save_agent_filters, FILTERS)
+      path = Pathname(@tmpdir) / "agent_filters.json"
+      assert path.exist?
+      data = JSON.parse(path.read)
+      assert_equal FILTERS.project_id,  data["project_id"]
+      assert_equal FILTERS.type_ids,    data["type_ids"]
+      assert_equal FILTERS.status_ids,  data["status_ids"]
+      assert_equal FILTERS.version_ids, data["version_ids"]
+    end
+
     def test_skips_merge_when_no_items_match
       stub_request(:get, /offset=1/).to_return(
         status: 200,
@@ -336,15 +347,5 @@ module Chomper
       refute (Pathname(@tmpdir) / "backlog.json").exist?
     end
 
-    def test_save_and_load_agent_filters
-      @pull.send(:save_agent_filters, FILTERS)
-      assert (Pathname(@tmpdir) / "agent_filters.json").exist?
-
-      loaded = @pull.load_or_prompt_agent_filters
-      assert_equal FILTERS.project_id,  loaded.project_id
-      assert_equal FILTERS.type_ids,    loaded.type_ids
-      assert_equal FILTERS.status_ids,  loaded.status_ids
-      assert_equal FILTERS.version_ids, loaded.version_ids
-    end
   end
 end

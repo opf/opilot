@@ -44,6 +44,16 @@ module Chomper
       assert_equal ["1"], @backlog.untriaged.map { |i| i["id"] }
     end
 
+    def test_requested_returns_requested_state
+      seed([{ "id" => "9", "state" => Backlog::STATE_REQUESTED }])
+      assert_equal ["9"], @backlog.requested.map { |i| i["id"] }
+    end
+
+    def test_requested_empty_when_none_present
+      seed
+      assert_empty @backlog.requested
+    end
+
     def test_pending_returns_pending_state
       seed
       assert_equal ["2"], @backlog.pending.map { |i| i["id"] }

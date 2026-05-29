@@ -111,7 +111,7 @@ module Chomper
           plan [id id ...]    Generate plans only — no implementation
           publish [id id ...] Push branches and open draft PRs (all committed, or specific IDs)
           purge <id id ...>   Remove specific items from the queue
-          agent               Poll OpenProject every 20s and sync updated work packages
+          agent               Poll OpenProject every 10s and sync updated work packages
           status              Show backlog counts and recent progress
           reset               De-register the worktree and delete .chomper/ (fresh start)
 
@@ -125,6 +125,7 @@ module Chomper
         State (all in .chomper/, gitignored):
           config          OpenProject URL, token, project, repo path
           backlog.json        Fetched + triaged bugs
+          agent_filters.json  Saved search filters for agent mode (created on first agent run)
           agent_filters.json  Saved search filters for agent mode
           items/<id>/     Per-WP folder: item.json, plan.md, review.txt, pr.md, gist.txt
           openproject/    Isolated git worktree for fixes

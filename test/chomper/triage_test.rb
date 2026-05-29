@@ -69,4 +69,48 @@ module Chomper
       assert_includes prompt, "complex"
     end
   end
+
+  class TriageItemSelectionTest < Minitest::Test
+    def setup
+      @tmpdir  = Dir.mktmpdir
+      @path    = Pathname(@tmpdir) / "backlog.json"
+      @backlog = Backlog.new(@path)
+
+      items = [
+        { "id" => "1", "state" => Backlog::STATE_UNTRIAGED },
+        { "id" => "2", "state" => Backlog::STATE_REQUESTED },
+        { "id" => "3", "state" => Backlog::STATE_PENDING   },
+      ]
+      @path.write(JSON.generate("items" => items))
+
+      ctx = Struct.new(:state_dir, :state_container, :log_file, :script_dir).new(
+        Pathname(@tmpdir), @tmpdir.to_s, Pathname("/dev/null"), Pathname(@tmpdir)
+      )
+      @triaged_ids = []
+      claude = Struct.new(:nothing).new
+      claude.define_singleton_method(:run) do |prompt|
+        ids = prompt.scan(%r{items/(\d+)/item\.json}).flatten
+        json = ids.map { |id| { "id" => id, "state" => "pending", "locality_group" => "x",
+                                "complexity" => "trivial", "files_touched" => [], "ai_category" => nil } }
+        "---BEGIN JSON---\n#{JSON.generate(json)}\n---END JSON---"
+      end
+      @triage = Triage.new(ctx, @backlog, claude)
+    end
+
+    def teardown
+      FileUtils.rm_rf(@tmpdir)
+    end
+
+    def test_run_triage_stage_only_processes_untriaged
+      @triage.run_triage_stage
+      assert_equal "pending", @backlog.find("1")["state"]
+      assert_equal Backlog::STATE_REQUESTED, @backlog.find("2")["state"]
+    end
+
+    def test_run_triage_for_requested_only_processes_requested
+      @triage.run_triage_for_requested
+      assert_equal Backlog::STATE_UNTRIAGED, @backlog.find("1")["state"]
+      assert_equal "pending", @backlog.find("2")["state"]
+    end
+  end
 end

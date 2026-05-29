@@ -18,7 +18,7 @@ module Chomper
       @claude  = claude
     end
 
-    def fix_item(item_id, cmd)
+    def fix_item(item_id, cmd, require_approval: @ctx.require_plan_approval)
       item = @backlog.find(item_id)
       return unless item
 
@@ -43,7 +43,7 @@ module Chomper
         puts "  ↩ Resuming: branch has commits, skipping plan + impl."
       else
         return if fix_plan(fs) == :rejected
-        if @ctx.require_plan_approval
+        if require_approval
           case request_approval(fs)
           when :rejected, :skipped then return
           end
@@ -91,7 +91,9 @@ module Chomper
     end
 
     def fix_plan(fs)
-      if fs.plan_file.exist? && fs.plan_file.size > 0
+      feedback_file = fs.item_dir / "feedback.txt"
+
+      if fs.plan_file.exist? && fs.plan_file.size > 0 && !feedback_file.exist?
         puts "  ↩ Resuming: plan exists, skipping planning stage."
         return :ok
       end
@@ -100,20 +102,45 @@ module Chomper
       item_c    = container_path(fs.item_file)
       review_c  = container_path(fs.review_file)
 
-      log_script "Writer: generating plan for ##{fs.item_id} — #{fs.title}"
-      prompt = <<~PROMPT
-        PRODUCT REPO: #{@ctx.worktree_container}
-        ISSUE:        #{item_c}  (JSON — fields: subject, description, comments[], version, files_touched)
-        HINT FILES:   #{fs.files_hint}
-        You are the WRITER. Produce a plan only — do not modify any file.
+      if feedback_file.exist?
+        log_script "Writer: revising plan for ##{fs.item_id} based on feedback"
+        prompt = <<~PROMPT
+          PRODUCT REPO:  #{@ctx.worktree_container}
+          ISSUE:         #{item_c}  (JSON — fields: subject, description, comments[], version, files_touched)
+          EXISTING PLAN: #{plan_c}
+          FEEDBACK:      #{feedback_file.read.strip}
 
-        ## Plan: ##{fs.item_id} — #{fs.title}
-        ### Files to change
-        ### Approach
-        ### Tests to run
-        ### Risks / assumptions
-      PROMPT
+          You are the WRITER. Revise the existing plan to incorporate the feedback above.
+          Preserve structure and content that is still valid; only change what the feedback requires.
+          Produce a plan only — do not modify any file.
+
+          ## Plan: ##{fs.item_id} — #{fs.title}
+          ### Files to change
+          ### Approach
+          ### Tests to run
+          ### Risks / assumptions
+        PROMPT
+      else
+        log_script "Writer: generating plan for ##{fs.item_id} — #{fs.title}"
+        prompt = <<~PROMPT
+          PRODUCT REPO: #{@ctx.worktree_container}
+          ISSUE:        #{item_c}  (JSON — fields: subject, description, comments[], version, files_touched)
+          HINT FILES:   #{fs.files_hint}
+          You are the WRITER. Produce a plan only — do not modify any file.
+
+          ## Plan: ##{fs.item_id} — #{fs.title}
+          ### Files to change
+          ### Approach
+          ### Tests to run
+          ### Risks / assumptions
+        PROMPT
+      end
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: fs.plan_file, fresh: true)
+
+      if feedback_file.exist?
+        safe_rm(feedback_file)
+        return :ok
+      end
 
       log_script "Reviewer: checking plan for ##{fs.item_id}"
       review_prompt = <<~PROMPT
