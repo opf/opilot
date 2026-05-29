@@ -37,6 +37,17 @@ module Chomper
         backlog.remove_items(ids)
         puts "Purged #{ids.length} item(s) from the queue."
         return
+      when "agent"
+        @ctx.load_config!
+        pull = Pull.new(@ctx, backlog)
+        filters = pull.load_or_prompt_agent_filters
+        puts "  Agent started — polling every 20s. Ctrl-C to stop."
+        loop do
+          puts "\n=== Poll #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ==="
+          pull.run_agent_poll(filters)
+          sleep 20
+        end
+        return
       when "fix", "plan"
         # handled below
       else

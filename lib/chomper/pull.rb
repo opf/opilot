@@ -39,9 +39,10 @@ module Chomper
         puts "  Fetching #{total} work packages..." if page == 1
 
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          item, cached = fetch_work_package_item(wp)
+          item, cached, comments = fetch_work_package_item(wp)
           new_items << item
           printf_item(item["id"], item["subject"], cached: cached)
+          print_comments(comments)
         end
 
         total_written += count
@@ -65,14 +66,97 @@ module Chomper
           puts "  Warning: WP ##{id} returned HTTP #{code} — skipping"
           next
         end
-        item, cached = fetch_work_package_item(wp)
+        item, cached, comments = fetch_work_package_item(wp)
         new_items << item
         printf_item(item["id"], item["subject"], cached: cached)
+        print_comments(comments)
       end
       @backlog.merge_fetched_items(new_items)
     end
 
+    def load_or_prompt_agent_filters
+      if agent_filters_path.exist?
+        data = JSON.parse(agent_filters_path.read)
+        puts "  Using saved filters (agent_filters.json)"
+        return FilterSet.new(
+          project_id:  data["project_id"],
+          type_ids:    data["type_ids"],
+          status_ids:  data["status_ids"],
+          version_ids: data["version_ids"]
+        )
+      end
+      filters = prompt_search_filters
+      save_agent_filters(filters)
+      filters
+    end
+
+    def run_agent_poll(filters)
+      version_filter = filters.version_ids.empty? ? "" :
+        %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
+      filters_json = %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_filter}])
+      encoded = HTTP.encode_filters(filters_json)
+      sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
+
+      new_items = []
+      page = 1; page_size = 50; total_written = 0; total = 0
+
+      loop do
+        url = "#{@ctx.op_url}/api/v3/projects/#{filters.project_id}/work_packages" \
+              "?pageSize=#{page_size}&offset=#{page}&filters=#{encoded}&sortBy=#{sort}"
+        code, resp = HTTP.get_json(url, token: @ctx.token)
+        raise Chomper::FatalError, "API returned HTTP #{code} — URL: #{url}" if code != 200
+        raise Chomper::FatalError, "API returned unparseable response — URL: #{url}" if resp.nil?
+
+        count = resp["count"].to_i
+        total = resp["total"].to_i
+        break if count == 0
+
+        puts "  Fetching #{total} work packages..." if page == 1
+
+        page_all_cached = true
+        (resp.dig("_embedded", "elements") || []).each do |wp|
+          item, cached, comments = fetch_work_package_item(wp)
+          new_items << item
+          printf_item(item["id"], item["subject"], cached: cached)
+          print_comments(comments)
+          page_all_cached = false unless cached
+        end
+
+        total_written += count
+        puts "  ── Page #{page} — #{total_written} / #{total}"
+
+        if page_all_cached
+          puts "  ── All cached — stopping early"
+          break
+        end
+
+        break if total_written >= total
+        page += 1
+      end
+
+      @backlog.merge_new_items(new_items) unless new_items.empty?
+    end
+
     private
+
+    def agent_filters_path
+      @ctx.state_dir / "agent_filters.json"
+    end
+
+    def save_agent_filters(filters)
+      tmp = Tempfile.new("agent_filters", @ctx.state_dir)
+      tmp.write(JSON.generate(
+        "project_id"  => filters.project_id,
+        "type_ids"    => filters.type_ids,
+        "status_ids"  => filters.status_ids,
+        "version_ids" => filters.version_ids
+      ))
+      tmp.close
+      File.rename(tmp.path, agent_filters_path.to_s)
+    rescue
+      tmp&.unlink
+      raise
+    end
 
     def prompt_search_filters
       puts ""
@@ -119,14 +203,15 @@ module Chomper
       if ver_code == 200
         ver_names = versions_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
         puts "  Versions available: #{ver_names}"
-        print "  Version(s), comma-separated [17.5.0]: "
+        print "  Version(s), comma-separated (leave blank to skip): "
         sel_versions = $stdin.gets.chomp
-        sel_versions = "17.5.0" if sel_versions.empty?
-        sel_ver_names = sel_versions.split(",").map(&:strip).map(&:downcase)
-        version_ids = (versions_data.dig("_embedded", "elements") || [])
-          .select { |e| sel_ver_names.include?(e["name"].downcase) }
-          .map { |e| e["id"].to_s }
-        raise Chomper::FatalError, "None of the specified versions found: #{sel_ver_names.join(", ")}" if version_ids.empty?
+        unless sel_versions.empty?
+          sel_ver_names = sel_versions.split(",").map(&:strip).map(&:downcase)
+          version_ids = (versions_data.dig("_embedded", "elements") || [])
+            .select { |e| sel_ver_names.include?(e["name"].downcase) }
+            .map { |e| e["id"].to_s }
+          raise Chomper::FatalError, "None of the specified versions found: #{sel_ver_names.join(", ")}" if version_ids.empty?
+        end
       else
         puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
       end
@@ -142,7 +227,9 @@ module Chomper
 
       if item_path.exist?
         cached = JSON.parse(item_path.read)
-        return [build_backlog_entry(wp), true] if cached["updated_at"] == wp["updatedAt"]
+        if cached["updated_at"] == wp["updatedAt"]
+          return [build_backlog_entry(wp), true, cached["comments"] || []]
+        end
       end
 
       acts_code, acts = HTTP.get_json("#{@ctx.op_url}/api/v3/work_packages/#{wp_id}/activities", token: @ctx.token)
@@ -160,7 +247,7 @@ module Chomper
       item_dir.mkpath
       item_path.write(JSON.generate(full))
 
-      [build_backlog_entry(wp), false]
+      [build_backlog_entry(wp), false, comments]
     end
 
     def build_comments(activities, reactions)
@@ -172,7 +259,7 @@ module Chomper
         .select { |a| a.dig("comment", "raw").to_s.strip != "" }
         .map do |a|
           {
-            "user"       => a.dig("_embedded", "user", "name"),
+            "user"       => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
             "created_at" => a["createdAt"],
             "text"       => a.dig("comment", "raw"),
             "reactions"  => rxn_index[a["id"].to_s] || {}
@@ -215,6 +302,16 @@ module Chomper
     def printf_item(wp_id, subject, cached: false)
       suffix = cached ? " (cached)" : ""
       puts "  ##{wp_id} #{subject}#{suffix}"
+    end
+
+    def print_comments(comments)
+      comments.each do |c|
+        text = c["text"].to_s.gsub(/\s+/, " ").strip
+        text = "#{text[0, 120]}..." if text.length > 120
+        rxns = (c["reactions"] || {}).map { |k, v| "#{k}: #{v}" }.join(", ")
+        rxns_str = rxns.empty? ? "" : "  [#{rxns}]"
+        puts "      #{c["user"]}: #{text}#{rxns_str}"
+      end
     end
   end
 end
