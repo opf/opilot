@@ -39,9 +39,9 @@ module Chomper
         puts "  Fetching #{total} work packages..." if page == 1
 
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          item = fetch_work_package_item(wp)
+          item, cached = fetch_work_package_item(wp)
           new_items << item
-          printf_item(item["id"], item["subject"])
+          printf_item(item["id"], item["subject"], cached: cached)
         end
 
         total_written += count
@@ -65,9 +65,9 @@ module Chomper
           puts "  Warning: WP ##{id} returned HTTP #{code} — skipping"
           next
         end
-        item = fetch_work_package_item(wp)
+        item, cached = fetch_work_package_item(wp)
         new_items << item
-        printf_item(item["id"], item["subject"])
+        printf_item(item["id"], item["subject"], cached: cached)
       end
       @backlog.merge_fetched_items(new_items)
     end
@@ -137,6 +137,13 @@ module Chomper
 
     def fetch_work_package_item(wp)
       wp_id = wp["id"]
+      item_dir  = @ctx.state_dir / "items" / wp_id.to_s
+      item_path = item_dir / "item.json"
+
+      if item_path.exist?
+        cached = JSON.parse(item_path.read)
+        return [build_backlog_entry(wp), true] if cached["updated_at"] == wp["updatedAt"]
+      end
 
       acts_code, acts = HTTP.get_json("#{@ctx.op_url}/api/v3/work_packages/#{wp_id}/activities", token: @ctx.token)
       acts = { "_embedded" => { "elements" => [] } } unless acts_code == 200
@@ -150,11 +157,10 @@ module Chomper
       )
 
       full = build_full_item(wp, comments)
-      item_dir = @ctx.state_dir / "items" / full["id"]
       item_dir.mkpath
-      (item_dir / "item.json").write(JSON.generate(full))
+      item_path.write(JSON.generate(full))
 
-      build_backlog_entry(wp)
+      [build_backlog_entry(wp), false]
     end
 
     def build_comments(activities, reactions)
@@ -206,8 +212,9 @@ module Chomper
       }
     end
 
-    def printf_item(wp_id, subject)
-      puts "  ##{wp_id} #{subject}"
+    def printf_item(wp_id, subject, cached: false)
+      suffix = cached ? " (cached)" : ""
+      puts "  ##{wp_id} #{subject}#{suffix}"
     end
   end
 end

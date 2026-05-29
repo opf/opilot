@@ -299,5 +299,4 @@ GITHUB_TOKEN=ghp_...
   * Or, just set it manually for now. Or, explicitly prompt for it.
 
 ### Fixes & Hardening
-* Do not re-fetch WPs if they haven't been updated since the last pull
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite

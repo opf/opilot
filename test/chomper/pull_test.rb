@@ -133,4 +133,71 @@ module Chomper
       assert_equal [], @pull.send(:build_comments, [], [])
     end
   end
+
+  class PullCacheTest < Minitest::Test
+    WP = {
+      "id"        => 42,
+      "subject"   => "Fix login bug",
+      "createdAt" => "2024-01-01T00:00:00Z",
+      "updatedAt" => "2024-01-02T00:00:00Z",
+      "_embedded" => {
+        "status"   => { "name" => "New" },
+        "priority" => { "name" => "High" },
+        "assignee" => { "name" => "Alice" },
+        "author"   => { "name" => "Bob" },
+        "version"  => { "name" => "17.5.0" },
+        "category" => { "name" => "Core" }
+      }
+    }.freeze
+
+    def setup
+      @tmpdir = Dir.mktmpdir
+      ctx = Struct.new(:op_url, :state_dir, :token).new("https://example.com", Pathname(@tmpdir), "tok")
+      @pull = Pull.new(ctx, nil)
+    end
+
+    def teardown
+      FileUtils.rm_rf(@tmpdir)
+    end
+
+    def test_skips_api_calls_when_item_json_is_current
+      item_dir = Pathname(@tmpdir) / "items" / "42"
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
+
+      # WebMock raises if any HTTP call is made — no stubs registered
+      result, cached = @pull.send(:fetch_work_package_item, WP)
+      assert_equal "42", result["id"]
+      assert_equal Backlog::STATE_PENDING, result["state"]
+      assert cached
+    end
+
+    def test_re_fetches_when_updated_at_differs
+      item_dir = Pathname(@tmpdir) / "items" / "42"
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-01T00:00:00Z" }))
+
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      result, cached = @pull.send(:fetch_work_package_item, WP)
+      assert_equal "42", result["id"]
+      refute cached
+      on_disk = JSON.parse((item_dir / "item.json").read)
+      assert_equal "2024-01-02T00:00:00Z", on_disk["updated_at"]
+    end
+
+    def test_fetches_and_writes_when_no_item_json_exists
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      _, cached = @pull.send(:fetch_work_package_item, WP)
+      assert (Pathname(@tmpdir) / "items" / "42" / "item.json").exist?
+      refute cached
+    end
+  end
 end
