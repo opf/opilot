@@ -42,8 +42,7 @@ module Chomper
         (resp.dig("_embedded", "elements") || []).each do |wp|
           item, cached, comments = fetch_work_package_item(wp)
           new_items << item
-          printf_item(item["id"], item["subject"], cached: cached)
-          print_comments(comments)
+          printf_item(item["id"], item["subject"], cached: cached, comment_count: comments.length)
         end
 
         total_written += count
@@ -128,6 +127,7 @@ module Chomper
       refinement_ids = []
       fix_approved_ids = []
       chat_ids = []
+      cached_count = 0
       page = 1; page_size = 50; total_written = 0; total = 0
 
       loop do
@@ -141,14 +141,11 @@ module Chomper
         total = resp["total"].to_i
         break if count == 0
 
-        puts "  Fetching #{total} work packages..." if page == 1
-
         page_all_cached = true
         (resp.dig("_embedded", "elements") || []).each do |wp|
           item, cached, comments = fetch_work_package_item(wp)
           new_items << item
-          printf_item(item["id"], item["subject"], cached: cached)
-          print_comments(comments)
+          cached_count += 1 if cached
           page_all_cached = false unless cached
 
           unless cached
@@ -182,16 +179,14 @@ module Chomper
         end
 
         total_written += count
-        puts "  ── Page #{page} — #{total_written} / #{total}"
-
-        if page_all_cached
-          puts "  ── All cached — stopping early"
-          break
-        end
+        break if page_all_cached
 
         break if total_written >= total
         page += 1
       end
+
+      fresh = new_items.length - cached_count
+      puts "#{Time.now.strftime("%H:%M:%S")}  #{new_items.length} WPs — #{fresh} fresh, #{cached_count} cached"
 
       @backlog.merge_new_items(new_items) unless new_items.empty?
       triggered_ids.each { |id| @backlog.set_state(id, Backlog::STATE_REQUESTED) }
@@ -420,19 +415,10 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
-    def printf_item(wp_id, subject, cached: false)
+    def printf_item(wp_id, subject, cached: false, comment_count: 0)
       suffix = cached ? " (cached)" : ""
-      puts "  ##{wp_id} #{subject}#{suffix}"
-    end
-
-    def print_comments(comments)
-      comments.each do |c|
-        text = c["text"].to_s.gsub(/\s+/, " ").strip
-        text = "#{text[0, 120]}..." if text.length > 120
-        rxns = (c["reactions"] || {}).map { |k, v| "#{k}: #{v}" }.join(", ")
-        rxns_str = rxns.empty? ? "" : "  [#{rxns}]"
-        puts "      #{c["user"]}: #{text}#{rxns_str}"
-      end
+      count  = comment_count > 0 ? "  [#{comment_count} comment#{comment_count == 1 ? "" : "s"}]" : ""
+      puts "  ##{wp_id} #{subject}#{suffix}#{count}"
     end
   end
 end

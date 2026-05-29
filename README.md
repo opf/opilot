@@ -288,13 +288,7 @@ GITHUB_TOKEN=ghp_...
 * Use separate agents for development and review to clearly split domain ownership
 
 ### Features
-* Introduce a background mode: Script continually polls for new interactions on the OP instance and then picks up new work to chomp through.
-  * The interactions can have multiple forms. Here are the ideas so far, in order of descending preference:
-    * Creating a dedicate sub-WP (type "AI Workflow")
-    * Tagging the WP with a relevant Category (or even Label, once we port them over from JIRA)
-    * Tagging the AI workflow user in Activity
-* Manual plan approvals for background mode
-* Skip extensive planning for very simple tickets.
+* Make the agent mode leverage dedicated sub-WPs or categories/labels instead of brute-force polling
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it.
