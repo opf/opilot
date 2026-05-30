@@ -104,6 +104,7 @@ cp .env.example .env
 
 | Invocation | Behaviour |
 |---|---|
+| `./chomper agent` | Poll OpenProject continuously and act on `@chomper` mentions |
 | `./chomper fix` | Pull → triage → show plan → prompt for approval → fix all pending issues |
 | `./chomper fix 123 456` | Load only those WP IDs, show plan, prompt for approval, fix them (skips pull + triage) |
 | `./chomper plan` | Pull + triage + generate plans only, no implementation |
