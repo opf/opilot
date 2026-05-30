@@ -6,11 +6,14 @@ RUN apt-get update && apt-get install -y \
 
 RUN npm install -g @anthropic-ai/claude-code
 
-RUN git config --global --add safe.directory '*' \
- && git config --global core.crossFS true
+RUN git config --system --add safe.directory '*' \
+ && git config --system core.crossFS true
 
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMIUM_FLAGS="--no-sandbox --headless --disable-gpu"
 
-COPY server.js /app/server.js
+COPY --chown=node:node server.js /app/server.js
+
+USER node
+
 CMD ["node", "/app/server.js"]

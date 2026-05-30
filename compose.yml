@@ -26,11 +26,11 @@ services:
       context: .
       dockerfile: Dockerfile.claude
     volumes:
-      - ${SCRIPT_DIR}/.chomper/claude-auth:/root/.claude
+      - ${SCRIPT_DIR}/.chomper/claude-auth:/home/node/.claude
       - ${SCRIPT_DIR}/.chomper/openproject:/repo
       - ${SCRIPT_DIR}/.chomper:/state
     environment:
-      - CLAUDE_CONFIG_DIR=/root/.claude
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
       - FORCE_COLOR=1
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
       - ANTHROPIC_API_KEY
