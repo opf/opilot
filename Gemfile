@@ -4,6 +4,7 @@ gem "rainbow"
 gem "octokit"
 gem "faraday-retry" # silences octokit/faraday v2 warning; not called directly
 gem "git"
+gem "retriable"
 
 group :test do
   gem "rake"
