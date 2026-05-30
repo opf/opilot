@@ -110,7 +110,7 @@ chomper is agent-first: a single long-lived loop driven by `@chomper` comments.
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper status` | List watched work packages with planned / shipped flags and recent progress |
+| `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
 

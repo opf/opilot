@@ -9,43 +9,36 @@ module Chomper
 
     def status
       items_dir = @ctx.state_dir / "items"
-      unless items_dir.exist? && items_dir.children.any?
-        puts "No work packages seen yet. Run ./chomper agent and mention @chomper on a WP."
-        return
-      end
+      dirs = items_dir.exist? ? items_dir.children.select(&:directory?).sort : []
 
-      rows = items_dir.children.select(&:directory?).sort.map do |dir|
-        id   = dir.basename.to_s
-        item = (JSON.parse((dir / "item.json").read) rescue {})
-        pr   = dir / "pr_url.txt"
+      rows = dirs.filter_map do |dir|
+        # Only work packages chomper has acted on — not every polled (cached) WP.
+        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? || (dir / "pr_url.txt").exist?
+        item    = (JSON.parse((dir / "item.json").read) rescue {})
+        pr_file = dir / "pr_url.txt"
         {
-          id:      id,
+          id:      dir.basename.to_s,
           subject: item["subject"] || "(unknown)",
           url:     item["url"],
-          planned: (dir / "plan.md").exist?,
-          pr_url:  pr.exist? ? pr.read.strip : nil
+          pr_url:  pr_file.exist? ? pr_file.read.strip : nil
         }
       end
 
-      shipped = rows.count { |r| r[:pr_url] }
-      planned = rows.count { |r| r[:planned] && !r[:pr_url] }
-      puts ""
-      puts "  #{rows.length} watched  ✎ #{planned} planned  ✓ #{shipped} shipped"
-      puts ""
-      rows.each do |r|
-        flag = r[:pr_url] ? "✓" : (r[:planned] ? "✎" : "·")
-        puts "    #{flag} #{Rainbow("##{r[:id].ljust(6)}").bold}  #{Rainbow(r[:subject]).bold}"
-        puts "               #{r[:url]}"      if r[:url]
-        puts "               PR: #{r[:pr_url]}" if r[:pr_url]
+      if rows.empty?
+        puts "Nothing yet. Run ./chomper agent and mention @chomper on a work package."
+        return
       end
 
-      if @ctx.progress_file.exist? && @ctx.progress_file.size > 0
-        puts ""
-        puts "  Recent:"
-        @ctx.progress_file.readlines.last(5).each do |line|
-          ts, id, _, note = line.chomp.split("|")
-          puts "    #{ts}  ##{id}  #{note}"
-        end
+      shipped = rows.count { |r| r[:pr_url] }
+      planned = rows.length - shipped
+      puts ""
+      puts "  📝 #{planned} planned   🚀 #{shipped} shipped"
+      puts ""
+      rows.each do |r|
+        flag = r[:pr_url] ? "🚀" : "📝"
+        puts "    #{flag} #{Rainbow("##{r[:id].ljust(6)}").bold}  #{Rainbow(r[:subject]).bold}"
+        puts "               #{r[:url]}"        if r[:url]
+        puts "               PR: #{r[:pr_url]}" if r[:pr_url]
       end
       puts ""
     end
@@ -88,7 +81,7 @@ module Chomper
 
         Commands:
           agent     Poll OpenProject every 10s and act on @chomper mentions
-          status    Show watched work packages (planned / shipped) and recent progress
+          status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 
         Options:
