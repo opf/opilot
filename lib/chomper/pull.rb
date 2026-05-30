@@ -151,11 +151,13 @@ module Chomper
           unless cached
             trigger = chomper_trigger_comment(item["id"], comments)
             if trigger
-              email = resolve_user_email(trigger)
-              unless @ctx.allowed_emails.include?(email.to_s)
-                puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
-                mark_chomper_acted(item["id"], trigger["created_at"])
-                next
+              if @ctx.allowlist_enabled
+                email = resolve_user_email(trigger)
+                unless @ctx.allowed_emails.include?(email.to_s)
+                  puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
+                  mark_chomper_acted(item["id"], trigger["created_at"])
+                  next
+                end
               end
               react_eyes(trigger["id"])
               mark_chomper_acted(item["id"], trigger["created_at"])
