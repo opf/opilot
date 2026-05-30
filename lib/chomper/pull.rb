@@ -6,8 +6,14 @@ module Chomper
                          :type_names, :status_names, :version_names, keyword_init: true)
 
   class Pull
+    # Stats from the most recent poll (for logging): total scanned, and how many
+    # had changed (were re-fetched rather than served from cache).
+    attr_reader :scanned_count, :changed_count
+
     def initialize(ctx)
       @ctx = ctx
+      @scanned_count = 0
+      @changed_count = 0
     end
 
     # Poll OpenProject for the watched work packages and turn any unacted
@@ -21,6 +27,7 @@ module Chomper
       sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
 
       intents = []
+      changed = 0
       page = 1; page_size = 50; total_written = 0; total = 0
       loop do
         url = "#{@ctx.op_url}/api/v3/projects/#{filters.project_id}/work_packages" \
@@ -34,7 +41,8 @@ module Chomper
         break if count == 0
 
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          _cached, comments = fetch_work_package_item(wp)
+          cached, comments = fetch_work_package_item(wp)
+          changed += 1 unless cached
           intent = intent_from_comments(wp, comments)
           intents << intent if intent
         end
@@ -44,6 +52,8 @@ module Chomper
         page += 1
       end
 
+      @scanned_count = total_written
+      @changed_count = changed
       intents
     end
 

@@ -17,14 +17,13 @@ module Chomper
 
     # Runs Claude with the given prompt. Streams tool-use lines to tty, returns text output.
     def run(prompt, tools: nil, fresh: false)
-      ts = Time.now.strftime("%H:%M:%S")
-      header = Rainbow("[ #{ts} ] CLAUDE CODE PROMPT").bold
+      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
       log_append(Rainbow(prompt.strip).cyan)
 
-      resp_header = Rainbow("[ #{Time.now.strftime("%H:%M:%S")} ] CLAUDE CODE RESPONSE").bold
+      resp_header = Rainbow("#{log_prefix} CLAUDE CODE RESPONSE").bold
       puts resp_header
       log_append(resp_header)
 

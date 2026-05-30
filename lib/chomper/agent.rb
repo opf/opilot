@@ -40,7 +40,11 @@ module Chomper
       puts "  Agent started — polling every 10s. Ctrl-C to stop."
 
       until Chomper.stopping?
-        @pull.poll_intents(filters).each do |intent|
+        intents = @pull.poll_intents(filters)
+        n = intents.length
+        log_script "Polled #{@pull.scanned_count} work package(s) — " \
+                   "#{@pull.changed_count} changed — #{n} @chomper trigger#{n == 1 ? "" : "s"}"
+        intents.each do |intent|
           break if Chomper.stopping?
           handle_and_ack(intent)
         end
@@ -280,7 +284,7 @@ module Chomper
         { "comment" => { "raw" => raw }, "internal" => true },
         token: @ctx.token
       )
-      puts "  [@chomper] " + (code == 201 ? "note posted to WP ##{item_id}" : "note failed (HTTP #{code})")
+      log_script(code == 201 ? "Note posted to WP ##{item_id}" : "Note failed for WP ##{item_id} (HTTP #{code})")
       code
     end
   end

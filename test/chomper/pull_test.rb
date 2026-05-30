@@ -285,6 +285,8 @@ module Chomper
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
+      assert_equal 1, @pull.scanned_count
+      assert_equal 0, @pull.changed_count   # seeded item.json is current → cached
       assert_equal "1",                   intents[0].item_id
       assert_equal :plan,                 intents[0].command
       assert_equal "watch the edges",     intents[0].text

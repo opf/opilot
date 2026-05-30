@@ -2,10 +2,23 @@ require "rainbow"
 
 module Chomper
   module Helpers
+    # Single source of truth for log-line timestamps — both the time format and
+    # the bracket wrapping — so every line chomper writes shares one format.
+    LOG_TIME_FORMAT = "%H:%M:%S"
+
+    def log_timestamp
+      Time.now.strftime(LOG_TIME_FORMAT)
+    end
+
+    # The bracketed prefix every log line starts with, e.g. "[ 14:23:01 ]".
+    def log_prefix
+      "[ #{log_timestamp} ]"
+    end
+
     def log_script(msg)
-      ts = Time.now.strftime("%H:%M:%S")
+      prefix = log_prefix
       msg.each_line do |line|
-        formatted = Rainbow("[ #{ts} ] #{line.chomp}").bold
+        formatted = Rainbow("#{prefix} #{line.chomp}").bold
         @ctx.log_file.open("a") { |f| f.puts(formatted) }
         $stdout.puts(formatted)
       end
