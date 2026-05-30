@@ -1,73 +1,56 @@
 require "json"
+require "tempfile"
 
 module Chomper
   FilterSet = Struct.new(:project_id, :project_name, :type_ids, :status_ids, :version_ids,
                          :type_names, :status_names, :version_names, keyword_init: true)
 
   class Pull
-    def initialize(ctx, backlog)
-      @ctx     = ctx
-      @backlog = backlog
+    def initialize(ctx)
+      @ctx = ctx
     end
 
-    def run_pull_stage
-      filters = prompt_search_filters
+    # Poll OpenProject for the watched work packages and turn any unacted
+    # @chomper comment into a Chomper::Intent. De-duplication is by
+    # `last_acted_comment_at` in item.json, which the agent sets only AFTER a
+    # handle succeeds — so an unprocessed trigger is re-emitted on the next poll
+    # (at-least-once delivery). Every matching WP is scanned each poll so a
+    # re-fire after a crash is not missed.
+    def poll_intents(filters)
       encoded = encoded_filters(filters)
+      sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
 
-      new_items = []
+      intents = []
       page = 1; page_size = 50; total_written = 0; total = 0
-
       loop do
         url = "#{@ctx.op_url}/api/v3/projects/#{filters.project_id}/work_packages" \
-              "?pageSize=#{page_size}&offset=#{page}&filters=#{encoded}"
+              "?pageSize=#{page_size}&offset=#{page}&filters=#{encoded}&sortBy=#{sort}"
         code, resp = HTTP.get_json(url, token: @ctx.token)
-        if code != 200
-          raise Chomper::FatalError, "API returned HTTP #{code} — URL: #{url}"
-        end
-
-        if resp.nil?
-          raise Chomper::FatalError, "API returned unparseable response (HTTP #{code}) — URL: #{url}"
-        end
+        raise Chomper::FatalError, "API returned HTTP #{code} — URL: #{url}" if code != 200
+        raise Chomper::FatalError, "API returned unparseable response — URL: #{url}" if resp.nil?
 
         count = resp["count"].to_i
         total = resp["total"].to_i
         break if count == 0
 
-        puts "  Fetching #{total} work packages..." if page == 1
-
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          item, cached, comments = fetch_work_package_item(wp)
-          new_items << item
-          printf_item(item["id"], item["subject"], cached: cached, comment_count: comments.length)
+          _cached, comments = fetch_work_package_item(wp)
+          intent = intent_from_comments(wp, comments)
+          intents << intent if intent
         end
 
         total_written += count
-        puts "  ── Page #{page} — #{total_written} / #{total}"
         break if total_written >= total
         page += 1
       end
 
-      if @backlog.exist?
-        @backlog.merge_new_items(new_items)
-      else
-        @backlog.replace_with_new_items(new_items.map { |i| i.merge("state" => Backlog::STATE_UNTRIAGED) })
-      end
+      intents
     end
 
-    def run_fetch_ids_stage(ids)
-      new_items = []
-      ids.each do |id|
-        code, wp = HTTP.get_json("#{@ctx.op_url}/api/v3/work_packages/#{id}", token: @ctx.token)
-        if code != 200
-          puts "  Warning: WP ##{id} returned HTTP #{code} — skipping"
-          next
-        end
-        item, cached, comments = fetch_work_package_item(wp)
-        new_items << item
-        printf_item(item["id"], item["subject"], cached: cached)
-        print_comments(comments)
-      end
-      @backlog.merge_fetched_items(new_items)
+    # Record that a trigger comment has been fully handled, so it is not
+    # re-emitted on later polls. Called by the agent after a successful handle.
+    def mark_acted(item_id, comment_at)
+      mark_chomper_acted(item_id, comment_at)
     end
 
     def load_or_prompt_agent_filters
@@ -94,87 +77,6 @@ module Chomper
       filters = prompt_search_filters
       save_agent_filters(filters)
       filters
-    end
-
-    def run_agent_poll(filters)
-      encoded = encoded_filters(filters)
-      sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
-
-      new_items = []
-      triggered_ids = []
-      refinement_ids = []
-      fix_approved_ids = []
-      chat_ids = []
-      cached_count = 0
-      page = 1; page_size = 50; total_written = 0; total = 0
-
-      loop do
-        url = "#{@ctx.op_url}/api/v3/projects/#{filters.project_id}/work_packages" \
-              "?pageSize=#{page_size}&offset=#{page}&filters=#{encoded}&sortBy=#{sort}"
-        code, resp = HTTP.get_json(url, token: @ctx.token)
-        raise Chomper::FatalError, "API returned HTTP #{code} — URL: #{url}" if code != 200
-        raise Chomper::FatalError, "API returned unparseable response — URL: #{url}" if resp.nil?
-
-        count = resp["count"].to_i
-        total = resp["total"].to_i
-        break if count == 0
-
-        page_all_cached = true
-        (resp.dig("_embedded", "elements") || []).each do |wp|
-          item, cached, comments = fetch_work_package_item(wp)
-          new_items << item
-          cached_count += 1 if cached
-          page_all_cached = false unless cached
-
-          unless cached
-            trigger = chomper_trigger_comment(item["id"], comments)
-            if trigger
-              if @ctx.allowed_emails.any?
-                email = resolve_user_email(trigger)
-                unless @ctx.allowed_emails.include?(email.to_s)
-                  puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
-                  mark_chomper_acted(item["id"], trigger["created_at"])
-                  next
-                end
-              end
-              react_eyes(trigger["id"])
-              mark_chomper_acted(item["id"], trigger["created_at"])
-              text = trigger["text"].to_s
-              if text.match?(/\A@chomper\s+plan\b/i)
-                triggered_ids << item["id"]
-              elsif text.match?(/\A@chomper\s+revise\b/i)
-                feedback = text.sub(/@chomper\s+revise\s*/i, "").strip
-                (@ctx.state_dir / "items" / item["id"].to_s / "feedback.txt").write(feedback)
-                refinement_ids << item["id"]
-              elsif text.match?(/\A@chomper\s+proceed\b/i)
-                plan_file = @ctx.state_dir / "items" / item["id"].to_s / "plan.md"
-                fix_approved_ids << item["id"] if plan_file.exist? && plan_file.size > 0
-              else
-                message = text.sub(/@chomper\s*/i, "").strip
-                (@ctx.state_dir / "items" / item["id"].to_s / "chat_message.txt").write(message)
-                chat_ids << item["id"]
-              end
-            end
-          end
-        end
-
-        total_written += count
-        break if page_all_cached
-
-        break if total_written >= total
-        page += 1
-      end
-
-      fresh = new_items.length - cached_count
-      puts "#{Time.now.strftime("%H:%M:%S")}  #{new_items.length} WPs — #{fresh} fresh, #{cached_count} cached"
-
-      @backlog.merge_new_items(new_items) unless new_items.empty?
-      triggered_ids.each { |id| @backlog.set_state(id, Backlog::STATE_REQUESTED) }
-      refinement_ids.each do |id|
-        (@ctx.state_dir / "items" / id / "gist.txt").delete rescue nil
-        @backlog.set_state(id, Backlog::STATE_REFINEMENT_REQUESTED)
-      end
-      fix_approved_ids.each { |id| @backlog.set_state(id, Backlog::STATE_FIX_APPROVED) }
     end
 
     def prompt_search_filters
@@ -252,6 +154,58 @@ module Chomper
 
     private
 
+    # Detect the latest unacted @chomper trigger on a WP and turn it into an
+    # Intent. Acknowledges receipt with 👀 and enforces the email allowlist
+    # (a non-allowlisted trigger is marked acted and dropped, never emitted).
+    def intent_from_comments(wp, comments)
+      trigger = chomper_trigger_comment(wp["id"], comments)
+      return nil unless trigger
+
+      if @ctx.allowed_emails.any?
+        email = resolve_user_email(trigger)
+        unless @ctx.allowed_emails.include?(email.to_s)
+          puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
+          mark_chomper_acted(wp["id"], trigger["created_at"])
+          return nil
+        end
+      end
+
+      react_eyes(trigger["id"])
+      command, text = parse_command(trigger["text"].to_s)
+      Intent.new(
+        item_id:    wp["id"].to_s,
+        subject:    wp["subject"],
+        command:    command,
+        text:       text,
+        comment_at: trigger["created_at"],
+        user:       trigger["user"],
+        user_href:  trigger["user_href"]
+      )
+    end
+
+    # Map @chomper trigger text to a [command, free-text] pair. Anything that is
+    # not a known command word becomes a :chat carrying the message body.
+    def parse_command(raw)
+      text = strip_mention(raw)
+      case text
+      when /\A@chomper\s+plan\b\s*(.*)/im    then [:plan,    $1.strip]
+      when /\A@chomper\s+fix\b\s*(.*)/im      then [:fix,     $1.strip]
+      when /\A@chomper\s+approve\b/i          then [:approve, nil]
+      else [:chat, text.sub(/@chomper\s*/i, "").strip]
+      end
+    end
+
+    # OpenProject's CKEditor wraps the @chomper handle in mention markup, e.g.
+    #   <mention ... data-text="🤖">@Chomper 🤖</mention> approve
+    # Normalise a leading mention to a plain "@chomper" token (so display is
+    # robust even when it renders as just an emoji), drop other mentions to their
+    # visible text, and strip any remaining HTML so the command word is exposed.
+    def strip_mention(raw)
+      text = raw.to_s.sub(%r{\A\s*<mention\b[^>]*>.*?</mention>}im, "@chomper")
+      text = text.gsub(%r{<mention\b[^>]*>(.*?)</mention>}im) { $1 }
+      text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
+    end
+
     # Builds the URL-encoded OpenProject `filters=` query from a FilterSet
     # (status + type, plus an optional version clause).
     def encoded_filters(filters)
@@ -269,7 +223,7 @@ module Chomper
       if item_path.exist?
         cached = JSON.parse(item_path.read)
         if cached["updated_at"] == wp["updatedAt"]
-          return [build_backlog_entry(wp), true, cached["comments"] || []]
+          return [true, cached["comments"] || []]
         end
       end
 
@@ -292,7 +246,7 @@ module Chomper
       item_dir.mkpath
       item_path.write(JSON.generate(full))
 
-      [build_backlog_entry(wp), false, comments]
+      [false, comments]
     end
 
     def build_comments(activities, reactions)
@@ -330,19 +284,6 @@ module Chomper
         "updated_at"  => wp["updatedAt"],
         "description" => wp.dig("description", "raw") || "",
         "comments"    => comments
-      }
-    end
-
-    def build_backlog_entry(wp)
-      {
-        "id"             => wp["id"].to_s,
-        "subject"        => wp["subject"],
-        "url"            => "#{@ctx.op_url}/work_packages/#{wp["id"]}",
-        "state"          => Backlog::STATE_PENDING,
-        "locality_group" => nil,
-        "complexity"     => nil,
-        "files_touched"  => [],
-        "ai_category"    => nil
       }
     end
 
@@ -403,9 +344,19 @@ module Chomper
       last_acted = item_path.exist? ? (JSON.parse(item_path.read)["last_acted_comment_at"] rescue nil) : nil
       comments
         .reject { |c| c["user_href"] == own_user_href }
-        .select { |c| c["text"].to_s.downcase.include?("@chomper") }
+        .select { |c| chomper_mentioned?(c["text"]) }
         .select { |c| last_acted.nil? || c["created_at"] > last_acted }
         .max_by { |c| c["created_at"] }
+    end
+
+    # A comment triggers chomper only when it carries a CKEditor mention of
+    # chomper's own user — i.e. a <mention> element whose data-id is our user id.
+    # Matching the literal "@chomper" text would misfire on quotes, plain-text
+    # references, or mentions of similarly-named users.
+    def chomper_mentioned?(text)
+      id = own_user_href.to_s.split("/").last.to_s
+      return false if id.empty?
+      text.to_s.match?(%r{<mention\b[^>]*\bdata-id="#{Regexp.escape(id)}"})
     end
 
     def mark_chomper_acted(wp_id, created_at)
@@ -416,10 +367,5 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
-    def printf_item(wp_id, subject, cached: false, comment_count: 0)
-      suffix = cached ? " (cached)" : ""
-      count  = comment_count > 0 ? "  [#{comment_count} comment#{comment_count == 1 ? "" : "s"}]" : ""
-      puts "  ##{wp_id} #{subject}#{suffix}#{count}"
-    end
   end
 end

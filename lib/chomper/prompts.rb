@@ -4,59 +4,41 @@ module Chomper
   # codebase. Methods are pure: they take already-resolved strings (container
   # paths, text) and return the prompt — no I/O, no context lookups.
   module Prompts
-    # The JSON object the triage model emits for each work package (one per item,
-    # between the ---BEGIN/END JSON--- delimiters).
-    #
-    #   - Angle-bracket values are instructions to the model, not literals.
-    #   - Keys must match the backlog item fields: the parsed object is merged
-    #     straight into each entry by Backlog#merge_triage_results.
-    TRIAGE_SCHEMA = <<~JSON
-      {
-        "id":             "<same id as input>",
-        "locality_group": "<subsystem: auth|api|db|ui|payments|...>",
-        "complexity":     "<trivial|simple|moderate|complex>",
-        "files_touched":  ["<likely source file paths>"],
-        "ai_category":    "<null-safety|type-error|logic-bug|perf|refactor|test|feature|chore>",
-        "state":          "pending"
-      }
-    JSON
-
-    # Triage a batch of work packages into locality/complexity/category scores.
-    def self.triage(paths:)
-      <<~PROMPT
-        Read each of these work package files:
-        #{paths}
-
-        Each file has: id, subject, description, comments[], version, category, priority.
-
-        For each item print one line:
-          #<id> <subject> → <locality_group> / <complexity>
-
-        Then output the complete results between these exact delimiters — nothing after the closing delimiter:
-        ---BEGIN JSON---
-        [one object per item]
-        ---END JSON---
-
-        Schema per object:
-        #{TRIAGE_SCHEMA}
-
-        Complexity guide:
-          trivial  — single obvious fix, ≤2 files
-          simple   — clear fix, ≤5 files
-          moderate — spans multiple subsystems
-          complex  — architectural impact or high risk
-
-        Set state to "pending" — this marks the item as triaged and ready to fix.
-      PROMPT
-    end
+    # Prepended to every phase except `implement`. Implementation is the ONLY
+    # phase allowed to change anything; everywhere else Claude must not edit,
+    # create, or delete files, run commands, or otherwise act on the plan. The
+    # harness also withholds the write tools, but saying so stops Claude from
+    # wasting turns trying (and from posting "I need write permission" replies).
+    READ_ONLY = <<~TEXT.strip
+      You are in READ-ONLY mode. Do NOT edit, create, or delete any file, run any
+      command, or implement/apply anything — only read and respond in text.
+      Implementation happens later, only when the user approves, in a separate step.
+    TEXT
 
     # WRITER: produce a fresh implementation plan for an issue.
+    #
+    # The first instruction is a sufficiency gate: rather than hallucinate a plan
+    # from a vague WP, the writer emits a NEEDS_INFO block and stops.
+    # Agent#produce_plan detects that sentinel on the first line and posts the
+    # questions back to the WP instead of saving a plan.
     def self.plan(repo:, item:, files_hint:, item_id:, title:)
       <<~PROMPT
         PRODUCT REPO: #{repo}
         ISSUE:        #{item}  (JSON — fields: subject, description, comments[], version, files_touched)
         HINT FILES:   #{files_hint}
-        You are the WRITER. Produce a plan only — do not modify any file.
+        You are the WRITER. Produce a plan only.
+        #{READ_ONLY}
+
+        FIRST, judge whether this issue gives you enough to plan a concrete fix:
+        a way to locate the affected code, the expected vs. actual behaviour, and
+        an unambiguous request. If it does NOT, do not guess and do not write a
+        plan — output exactly the following, starting on the first line, and stop:
+
+          NEEDS_INFO
+          ### Questions for the reporter
+          - <each specific thing you need before you can proceed>
+
+        Otherwise, produce the plan:
 
         ## Plan: ##{item_id} — #{title}
         ### Files to change
@@ -76,7 +58,8 @@ module Chomper
 
         You are the WRITER. Revise the existing plan to incorporate the feedback above.
         Preserve structure and content that is still valid; only change what the feedback requires.
-        Produce a plan only — do not modify any file.
+        Produce a plan only.
+        #{READ_ONLY}
 
         ## Plan: ##{item_id} — #{title}
         ### Files to change
@@ -90,6 +73,7 @@ module Chomper
     def self.plan_review(plan:, item_id:)
       <<~PROMPT
         You are the REVIEWER. Read the plan at #{plan} and critique it.
+        #{READ_ONLY}
         Flag: wrong file paths, missing edge cases, unnecessary complexity, blast radius.
 
         ## Review: ##{item_id}
@@ -104,7 +88,8 @@ module Chomper
       <<~PROMPT
         Read the original plan at #{plan} and the review at #{review}.
         Revise the plan incorporating the reviewer's suggestions.
-        Print the complete revised plan to stdout only — do not write or edit any files.
+        Print the complete revised plan to stdout only.
+        #{READ_ONLY}
       PROMPT
     end
 
@@ -113,6 +98,9 @@ module Chomper
       <<~PROMPT
         PRODUCT REPO: #{repo}
         APPROVED PLAN: #{plan}
+
+        This is the IMPLEMENTATION step — the one phase where you should edit files
+        in the worktree. The plan has been approved; apply it now.
 
         Check the current state of the worktree (uncommitted changes, existing work in progress).
         Continue from wherever things are — there may already be partial or complete work in place.
@@ -126,6 +114,7 @@ module Chomper
     def self.pr_description(item:, plan:, diff_stat:, template_section:)
       <<~PROMPT
         Write a GitHub PR description for this fix.
+        #{READ_ONLY}
 
         ISSUE: #{item}
         PLAN:  #{plan}
@@ -142,14 +131,17 @@ module Chomper
     def self.chat(item_id:, subject:, plan:, message:)
       <<~PROMPT
         You are chomper, an AI code assistant working on OpenProject work package ##{item_id}: #{subject}
+        #{READ_ONLY}
+        This is a conversation: answer the user's question. Do not implement the plan
+        here — if they want it built, tell them to comment `@chomper approve` or `@chomper fix`.
 
         CURRENT PLAN:
         #{plan}
 
         AVAILABLE COMMANDS (mention these when relevant):
-        - @chomper plan       — generate an implementation plan
-        - @chomper revise ... — revise the plan with feedback
-        - @chomper proceed    — approve the plan and trigger implementation
+        - @chomper plan [feedback]  — draft or revise an implementation plan
+        - @chomper approve          — implement the plan and open a draft PR
+        - @chomper fix [feedback]   — plan and ship in one step
 
         USER: #{message}
 

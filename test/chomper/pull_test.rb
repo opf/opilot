@@ -4,7 +4,7 @@ module Chomper
   class PullTest < Minitest::Test
     def setup
       ctx = Struct.new(:op_url).new("https://example.com")
-      @pull = Pull.new(ctx, nil)
+      @pull = Pull.new(ctx)
     end
 
     WP = {
@@ -46,33 +46,6 @@ module Chomper
     def test_build_full_item_has_no_state_field
       item = @pull.send(:build_full_item, WP, [])
       refute item.key?("state")
-    end
-
-    def test_build_full_item_has_no_scoring_fields
-      item = @pull.send(:build_full_item, WP, [])
-      refute item.key?("locality_group")
-      refute item.key?("complexity")
-      refute item.key?("files_touched")
-      refute item.key?("ai_category")
-    end
-
-    def test_build_backlog_entry_contains_pointer_and_scoring_fields
-      item = @pull.send(:build_backlog_entry, WP)
-      assert_equal %w[ai_category complexity files_touched id locality_group state subject url],
-                   item.keys.sort
-    end
-
-    def test_build_backlog_entry_defaults_state_to_pending
-      item = @pull.send(:build_backlog_entry, WP)
-      assert_equal Backlog::STATE_PENDING, item["state"]
-    end
-
-    def test_build_backlog_entry_has_no_metadata_fields
-      item = @pull.send(:build_backlog_entry, WP)
-      refute item.key?("description")
-      refute item.key?("comments")
-      refute item.key?("status")
-      refute item.key?("assignee")
     end
 
     def test_build_full_item_nil_assignee_becomes_unassigned
@@ -121,16 +94,52 @@ module Chomper
       assert_equal({ "thumbsup" => 3 }, result[0]["reactions"])
     end
 
-    def test_build_comments_empty_reactions_for_unmatched_activity
-      activities = [
-        { "id" => 9, "comment" => { "raw" => "Hi" }, "_embedded" => { "user" => { "name" => "A" } }, "createdAt" => "t" }
-      ]
-      result = @pull.send(:build_comments, activities, [])
-      assert_equal({}, result[0]["reactions"])
-    end
-
     def test_build_comments_no_activities_returns_empty
       assert_equal [], @pull.send(:build_comments, [], [])
+    end
+
+    # ── parse_command ─────────────────────────────────────────────────────────
+
+    def test_parse_command_plan_without_feedback
+      assert_equal [:plan, ""], @pull.send(:parse_command, "@chomper plan")
+    end
+
+    def test_parse_command_plan_with_feedback
+      assert_equal [:plan, "also handle nil input"],
+                   @pull.send(:parse_command, "@chomper plan also handle nil input")
+    end
+
+    def test_parse_command_fix_with_feedback
+      assert_equal [:fix, "be careful"], @pull.send(:parse_command, "@chomper fix be careful")
+    end
+
+    def test_parse_command_approve
+      assert_equal [:approve, nil], @pull.send(:parse_command, "@chomper approve")
+    end
+
+    def test_parse_command_free_text_is_chat
+      assert_equal [:chat, "what about tests?"],
+                   @pull.send(:parse_command, "@chomper what about tests?")
+    end
+
+    # OpenProject wraps the handle in CKEditor mention markup.
+    MENTION = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
+
+    def test_parse_command_handles_mention_markup_approve
+      assert_equal [:approve, nil], @pull.send(:parse_command, "#{MENTION} approve")
+    end
+
+    def test_parse_command_handles_mention_markup_fix_with_feedback
+      assert_equal [:fix, "be careful"], @pull.send(:parse_command, "#{MENTION} fix be careful")
+    end
+
+    def test_parse_command_handles_mention_markup_chat
+      assert_equal [:chat, "what now?"], @pull.send(:parse_command, "#{MENTION} what now?")
+    end
+
+    def test_parse_command_handles_emoji_only_mention
+      emoji_mention = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">🤖</mention>)
+      assert_equal [:plan, ""], @pull.send(:parse_command, "#{emoji_mention} plan")
     end
   end
 
@@ -153,7 +162,7 @@ module Chomper
     def setup
       @tmpdir = Dir.mktmpdir
       ctx = Struct.new(:op_url, :state_dir, :token).new("https://example.com", Pathname(@tmpdir), "tok")
-      @pull = Pull.new(ctx, nil)
+      @pull = Pull.new(ctx)
     end
 
     def teardown
@@ -166,9 +175,7 @@ module Chomper
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
 
       # WebMock raises if any HTTP call is made — no stubs registered
-      result, cached, comments = @pull.send(:fetch_work_package_item, WP)
-      assert_equal "42", result["id"]
-      assert_equal Backlog::STATE_PENDING, result["state"]
+      cached, comments = @pull.send(:fetch_work_package_item, WP)
       assert cached
       assert_equal [], comments
     end
@@ -179,7 +186,7 @@ module Chomper
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z", "comments" => stored_comments }))
 
-      _, _, comments = @pull.send(:fetch_work_package_item, WP)
+      _, comments = @pull.send(:fetch_work_package_item, WP)
       assert_equal stored_comments, comments
     end
 
@@ -193,8 +200,7 @@ module Chomper
       stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
 
-      result, cached, comments = @pull.send(:fetch_work_package_item, WP)
-      assert_equal "42", result["id"]
+      cached, comments = @pull.send(:fetch_work_package_item, WP)
       refute cached
       assert_equal [], comments
       on_disk = JSON.parse((item_dir / "item.json").read)
@@ -207,14 +213,14 @@ module Chomper
       stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
 
-      _, cached, comments = @pull.send(:fetch_work_package_item, WP)
+      cached, comments = @pull.send(:fetch_work_package_item, WP)
       assert (Pathname(@tmpdir) / "items" / "42" / "item.json").exist?
       refute cached
       assert_equal [], comments
     end
   end
 
-  class PullAgentPollTest < Minitest::Test
+  class PullPollIntentsTest < Minitest::Test
     FILTERS = FilterSet.new(
       project_id:  "my-project",
       type_ids:    ["1"],
@@ -223,106 +229,91 @@ module Chomper
     )
 
     def wp(id, updated_at)
-      {
-        "id"        => id,
-        "subject"   => "Bug ##{id}",
-        "updatedAt" => updated_at,
-        "createdAt" => "2024-01-01T00:00:00Z",
-        "_embedded" => {
-          "status"   => { "name" => "New" },
-          "priority" => { "name" => "Normal" },
-          "assignee" => nil,
-          "author"   => { "name" => "Alice" },
-          "version"  => nil,
-          "category" => nil
-        }
-      }
+      { "id" => id, "subject" => "Bug ##{id}", "updatedAt" => updated_at, "createdAt" => "2024-01-01T00:00:00Z" }
     end
 
     def page_response(wps, total:)
-      JSON.generate({
-        "count"     => wps.length,
-        "total"     => total,
-        "_embedded" => { "elements" => wps }
-      })
+      JSON.generate({ "count" => wps.length, "total" => total, "_embedded" => { "elements" => wps } })
     end
 
-    def stub_activities(id)
-      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+    # Seed a cached item.json so fetch_work_package_item returns its comments
+    # without any activities HTTP call.
+    def seed_item(id, updated_at, comments)
+      dir = Pathname(@tmpdir) / "items" / id.to_s
+      dir.mkpath
+      (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
+    end
+
+    def build_pull(allowed_emails = [])
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_emails)
+                  .new("https://example.com", Pathname(@tmpdir), "tok", allowed_emails)
+      Pull.new(ctx)
     end
 
     def setup
-      @tmpdir  = Dir.mktmpdir
-      ctx      = Struct.new(:op_url, :state_dir, :token).new("https://example.com", Pathname(@tmpdir), "tok")
-      @backlog = Backlog.new(Pathname(@tmpdir) / "backlog.json")
-      @pull    = Pull.new(ctx, @backlog)
+      @tmpdir = Dir.mktmpdir
+      @pull   = build_pull
+      # /users/me drives own-comment filtering; chomper is user 1.
+      stub_request(:get, "https://example.com/api/v3/users/me")
+        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
     end
 
     def teardown
       FileUtils.rm_rf(@tmpdir)
     end
 
+    def test_returns_empty_when_no_work_packages
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([], total: 0))
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
     def test_url_includes_sort_by_param
-      # Stub only matches URLs containing sortBy= — WebMock raises if it's absent
-      stub_request(:get, /sortBy=/).to_return(
-        status: 200,
-        body: page_response([], total: 0)
-      )
-      @pull.run_agent_poll(FILTERS)
+      stub_request(:get, /sortBy=/).to_return(status: 200, body: page_response([], total: 0))
+      @pull.poll_intents(FILTERS)
     end
 
-    def test_stops_early_when_all_cached
-      w1 = wp(1, "2024-01-02T00:00:00Z")
-      w2 = wp(2, "2024-01-01T00:00:00Z")
-      [w1, w2].each do |w|
-        dir = Pathname(@tmpdir) / "items" / w["id"].to_s
-        dir.mkpath
-        (dir / "item.json").write(JSON.generate({ "updated_at" => w["updatedAt"] }))
-      end
+    # chomper is user 1 (per the /users/me stub); a trigger is a mention of it.
+    MENTION = %q(<mention class="mention" data-id="1" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 
-      stub_request(:get, /offset=1/).to_return(
-        status: 200,
-        body: page_response([w1, w2], total: 100)
-      )
-      # No stub for page 2 — WebMock raises if it's requested
+    def test_emits_intent_for_chomper_comment
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} plan watch the edges" }
+      ])
+      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      @pull.run_agent_poll(FILTERS)
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal "1",                   intents[0].item_id
+      assert_equal :plan,                 intents[0].command
+      assert_equal "watch the edges",     intents[0].text
+      assert_equal "2024-02-01T00:00:00Z", intents[0].comment_at
     end
 
-    def test_continues_when_page_has_uncached_item
-      w1 = wp(1, "2024-01-03T00:00:00Z")  # uncached
-      w2 = wp(2, "2024-01-02T00:00:00Z")  # cached
+    def test_drops_trigger_from_non_allowlisted_user
+      @pull = build_pull(["allowed@example.com"])
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Mallory", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} fix it" }
+      ])
+      stub_request(:get, "https://example.com/api/v3/users/2")
+        .to_return(status: 200, body: JSON.generate({ "email" => "mallory@example.com" }))
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      dir = Pathname(@tmpdir) / "items" / "2"
-      dir.mkpath
-      (dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
+      assert_equal [], @pull.poll_intents(FILTERS)
+      # marked acted so it is not re-evaluated next poll
+      on_disk = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
+    end
 
-      stub_activities(1)
-
-      w3 = wp(3, "2024-01-01T12:00:00Z")  # cached
-      w4 = wp(4, "2024-01-01T00:00:00Z")  # cached
-      [w3, w4].each do |w|
-        dir = Pathname(@tmpdir) / "items" / w["id"].to_s
-        dir.mkpath
-        (dir / "item.json").write(JSON.generate({ "updated_at" => w["updatedAt"] }))
-      end
-
-      stub_request(:get, /offset=1/).to_return(
-        status: 200,
-        body: page_response([w1, w2], total: 4)
-      )
-      stub_request(:get, /offset=2/).to_return(
-        status: 200,
-        body: page_response([w3, w4], total: 4)
-      )
-      # No stub for page 3 — would raise if fetched
-
-      @pull.run_agent_poll(FILTERS)
-
-      assert_requested :get, /offset=2/
+    def test_ignores_work_packages_without_a_trigger
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "just a normal comment" }
+      ])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      assert_equal [], @pull.poll_intents(FILTERS)
     end
 
     def test_save_and_reload_agent_filters
@@ -335,17 +326,5 @@ module Chomper
       assert_equal FILTERS.status_ids,  data["status_ids"]
       assert_equal FILTERS.version_ids, data["version_ids"]
     end
-
-    def test_skips_merge_when_no_items_match
-      stub_request(:get, /offset=1/).to_return(
-        status: 200,
-        body: JSON.generate({ "count" => 0, "total" => 0, "_embedded" => { "elements" => [] } })
-      )
-
-      @pull.run_agent_poll(FILTERS)
-
-      refute (Pathname(@tmpdir) / "backlog.json").exist?
-    end
-
   end
 end

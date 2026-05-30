@@ -8,15 +8,14 @@ require "fileutils"
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "chomper/context"
-require "chomper/backlog"
 require "chomper/http"
 require "chomper/helpers"
 require "chomper/prompts"
 require "chomper/claude"
+require "chomper/ui"
 require "chomper/pull"
-require "chomper/triage"
-require "chomper/fix"
 require "chomper/publish"
+require "chomper/agent"
 require "chomper/cli"
 
 WebMock.disable_net_connect!

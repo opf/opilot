@@ -2,10 +2,10 @@
 
 # openproject-chomper
 
-Automated bug-fixing loop for OpenProject backlogs. Fetches open bugs, triages them by complexity, then has Claude plan, implement fixes, and commit — all inside a Docker container. You review and push when you're happy.
+An agent that watches OpenProject work packages and acts on `@chomper` mentions: it plans a fix, implements it, and opens a draft PR — all inside a Docker container. You drive it from the comments; you review and merge when you're happy.
 
 ```
-git clone → ./chomper fix → answer a few questions → have a coffee and wait for PRs
+./chomper agent → comment "@chomper fix" on a bug → wait for the draft PR
 ```
 
 ---
@@ -28,7 +28,7 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 ## Requirements
 
 - **Docker** (runs both the Ruby runner and the Claude Code container)
-- A GitHub token with repo + gist write access (for publishing PRs and plan gists)
+- A GitHub token with repo write access (for opening PRs)
 - An OpenProject API token (preferably scoped only to reading your target WPs)
 - Optionally, a local `openproject` repo — chomper can clone one automatically if you don't have it
 
@@ -42,15 +42,17 @@ cd openproject-chomper
 cp .env.example .env
 # edit .env — set OPENPROJECT_URL, OPENPROJECT_TOKEN, GITHUB_TOKEN
 
-# Run as a long-lived agent: polls OpenProject and acts on @chomper mentions
+# Run the agent: it polls OpenProject and acts on @chomper mentions
 ./chomper agent
 
-# Or: pull issues, generate plans, and implement fixes in one shot
-./chomper fix
-# See what progress has been made
+# Then, on any watched work package, comment:
+#   @chomper plan        → draft an implementation plan
+#   @chomper approve     → implement the plan and open a draft PR
+#   @chomper fix         → plan and ship in one step
+#   @chomper <question>  → chat (replies with the plan as context)
+
+# See what's been planned / shipped
 ./chomper status
-# Publish draft GitHub PRs
-./chomper publish
 ```
 
 ## Bird's-eye view
@@ -74,7 +76,7 @@ cp .env.example .env
 │    │      * WP metadata mirror               │   │
 │    │      * Plan files                       │   │
 │    │      * Draft PR data                    │   │ 
-│    │  * Publishes PRs and gists              │   │
+│    │  * Pushes branches and opens PRs        │   │
 │    │  * Delegates conversation to Claude     │   │
 │    │      * HTTP POST http://claude:3000     │   │
 │    │                                         │   │
@@ -103,36 +105,41 @@ cp .env.example .env
 
 ## Commands
 
+chomper is agent-first: a single long-lived loop driven by `@chomper` comments.
+
 | Invocation | Behaviour |
 |---|---|
-| `./chomper agent` | Poll OpenProject continuously and act on `@chomper` mentions |
-| `./chomper fix` | Pull → triage → show plan → prompt for approval → fix all pending issues |
-| `./chomper fix 123 456` | Load only those WP IDs, show plan, prompt for approval, fix them (skips pull + triage) |
-| `./chomper plan` | Pull + triage + generate plans only, no implementation |
-| `./chomper plan 123` | Generate a plan for one specific issue |
-| `./chomper publish` | Push all committed fix branches and open draft PRs |
-| `./chomper publish 123` | Push and open PR for one specific issue |
-| `./chomper purge <id ...>` | Remove specific items from the queue |
-| `./chomper status` | Show per-issue status with OpenProject URL, plan gist, and PR link |
+| `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper status` | List watched work packages with planned / shipped flags and recent progress |
 | `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
+
+### `@chomper` comment commands
+
+While the agent runs, drive it by mentioning `@chomper` in a comment on any watched work package:
+
+| Comment | Behaviour |
+|---|---|
+| `@chomper plan [feedback]` | Draft an implementation plan (optional feedback text revises an existing plan) |
+| `@chomper approve` | Implement the current plan, commit, push, and open a draft PR |
+| `@chomper fix [feedback]` | Plan **and** ship in one step, skipping the approval wait |
+| `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
+
+Triggers are gated by the `CHOMPER_ALLOWED_EMAILS` allowlist (when set). A work
+package's status is just the files in `.chomper/items/<id>/`: `plan.md` present
+means it has a plan, `pr_url.txt` present means it shipped.
 
 ---
 
 ## Reviewing & pushing
 
-All commits are local until you push. Use the `publish` command to push branches and open draft PRs in one step:
+`@chomper approve` (and `@chomper fix`) push the branch and open a **draft** PR in
+one step, posting the PR link back to the work package. This is idempotent — if a
+PR already exists for the branch, the existing URL is reported instead of opening
+a new one, and re-sending `approve` after a shipped fix just re-reports it.
 
-```bash
-./chomper publish        # push all committed fixes
-./chomper publish 123    # push one specific fix
-```
-
-`publish` is idempotent — if a PR already exists for a branch it records the URL and moves on.
-
-`./chomper status` shows each issue with its OpenProject link, plan gist URL, and PR link so you can track what's been published at a glance.
-
-**Retry a blocked item:** set `state` back to `"pending"` in `.chomper/backlog.json` and re-run.
+`./chomper status` lists each watched work package with its OpenProject link and
+PR link so you can see what's been planned and shipped at a glance.
 
 ---
 
@@ -145,27 +152,24 @@ openproject-chomper/
 ├── chomper                  ← bash entry point (sets up Docker, runs runner)
 ├── bin/chomper              ← Ruby CLI (runs inside the runner container)
 ├── lib/chomper/
-│   ├── cli.rb              ← command dispatch
+│   ├── cli.rb              ← command dispatch (agent / status / reset)
 │   ├── context.rb          ← shared config and paths
-│   ├── backlog.rb          ← backlog.json read/write
 │   ├── http.rb             ← thin HTTP wrapper
 │   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
-│   ├── pull.rb             ← fetch from OpenProject API
-│   ├── triage.rb           ← AI triage stage
-│   ├── fix.rb              ← plan → impl → commit
-│   ├── publish.rb          ← push branches, open PRs
+│   ├── pull.rb             ← poll OpenProject, turn @chomper comments into intents
+│   ├── agent.rb            ← the loop: handle chat / plan / approve / fix
+│   ├── prompts.rb          ← all Claude prompts
+│   ├── publish.rb          ← push branch, open draft PR
 │   ├── claude.rb           ← HTTP client for the Claude container
 │   └── ui.rb               ← status display, usage, reset
 ├── test/
 │   ├── test_helper.rb
 │   └── chomper/
-│       ├── backlog_test.rb
+│       ├── agent_test.rb
 │       ├── context_test.rb
-│       ├── fix_test.rb
 │       ├── helpers_test.rb
 │       ├── http_test.rb
-│       ├── pull_test.rb
-│       └── triage_test.rb
+│       └── pull_test.rb
 ├── server.js                ← Node.js HTTP wrapper around `claude -p`
 ├── Dockerfile.runner        ← Ruby 4.0 image
 ├── Dockerfile.claude        ← Node.js + Claude Code image
@@ -179,19 +183,18 @@ openproject-chomper/
 
 ```
 .chomper/
-├── backlog.json     ← lightweight index: id, subject, url, state, scoring fields
-├── progress.txt     ← session log
-├── chomp.log        ← full prompt + response log
-├── claude-auth/     ← persisted Claude container auth
-├── openproject/     ← git worktree or fresh clone of openproject
+├── agent_filters.json ← saved search filters (which WPs to watch)
+├── progress.txt       ← progress log
+├── chomp.log          ← full prompt + response log
+├── claude-auth/       ← persisted Claude container auth
+├── openproject/       ← git worktree or fresh clone of openproject
 └── items/
     └── <id>/
-        ├── item.json    ← full WP metadata (written at pull time)
-        ├── plan.md      ← Writer's implementation plan
+        ├── item.json    ← full WP metadata + last_acted_comment_at (poll cache)
+        ├── plan.md      ← implementation plan (present = "has a plan")
         ├── review.txt   ← Reviewer's critique (deleted after plan review)
         ├── pr.md        ← generated PR description
-        ├── gist.txt     ← plan gist URL
-        └── pr_url.txt   ← PR URL (written by publish)
+        └── pr_url.txt   ← PR URL (present = "shipped")
 ```
 
 ---
@@ -203,8 +206,7 @@ openproject-chomper/
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | Read-only OpenProject API token (My Account → Access Tokens → View work packages) |
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
-| `GITHUB_TOKEN` | — | Used by publish to create gists and open PRs via the GitHub API |
-| `REQUIRE_PLAN_APPROVAL` | `true` | Set to `false` to skip the interactive plan-approval prompt and implement automatically (`fix`/`plan` commands). |
+| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. **If unset or empty, any OpenProject user can trigger the agent;** set it to gate triggers to specific people. |
 
 ---
@@ -222,7 +224,7 @@ docker compose run --no-deps --rm runner bundle exec rake
 **Run a single file:**
 
 ```bash
-docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/backlog_test.rb
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/agent_test.rb
 ```
 
 **After changing `Gemfile`**, regenerate the lockfile and rebuild the image:
@@ -249,24 +251,7 @@ OP_REPO_PATH=../openproject   # or "false" to have chomper clone automatically
 GITHUB_TOKEN=ghp_...
 ```
 
-**`backlog.json` item schema** (pointers + scoring only)
-
-```json
-{
-  "id":             "42",
-  "subject":        "Null check in UserService",
-  "url":            "https://community.openproject.org/work_packages/42",
-  "state":          "pending",
-  "locality_group": "auth",
-  "complexity":     "trivial",
-  "files_touched":  ["src/services/UserService.ts"],
-  "ai_category":    "null-safety"
-}
-```
-
-`state` values: `untriaged` · `requested` · `refinement_requested` · `fix_approved` · `pending` · `planned` · `in_progress` · `committed` · `blocked`
-
-**`items/<id>/item.json` schema** (full WP metadata, written at pull time)
+**`items/<id>/item.json` schema** (full WP metadata, written at poll time)
 
 ```json
 {

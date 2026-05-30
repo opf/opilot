@@ -1,62 +1,42 @@
+require "json"
 require "rainbow"
 
 module Chomper
   class UI
-    include Helpers
-
-    def initialize(ctx, backlog)
-      @ctx     = ctx
-      @backlog = backlog
+    def initialize(ctx)
+      @ctx = ctx
     end
 
     def status
-      unless @backlog.exist?
-        puts "No backlog yet. Run ./chomper to fetch and triage."
+      items_dir = @ctx.state_dir / "items"
+      unless items_dir.exist? && items_dir.children.any?
+        puts "No work packages seen yet. Run ./chomper agent and mention @chomper on a WP."
         return
       end
 
-      done        = @backlog.committed.length
-      in_progress = @backlog.in_progress.length
-      pending     = @backlog.pending.length
-      planned     = @backlog.planned.length
-      blk         = @backlog.blocked.length
-      untriaged   = @backlog.untriaged.length
+      rows = items_dir.children.select(&:directory?).sort.map do |dir|
+        id   = dir.basename.to_s
+        item = (JSON.parse((dir / "item.json").read) rescue {})
+        pr   = dir / "pr_url.txt"
+        {
+          id:      id,
+          subject: item["subject"] || "(unknown)",
+          url:     item["url"],
+          planned: (dir / "plan.md").exist?,
+          pr_url:  pr.exist? ? pr.read.strip : nil
+        }
+      end
+
+      shipped = rows.count { |r| r[:pr_url] }
+      planned = rows.count { |r| r[:planned] && !r[:pr_url] }
       puts ""
-      summary = "  #{pending} pending"
-      summary += "  ▶ #{in_progress} in progress" if in_progress > 0
-      summary += "  ✎ #{planned} planned"          if planned      > 0
-      summary += "  ✓ #{done} done"                if done         > 0
-      summary += "  ✗ #{blk} blocked"              if blk          > 0
-      summary += "  ? #{untriaged} untriaged"       if untriaged    > 0
-      puts summary
-
-      { "In progress" => @backlog.in_progress, "Pending" => @backlog.pending,
-        "Planned" => @backlog.planned, "Done" => @backlog.committed,
-        "Blocked" => @backlog.blocked, "Untriaged" => @backlog.untriaged }.each do |label, list|
-        next if list.empty?
-        puts ""
-        puts "  #{label}:"
-        list.each do |item|
-          id   = item["id"]
-          lg   = item["locality_group"] || "?"
-          cplx = item["complexity"]     || "?"
-          puts "    #{Rainbow("##{id.ljust(6)}").bold}  #{Rainbow(item["subject"]).bold}  (#{lg} / #{cplx})"
-          puts "               #{item["url"]}" if item["url"]
-
-          item_dir  = @ctx.state_dir / "items" / id
-          gist_file = item_dir / "gist.txt"
-          pr_file   = item_dir / "pr_url.txt"
-
-          if item_dir.exist?
-            puts "               Branch: #{branch_slug(id, item["subject"])}"
-          end
-          puts "               Plan: #{gist_file.read.chomp}" if gist_file.exist?
-          if pr_file.exist?
-            puts "               PR:   #{pr_file.read.chomp}"
-          elsif label == "Done"
-            puts "               No PR yet — run: ./chomper publish #{id}"
-          end
-        end
+      puts "  #{rows.length} watched  ✎ #{planned} planned  ✓ #{shipped} shipped"
+      puts ""
+      rows.each do |r|
+        flag = r[:pr_url] ? "✓" : (r[:planned] ? "✎" : "·")
+        puts "    #{flag} #{Rainbow("##{r[:id].ljust(6)}").bold}  #{Rainbow(r[:subject]).bold}"
+        puts "               #{r[:url]}"      if r[:url]
+        puts "               PR: #{r[:pr_url]}" if r[:pr_url]
       end
 
       if @ctx.progress_file.exist? && @ctx.progress_file.size > 0
@@ -104,43 +84,38 @@ module Chomper
     def usage
       puts <<~USAGE
 
-        Usage: ./chomper [COMMAND [IDs...]]
+        Usage: ./chomper [COMMAND]
 
         Commands:
-          fix [id id ...]     Fix all pending bugs, or only the specified ticket IDs
-          plan [id id ...]    Generate plans only — no implementation
-          publish [id id ...] Push branches and open draft PRs (all committed, or specific IDs)
-          purge <id id ...>   Remove specific items from the queue
-          agent               Poll OpenProject every 10s and sync updated work packages
-          status              Show backlog counts and recent progress
-          reset               De-register the worktree and delete .chomper/ (fresh start)
+          agent     Poll OpenProject every 10s and act on @chomper mentions
+          status    Show watched work packages (planned / shipped) and recent progress
+          reset     De-register the worktree and delete .chomper/ (fresh start)
 
         Options:
           --help, -h    Show this help
 
+        @chomper comment commands (on any watched work package):
+          @chomper <text>          Ask a question — replies with the plan as context
+          @chomper plan [feedback] Generate (or revise) an implementation plan
+          @chomper approve         Implement the plan and open a draft PR
+          @chomper fix [feedback]  Plan and ship in one step, skipping approval
+
         Environment:
           OPENPROJECT_URL         OpenProject instance URL
-          OPENPROJECT_TOKEN       Read-only OpenProject API token
+          OPENPROJECT_TOKEN       OpenProject API token
           ANTHROPIC_API_KEY       Passed into the claude container if set
-          GITHUB_TOKEN            Required for gist creation and opening PRs
+          GITHUB_TOKEN            Required for pushing branches and opening PRs
+          CHOMPER_ALLOWED_EMAILS  Comma-separated allowlist of @chomper triggerers
 
         State (all in .chomper/, gitignored):
-          backlog.json        Fetched + triaged bugs
-          agent_filters.json  Saved search filters for agent mode (created on first agent run)
-          items/<id>/     Per-WP folder: item.json, plan.md, review.txt, pr.md, gist.txt
-          openproject/    Isolated git worktree for fixes
-          progress.txt    Fix log
-          claude-auth/    Persisted claude container auth (delete to re-authenticate)
-          chomp.log       Full prompt + response log
+          agent_filters.json  Saved search filters (created on first agent run)
+          items/<id>/         Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
+          openproject/        Isolated git worktree for fixes
+          progress.txt        Progress log
+          claude-auth/        Persisted claude container auth (delete to re-authenticate)
+          chomp.log           Full prompt + response log
 
       USAGE
-    end
-
-    private
-
-    def log(msg)
-      ts = Time.now.strftime("%H:%M:%S")
-      puts Rainbow("[ #{ts} ] #{msg}").bold
     end
   end
 end

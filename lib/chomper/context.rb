@@ -5,10 +5,10 @@ module Chomper
   FatalError = Class.new(StandardError)
 
   class Context
-    attr_reader :script_dir, :state_dir, :backlog_json, :progress_file,
+    attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :claude_url, :github_token,
                 :worktree_host, :worktree_container, :state_container,
-                :anthropic_api_key, :op_url, :token, :repo_path, :require_plan_approval
+                :anthropic_api_key, :op_url, :token, :repo_path
     attr_reader   :allowed_emails
 
     def self.build(script_dir = nil)
@@ -19,7 +19,6 @@ module Chomper
     def initialize(script_dir)
       @script_dir         = Pathname(script_dir)
       @state_dir          = @script_dir / ".chomper"
-      @backlog_json       = @state_dir / "backlog.json"
       @progress_file      = @state_dir / "progress.txt"
       @log_file           = @state_dir / "chomp.log"
       @github_token       = ENV["GITHUB_TOKEN"]
@@ -31,7 +30,6 @@ module Chomper
       @op_url             = ENV["OPENPROJECT_URL"]
       @token              = ENV["OPENPROJECT_TOKEN"]
       @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
-      @require_plan_approval = ENV["REQUIRE_PLAN_APPROVAL"] != "false"
       # @chomper triggers are gated only when this list is non-empty; otherwise
       # every OpenProject user may trigger the agent.
       @allowed_emails        = ENV.fetch("CHOMPER_ALLOWED_EMAILS", "")
