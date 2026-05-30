@@ -83,9 +83,17 @@ module Chomper
         pr_body = pr_body.sub(/^(##[^\n]*accomplish[^\n]*\n)/i) { "#{$1}\n**Plan:** #{gist_url}\n" }
       end
 
-      push_url = "https://#{@ctx.github_token}@github.com/#{github_repo}.git"
-      system("git", "-C", @ctx.worktree_host.to_s, "push", push_url, "#{branch}:#{branch}") or
-        raise "git push failed for branch #{branch}"
+      # Authenticate via a credential helper that reads the token from the child's
+      # environment, so the secret never appears in argv (visible via ps/proc).
+      push_url = "https://github.com/#{github_repo}.git"
+      cred_helper = '!f() { echo username=x-access-token; echo "password=$CHOMPER_GH_TOKEN"; }; f'
+      system(
+        { "CHOMPER_GH_TOKEN" => @ctx.github_token },
+        "git", "-C", @ctx.worktree_host.to_s,
+        "-c", "credential.helper=",            # reset any inherited helpers
+        "-c", "credential.helper=#{cred_helper}",
+        "push", push_url, "#{branch}:#{branch}"
+      ) or raise "git push failed for branch #{branch}"
 
       title = "[##{item_id}] #{item["subject"]}"
       pr = octokit.create_pull_request(
@@ -94,7 +102,7 @@ module Chomper
       )
       puts "  ✓ #{pr.html_url}"
       (@ctx.state_dir / "items" / item_id.to_s / "pr_url.txt").write(pr.html_url)
-      @ctx.progress_file.open("a") { |f| f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{item_id}|#{branch}|published" }
+      record_progress(item_id, branch, "published")
     end
 
     def existing_pr_url(branch)
@@ -103,10 +111,6 @@ module Chomper
       prs.first&.html_url
     rescue Octokit::Error
       nil
-    end
-
-    def worktree
-      @worktree ||= Git.open(@ctx.worktree_host.to_s)
     end
 
     def github_repo

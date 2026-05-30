@@ -41,5 +41,17 @@ module Chomper
     rescue Git::FailedError
       false
     end
+
+    # Git handle on the isolated worktree where fixes are made.
+    def worktree
+      @worktree ||= Git.open(@ctx.worktree_host.to_s)
+    end
+
+    # Append a pipe-delimited line to the session progress log.
+    def record_progress(id, branch, note)
+      @ctx.progress_file.open("a") do |f|
+        f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{id}|#{branch}|#{note}"
+      end
+    end
   end
 end

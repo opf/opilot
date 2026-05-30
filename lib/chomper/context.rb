@@ -9,8 +9,7 @@ module Chomper
                 :log_file, :claude_url, :github_token,
                 :worktree_host, :worktree_container, :state_container,
                 :anthropic_api_key, :op_url, :token, :repo_path, :require_plan_approval
-    attr_accessor :allowed_emails
-    attr_reader   :allowlist_enabled
+    attr_reader   :allowed_emails
 
     def self.build(script_dir = nil)
       script_dir = Pathname(script_dir || File.expand_path("../../..", __FILE__))
@@ -33,7 +32,8 @@ module Chomper
       @token              = ENV["OPENPROJECT_TOKEN"]
       @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
       @require_plan_approval = ENV["REQUIRE_PLAN_APPROVAL"] != "false"
-      @allowlist_enabled     = ENV["CHOMPER_ALLOWLIST"] == "true"
+      # @chomper triggers are gated only when this list is non-empty; otherwise
+      # every OpenProject user may trigger the agent.
       @allowed_emails        = ENV.fetch("CHOMPER_ALLOWED_EMAILS", "")
                                   .split(",").map { |e| e.strip.downcase }.reject(&:empty?)
 

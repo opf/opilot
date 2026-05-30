@@ -53,7 +53,7 @@ module Chomper
           puts "  ✓ Plan saved — plan mode, skipping implementation."
           return
         end
-        fix_impl(fs, tests_pre_written: false)
+        fix_impl(fs)
       end
 
       fix_commit(fs)
@@ -104,36 +104,16 @@ module Chomper
 
       if feedback_file.exist?
         log_script "Writer: revising plan for ##{fs.item_id} based on feedback"
-        prompt = <<~PROMPT
-          PRODUCT REPO:  #{@ctx.worktree_container}
-          ISSUE:         #{item_c}  (JSON — fields: subject, description, comments[], version, files_touched)
-          EXISTING PLAN: #{plan_c}
-          FEEDBACK:      #{feedback_file.read.strip}
-
-          You are the WRITER. Revise the existing plan to incorporate the feedback above.
-          Preserve structure and content that is still valid; only change what the feedback requires.
-          Produce a plan only — do not modify any file.
-
-          ## Plan: ##{fs.item_id} — #{fs.title}
-          ### Files to change
-          ### Approach
-          ### Tests to run
-          ### Risks / assumptions
-        PROMPT
+        prompt = Prompts.replan(
+          repo: @ctx.worktree_container, item: item_c, plan: plan_c,
+          feedback: feedback_file.read.strip, item_id: fs.item_id, title: fs.title
+        )
       else
         log_script "Writer: generating plan for ##{fs.item_id} — #{fs.title}"
-        prompt = <<~PROMPT
-          PRODUCT REPO: #{@ctx.worktree_container}
-          ISSUE:        #{item_c}  (JSON — fields: subject, description, comments[], version, files_touched)
-          HINT FILES:   #{fs.files_hint}
-          You are the WRITER. Produce a plan only — do not modify any file.
-
-          ## Plan: ##{fs.item_id} — #{fs.title}
-          ### Files to change
-          ### Approach
-          ### Tests to run
-          ### Risks / assumptions
-        PROMPT
+        prompt = Prompts.plan(
+          repo: @ctx.worktree_container, item: item_c,
+          files_hint: fs.files_hint, item_id: fs.item_id, title: fs.title
+        )
       end
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: fs.plan_file, fresh: true)
 
@@ -143,15 +123,7 @@ module Chomper
       end
 
       log_script "Reviewer: checking plan for ##{fs.item_id}"
-      review_prompt = <<~PROMPT
-        You are the REVIEWER. Read the plan at #{plan_c} and critique it.
-        Flag: wrong file paths, missing edge cases, unnecessary complexity, blast radius.
-
-        ## Review: ##{fs.item_id}
-        ### Issues found  (or 'None')
-        ### Suggested adjustments  (or 'None')
-        ### Verdict  PROCEED | REVISE | REJECT
-      PROMPT
+      review_prompt = Prompts.plan_review(plan: plan_c, item_id: fs.item_id)
       @claude.capture(review_prompt, tools: Claude::TOOLS_READ, outfile: fs.review_file, fresh: true)
 
       verdict = fs.review_file.read.scan(/\b(PROCEED|REVISE|REJECT)\b/i).last&.first&.upcase || "PROCEED"
@@ -162,16 +134,12 @@ module Chomper
         worktree.checkout('origin/dev', detach: true)
         Git.open(@ctx.repo_path.to_s).branch(fs.branch).delete rescue nil
         @backlog.set_state(fs.item_id, Backlog::STATE_BLOCKED)
-        @ctx.progress_file.open("a") { |f| f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{fs.item_id}|-|REJECTED" }
+        record_progress(fs.item_id, "-", "REJECTED")
         safe_rm(fs.review_file)
         return :rejected
       when "REVISE"
         log_script "Revising plan for ##{fs.item_id} based on reviewer feedback"
-        revise_prompt = <<~PROMPT
-          Read the original plan at #{plan_c} and the review at #{review_c}.
-          Revise the plan incorporating the reviewer's suggestions.
-          Print the complete revised plan to stdout only — do not write or edit any files.
-        PROMPT
+        revise_prompt = Prompts.plan_revise(plan: plan_c, review: review_c)
         @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: fs.plan_file, fresh: true)
       end
 
@@ -179,22 +147,9 @@ module Chomper
       :ok
     end
 
-    def fix_impl(fs, tests_pre_written:)
+    def fix_impl(fs)
       log_script "Implementing fix for ##{fs.item_id}"
-      plan_c = container_path(fs.plan_file)
-      test_instruction = tests_pre_written ?
-        "- Do not modify the tests" :
-        "- Write tests as specified in the plan, then implement the fix"
-      prompt = <<~PROMPT
-        PRODUCT REPO: #{@ctx.worktree_container}
-        APPROVED PLAN: #{plan_c}
-
-        Check the current state of the worktree (uncommitted changes, existing work in progress).
-        Continue from wherever things are — there may already be partial or complete work in place.
-        Implement what's missing to fix the issue according to the plan.
-        #{test_instruction}
-        - Do not commit
-      PROMPT
+      prompt = Prompts.implement(repo: @ctx.worktree_container, plan: container_path(fs.plan_file))
       @claude.run(prompt, tools: Claude::TOOLS_IMPL, fresh: true)
     end
 
@@ -203,7 +158,7 @@ module Chomper
       diff = worktree.diff('HEAD')
       if diff.entries.empty?
         log_script "##{fs.item_id} — nothing to commit, leaving as pending for retry."
-        @ctx.progress_file.open("a") { |f| f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{fs.item_id}|#{fs.branch}|no-changes" }
+        record_progress(fs.item_id, fs.branch, "no-changes")
         return
       end
 
@@ -216,7 +171,7 @@ module Chomper
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
 
       @backlog.set_state(fs.item_id, Backlog::STATE_COMMITTED)
-      @ctx.progress_file.open("a") { |f| f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{fs.item_id}|#{fs.branch}|committed" }
+      record_progress(fs.item_id, fs.branch, "committed")
 
       item_c = container_path(fs.item_file)
       plan_c = container_path(fs.plan_file)
@@ -229,18 +184,9 @@ module Chomper
       diff_stat = worktree.diff('HEAD~1', 'HEAD').stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
-      prompt = <<~PROMPT
-        Write a GitHub PR description for this fix.
-
-        ISSUE: #{item_c}
-        PLAN:  #{plan_c}
-        DIFF:
-        #{diff_stat}
-        #{template_section}
-        Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
-        even if empty (write "N/A" or "No visual changes").
-        Output only the PR description — no preamble.
-      PROMPT
+      prompt = Prompts.pr_description(
+        item: item_c, plan: plan_c, diff_stat: diff_stat, template_section: template_section
+      )
 
       pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, fresh: true)
       # Strip everything before the first markdown heading
@@ -251,10 +197,6 @@ module Chomper
       puts "  Push & open PR:"
       puts "    git -C #{@ctx.worktree_host} push -u origin #{fs.branch}"
       puts "    gh pr create --draft --base dev --head #{fs.branch} --body-file #{fs.pr_desc_file}"
-    end
-
-    def worktree
-      @worktree ||= Git.open(@ctx.worktree_host.to_s)
     end
 
     def container_path(host_path)

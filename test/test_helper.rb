@@ -11,6 +11,7 @@ require "chomper/context"
 require "chomper/backlog"
 require "chomper/http"
 require "chomper/helpers"
+require "chomper/prompts"
 require "chomper/claude"
 require "chomper/pull"
 require "chomper/triage"
@@ -19,3 +20,6 @@ require "chomper/publish"
 require "chomper/cli"
 
 WebMock.disable_net_connect!
+
+# Disable real retry backoff so the suite doesn't sleep through HTTP retries.
+Chomper::HTTP.base_interval = 0

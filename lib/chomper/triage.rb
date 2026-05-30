@@ -5,17 +5,6 @@ module Chomper
     include Helpers
     BATCH_SIZE = 25
 
-    SCHEMA = <<~JSON.freeze
-      {
-        "id":             "<same id as input>",
-        "locality_group": "<subsystem: auth|api|db|ui|payments|...>",
-        "complexity":     "<trivial|simple|moderate|complex>",
-        "files_touched":  ["<likely source file paths>"],
-        "ai_category":    "<null-safety|type-error|logic-bug|perf|refactor|test|feature|chore>",
-        "state":          "pending"
-      }
-    JSON
-
     def initialize(ctx, backlog, claude)
       @ctx     = ctx
       @backlog = backlog
@@ -63,31 +52,7 @@ module Chomper
 
     def build_prompt(batch)
       paths = batch.map { |item| "#{@ctx.state_container}/items/#{item["id"]}/item.json" }.join("\n")
-      <<~PROMPT
-        Read each of these work package files:
-        #{paths}
-
-        Each file has: id, subject, description, comments[], version, category, priority.
-
-        For each item print one line:
-          #<id> <subject> → <locality_group> / <complexity>
-
-        Then output the complete results between these exact delimiters — nothing after the closing delimiter:
-        ---BEGIN JSON---
-        [one object per item]
-        ---END JSON---
-
-        Schema per object:
-        #{SCHEMA}
-
-        Complexity guide:
-          trivial  — single obvious fix, ≤2 files
-          simple   — clear fix, ≤5 files
-          moderate — spans multiple subsystems
-          complex  — architectural impact or high risk
-
-        Set state to "pending" — this marks the item as triaged and ready to fix.
-      PROMPT
+      Prompts.triage(paths: paths)
     end
 
     def extract_json_block(text)

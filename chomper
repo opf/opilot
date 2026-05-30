@@ -74,10 +74,10 @@ if [[ "$CMD" == "fix" || "$CMD" == "plan" || "$CMD" == "agent" ]]; then
       echo "  ✓ Cloned to $WORKTREE"
       echo ""
     else
-      git -C "$WORKTREE" fetch origin dev
+      git -C "$WORKTREE" fetch --quiet origin dev
     fi
   else
-    git -C "$OP_REPO_PATH" fetch origin dev
+    git -C "$OP_REPO_PATH" fetch --quiet origin dev
     if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
       echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
       git -C "$OP_REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
@@ -88,11 +88,11 @@ if [[ "$CMD" == "fix" || "$CMD" == "plan" || "$CMD" == "agent" ]]; then
   if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
       claude claude auth status &>/dev/null; then
     echo "[ Claude auth required — follow the prompts below ]"
-    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
+    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm --remove-orphans \
       claude claude auth login
     echo ""
   fi
-  docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait claude
+  docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
   trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude 2>/dev/null || true' EXIT INT TERM
 fi
-docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm runner ruby "$SCRIPT_DIR/bin/chomper" "$@"
+docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"

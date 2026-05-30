@@ -12,11 +12,7 @@ module Chomper
 
     def run_pull_stage
       filters = prompt_search_filters
-
-      version_filter = filters.version_ids.empty? ? "" :
-        %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
-      filters_json = %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_filter}])
-      encoded = HTTP.encode_filters(filters_json)
+      encoded = encoded_filters(filters)
 
       new_items = []
       page = 1; page_size = 50; total_written = 0; total = 0
@@ -98,28 +94,8 @@ module Chomper
       filters
     end
 
-    def load_or_prompt_agent_emails
-      emails_path = @ctx.state_dir / "agent_emails.txt"
-      if emails_path.exist?
-        saved = emails_path.read.strip.split(",").map { |e| e.strip.downcase }.reject(&:empty?)
-        unless saved.empty?
-          puts "  Saved allowed emails: #{saved.join(", ")}"
-          print "  Reuse saved emails? [Y/n]: "
-          return saved unless $stdin.gets.chomp.downcase == "n"
-        end
-      end
-      print "  Allowed emails for @chomper triggers, comma-separated: "
-      input = $stdin.gets.chomp
-      emails = input.split(",").map { |e| e.strip.downcase }.reject(&:empty?)
-      emails_path.write(emails.join(", "))
-      emails
-    end
-
     def run_agent_poll(filters)
-      version_filter = filters.version_ids.empty? ? "" :
-        %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
-      filters_json = %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_filter}])
-      encoded = HTTP.encode_filters(filters_json)
+      encoded = encoded_filters(filters)
       sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
 
       new_items = []
@@ -151,7 +127,7 @@ module Chomper
           unless cached
             trigger = chomper_trigger_comment(item["id"], comments)
             if trigger
-              if @ctx.allowlist_enabled
+              if @ctx.allowed_emails.any?
                 email = resolve_user_email(trigger)
                 unless @ctx.allowed_emails.include?(email.to_s)
                   puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
@@ -270,6 +246,15 @@ module Chomper
     end
 
     private
+
+    # Builds the URL-encoded OpenProject `filters=` query from a FilterSet
+    # (status + type, plus an optional version clause).
+    def encoded_filters(filters)
+      version_filter = filters.version_ids.empty? ? "" :
+        %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
+      filters_json = %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_filter}])
+      HTTP.encode_filters(filters_json)
+    end
 
     def fetch_work_package_item(wp)
       wp_id = wp["id"]

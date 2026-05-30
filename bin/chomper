@@ -11,6 +11,7 @@ require "chomper/context"
 require "chomper/backlog"
 require "chomper/http"
 require "chomper/helpers"
+require "chomper/prompts"
 require "chomper/claude"
 require "chomper/ui"
 require "chomper/pull"
@@ -23,25 +24,20 @@ Rainbow.enabled = $stdout.tty?
 
 ctx = Chomper::Context.build
 
-def cleanup(ctx)
+def reset_terminal
   $stdout.print(Rainbow("").reset)
   $stdout.flush
-  %w[new_items.json response.json tmp.json triage_input.json triage_output.json].each do |f|
-    path = ctx.state_dir / f
-    path.delete if path.exist? && path.to_s.start_with?(ctx.script_dir.to_s)
-  end
 end
 
 Signal.trap("INT") do
-  cleanup(ctx)
+  reset_terminal
   puts ""
-  puts "Interrupted — cleaning up..."
-  puts "Run ./chomper to resume."
+  puts "Interrupted — run ./chomper to resume."
   exit 130
 end
 
 Signal.trap("TERM") do
-  cleanup(ctx)
+  reset_terminal
   exit 143
 end
 

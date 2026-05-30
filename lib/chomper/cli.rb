@@ -45,7 +45,11 @@ module Chomper
         fix     = Fix.new(@ctx, backlog, claude)
         publish = Publish.new(@ctx, backlog)
         filters = pull.load_or_prompt_agent_filters
-        @ctx.allowed_emails = pull.load_or_prompt_agent_emails if @ctx.allowlist_enabled && @ctx.allowed_emails.empty?
+        if @ctx.allowed_emails.any?
+          puts "  Allowlist active — only triggers from: #{@ctx.allowed_emails.join(", ")}"
+        else
+          puts "  No allowlist set (CHOMPER_ALLOWED_EMAILS) — any user can trigger @chomper."
+        end
         puts "  Agent started — polling every 10s. Ctrl-C to stop."
         loop do
           pull.run_agent_poll(filters)
@@ -54,51 +58,15 @@ module Chomper
           unless requested.empty?
             puts "\n  [@chomper] #{requested.length} item(s) requested — triaging..."
             triage.run_triage_for_requested
-            requested.each do |item|
-              puts "  [@chomper] Planning ##{item["id"]} — #{item["subject"]}..."
-              fix.fix_item(item["id"], "plan", require_approval: false)
-
-              gist_url = publish.upload_plan_gist(item["id"], item["subject"])
-              if gist_url
-                note_body = {
-                  "comment"  => { "raw" => "Plan ready for review: #{gist_url}" },
-                  "internal" => true
-                }
-                code, = HTTP.post_json(
-                  "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
-                  note_body,
-                  token: @ctx.token
-                )
-                puts "  [@chomper] " + (code == 201 ? "Internal note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
-              end
-            rescue => e
-              puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
-            end
+            plan_and_notify(requested, fix, publish,
+                            verb: "Planning", prefix: "Plan ready for review", kind: "Internal note")
           end
 
           refinement = backlog.refinement_requested
           unless refinement.empty?
             puts "\n  [@chomper] #{refinement.length} item(s) need re-planning with feedback..."
-            refinement.each do |item|
-              puts "  [@chomper] Re-planning ##{item["id"]} — #{item["subject"]}..."
-              fix.fix_item(item["id"], "plan", require_approval: false)
-
-              gist_url = publish.upload_plan_gist(item["id"], item["subject"])
-              if gist_url
-                note_body = {
-                  "comment"  => { "raw" => "Revised plan ready for review: #{gist_url}" },
-                  "internal" => true
-                }
-                code, = HTTP.post_json(
-                  "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
-                  note_body,
-                  token: @ctx.token
-                )
-                puts "  [@chomper] " + (code == 201 ? "Revised note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
-              end
-            rescue => e
-              puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
-            end
+            plan_and_notify(refinement, fix, publish,
+                            verb: "Re-planning", prefix: "Revised plan ready for review", kind: "Revised note")
           end
 
           fix_approved = backlog.fix_approved
@@ -115,12 +83,7 @@ module Chomper
               note_text   = "Implementation complete. Branch: `#{branch}`"
               note_text  += " | PR: #{pr_url}" if pr_url
 
-              code, = HTTP.post_json(
-                "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
-                { "comment" => { "raw" => note_text }, "internal" => true },
-                token: @ctx.token
-              )
-              puts "  [@chomper] " + (code == 201 ? "Note posted to WP ##{item["id"]}" : "Note failed (HTTP #{code})")
+              post_internal_note(item["id"], note_text, "Note")
             rescue => e
               puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
             end
@@ -138,31 +101,14 @@ module Chomper
             plan_file = @ctx.state_dir / "items" / item["id"] / "plan.md"
             plan_text = plan_file.exist? ? plan_file.read : "(no plan yet)"
 
-            prompt = <<~PROMPT
-              You are chomper, an AI code assistant working on OpenProject work package ##{item["id"]}: #{item["subject"]}
-
-              CURRENT PLAN:
-              #{plan_text}
-
-              AVAILABLE COMMANDS (mention these when relevant):
-              - @chomper plan       — generate an implementation plan
-              - @chomper revise ... — revise the plan with feedback
-              - @chomper proceed    — approve the plan and trigger implementation
-
-              USER: #{message}
-
-              Reply helpfully and concisely. Your response will be posted as an internal note.
-            PROMPT
+            prompt = Prompts.chat(
+              item_id: item["id"], subject: item["subject"], plan: plan_text, message: message
+            )
 
             response = claude.run(prompt, tools: Claude::TOOLS_READ)
             next if response.strip.empty?
 
-            code, = HTTP.post_json(
-              "#{@ctx.op_url}/api/v3/work_packages/#{item["id"]}/activities",
-              { "comment" => { "raw" => response.strip }, "internal" => true },
-              token: @ctx.token
-            )
-            puts "  [@chomper] " + (code == 201 ? "Chat reply posted to WP ##{item["id"]}" : "Reply failed (HTTP #{code})")
+            post_internal_note(item["id"], response.strip, "Chat reply")
           rescue => e
             puts "  [@chomper] Chat error on ##{item["id"]}: #{e.message}"
           end
@@ -232,6 +178,31 @@ module Chomper
         committed = backlog.committed
         puts committed.any? ? "=== Session complete — push when ready. ===" : "=== Nothing committed. ==="
       end
+    end
+
+    private
+
+    # Plan (or re-plan) each item, upload its plan gist, and post the gist link
+    # back to the work package as an internal note.
+    def plan_and_notify(items, fix, publish, verb:, prefix:, kind:)
+      items.each do |item|
+        puts "  [@chomper] #{verb} ##{item["id"]} — #{item["subject"]}..."
+        fix.fix_item(item["id"], "plan", require_approval: false)
+        gist_url = publish.upload_plan_gist(item["id"], item["subject"])
+        post_internal_note(item["id"], "#{prefix}: #{gist_url}", kind) if gist_url
+      rescue => e
+        puts "  [@chomper] Error on ##{item["id"]}: #{e.message}"
+      end
+    end
+
+    def post_internal_note(item_id, raw, kind)
+      code, = HTTP.post_json(
+        "#{@ctx.op_url}/api/v3/work_packages/#{item_id}/activities",
+        { "comment" => { "raw" => raw }, "internal" => true },
+        token: @ctx.token
+      )
+      puts "  [@chomper] " + (code == 201 ? "#{kind} posted to WP ##{item_id}" : "Note failed (HTTP #{code})")
+      code
     end
   end
 end

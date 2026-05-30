@@ -62,5 +62,21 @@ module Chomper
       stub_request(:get, URL).to_raise(SocketError.new("connection refused"))
       assert_raises(HTTP::Error) { HTTP.get(URL, token: "tok") }
     end
+
+    def test_get_returns_code_on_persistent_retryable_status
+      stub_request(:get, URL).to_return(status: 503, body: "unavailable")
+      code, body = HTTP.get(URL, token: "tok")
+      assert_equal 503, code
+      assert_equal "unavailable", body
+    end
+
+    def test_get_retries_then_succeeds_on_transient_status
+      stub_request(:get, URL)
+        .to_return(status: 503, body: "down").then
+        .to_return(status: 200, body: "ok")
+      code, body = HTTP.get(URL, token: "tok")
+      assert_equal 200, code
+      assert_equal "ok", body
+    end
   end
 end

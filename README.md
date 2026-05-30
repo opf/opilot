@@ -40,7 +40,7 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
 cp .env.example .env
-# edit .env — set OP_URL, TOKEN, GITHUB_TOKEN
+# edit .env — set OPENPROJECT_URL, OPENPROJECT_TOKEN, GITHUB_TOKEN
 
 # Run as a long-lived agent: polls OpenProject and acts on @chomper mentions
 ./chomper agent
@@ -204,7 +204,8 @@ openproject-chomper/
 | `OPENPROJECT_TOKEN` | — | Read-only OpenProject API token (My Account → Access Tokens → View work packages) |
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
 | `GITHUB_TOKEN` | — | Used by publish to create gists and open PRs via the GitHub API |
-| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated list of emails authorised to trigger the agent via `@chomper` comments. If unset or empty, **all triggers are denied**. |
+| `REQUIRE_PLAN_APPROVAL` | `true` | Set to `false` to skip the interactive plan-approval prompt and implement automatically (`fix`/`plan` commands). |
+| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. **If unset or empty, any OpenProject user can trigger the agent;** set it to gate triggers to specific people. |
 
 ---
 
@@ -242,8 +243,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 Written by the first-run setup wizard (chmod 600, gitignored).
 
 ```bash
-OP_URL=https://community.openproject.org
-TOKEN=your_readonly_token
+OPENPROJECT_URL=https://community.openproject.org
+OPENPROJECT_TOKEN=your_readonly_token
 OP_REPO_PATH=../openproject   # or "false" to have chomper clone automatically
 GITHUB_TOKEN=ghp_...
 ```
