@@ -119,6 +119,8 @@ module Chomper
           --help, -h    Show this help
 
         Environment:
+          OPENPROJECT_URL         OpenProject instance URL
+          OPENPROJECT_TOKEN       Read-only OpenProject API token
           ANTHROPIC_API_KEY       Passed into the claude container if set
           GITHUB_TOKEN            Required for gist creation and opening PRs
 

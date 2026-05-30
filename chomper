@@ -6,22 +6,22 @@ export SCRIPT_DIR
 ENV_FILE="$SCRIPT_DIR/.env"
 
 # ── First-run setup ───────────────────────────────────────────────────────
-if ! grep -q "^OP_URL=" "$ENV_FILE" 2>/dev/null; then
+if ! grep -q "^OPENPROJECT_URL=" "$ENV_FILE" 2>/dev/null; then
   mkdir -p "$SCRIPT_DIR/.chomper"
   echo ""
   echo "=== First run — quick setup ==="
   echo ""
   printf "  OpenProject URL [https://community.openproject.org]: "
-  read -r OP_URL; OP_URL="${OP_URL:-https://community.openproject.org}"
-  TOKEN=""
-  while [ -z "$TOKEN" ]; do
+  read -r OPENPROJECT_URL; OPENPROJECT_URL="${OPENPROJECT_URL:-https://community.openproject.org}"
+  OPENPROJECT_TOKEN=""
+  while [ -z "$OPENPROJECT_TOKEN" ]; do
     printf "  API token (read-only, View work packages only): "
-    read -rs TOKEN; echo ""
-    [ -z "$TOKEN" ] && echo "  Token is required — please enter a value."
+    read -rs OPENPROJECT_TOKEN; echo ""
+    [ -z "$OPENPROJECT_TOKEN" ] && echo "  Token is required — please enter a value."
   done
   {
-    printf 'OP_URL=%s\n' "$OP_URL"
-    printf 'TOKEN=%s\n' "$TOKEN"
+    printf 'OPENPROJECT_URL=%s\n' "$OPENPROJECT_URL"
+    printf 'OPENPROJECT_TOKEN=%s\n' "$OPENPROJECT_TOKEN"
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   echo ""

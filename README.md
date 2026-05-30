@@ -39,7 +39,13 @@ git clone → ./chomper fix → answer a few questions → have a coffee and wai
 ```bash
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
-# Pull packages, generate plans, prepare commits
+cp .env.example .env
+# edit .env — set OP_URL, TOKEN, GITHUB_TOKEN
+
+# Run as a long-lived agent: polls OpenProject and acts on @chomper mentions
+./chomper agent
+
+# Or: pull issues, generate plans, and implement fixes in one shot
 ./chomper fix
 # See what progress has been made
 ./chomper status
@@ -192,6 +198,8 @@ openproject-chomper/
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `OPENPROJECT_URL` | — | URL of your OpenProject instance |
+| `OPENPROJECT_TOKEN` | — | Read-only OpenProject API token (My Account → Access Tokens → View work packages) |
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
 | `GITHUB_TOKEN` | — | Used by publish to create gists and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated list of emails authorised to trigger the agent via `@chomper` comments. If unset or empty, **all triggers are denied**. |

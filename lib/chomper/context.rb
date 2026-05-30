@@ -29,8 +29,8 @@ module Chomper
       @worktree_container = "/repo"
       @state_container    = "/state"
       @anthropic_api_key  = ENV["ANTHROPIC_API_KEY"]
-      @op_url             = ENV["OP_URL"]
-      @token              = ENV["TOKEN"]
+      @op_url             = ENV["OPENPROJECT_URL"]
+      @token              = ENV["OPENPROJECT_TOKEN"]
       @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
       @require_plan_approval = ENV["REQUIRE_PLAN_APPROVAL"] != "false"
       @allowlist_enabled     = ENV["CHOMPER_ALLOWLIST"] == "true"
@@ -42,7 +42,7 @@ module Chomper
     end
 
     def load_config!
-      raise FatalError, "Config not found — add OP_URL, TOKEN, OP_REPO_PATH to .env and re-run." \
+      raise FatalError, "Config not found — add OPENPROJECT_URL, OPENPROJECT_TOKEN, OP_REPO_PATH to .env and re-run." \
         unless @op_url && @token && @repo_path
     end
   end

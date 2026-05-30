@@ -14,8 +14,8 @@ services:
       - GIT_AUTHOR_EMAIL
       - GIT_COMMITTER_NAME
       - GIT_COMMITTER_EMAIL
-      - OP_URL=${OP_URL}
-      - TOKEN=${TOKEN}
+      - OPENPROJECT_URL=${OPENPROJECT_URL}
+      - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR}
     stdin_open: true
