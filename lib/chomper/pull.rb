@@ -1,7 +1,7 @@
 require "json"
 
 module Chomper
-  FilterSet = Struct.new(:project_id, :type_ids, :status_ids, :version_ids,
+  FilterSet = Struct.new(:project_id, :project_name, :type_ids, :status_ids, :version_ids,
                          :type_names, :status_names, :version_names, keyword_init: true)
 
   class Pull
@@ -76,6 +76,7 @@ module Chomper
         if data["type_names"] && data["status_names"]
           saved = FilterSet.new(
             project_id:    data["project_id"],
+            project_name:  data["project_name"],
             type_ids:      data["type_ids"],
             status_ids:    data["status_ids"],
             version_ids:   data["version_ids"],
@@ -84,7 +85,8 @@ module Chomper
             version_names: data["version_names"]
           )
           version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
-          puts "  Saved filters: project=[#{saved.project_id}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
+          project_label = saved.project_name ? "#{saved.project_id} — #{saved.project_name}" : saved.project_id
+          puts "  Saved filters: project=[#{project_label}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
           print "  Reuse saved filters? [Y/n]: "
           return saved unless $stdin.gets.chomp.downcase == "n"
         end
@@ -190,6 +192,8 @@ module Chomper
         break if code == 200
         puts "  Project '#{project_id}' not found (HTTP #{code}) — please try again."
       end
+      _pc, project_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}", token: @ctx.token)
+      project_name = project_data&.dig("name")
       type_names = types_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
       puts "  Types available: #{type_names}"
       print "  Type(s), comma-separated [bug]: "
@@ -236,6 +240,7 @@ module Chomper
       puts ""
       FilterSet.new(
         project_id:    project_id,
+        project_name:  project_name,
         type_ids:      type_ids,
         status_ids:    status_ids,
         version_ids:   version_ids,
@@ -349,6 +354,7 @@ module Chomper
       tmp = Tempfile.new("agent_filters", @ctx.state_dir)
       tmp.write(JSON.generate(
         "project_id"    => filters.project_id,
+        "project_name"  => filters.project_name,
         "type_ids"      => filters.type_ids,
         "status_ids"    => filters.status_ids,
         "version_ids"   => filters.version_ids,
