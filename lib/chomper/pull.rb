@@ -398,10 +398,18 @@ module Chomper
       puts "  Warning: could not post 👀 reaction: #{e.message}"
     end
 
+    def own_user_href
+      @own_user_href ||= begin
+        _, me = HTTP.get_json("#{@ctx.op_url}/api/v3/users/me", token: @ctx.token)
+        me&.dig("_links", "self", "href")
+      end
+    end
+
     def chomper_trigger_comment(wp_id, comments)
       item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
       last_acted = item_path.exist? ? (JSON.parse(item_path.read)["last_acted_comment_at"] rescue nil) : nil
       comments
+        .reject { |c| c["user_href"] == own_user_href }
         .select { |c| c["text"].to_s.downcase.include?("@chomper") }
         .select { |c| last_acted.nil? || c["created_at"] > last_acted }
         .max_by { |c| c["created_at"] }
