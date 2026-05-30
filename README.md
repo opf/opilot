@@ -56,46 +56,46 @@ cp .env.example .env
 ## Bird's-eye view
 
 ```
-  ┌─ HOST ───────────────────────────────────────────────────────────────────────┐
-  │                                                                              │
-  │   ./chomper fix  (bash wrapper)                                              │
-  │        │                                                                     │
-  │        │  reads .env (writes on first run), ensures openproject exists        │
-  │        │  docker compose run --rm runner ruby bin/chomper fix                │
-  │        │                                                                     │
-  │        │         ┌─ runner container (Ruby 4.0) ──────────────────────┐      │
-  │        │         │                                                    │      │
-  │        │         │  Stage 1: Pull                                     │      │
-  │        │         │    HTTP → OpenProject API (work packages,          │      │
-  │        │         │            activities, reactions)                  │      │
-  │        │         │    writes .chomper/backlog.json                    │      │
-  │        │         │    writes .chomper/items/<id>/item.json            │      │
-  │        │         │                                                    │      │
-  │        │         │  Stage 2: Triage / Stage 3: Fix                    │      │
-  │        │         │    HTTP POST http://claude:3000  ◄─────────────────┼───┐  │
-  │        │         │                                                    │   │  │
-  │        │         │                                                    │   │  │
-  │        │         └────────────────────────────────────────────────────┘   │  │
-  │        │                                                                  │  │
-  │        │         ┌─ claude container (Node.js + Claude Code) ──────────┐  │  │
-  │        │         │  server.js  listens on :3000                 ◄──────┼──┘  │
-  │        │         │  POST /  →  claude -p --output-format stream-json   │     │
-  │        │         │                                                     │     │
-  │        │         │  volumes:                                           │     │
-  │        │         │    .chomper/openproject → /repo   (rw)              │     │
-  │        │         │    .chomper/         → /state  (rw)                 │     │
-  │        │         │    claude-auth/      → /root/.claude                │     │
-  │        │         └─────────────────────────────────────────────────────┘     │
-  │                                                                              │
-  │   ./chomper publish                                                          │
-  │        │                                                                     │
-  │        │  Stage 4: Publish                                                   │
-  │        │                     ┌─────────────────────────────────┐             │
-  │        ├── gist create ─────►│  GitHub                         │             │
-  │        └── pr create ───────►│  public gist  → plan URL        │             │
-  │                              │  draft PR     → pr_url.txt      │             │
-  │                              └─────────────────────────────────┘             │
-  └──────────────────────────────────────────────────────────────────────────────┘
+               ┌─────────────────┐
+               │   ./chomper     │
+               │ (shell wrapper) │
+               └─────────────────┘
+                        │
+                        │                    
+                        │ docker compose exec
+                        │
+┌─ Docker ──────────────┼──────────────────────────┐
+│                       ▼                          │
+│    ┌─────────── runner container ────────────┐   │
+│    │                                         │   │
+│    │ Ruby 4.0 script                         │   │
+│    │  * Pulls WP content from OP API         │   │
+│    │  * Manages metadata in .chomper/        │   │
+│    │      * WP metadata mirror               │   │
+│    │      * Plan files                       │   │
+│    │      * Draft PR data                    │   │ 
+│    │  * Publishes PRs and gists              │   │
+│    │  * Delegates conversation to Claude     │   │
+│    │      * HTTP POST http://claude:3000     │   │
+│    │                                         │   │
+│    │                                         │   │
+│    └─────────────────────────────────────────┘   │
+│                        ▲                         │
+│                        │                         │
+│                        │                         │
+│                        ▼                         │       
+│   ┌──────────── claude container ─────────────┐  │
+│   │                                           │  │
+│   │  Node.js server (:3000)                   │  │
+│   │    POST / → `claude -p`                   │  │
+│   │                                           │  │
+│   │  volumes:                                 │  │
+│   │    .chomper/            → /state  (rw)    │  │
+│   │    .chomper/openproject → /repo   (rw)    │  │
+│   │                                           │  │
+│   └───────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────┘
+
 ```
 
 ---
