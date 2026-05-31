@@ -1,9 +1,10 @@
 require "json"
 require "tempfile"
+require "time"
 
 module Chomper
   FilterSet = Struct.new(:project_id, :project_name, :type_ids, :status_ids, :version_ids,
-                         :type_names, :status_names, :version_names, keyword_init: true)
+                         :type_names, :status_names, :version_names, :scan_from_at, keyword_init: true)
 
   class Pull
     # Stats from the most recent poll (for logging): total scanned, and how many
@@ -23,6 +24,7 @@ module Chomper
     # (at-least-once delivery). Every matching WP is scanned each poll so a
     # re-fire after a crash is not missed.
     def poll_intents(filters)
+      @scan_from_at = filters.scan_from_at
       encoded = encoded_filters(filters)
       sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
 
@@ -75,7 +77,8 @@ module Chomper
             version_ids:   data["version_ids"],
             type_names:    data["type_names"],
             status_names:  data["status_names"],
-            version_names: data["version_names"]
+            version_names: data["version_names"],
+            scan_from_at:  data["scan_from_at"]
           )
           version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
           project_label = saved.project_name ? "#{saved.project_id} — #{saved.project_name}" : saved.project_id
@@ -149,6 +152,11 @@ module Chomper
         puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
       end
 
+      puts "  How far back should the comment scanner look?"
+      puts "  Formats: \"1h\", \"2 days\", \"1 week\""
+      print "  Scan from [now]: "
+      scan_from_at = parse_scan_from_input($stdin.gets.chomp)
+
       puts ""
       FilterSet.new(
         project_id:    project_id,
@@ -158,7 +166,8 @@ module Chomper
         version_ids:   version_ids,
         type_names:    sel_names.join(", "),
         status_names:  sel_status_names.join(", "),
-        version_names: sel_ver_names.empty? ? nil : sel_ver_names.join(", ")
+        version_names: sel_ver_names.empty? ? nil : sel_ver_names.join(", "),
+        scan_from_at:  scan_from_at
       )
     end
 
@@ -311,13 +320,35 @@ module Chomper
         "version_ids"   => filters.version_ids,
         "type_names"    => filters.type_names,
         "status_names"  => filters.status_names,
-        "version_names" => filters.version_names
+        "version_names" => filters.version_names,
+        "scan_from_at"  => filters.scan_from_at
       ))
       tmp.close
       File.rename(tmp.path, agent_filters_path.to_s)
     rescue
       tmp&.unlink
       raise
+    end
+
+    def parse_scan_from_input(input)
+      input = input.strip.downcase
+      return Time.now.utc.iso8601 if input.empty? || input == "now"
+      if (m = input.match(/\A(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)\z/))
+        n = m[1].to_i
+        seconds = case m[2][0]
+                  when "m" then n * 60
+                  when "h" then n * 3600
+                  when "d" then n * 86400
+                  when "w" then n * 604800
+                  end
+        return (Time.now - seconds).utc.iso8601
+      end
+      begin
+        Time.parse(input).utc.iso8601
+      rescue ArgumentError
+        puts "  Could not parse '#{input}' — defaulting to now"
+        Time.now.utc.iso8601
+      end
     end
 
     def resolve_user_email(comment)
@@ -352,10 +383,11 @@ module Chomper
     def chomper_trigger_comment(wp_id, comments)
       item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
       last_acted = item_path.exist? ? (JSON.parse(item_path.read)["last_acted_comment_at"] rescue nil) : nil
+      cutoff = [last_acted, @scan_from_at].compact.max
       comments
         .reject { |c| c["user_href"] == own_user_href }
         .select { |c| chomper_mentioned?(c["text"]) }
-        .select { |c| last_acted.nil? || c["created_at"] > last_acted }
+        .select { |c| cutoff.nil? || c["created_at"] > cutoff }
         .max_by { |c| c["created_at"] }
     end
 
