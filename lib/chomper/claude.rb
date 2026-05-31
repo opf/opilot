@@ -30,8 +30,12 @@ module Chomper
       log_append(resp_header)
 
       session_id = session_file&.exist? ? session_file.read.strip : nil
+      log_append("session: #{session_id ? "resume #{session_id}" : "fresh"}")
       text, new_session_id = http_stream(prompt, tools: tools, session_id: session_id)
-      session_file.write(new_session_id) if session_file && new_session_id
+      if session_file && new_session_id
+        log_append("session: captured #{new_session_id} → #{session_file}")
+        session_file.write(new_session_id)
+      end
       log_append(text)
       puts ""
       text

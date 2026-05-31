@@ -136,6 +136,7 @@ module Chomper
         here — if they want it built, tell them to comment `@chomper approve` or `@chomper fix`.
 
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])
+        Read this file for full context, including prior comments, before answering.
 
         CURRENT PLAN:
         #{plan}
