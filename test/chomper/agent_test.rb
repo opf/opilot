@@ -12,14 +12,14 @@ module Chomper
         @runs = []; @captures = []
       end
 
-      def capture(prompt, tools: nil, outfile:, fresh: false)
+      def capture(prompt, tools: nil, outfile:)
         @captures << prompt
         content = prompt.include?("REVIEWER") ? @review : @plan
         Pathname(outfile).write(content)
         content
       end
 
-      def run(prompt, tools: nil, fresh: false)
+      def run(prompt, tools: nil, session_file: nil)
         @runs << prompt
         return @chat if prompt.include?("You are chomper")
         return @pr   if prompt.include?("PR description")

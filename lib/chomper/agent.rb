@@ -22,7 +22,7 @@ module Chomper
 
     ItemState = Struct.new(:item_id, :subject, :branch, :item_dir, :plan_file,
                            :item_file, :review_file, :pr_desc_file, :pr_url_file,
-                           keyword_init: true)
+                           :session_file, keyword_init: true)
 
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
@@ -104,7 +104,7 @@ module Chomper
       prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
                             plan: plan_text, message: intent.text.to_s)
-      reply = @claude.run(prompt, tools: Claude::TOOLS_READ)
+      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
 
@@ -146,14 +146,14 @@ module Chomper
         log_script "Writer: revising plan for ##{st.item_id} from feedback"
         prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject)
-        @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file, fresh: true)
+        @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
         return :ok
       end
 
       log_script "Writer: generating plan for ##{st.item_id} — #{st.subject}"
-      prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c, files_hint: "",
-                            item_id: st.item_id, title: st.subject)
-      @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file, fresh: true)
+      prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c,
+                            item_id: st.item_id, title: st.subject, hint: feedback.to_s)
+      @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
@@ -167,7 +167,7 @@ module Chomper
 
       log_script "Reviewer: checking plan for ##{st.item_id}"
       review_prompt = Prompts.plan_review(plan: plan_c, item_id: st.item_id)
-      @claude.capture(review_prompt, tools: Claude::TOOLS_READ, outfile: st.review_file, fresh: true)
+      @claude.capture(review_prompt, tools: Claude::TOOLS_READ, outfile: st.review_file)
       verdict = st.review_file.read.scan(/\b(PROCEED|REVISE|REJECT)\b/i).last&.first&.upcase || "PROCEED"
 
       case verdict
@@ -180,7 +180,7 @@ module Chomper
       when "REVISE"
         log_script "Revising plan for ##{st.item_id} from reviewer feedback"
         revise_prompt = Prompts.plan_revise(plan: plan_c, review: container_path(st.review_file))
-        @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file, fresh: true)
+        @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
       end
 
       safe_rm(st.review_file)
@@ -199,7 +199,7 @@ module Chomper
       unless branch_has_commits?(st)
         log_script "Implementing fix for ##{st.item_id}"
         @claude.run(Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
-                    tools: Claude::TOOLS_IMPL, fresh: true)
+                    tools: Claude::TOOLS_IMPL)
         commit(st)
       end
 
@@ -256,7 +256,7 @@ module Chomper
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, fresh: true)
+      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ)
       pr_body = pr_text[/^#.*/m] || pr_text
       st.pr_desc_file.write(strip_ansi(pr_body))
     end
@@ -275,7 +275,8 @@ module Chomper
         item_file:    dir / "item.json",
         review_file:  dir / "review.txt",
         pr_desc_file: dir / "pr.md",
-        pr_url_file:  dir / "pr_url.txt"
+        pr_url_file:  dir / "pr_url.txt",
+        session_file: dir / "session_id"
       )
     end
 

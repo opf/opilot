@@ -21,11 +21,11 @@ module Chomper
     # from a vague WP, the writer emits a NEEDS_INFO block and stops.
     # Agent#produce_plan detects that sentinel on the first line and posts the
     # questions back to the WP instead of saving a plan.
-    def self.plan(repo:, item:, files_hint:, item_id:, title:)
+    def self.plan(repo:, item:, item_id:, title:, hint: "")
+      focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
       <<~PROMPT
         PRODUCT REPO: #{repo}
-        ISSUE:        #{item}  (JSON — fields: subject, description, comments[], version, files_touched)
-        HINT FILES:   #{files_hint}
+        ISSUE:        #{item}  (JSON — fields: subject, description, comments[], version, files_touched)#{focus}
         You are the WRITER. Produce a plan only.
         #{READ_ONLY}
 

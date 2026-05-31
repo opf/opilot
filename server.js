@@ -5,26 +5,28 @@ const { spawn } = require('child_process');
 const PORT = 3000;
 const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-// Serialise requests so --continue sessions are never interleaved.
+// Serialise requests so sessions are never interleaved.
 const queue = [];
 let busy = false;
 
 function drain() {
   if (queue.length === 0) { busy = false; return; }
   busy = true;
-  const { body, tools, fresh, res } = queue.shift();
-  runClaude(body, tools, fresh, res, drain);
+  const { body, tools, sessionId, res } = queue.shift();
+  runClaude(body, tools, sessionId, res, drain);
 }
 
-function enqueue(body, tools, fresh, res) {
-  queue.push({ body, tools, fresh, res });
+function enqueue(body, tools, sessionId, res) {
+  queue.push({ body, tools, sessionId, res });
   if (!busy) drain();
 }
 
-function runClaude(body, tools, fresh, res, done) {
+function runClaude(body, tools, sessionId, res, done) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose'];
   if (tools) args.push('--allowedTools', tools);
-  if (!fresh) args.push('--continue');
+  if (sessionId) {
+    args.push('--resume', sessionId);
+  }
 
   const proc = spawn('claude', args, { env: process.env });
 
@@ -36,11 +38,31 @@ function runClaude(body, tools, fresh, res, done) {
   proc.stdin.end(body);
 
   res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-  proc.stdout.on('data', chunk => res.write(chunk));
+
+  // Stream stdout to client while scanning for the session ID.
+  let capturedSessionId = null;
+  let lineBuffer = '';
+  proc.stdout.on('data', chunk => {
+    res.write(chunk);
+    lineBuffer += chunk.toString();
+    const lines = lineBuffer.split('\n');
+    lineBuffer = lines.pop();
+    for (const line of lines) {
+      if (capturedSessionId) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.session_id) capturedSessionId = parsed.session_id;
+      } catch (e) {}
+    }
+  });
+
   proc.stderr.on('data', chunk => process.stderr.write(chunk));
 
   proc.on('close', () => {
     clearTimeout(timer);
+    if (capturedSessionId) {
+      res.write(JSON.stringify({ type: 'session_id', session_id: capturedSessionId }) + '\n');
+    }
     res.end();
     done();
   });
@@ -67,12 +89,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const tools = req.headers['x-claude-tools'];
-  const fresh = req.headers['x-claude-fresh'] === 'true';
+  const tools     = req.headers['x-claude-tools'];
+  const sessionId = req.headers['x-claude-session'] || null;
 
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
-  req.on('end', () => enqueue(Buffer.concat(chunks), tools, fresh, res));
+  req.on('end', () => enqueue(Buffer.concat(chunks), tools, sessionId, res));
 });
 
 server.listen(PORT, '0.0.0.0', () => {
