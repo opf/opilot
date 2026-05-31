@@ -101,7 +101,9 @@ module Chomper
     def handle_chat(intent)
       st = state_for(intent.item_id, intent.subject)
       plan_text = st.plan_file.exist? ? st.plan_file.read : "(no plan yet)"
-      prompt = Prompts.chat(item_id: st.item_id, subject: st.subject, plan: plan_text, message: intent.text.to_s)
+      prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
+                            item: container_path(st.item_file),
+                            plan: plan_text, message: intent.text.to_s)
       reply = @claude.run(prompt, tools: Claude::TOOLS_READ)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
@@ -211,7 +213,7 @@ module Chomper
       url = @publish.open_pr(st.item_id, st.subject)
       if url
         record_progress(st.item_id, st.branch, "shipped")
-        post_note(st.item_id, addressed("the draft PR is up — #{url}"))
+        post_note(st.item_id, addressed("here's your draft PR: #{url}"))
       else
         post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
       end

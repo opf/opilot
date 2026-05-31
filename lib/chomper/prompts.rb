@@ -128,20 +128,22 @@ module Chomper
     end
 
     # Conversational reply to an @chomper comment on a work package (read-only tools).
-    def self.chat(item_id:, subject:, plan:, message:)
+    def self.chat(item_id:, subject:, item:, plan:, message:)
       <<~PROMPT
         You are chomper, an AI code assistant working on OpenProject work package ##{item_id}: #{subject}
         #{READ_ONLY}
         This is a conversation: answer the user's question. Do not implement the plan
         here — if they want it built, tell them to comment `@chomper approve` or `@chomper fix`.
 
+        ISSUE: #{item}  (JSON — fields: subject, description, comments[])
+
         CURRENT PLAN:
         #{plan}
 
         AVAILABLE COMMANDS (mention these when relevant):
-        - @chomper plan [feedback]  — draft or revise an implementation plan
-        - @chomper approve          — implement the plan and open a draft PR
-        - @chomper fix [feedback]   — plan and ship in one step
+        - @chomper fix [feedback]   — plan and ship in one step (use this for most tasks)
+        - @chomper plan [feedback]  — for complex tasks: draft a plan for review before touching any code
+        - @chomper approve          — implement and ship a plan that was drafted with @chomper plan
 
         USER: #{message}
 

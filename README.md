@@ -120,9 +120,9 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 
 | Comment | Behaviour |
 |---|---|
-| `@chomper plan [feedback]` | Draft an implementation plan (optional feedback text revises an existing plan) |
-| `@chomper approve` | Implement the current plan, commit, push, and open a draft PR |
-| `@chomper fix [feedback]` | Plan **and** ship in one step, skipping the approval wait |
+| `@chomper fix [feedback]` | Plan and ship in one step — the right choice for most tasks |
+| `@chomper plan [feedback]` | For complex tasks: draft a plan for human review before touching any code (optional feedback revises an existing plan) |
+| `@chomper approve` | Implement and ship a plan that was drafted with `@chomper plan` |
 | `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
 
 Triggers are gated by the `CHOMPER_ALLOWED_EMAILS` allowlist (when set). A work
