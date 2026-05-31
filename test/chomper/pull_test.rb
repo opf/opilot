@@ -3,7 +3,7 @@ require_relative "../test_helper"
 module Chomper
   class PullTest < Minitest::Test
     def setup
-      ctx = Struct.new(:op_url).new("https://example.com")
+      ctx = Struct.new(:op_url, :token).new("https://example.com", nil)
       @pull = Pull.new(ctx)
     end
 

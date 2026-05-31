@@ -1,4 +1,5 @@
 require "json"
+require_relative "clients"
 
 module Chomper
   # An inbound instruction parsed from an @chomper comment (see Pull#poll_intents).
@@ -28,6 +29,7 @@ module Chomper
       @pull    = pull
       @claude  = claude
       @publish = publish
+      @api     = Clients::OpenProject.new(ctx.op_url, ctx.token)
     end
 
     def run
@@ -279,11 +281,7 @@ module Chomper
     end
 
     def post_note(item_id, raw)
-      code, = HTTP.post_json(
-        "#{@ctx.op_url}/api/v3/work_packages/#{item_id}/activities",
-        { "comment" => { "raw" => raw }, "internal" => true },
-        token: @ctx.token
-      )
+      code, = @api.post_activity(item_id, comment: raw)
       log_script(code == 201 ? "Note posted to WP ##{item_id}" : "Note failed for WP ##{item_id} (HTTP #{code})")
       code
     end

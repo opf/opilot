@@ -4,7 +4,8 @@ require "json"
 require "retriable"
 
 module Chomper
-  module HTTP
+  module Clients
+    module HTTP
     Error = Class.new(RuntimeError)
 
     # Raised inside retriable blocks for transient HTTP status codes (429, 5xx).
@@ -96,6 +97,7 @@ module Chomper
       last_response
     rescue => e
       raise Error, "HTTP request failed for #{url}: #{e.message}"
+    end
     end
   end
 end

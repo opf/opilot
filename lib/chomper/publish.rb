@@ -1,11 +1,12 @@
-require "octokit"
+require_relative "clients"
 
 module Chomper
   class Publish
     include Helpers
 
     def initialize(ctx)
-      @ctx = ctx
+      @ctx    = ctx
+      @github = Clients::GitHub.new(ctx.github_token)
     end
 
     # Push the WP's fix branch and open a draft PR, returning the PR URL (or nil
@@ -30,7 +31,7 @@ module Chomper
         return nil
       end
 
-      existing = existing_pr_url(branch)
+      existing = @github.find_open_pr(github_repo, branch: branch)
       if existing
         pr_url_file.write(existing)
         return existing
@@ -50,34 +51,16 @@ module Chomper
                   "#{ref}\n\n#{body}"
                 end
 
-      # Authenticate via a credential helper that reads the token from the child's
-      # environment, so the secret never appears in argv (visible via ps/proc).
-      push_url    = "https://github.com/#{github_repo}.git"
-      cred_helper = '!f() { echo username=x-access-token; echo "password=$CHOMPER_GH_TOKEN"; }; f'
-      system(
-        { "CHOMPER_GH_TOKEN" => @ctx.github_token },
-        "git", "-C", @ctx.worktree_host.to_s,
-        "-c", "credential.helper=",            # reset any inherited helpers
-        "-c", "credential.helper=#{cred_helper}",
-        "push", push_url, "#{branch}:#{branch}"
-      ) or raise "git push failed for branch #{branch}"
+      @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
       title = "[##{item_id}] #{subject}"
-      pr = octokit.create_pull_request(github_repo, "dev", branch, title, pr_body, draft: true)
-      pr_url_file.write(pr.html_url)
+      url = @github.create_draft_pr(github_repo, base: "dev", head: branch, title: title, body: pr_body)
+      pr_url_file.write(url)
       record_progress(item_id, branch, "published")
-      pr.html_url
+      url
     end
 
     private
-
-    def existing_pr_url(branch)
-      owner = github_repo.split("/").first
-      prs = octokit.pull_requests(github_repo, head: "#{owner}:#{branch}", state: "open")
-      prs.first&.html_url
-    rescue Octokit::Error
-      nil
-    end
 
     def github_repo
       @github_repo ||= begin
@@ -87,8 +70,5 @@ module Chomper
       end
     end
 
-    def octokit
-      @octokit ||= Octokit::Client.new(access_token: @ctx.github_token)
-    end
   end
 end

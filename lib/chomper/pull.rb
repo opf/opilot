@@ -1,6 +1,7 @@
 require "json"
 require "tempfile"
 require "time"
+require_relative "clients"
 
 module Chomper
   FilterSet = Struct.new(:project_id, :project_name, :type_ids, :status_ids, :version_ids,
@@ -13,6 +14,7 @@ module Chomper
 
     def initialize(ctx)
       @ctx = ctx
+      @api = Clients::OpenProject.new(ctx.op_url, ctx.token)
       @scanned_count = 0
       @changed_count = 0
     end
@@ -25,18 +27,15 @@ module Chomper
     # re-fire after a crash is not missed.
     def poll_intents(filters)
       @scan_from_at = filters.scan_from_at
-      encoded = encoded_filters(filters)
-      sort    = HTTP.encode_filters('[["updatedAt","desc"]]')
+      fj = filters_json(filters)
 
       intents = []
       changed = 0
       page = 1; page_size = 50; total_written = 0; total = 0
       loop do
-        url = "#{@ctx.op_url}/api/v3/projects/#{filters.project_id}/work_packages" \
-              "?pageSize=#{page_size}&offset=#{page}&filters=#{encoded}&sortBy=#{sort}"
-        code, resp = HTTP.get_json(url, token: @ctx.token)
-        raise Chomper::FatalError, "API returned HTTP #{code} — URL: #{url}" if code != 200
-        raise Chomper::FatalError, "API returned unparseable response — URL: #{url}" if resp.nil?
+        code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
+        raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
+        raise Chomper::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
 
         count = resp["count"].to_i
         total = resp["total"].to_i
@@ -103,11 +102,11 @@ module Chomper
         print "  Project [TTP2]: "
         project_id = $stdin.gets.chomp
         project_id = "TTP2" if project_id.empty?
-        code, types_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}/types", token: @ctx.token)
+        code, types_data = @api.project_types(project_id)
         break if code == 200
         puts "  Project '#{project_id}' not found (HTTP #{code}) — please try again."
       end
-      _pc, project_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}", token: @ctx.token)
+      _pc, project_data = @api.project(project_id)
       project_name = project_data&.dig("name")
       type_names = types_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
       puts "  Types available: #{type_names}"
@@ -121,7 +120,7 @@ module Chomper
         .map { |e| e["id"].to_s }
       raise Chomper::FatalError, "None of the specified types found: #{sel_names.join(", ")}" if type_ids.empty?
 
-      _code, statuses_data = HTTP.get_json!("#{@ctx.op_url}/api/v3/statuses", token: @ctx.token)
+      _code, statuses_data = @api.statuses
       status_names = statuses_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
       puts "  Statuses available: #{status_names}"
       print "  Status(es), comma-separated [new, confirmed]: "
@@ -135,7 +134,7 @@ module Chomper
       raise Chomper::FatalError, "None of the specified statuses found: #{sel_status_names.join(", ")}" if status_ids.empty?
 
       version_ids = []; sel_ver_names = []
-      ver_code, versions_data = HTTP.get_json("#{@ctx.op_url}/api/v3/projects/#{project_id}/versions", token: @ctx.token)
+      ver_code, versions_data = @api.project_versions(project_id)
       if ver_code == 200
         ver_names = versions_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
         puts "  Versions available: #{ver_names}"
@@ -225,13 +224,11 @@ module Chomper
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # Builds the URL-encoded OpenProject `filters=` query from a FilterSet
-    # (status + type, plus an optional version clause).
-    def encoded_filters(filters)
-      version_filter = filters.version_ids.empty? ? "" :
+    # Builds the raw filters JSON for a FilterSet (status + type, optional version).
+    def filters_json(filters)
+      version_clause = filters.version_ids.empty? ? "" :
         %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
-      filters_json = %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_filter}])
-      HTTP.encode_filters(filters_json)
+      %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_clause}])
     end
 
     def fetch_work_package_item(wp)
@@ -246,10 +243,10 @@ module Chomper
         end
       end
 
-      acts_code, acts = HTTP.get_json("#{@ctx.op_url}/api/v3/work_packages/#{wp_id}/activities", token: @ctx.token)
+      acts_code, acts = @api.work_package_activities(wp_id)
       acts = { "_embedded" => { "elements" => [] } } unless acts_code == 200
 
-      rxns_code, rxns = HTTP.get_json("#{@ctx.op_url}/api/v3/work_packages/#{wp_id}/activities_emoji_reactions", token: @ctx.token)
+      rxns_code, rxns = @api.work_package_emoji_reactions(wp_id)
       rxns = { "_embedded" => { "elements" => [] } } unless rxns_code == 200
 
       comments = build_comments(
@@ -355,7 +352,7 @@ module Chomper
       href = comment["user_href"].to_s
       return nil if href.empty?
       user_id = href.split("/").last
-      _, user = HTTP.get_json("#{@ctx.op_url}/api/v3/users/#{user_id}", token: @ctx.token)
+      _, user = @api.user(user_id)
       user&.dig("email")&.downcase
     rescue => e
       puts "  Warning: could not resolve email for #{comment["user"]}: #{e.message}"
@@ -364,18 +361,14 @@ module Chomper
 
     def react_eyes(activity_id)
       return unless activity_id.to_s.length > 0
-      HTTP.patch_json(
-        "#{@ctx.op_url}/api/v3/activities/#{activity_id}/emoji_reactions",
-        { "reaction" => "eyes" },
-        token: @ctx.token
-      )
+      @api.post_emoji_reaction(activity_id, reaction: "eyes")
     rescue => e
       puts "  Warning: could not post 👀 reaction: #{e.message}"
     end
 
     def own_user_href
       @own_user_href ||= begin
-        _, me = HTTP.get_json("#{@ctx.op_url}/api/v3/users/me", token: @ctx.token)
+        _, me = @api.me
         me&.dig("_links", "self", "href")
       end
     end

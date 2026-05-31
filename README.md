@@ -154,7 +154,11 @@ openproject-chomper/
 ├── lib/chomper/
 │   ├── cli.rb              ← command dispatch (agent / status / reset)
 │   ├── context.rb          ← shared config and paths
-│   ├── http.rb             ← thin HTTP wrapper
+│   ├── clients.rb          ← requires clients/
+│   ├── clients/
+│   │   ├── http.rb         ← transport layer (retry, auth, JSON parsing)
+│   │   ├── openproject.rb  ← OpenProject REST API client (all endpoint calls)
+│   │   └── github.rb       ← GitHub client (branch push, PR lookup and creation)
 │   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
 │   ├── pull.rb             ← poll OpenProject, turn @chomper comments into intents
 │   ├── agent.rb            ← the loop: handle chat / plan / approve / fix

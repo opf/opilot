@@ -8,7 +8,7 @@ require "fileutils"
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
 require "chomper/context"
-require "chomper/http"
+require "chomper/clients"
 require "chomper/helpers"
 require "chomper/prompts"
 require "chomper/claude"
@@ -21,4 +21,4 @@ require "chomper/cli"
 WebMock.disable_net_connect!
 
 # Disable real retry backoff so the suite doesn't sleep through HTTP retries.
-Chomper::HTTP.base_interval = 0
+Chomper::Clients::HTTP.base_interval = 0
