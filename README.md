@@ -299,4 +299,4 @@ GITHUB_TOKEN=ghp_...
   * One disadvantage: API tokens are billed separately. However, after 6th of June, we'll have to pay anyway.
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
 * Limit egress from the Claude container to only Anthropic & Rails guides
-* Add more robust error handling around the HTTP interface between runner and claude containers (timeouts, retries, malformed responses, etc.)
+* Ensure each WP-scoped session is isolated from the rest (current version looks buggy)
