@@ -41,9 +41,16 @@ module Chomper
       end
     end
 
-    def branch_slug(id, title)
-      slug = title.downcase.gsub(/[^a-z0-9]/, "-")[0, 40]
-      "fix/#{id.to_i}-#{slug}"
+    def branch_slug(id, type, title)
+      prefix = sanitize_branch_part(type).then { |s| s.empty? ? "task" : s }
+      slug   = sanitize_branch_part(title)[0, 40]
+      "#{prefix}/#{id}-#{slug}"
+    end
+
+    private
+
+    def sanitize_branch_part(str)
+      str.downcase.gsub("&", "and").gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
     end
 
     # Uses revparse instead of branches.local, which parses `git branch -a` and

@@ -30,7 +30,7 @@ module Chomper
     # Mirrors the real Publish: open_pr writes pr_url.txt and returns the URL.
     class FakePublish
       def initialize(state_dir, pr:); @state_dir = state_dir; @pr = pr; end
-      def open_pr(id, _subject)
+      def open_pr(id, _subject, _branch)
         (@state_dir / "items" / id.to_s / "pr_url.txt").write(@pr)
         @pr
       end
@@ -113,8 +113,8 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
-    def intent(command, item_id: "42", subject: "Fix the bug", text: nil, user: nil, user_href: nil)
-      Intent.new(item_id: item_id, subject: subject, command: command, text: text,
+    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil, user_href: nil)
+      Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
                  comment_at: "2024-02-01T00:00:00Z", user: user, user_href: user_href)
     end
 

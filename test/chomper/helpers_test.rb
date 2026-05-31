@@ -27,27 +27,42 @@ module Chomper
     end
 
     def test_branch_slug_basic
-      assert_equal "fix/42-fix-the-login-bug", h.branch_slug(42, "Fix the login bug")
+      assert_equal "bug/42-fix-the-login-bug", h.branch_slug(42, "Bug", "Fix the login bug")
     end
 
     def test_branch_slug_downcases
-      assert_equal "fix/1-all-caps", h.branch_slug(1, "ALL CAPS")
+      assert_equal "feature/1-all-caps", h.branch_slug(1, "Feature", "ALL CAPS")
+    end
+
+    def test_branch_slug_sanitizes_type
+      assert_equal "new-feature/1-title", h.branch_slug(1, "New Feature", "title")
+    end
+
+    def test_branch_slug_ampersand_in_type
+      assert_equal "research-and-development/1-title", h.branch_slug(1, "Research & Development", "title")
+    end
+
+    def test_branch_slug_falls_back_to_task_when_type_empty
+      assert_match(/^task\//, h.branch_slug(1, "", "title"))
     end
 
     def test_branch_slug_replaces_special_chars_with_hyphens
-      slug = h.branch_slug(1, "Fix: the #1 bug (critical!)")
+      slug = h.branch_slug(1, "Bug", "Fix: the #1 bug (critical!)")
       refute_match(/[^a-z0-9\-\/]/, slug)
     end
 
     def test_branch_slug_truncates_title_to_40_chars
-      long_title = "a" * 60
-      slug = h.branch_slug(1, long_title)
-      title_part = slug.sub("fix/1-", "")
+      slug = h.branch_slug(1, "Bug", "a" * 60)
+      title_part = slug.sub("bug/1-", "")
       assert title_part.length <= 40
     end
 
     def test_branch_slug_integer_id
-      assert_match(/^fix\/99-/, h.branch_slug(99, "Some title"))
+      assert_match(/^bug\/99-/, h.branch_slug(99, "Bug", "Some title"))
+    end
+
+    def test_branch_slug_string_id
+      assert_match(/^bug\/ABC-123-/, h.branch_slug("ABC-123", "Bug", "Some title"))
     end
   end
 end

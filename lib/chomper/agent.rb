@@ -4,7 +4,7 @@ require_relative "clients"
 module Chomper
   # An inbound instruction parsed from an @chomper comment (see Pull#poll_intents).
   # `user` / `user_href` identify the commenter, so replies can address them.
-  Intent = Struct.new(:item_id, :subject, :command, :text, :comment_at,
+  Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
                       :user, :user_href, keyword_init: true)
 
   # Cooperative shutdown flag, shared with the SIGINT handler in bin/chomper.
@@ -99,7 +99,7 @@ module Chomper
     # ── command handlers ──────────────────────────────────────────────────────
 
     def handle_chat(intent)
-      st = state_for(intent.item_id, intent.subject)
+      st = state_for(intent.item_id, intent.subject, intent.type)
       plan_text = st.plan_file.exist? ? st.plan_file.read : "(no plan yet)"
       prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
@@ -109,7 +109,7 @@ module Chomper
     end
 
     def handle_plan(intent)
-      st = state_for(intent.item_id, intent.subject)
+      st = state_for(intent.item_id, intent.subject, intent.type)
       return unless produce_plan(st, intent.text) == :ok
       post_note(st.item_id, addressed(
         "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
@@ -117,7 +117,7 @@ module Chomper
     end
 
     def handle_approve(intent)
-      st = state_for(intent.item_id, intent.subject)
+      st = state_for(intent.item_id, intent.subject, intent.type)
       unless st.plan_file.exist? && st.plan_file.size > 0
         post_note(st.item_id, addressed("there's no plan yet — comment `@chomper plan` first, or `@chomper fix` to plan and ship in one go."))
         return
@@ -126,7 +126,7 @@ module Chomper
     end
 
     def handle_fix(intent)
-      st = state_for(intent.item_id, intent.subject)
+      st = state_for(intent.item_id, intent.subject, intent.type)
       # Express lane: skip the internal reviewer (NEEDS_INFO still guards blind fixes).
       return unless produce_plan(st, intent.text, review: false) == :ok
       ship(st)
@@ -210,10 +210,11 @@ module Chomper
       end
 
       generate_pr_description(st)
-      url = @publish.open_pr(st.item_id, st.subject)
+      url = @publish.open_pr(st.item_id, st.subject, st.branch)
       if url
         record_progress(st.item_id, st.branch, "shipped")
-        post_note(st.item_id, addressed("here's your draft PR: #{url}"))
+        pr_title = "[##{st.item_id}] #{st.subject}"
+        post_note(st.item_id, addressed("here's your draft PR: [#{pr_title}](#{url})"))
       else
         post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
       end
@@ -262,13 +263,13 @@ module Chomper
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def state_for(item_id, subject)
+    def state_for(item_id, subject, type = nil)
       dir = @ctx.state_dir / "items" / item_id.to_s
       dir.mkpath
       ItemState.new(
         item_id:      item_id.to_s,
         subject:      subject.to_s,
-        branch:       branch_slug(item_id, subject.to_s),
+        branch:       branch_slug(item_id, type.to_s, subject.to_s),
         item_dir:     dir,
         plan_file:    dir / "plan.md",
         item_file:    dir / "item.json",

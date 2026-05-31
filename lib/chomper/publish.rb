@@ -11,13 +11,12 @@ module Chomper
 
     # Push the WP's fix branch and open a draft PR, returning the PR URL (or nil
     # on failure). Idempotent: an already-open PR is recorded and returned.
-    def open_pr(item_id, subject)
+    def open_pr(item_id, subject, branch)
       unless @ctx.github_token
         puts "  Error: GITHUB_TOKEN is not set — cannot open PRs."
         return nil
       end
 
-      branch       = branch_slug(item_id, subject)
       item_dir     = @ctx.state_dir / "items" / item_id.to_s
       pr_desc_file = item_dir / "pr.md"
       pr_url_file  = item_dir / "pr_url.txt"

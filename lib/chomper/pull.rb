@@ -193,6 +193,7 @@ module Chomper
       Intent.new(
         item_id:    wp["id"].to_s,
         subject:    wp["subject"],
+        type:       wp.dig("_embedded", "type", "name").to_s,
         command:    command,
         text:       text,
         comment_at: trigger["created_at"],
