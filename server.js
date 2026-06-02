@@ -2,7 +2,7 @@
 const http = require('http');
 const { spawn } = require('child_process');
 
-const PORT = 3000;
+const PORT = 47291;
 const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 // Serialise requests so sessions are never interleaved.
@@ -60,6 +60,12 @@ function runClaude(body, tools, sessionId, res, done) {
 
   proc.on('close', () => {
     clearTimeout(timer);
+    if (!capturedSessionId && lineBuffer.trim()) {
+      try {
+        const parsed = JSON.parse(lineBuffer);
+        if (parsed.session_id) capturedSessionId = parsed.session_id;
+      } catch (e) {}
+    }
     if (capturedSessionId) {
       res.write(JSON.stringify({ type: 'session_id', session_id: capturedSessionId }) + '\n');
     }

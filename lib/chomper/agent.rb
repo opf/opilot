@@ -213,8 +213,7 @@ module Chomper
       url = @publish.open_pr(st.item_id, st.subject, st.branch)
       if url
         record_progress(st.item_id, st.branch, "shipped")
-        pr_title = "[##{st.item_id}] #{st.subject}"
-        post_note(st.item_id, addressed("here's your draft PR: [#{pr_title}](#{url})"))
+        post_note(st.item_id, addressed("here's your draft PR: [#{st.subject}](#{url})"))
       else
         post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
       end

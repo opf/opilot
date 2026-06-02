@@ -9,7 +9,7 @@ services:
     environment:
       - ANTHROPIC_API_KEY
       - GITHUB_TOKEN
-      - CLAUDE_URL=http://claude:3000
+      - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL
       - GIT_COMMITTER_NAME
@@ -35,7 +35,7 @@ services:
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
       - ANTHROPIC_API_KEY
     ports:
-      - "3000:3000"
+      - "47291:47291"
     read_only: true
     tmpfs:
       - /tmp
@@ -44,7 +44,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:47291/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 2s
       timeout: 5s
       retries: 15

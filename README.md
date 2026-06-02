@@ -78,7 +78,7 @@ cp .env.example .env
 │    │      * Draft PR data                    │   │ 
 │    │  * Pushes branches and opens PRs        │   │
 │    │  * Delegates conversation to Claude     │   │
-│    │      * HTTP POST http://claude:3000     │   │
+│    │      * HTTP POST http://claude:47291    │   │
 │    │                                         │   │
 │    │                                         │   │
 │    └─────────────────────────────────────────┘   │
@@ -89,7 +89,7 @@ cp .env.example .env
 │                        ▼                         │       
 │   ┌──────────── claude container ─────────────┐  │
 │   │                                           │  │
-│   │  Node.js server (:3000)                   │  │
+│   │  Node.js server (:47291)                  │  │
 │   │    POST / → `claude -p`                   │  │
 │   │                                           │  │
 │   │  volumes:                                 │  │
@@ -284,7 +284,7 @@ GITHUB_TOKEN=ghp_...
 
 ### Architecture & Refactoring
 * Explore alternatives to Claude Code. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
-  * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :3000
+  * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
 * Use separate agents for development and review to clearly split domain ownership
 
 ### Features

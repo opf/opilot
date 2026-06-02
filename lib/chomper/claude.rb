@@ -19,7 +19,9 @@ module Chomper
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.
     def run(prompt, tools: nil, session_file: nil)
-      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT").bold
+      session_id = session_file&.exist? ? session_file.read.strip : nil
+
+      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT (session: #{session_id || "fresh"})").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
@@ -29,8 +31,6 @@ module Chomper
       puts resp_header
       log_append(resp_header)
 
-      session_id = session_file&.exist? ? session_file.read.strip : nil
-      log_append("session: #{session_id ? "resume #{session_id}" : "fresh"}")
       text, new_session_id = http_stream(prompt, tools: tools, session_id: session_id)
       if session_file && new_session_id
         log_append("session: captured #{new_session_id} → #{session_file}")

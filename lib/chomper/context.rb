@@ -22,7 +22,7 @@ module Chomper
       @progress_file      = @state_dir / "progress.txt"
       @log_file           = @state_dir / "chomp.log"
       @github_token       = ENV["GITHUB_TOKEN"]
-      @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:3000")
+      @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @worktree_host      = @state_dir / "openproject"
       @worktree_container = "/repo"
       @state_container    = "/state"
