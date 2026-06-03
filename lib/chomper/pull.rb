@@ -64,6 +64,16 @@ module Chomper
       mark_chomper_acted(item_id, comment_at)
     end
 
+    # Record the ID of a note posted by chomper so it is never re-detected as a
+    # trigger. Called by the agent after successfully posting a reply.
+    def record_chomper_comment(wp_id, comment_id)
+      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
+      return unless item_path.exist?
+      data = JSON.parse(item_path.read)
+      data["last_chomper_comment_id"] = comment_id.to_s
+      item_path.write(JSON.generate(data))
+    end
+
     def load_or_prompt_agent_filters
       if agent_filters_path.exist?
         data = JSON.parse(agent_filters_path.read)
@@ -258,7 +268,8 @@ module Chomper
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = JSON.parse(item_path.read) rescue {}
-        full["last_acted_comment_at"] = prev["last_acted_comment_at"] if prev.key?("last_acted_comment_at")
+        full["last_acted_comment_at"]  = prev["last_acted_comment_at"]  if prev.key?("last_acted_comment_at")
+        full["last_chomper_comment_id"] = prev["last_chomper_comment_id"] if prev.key?("last_chomper_comment_id")
       end
       item_dir.mkpath
       item_path.write(JSON.generate(full))
@@ -367,32 +378,22 @@ module Chomper
       puts "  Warning: could not post 👀 reaction: #{e.message}"
     end
 
-    def own_user_href
-      @own_user_href ||= begin
-        _, me = @api.me
-        me&.dig("_links", "self", "href")
-      end
-    end
-
     def chomper_trigger_comment(wp_id, comments)
       item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
-      last_acted = item_path.exist? ? (JSON.parse(item_path.read)["last_acted_comment_at"] rescue nil) : nil
-      cutoff = [last_acted, @scan_from_at].compact.max
+      saved = item_path.exist? ? (JSON.parse(item_path.read) rescue {}) : {}
+      cutoff = [saved["last_acted_comment_at"], @scan_from_at].compact.max
+      last_chomper_id = saved["last_chomper_comment_id"]
       comments
-        .reject { |c| c["user_href"] == own_user_href }
+        .reject { |c| last_chomper_id && c["id"] == last_chomper_id }
         .select { |c| chomper_mentioned?(c["text"]) }
         .select { |c| cutoff.nil? || c["created_at"] > cutoff }
         .max_by { |c| c["created_at"] }
     end
 
-    # A comment triggers chomper only when it carries a CKEditor mention of
-    # chomper's own user — i.e. a <mention> element whose data-id is our user id.
-    # Matching the literal "@chomper" text would misfire on quotes, plain-text
-    # references, or mentions of similarly-named users.
+    # A comment triggers chomper when it contains the literal text "@chomper"
+    # (case-insensitive), either as plain text or inside a CKEditor mention element.
     def chomper_mentioned?(text)
-      id = own_user_href.to_s.split("/").last.to_s
-      return false if id.empty?
-      text.to_s.match?(%r{<mention\b[^>]*\bdata-id="#{Regexp.escape(id)}"})
+      text.to_s.match?(/\@chomper\b/i)
     end
 
     def mark_chomper_acted(wp_id, created_at)

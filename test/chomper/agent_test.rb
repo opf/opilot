@@ -40,6 +40,7 @@ module Chomper
       attr_reader :acted
       def initialize; @acted = []; end
       def mark_acted(id, at); @acted << [id, at]; end
+      def record_chomper_comment(*, **); end
     end
 
     # A publisher whose push always fails, to exercise the error path.

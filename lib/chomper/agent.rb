@@ -284,8 +284,14 @@ module Chomper
     end
 
     def post_note(item_id, raw)
-      code, = @api.post_activity(item_id, comment: raw)
-      log_script(code == 201 ? "Note posted to WP ##{item_id}" : "Note failed for WP ##{item_id} (HTTP #{code})")
+      code, body = @api.post_activity(item_id, comment: raw)
+      if code == 201
+        log_script "Note posted to WP ##{item_id}"
+        comment_id = body&.dig("id")&.to_s
+        @pull.record_chomper_comment(item_id, comment_id) if comment_id
+      else
+        log_script "Note failed for WP ##{item_id} (HTTP #{code})"
+      end
       code
     end
   end

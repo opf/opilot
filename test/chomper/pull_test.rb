@@ -253,9 +253,6 @@ module Chomper
     def setup
       @tmpdir = Dir.mktmpdir
       @pull   = build_pull
-      # /users/me drives own-comment filtering; chomper is user 1.
-      stub_request(:get, "https://example.com/api/v3/users/me")
-        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
     end
 
     def teardown
@@ -272,7 +269,6 @@ module Chomper
       @pull.poll_intents(FILTERS)
     end
 
-    # chomper is user 1 (per the /users/me stub); a trigger is a mention of it.
     MENTION = %q(<mention class="mention" data-id="1" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 
     def test_emits_intent_for_chomper_comment
@@ -307,6 +303,55 @@ module Chomper
       # marked acted so it is not re-evaluated next poll
       on_disk = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
       assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
+    end
+
+    def test_ignores_comment_recorded_as_chomper_reply
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Tom", "user_href" => "/api/v3/users/1",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan" }
+      ])
+      # Mark comment 9 as a chomper-generated reply.
+      item_path = Pathname(@tmpdir) / "items" / "1" / "item.json"
+      data = JSON.parse(item_path.read)
+      data["last_chomper_comment_id"] = "9"
+      item_path.write(JSON.generate(data))
+
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_record_chomper_comment_persists_id
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.record_chomper_comment("1", "42")
+      data = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      assert_equal "42", data["last_chomper_comment_id"]
+    end
+
+    def test_record_chomper_comment_survives_item_refresh
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.record_chomper_comment("1", "42")
+      # Simulate a re-fetch that rewrites item.json (updated_at changes).
+      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stale_wp = wp(1, "2024-01-02T00:00:00Z").merge("updatedAt" => "2024-03-01T00:00:00Z")
+      @pull.send(:fetch_work_package_item, stale_wp)
+      data = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      assert_equal "42", data["last_chomper_comment_id"]
+    end
+
+    def test_emits_intent_for_plain_text_chomper_call
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@Chomper plan watch the edges" }
+      ])
+      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal :plan, intents[0].command
     end
 
     def test_ignores_work_packages_without_a_trigger
