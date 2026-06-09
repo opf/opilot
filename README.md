@@ -61,49 +61,41 @@ cp .env.example .env
 ## Bird's-eye view
 
 ```
-               ┌─────────────────┐
-               │   ./chomper     │
-               │ (shell wrapper) │
-               └─────────────────┘
-                        │
-                        │                    
-                        │ docker compose exec
-                        │
-┌─ Docker ──────────────┼──────────────────────────┐
-│                       ▼                          │
-│    ┌─────────── runner container ────────────┐   │
-│    │                                         │   │
-│    │ Ruby 4.0 script                         │   │
-│    │  * Pulls WP content from OP API         │   │
-│    │  * Manages metadata in .chomper/        │   │
-│    │      * WP metadata mirror               │   │
-│    │      * Plan files                       │   │
-│    │      * Draft PR data                    │   │ 
-│    │  * Pushes branches and opens PRs        │   │
-│    │  * Delegates conversation to Claude     │   │
-│    │      * HTTP POST http://claude:47291    │   │
-│    │                                         │   │
-│    │                                         │   │
-│    └─────────────────────────────────────────┘   │
-│                        ▲                         │
-│                        │                         │
-│                        │ json                    │
-│                        │                         │
-│                        ▼                         │       
-│   ┌──────────── claude container ─────────────┐  │
-│   │                                           │  │
-│   │  Node.js server (:47291)                  │  │
-│   │    POST / → `claude -p`                   │  │
-│   │                                           │  │
-│   │  volumes:                                 │  │
-│   │    .chomper/            → /state  (rw)    │  │
-│   │    .chomper/openproject → /repo   (rw)    │  │
-│   │                                           │  │
-│   │  internal-only network; all egress via    │  │
-│   │  the proxy container (allowlisted hosts)  │  │
-│   └───────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────┘
-
+              ┌─────────────────┐
+              │    ./chomper    │
+              │ (shell wrapper) │
+              └─────────────────┘
+                       │
+                       │ docker compose exec
+                       │
+┌─ Docker ─────────────┼──────────────────────────────────────────────┐
+│                      ▼                                              │
+│    ┌─────────── runner container ───────────┐                       │
+│    │                                        │                       │
+│    │ Ruby 4.0 script                        │                       │     ┌──────────┐
+│    │  * Pulls WP content from OP API        ├───────────────────────┤────▶│  OP API  │
+│    │  * Manages metadata in .chomper/       │                       │     └──────────┘
+│    │      * WP metadata mirror              │                       │
+│    │      * Plan files                      │                       │
+│    │      * Draft PR data                   │                       │     ┌────────────┐
+│    │  * Pushes branches and opens PRs       ├───────────────────────┤────▶│ GitHub API │
+│    │  * Delegates conversations to Claude   │                       │     └────────────┘
+│    └────────────────────────────────────────┘                       │
+│                      ▲                                              │
+│                      │ json                                         │
+│                      ▼                                              │
+│   ┌──────────── claude container ────────────┐                      │
+│   │ Node.js server (:47291)                  │    ┌─── proxy ───┐   │
+│   │   POST / → `claude -p`                   │    │ tinyproxy   │   │
+│   │                                          │    │ (:8888)     │   │     ┌───────────────┐
+│   │ volumes:                                 │───▶│             ├───┤────▶│ Anthropic API │
+│   │   .chomper/            → /state  (rw)    │    │ egress      │   │     └───────────────┘
+│   │   .chomper/openproject → /repo   (rw)    │    │ allowlist   │   │
+│   │                                          │    │             │   │
+│   │ internal-only; egress only via proxy     │    └─────────────┘   │
+│   │                                          │                      │
+│   └──────────────────────────────────────────┘                      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Security model
