@@ -2,10 +2,13 @@
 
 # openproject-chomper
 
-An agent that watches OpenProject work packages and acts on `@chomper` mentions: it plans a fix, implements it, and opens a draft PR — all inside a Docker container. You drive it from the comments; you review and merge when you're happy.
+An agent that watches OpenProject work packages and fixes bugs — all inside a Docker container. You review and merge when you're happy.
+
+Two modes:
 
 ```
-./chomper agent → comment "@chomper fix" on a bug → wait for the draft PR
+./chomper agent   → driven by @chomper comments on work packages
+./chomper backlog → fetch a full WP query, triage by complexity, step through with terminal approval
 ```
 
 ---
@@ -105,14 +108,28 @@ cp .env.example .env
 
 ## Commands
 
-chomper is agent-first: a single long-lived loop driven by `@chomper` comments.
-
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper backlog` | Fetch all WPs matching saved filters, triage by complexity, process one by one with terminal approval |
 | `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
+
+### `./chomper backlog` flow
+
+On first run, prompts you to save a filter (project / types / statuses / version). Then:
+
+1. Fetches all matching work packages and resolves the **Module** custom field from the WP form schema.
+2. Runs a Claude triage pass to estimate complexity for each item (cached in `backlog_triage.json`; reused on subsequent runs if the filters haven't changed).
+3. Groups items by Module and sorts each group from simplest to most complex.
+4. Steps through items one by one, streaming an implementation plan for each.
+5. Prompts: `[y]es implement / [s]kip / [d]rop / [c]hat`
+   - **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
+   - **s** — skip; item reappears on the next backlog run
+   - **d** — drop; item is permanently excluded from future backlog runs
+   - **c** — open a chat session to ask questions before deciding; plan is re-generated with the chat context afterwards
+6. Items already shipped (`pr_url.txt` present) or previously dropped (`backlog_done.txt`) are skipped automatically.
 
 ### `@chomper` comment commands
 
@@ -152,7 +169,7 @@ openproject-chomper/
 ├── chomper                  ← bash entry point (sets up Docker, runs runner)
 ├── bin/chomper              ← Ruby CLI (runs inside the runner container)
 ├── lib/chomper/
-│   ├── cli.rb              ← command dispatch (agent / status / reset)
+│   ├── cli.rb              ← command dispatch (agent / backlog / status / reset)
 │   ├── context.rb          ← shared config and paths
 │   ├── clients.rb          ← requires clients/
 │   ├── clients/
@@ -162,6 +179,7 @@ openproject-chomper/
 │   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
 │   ├── pull.rb             ← poll OpenProject, turn @chomper comments into intents
 │   ├── agent.rb            ← the loop: handle chat / plan / approve / fix
+│   ├── backlog_runner.rb   ← batch backlog mode: triage, cluster by module, terminal approval
 │   ├── prompts.rb          ← all Claude prompts
 │   ├── publish.rb          ← push branch, open draft PR
 │   ├── claude.rb           ← HTTP client for the Claude container
@@ -187,18 +205,22 @@ openproject-chomper/
 
 ```
 .chomper/
-├── agent_filters.json ← saved search filters (which WPs to watch)
-├── progress.txt       ← progress log
-├── chomp.log          ← full prompt + response log
-├── claude-auth/       ← persisted Claude container auth
-├── openproject/       ← git worktree or fresh clone of openproject
+├── agent_filters.json   ← saved search filters for agent mode
+├── backlog_filters.json ← saved search filters for backlog mode
+├── backlog_triage.json  ← cached complexity map (keyed by filter fingerprint)
+├── progress.txt         ← progress log
+├── chomp.log            ← full prompt + response log
+├── claude-auth/         ← persisted Claude container auth
+├── openproject/         ← git worktree or fresh clone of openproject
 └── items/
     └── <id>/
-        ├── item.json    ← full WP metadata + last_acted_comment_at (poll cache)
-        ├── plan.md      ← implementation plan (present = "has a plan")
-        ├── review.txt   ← Reviewer's critique (deleted after plan review)
-        ├── pr.md        ← generated PR description
-        └── pr_url.txt   ← PR URL (present = "shipped")
+        ├── item.json        ← full WP metadata + last_acted_comment_at (poll cache)
+        ├── plan.md          ← implementation plan (present = "has a plan")
+        ├── review.txt       ← Reviewer's critique (deleted after plan review)
+        ├── pr.md            ← generated PR description
+        ├── pr_url.txt       ← PR URL (present = "shipped")
+        ├── backlog_done.txt ← backlog outcome: "dropped" (permanent skip)
+        └── session_id       ← Claude session ID for per-WP chat continuity
 ```
 
 ---
@@ -261,6 +283,7 @@ GITHUB_TOKEN=ghp_...
 {
   "id":          "42",
   "subject":     "Null check in UserService",
+  "type":        "Bug",
   "url":         "https://community.openproject.org/work_packages/42",
   "status":      "New",
   "priority":    "Normal",
@@ -269,6 +292,7 @@ GITHUB_TOKEN=ghp_...
   "author":      "Jane Smith",
   "version":     "14.0",
   "category":    "auth",
+  "module":      "Comments and activity",
   "created_at":  "2024-01-15T10:00:00Z",
   "updated_at":  "2024-01-20T14:30:00Z",
   "description": "Raw description text...",

@@ -4,13 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that watches OpenProject work packages for `@chomper` mentions and automatically plans fixes, implements them in an isolated git worktree, and opens draft PRs. The user drives it via comments; the agent does the coding.
+`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Two modes:
+
+- **agent** — continuous polling loop driven by `@chomper` comments on work packages
+- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat`)
 
 ## Commands
 
 ```bash
 # Run the agent (polls every 10s for @chomper mentions)
 ./chomper agent
+
+# Run batch backlog mode (terminal approval per item)
+./chomper backlog
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
@@ -43,6 +49,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `context.rb` | Singleton config — env vars, paths, allowed emails |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
+| `backlog_runner.rb` | Batch backlog mode — triage, cluster by Module, terminal approval loop |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch via git credential helper; opens draft PRs via Octokit |
@@ -63,7 +70,9 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 ```
 .chomper/
-├── agent_filters.json       # saved search filters
+├── agent_filters.json       # saved search filters (agent mode)
+├── backlog_filters.json     # saved search filters (backlog mode)
+├── backlog_triage.json      # cached complexity map (keyed by filter fingerprint)
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── items/<wp_id>/
@@ -71,6 +80,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 │   ├── plan.md              # implementation plan
 │   ├── pr.md                # PR description
 │   ├── pr_url.txt           # published PR URL
+│   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent skip)
 │   └── session_id           # Claude session for continuity across turns
 ├── openproject/             # git worktree
 └── claude-auth/             # persisted Claude CLI auth
