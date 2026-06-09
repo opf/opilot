@@ -1,0 +1,7 @@
+# Hosts the claude container may reach (extended regex, one per line).
+# Anthropic API + auth/console, plus Rails docs for reference during
+# planning. Everything else is denied.
+^([a-z0-9-]+\.)*anthropic\.com$
+^([a-z0-9-]+\.)*claude\.ai$
+^([a-z0-9-]+\.)*claude\.com$
+^(guides|api)\.rubyonrails\.org$

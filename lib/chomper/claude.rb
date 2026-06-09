@@ -7,8 +7,12 @@ module Chomper
   class Claude
     include Helpers
 
+    # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
+    # any other grant. The Bash rule needs both forms: the bare command and the
+    # space-separated prefix — "bin/compose*" (no space) would also match
+    # unrelated commands like "bin/composer-evil".
     TOOLS_READ = "Read"
-    TOOLS_IMPL = "Read,Write,Edit,Bash(bin/compose*)"
+    TOOLS_IMPL = "Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"
 
     def initialize(ctx)
       @ctx = ctx

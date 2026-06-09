@@ -99,10 +99,32 @@ cp .env.example .env
 │   │    .chomper/            → /state  (rw)    │  │
 │   │    .chomper/openproject → /repo   (rw)    │  │
 │   │                                           │  │
+│   │  internal-only network; all egress via    │  │
+│   │  the proxy container (allowlisted hosts)  │  │
 │   └───────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────┘
 
 ```
+
+### Security model
+
+The claude container processes untrusted text (work package descriptions and
+comments), so it is boxed in from several directions:
+
+* **No host or LAN exposure** — port 47291 is not published; the container sits
+  on an `internal: true` Docker network reachable only by the runner.
+* **Server-side tool allowlist** — `server.js` refuses any `X-Claude-Tools`
+  grant that isn't one of the two known tool sets, and validates session IDs.
+* **Egress allowlist** — all outbound traffic goes through a tinyproxy sidecar
+  that only permits Anthropic endpoints (plus Rails docs); a prompt injection
+  has no channel to exfiltrate data.
+* **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
+  file mutation outside `/repo`, so plans, state, and Claude credentials can't
+  be tampered with even in the implementation phase.
+* **Container hardening** — read-only rootfs, `cap_drop: ALL`,
+  `no-new-privileges`, and no OpenProject/GitHub tokens in the environment.
+* **Human gate** — everything ships as a *draft* PR; review it as untrusted
+  code, since WP content can attempt prompt injection.
 
 ---
 
@@ -233,7 +255,7 @@ openproject-chomper/
 | `OPENPROJECT_TOKEN` | — | Read-only OpenProject API token (My Account → Access Tokens → View work packages) |
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
 | `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
-| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. **If unset or empty, any OpenProject user can trigger the agent;** set it to gate triggers to specific people. |
+| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
 ---
 
@@ -322,5 +344,4 @@ GITHUB_TOKEN=ghp_...
   * This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
   * One disadvantage: API tokens are billed separately. However, after 6th of June, we'll have to pay anyway.
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
-* Limit egress from the Claude container to only Anthropic & Rails guides
 * Ensure each WP-scoped session is isolated from the rest (current version looks buggy)

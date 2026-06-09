@@ -7,7 +7,7 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true
 
-COPY --chown=node:node server.js /app/server.js
+COPY --chown=node:node server.js claude-settings.json guard-writes.js /app/
 
 USER node
 

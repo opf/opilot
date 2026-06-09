@@ -1,4 +1,5 @@
 require "json"
+require "cgi"
 require_relative "clients"
 
 module Chomper
@@ -84,10 +85,12 @@ module Chomper
 
     # An OpenProject mention of the commenter, so replies notify and address them
     # by name (falls back to the bare name, then empty, when details are missing).
+    # Name and id are attacker-influenced (OpenProject display names are free
+    # text), so the name is HTML-escaped and the id must be numeric.
     def requester_mention(intent)
-      name = intent.user.to_s
+      name = CGI.escapeHTML(intent.user.to_s)
       id   = intent.user_href.to_s.split("/").last.to_s
-      return name if id.empty?
+      return name unless id.match?(/\A\d+\z/)
       %Q(<mention class="mention" data-id="#{id}" data-type="user" data-text="#{name}">@#{name}</mention>)
     end
 

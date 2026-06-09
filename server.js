@@ -5,6 +5,17 @@ const { spawn } = require('child_process');
 const PORT = 47291;
 const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
+// Server-side allowlist of tool grants. The header is client-controlled, so
+// only the exact grants the runner uses are accepted — anything else (e.g. an
+// unexpected Bash(*)) is refused rather than passed to --allowedTools.
+// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/claude.rb.
+const ALLOWED_TOOL_GRANTS = new Set([
+  'Read',
+  'Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)',
+]);
+
+const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
 // Serialise requests so sessions are never interleaved.
 const queue = [];
 let busy = false;
@@ -22,7 +33,8 @@ function enqueue(body, tools, sessionId, res) {
 }
 
 function runClaude(body, tools, sessionId, res, done) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose'];
+  const args = ['-p', '--output-format', 'stream-json', '--verbose',
+                '--settings', '/app/claude-settings.json'];
   if (tools) args.push('--allowedTools', tools);
   if (sessionId) {
     args.push('--resume', sessionId);
@@ -97,6 +109,17 @@ const server = http.createServer((req, res) => {
 
   const tools     = req.headers['x-claude-tools'];
   const sessionId = req.headers['x-claude-session'] || null;
+
+  if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' });
+    res.end('unknown tool grant\n');
+    return;
+  }
+  if (sessionId && !SESSION_ID_RE.test(sessionId)) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('malformed session id\n');
+    return;
+  }
 
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));

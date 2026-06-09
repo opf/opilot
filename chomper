@@ -44,6 +44,27 @@ if ! grep -q "^OP_REPO_PATH=" "$ENV_FILE" 2>/dev/null; then
   echo ""
 fi
 
+if ! grep -q "^CHOMPER_ALLOWED_EMAILS=" "$ENV_FILE" 2>/dev/null; then
+  _OP_URL="$(grep '^OPENPROJECT_URL=' "$ENV_FILE" | cut -d= -f2-)"
+  echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
+  while :; do
+    printf "  Emails allowed to trigger @chomper (comma-separated): "
+    read -r CHOMPER_ALLOWED_EMAILS
+    [ -n "$CHOMPER_ALLOWED_EMAILS" ] && break
+    # On the public community instance an open trigger means anyone on the
+    # internet can spend your tokens — refuse to proceed without a list.
+    if [[ "$_OP_URL" != *community.openproject.org* ]]; then
+      printf "  Leave empty to allow ALL users — are you sure? [y/N]: "
+      read -r _CONFIRM_OPEN
+      [[ "${_CONFIRM_OPEN:-N}" =~ ^[Yy] ]] && break
+    else
+      echo "  An allowlist is required when targeting the public community instance."
+    fi
+  done
+  printf 'CHOMPER_ALLOWED_EMAILS=%s\n' "$CHOMPER_ALLOWED_EMAILS" >> "$ENV_FILE"
+  echo ""
+fi
+
 # ── Load config ───────────────────────────────────────────────────────────
 _OP_REPO_PATH_RAW="$(grep '^OP_REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)"
 if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then
@@ -93,6 +114,6 @@ if [[ "$CMD" == "agent" || "$CMD" == "backlog" ]]; then
     echo ""
   fi
   docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
-  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude 2>/dev/null || true' EXIT INT TERM
+  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude proxy 2>/dev/null || true' EXIT INT TERM
 fi
 docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"

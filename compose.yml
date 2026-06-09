@@ -16,15 +16,26 @@ services:
       - GIT_COMMITTER_EMAIL
       - OPENPROJECT_URL=${OPENPROJECT_URL}
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
+      - CHOMPER_ALLOWED_EMAILS=${CHOMPER_ALLOWED_EMAILS:-}
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR}
     stdin_open: true
     tty: true
+    networks:
+      - internal
+      - egress
 
+  # The claude container is deliberately not published on the host and sits on
+  # an internal-only network: server.js is unauthenticated, so its only client
+  # must be the runner. All outbound traffic goes through the egress proxy,
+  # which allows Anthropic endpoints only — work-package text is untrusted, and
+  # this closes the exfiltration channel a prompt injection would need.
   claude:
     build:
       context: .
       dockerfile: Dockerfile.claude
+    depends_on:
+      - proxy
     volumes:
       - ${SCRIPT_DIR}/.chomper/claude-auth:/home/node/.claude
       - ${SCRIPT_DIR}/.chomper/openproject:/repo
@@ -34,8 +45,11 @@ services:
       - FORCE_COLOR=1
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
       - ANTHROPIC_API_KEY
-    ports:
-      - "47291:47291"
+      - HTTP_PROXY=http://proxy:8888
+      - HTTPS_PROXY=http://proxy:8888
+      - NO_PROXY=localhost,127.0.0.1
+    networks:
+      - internal
     read_only: true
     tmpfs:
       - /tmp
@@ -48,3 +62,26 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+
+  # Egress allowlist proxy for the claude container (tinyproxy, CONNECT to
+  # Anthropic domains only — see tinyproxy-filter).
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile.proxy
+    networks:
+      - internal
+      - egress
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+networks:
+  # No route to the outside world — claude can only talk to runner and proxy.
+  internal:
+    internal: true
+  egress:

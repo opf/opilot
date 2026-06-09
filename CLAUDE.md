@@ -35,10 +35,11 @@ docker compose build runner
 
 ## Architecture
 
-Two Docker containers orchestrated by `compose.yml`:
+Three Docker containers orchestrated by `compose.yml`:
 
 - **Runner** (Ruby 4.0): the agent. Polls OpenProject, dispatches intents, calls Claude, pushes branches, opens PRs.
-- **Claude** (Node 20 + Claude Code CLI): wraps `claude -p` via `server.js` HTTP server on port 47291. Accepts prompts with tool grants and session IDs; streams NDJSON back.
+- **Claude** (Node 20 + Claude Code CLI): wraps `claude -p` via `server.js` HTTP server on port 47291 (internal network only, never published to the host). Accepts prompts with tool grants and session IDs; streams NDJSON back. A `PreToolUse` hook (`guard-writes.js`, loaded via `--settings /app/claude-settings.json`) blocks file writes outside `/repo`.
+- **Proxy** (tinyproxy): egress allowlist for the claude container — only hosts matching `tinyproxy-filter` (Anthropic endpoints, Rails docs) are reachable; everything else is denied.
 
 The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree creation) then invokes the runner container.
 
@@ -89,7 +90,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 ### Claude container communication
 
 Runner POSTs to `http://claude:47291` with headers:
-- `X-Claude-Tools`: `"Read"` (planning/chat) or `"Read,Write,Edit,Bash(bin/compose*)"` (implementation)
+- `X-Claude-Tools`: `"Read"` (planning/chat) or `"Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"` (implementation). `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
 - `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
 `server.js` spawns `claude -p` with `--output-format stream-json --verbose`, streams NDJSON back, and persists the session ID.
@@ -102,5 +103,5 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OPENPROJECT_TOKEN` | API token (needs read access to WPs and write access to post comments) |
 | `OP_REPO_PATH` | Path to local openproject repo, or `false` to auto-clone |
 | `GITHUB_TOKEN` | For pushing branches and opening PRs |
-| `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent (empty = unrestricted) |
+| `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `ANTHROPIC_API_KEY` | Optional; falls back to `claude auth login` |
