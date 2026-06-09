@@ -60,6 +60,10 @@ module Chomper
         )
       end
 
+      def work_packages_form(project_id)
+        HTTP.post_json("#{@base}/api/v3/projects/#{project_id}/work_packages/form", {}, token: @token)
+      end
+
       # Posts a comment to a work package. Returns [code, response_hash].
       def post_activity(wp_id, comment:, internal: true)
         HTTP.post_json(

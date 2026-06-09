@@ -75,33 +75,46 @@ module Chomper
     end
 
     def load_or_prompt_agent_filters
-      if agent_filters_path.exist?
-        data = JSON.parse(agent_filters_path.read)
-        if data["type_names"] && data["status_names"]
-          saved = FilterSet.new(
-            project_id:    data["project_id"],
-            project_name:  data["project_name"],
-            type_ids:      data["type_ids"],
-            status_ids:    data["status_ids"],
-            version_ids:   data["version_ids"],
-            type_names:    data["type_names"],
-            status_names:  data["status_names"],
-            version_names: data["version_names"],
-            scan_from_at:  data["scan_from_at"]
-          )
-          version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
-          project_label = saved.project_name ? "#{saved.project_id} — #{saved.project_name}" : saved.project_id
-          puts "  Saved filters: project=[#{project_label}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
-          print "  Reuse saved filters? [Y/n]: "
-          return saved unless $stdin.gets.chomp.downcase == "n"
-        end
-      end
-      filters = prompt_search_filters
-      save_agent_filters(filters)
-      filters
+      load_or_prompt_filters(ask_scan_from: true)
     end
 
-    def prompt_search_filters
+    def load_or_prompt_backlog_filters
+      load_or_prompt_filters(ask_scan_from: false)
+    end
+
+    # Fetch all work packages matching filters (without requiring @chomper triggers).
+    # Saves each WP to item.json (same cache as poll_intents). When module_field_key
+    # is given, enriches item.json with a "module" key from that _links entry.
+    def fetch_all_items(filters, module_field_key: nil)
+      fj = filters_json(filters)
+      items = []
+      page = 1; page_size = 50; total_written = 0
+      loop do
+        code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
+        raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
+        raise Chomper::FatalError, "API returned unparseable response" if resp.nil?
+        count = resp["count"].to_i; total = resp["total"].to_i
+        break if count == 0
+        (resp.dig("_embedded", "elements") || []).each do |wp|
+          fetch_work_package_item(wp)
+          path = @ctx.state_dir / "items" / wp["id"].to_s / "item.json"
+          next unless path.exist?
+          data = JSON.parse(path.read)
+          if module_field_key
+            titles = wp.dig("_links", module_field_key)&.map { |l| l["title"] }&.compact
+            data["module"] = titles&.any? ? titles.join(" / ") : ""
+            path.write(JSON.generate(data))
+          end
+          items << data
+        end
+        total_written += count
+        break if total_written >= total
+        page += 1
+      end
+      items
+    end
+
+    def prompt_search_filters(ask_scan_from: true)
       puts ""
       puts "=== Search filters ==="
       puts ""
@@ -161,10 +174,13 @@ module Chomper
         puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
       end
 
-      puts "  How far back should the comment scanner look?"
-      puts "  Formats: \"1h\", \"2 days\", \"1 week\""
-      print "  Scan from [now]: "
-      scan_from_at = parse_scan_from_input($stdin.gets.chomp)
+      scan_from_at = nil
+      if ask_scan_from
+        puts "  How far back should the comment scanner look?"
+        puts "  Formats: \"1h\", \"2 days\", \"1 week\""
+        print "  Scan from [now]: "
+        scan_from_at = parse_scan_from_input($stdin.gets.chomp)
+      end
 
       puts ""
       FilterSet.new(
@@ -181,6 +197,33 @@ module Chomper
     end
 
     private
+
+    def load_or_prompt_filters(ask_scan_from:)
+      if agent_filters_path.exist?
+        data = JSON.parse(agent_filters_path.read)
+        if data["type_names"] && data["status_names"]
+          saved = FilterSet.new(
+            project_id:    data["project_id"],
+            project_name:  data["project_name"],
+            type_ids:      data["type_ids"],
+            status_ids:    data["status_ids"],
+            version_ids:   data["version_ids"],
+            type_names:    data["type_names"],
+            status_names:  data["status_names"],
+            version_names: data["version_names"],
+            scan_from_at:  data["scan_from_at"]
+          )
+          version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
+          project_label = saved.project_name ? "#{saved.project_id} — #{saved.project_name}" : saved.project_id
+          puts "  Saved filters: project=[#{project_label}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
+          print "  Reuse saved filters? [Y/n]: "
+          return saved unless $stdin.gets.chomp.downcase == "n"
+        end
+      end
+      filters = prompt_search_filters(ask_scan_from: ask_scan_from)
+      save_agent_filters(filters)
+      filters
+    end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an
     # Intent. Acknowledges receipt with 👀 and enforces the email allowlist
@@ -300,6 +343,7 @@ module Chomper
       {
         "id"          => wp["id"].to_s,
         "subject"     => wp["subject"],
+        "type"        => wp.dig("_embedded", "type", "name"),
         "url"         => "#{@ctx.op_url}/work_packages/#{wp["id"]}",
         "status"      => wp.dig("_embedded", "status", "name"),
         "priority"    => wp.dig("_embedded", "priority", "name"),

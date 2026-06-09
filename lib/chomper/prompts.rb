@@ -127,6 +127,28 @@ module Chomper
       PROMPT
     end
 
+    # TRIAGE: classify a batch of work packages by complexity (backlog mode).
+    # Outputs a summary line per item then a JSON block for machine parsing.
+    def self.triage(paths:)
+      <<~PROMPT
+        Read each of these work package JSON files:
+        #{paths}
+
+        For each item print one summary line:  #<id> <subject> → <complexity>
+
+        Then output the complete results between these exact delimiters — nothing after the closing one:
+        ---BEGIN JSON---
+        [{ "id": "<id>", "complexity": "<trivial|simple|moderate|complex>" }]
+        ---END JSON---
+
+        Complexity guide:
+          trivial  — single obvious fix, ≤2 files
+          simple   — clear fix, ≤5 files
+          moderate — spans multiple subsystems
+          complex  — architectural impact or high risk
+      PROMPT
+    end
+
     # Conversational reply to an @chomper comment on a work package (read-only tools).
     def self.chat(item_id:, subject:, item:, plan:, message:)
       <<~PROMPT
@@ -149,6 +171,26 @@ module Chomper
         USER: #{message}
 
         Reply helpfully and concisely. Your response will be posted as an internal note.
+      PROMPT
+    end
+    # Conversational reply during a terminal backlog session (read-only tools).
+    # Like chat but terminal-adapted: no OP reply instruction, no command list.
+    def self.backlog_chat(item_id:, subject:, item:, plan:, message:)
+      <<~PROMPT
+        You are chomper, reviewing OpenProject work package ##{item_id}: #{subject}
+        #{READ_ONLY}
+        This is a terminal planning session. Answer the user's question about the plan or the issue.
+        When done, the user will approve, skip, or discard the plan in the terminal.
+
+        ISSUE: #{item}  (JSON — fields: subject, description, comments[])
+        Read this file for full context before answering.
+
+        CURRENT PLAN:
+        #{plan}
+
+        USER: #{message}
+
+        Reply helpfully and concisely.
       PROMPT
     end
   end

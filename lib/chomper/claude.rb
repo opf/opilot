@@ -42,8 +42,8 @@ module Chomper
     end
 
     # Like run, but also writes ANSI-stripped output to outfile.
-    def capture(prompt, tools: nil, outfile:)
-      text = run(prompt, tools: tools)
+    def capture(prompt, tools: nil, outfile:, session_file: nil)
+      text = run(prompt, tools: tools, session_file: session_file)
       Pathname(outfile).write(strip_ansi(text))
       text
     end
@@ -98,7 +98,7 @@ module Chomper
             end
           end
         end
-      rescue EOFError, Errno::ECONNRESET, Errno::EPIPE => e
+      rescue SocketError, EOFError, Errno::ECONNRESET, Errno::EPIPE => e
         if attempts < 3
           delay = attempts * 10
           $stdout.puts Rainbow("\n  ⚠ #{e.class} (attempt #{attempts}) — retrying in #{delay}s…").yellow

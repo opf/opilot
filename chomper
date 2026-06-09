@@ -65,7 +65,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 
 # ── Run ───────────────────────────────────────────────────────────────────
 CMD="${1:-}"
-if [[ "$CMD" == "agent" ]]; then
+if [[ "$CMD" == "agent" || "$CMD" == "backlog" ]]; then
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   if [[ "$_CLONE_REPO" == "true" ]]; then
     if [ ! -d "$WORKTREE/.git" ]; then

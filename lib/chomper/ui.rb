@@ -81,6 +81,7 @@ module Chomper
 
         Commands:
           agent     Poll OpenProject every 10s and act on @chomper mentions
+          backlog   Fetch all matching WPs, group by module, process one by one with approval
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 
