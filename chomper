@@ -75,6 +75,9 @@ else
   _CLONE_REPO=false
 fi
 export OP_REPO_PATH
+# Mount path for compose (kept distinct from OP_REPO_PATH, whose .env value may
+# be relative or "false"); see the volumes comment in compose.yml.
+export OP_REPO="$OP_REPO_PATH"
 mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
 
 # ── Git identity — passed into the runner container so commits are authored

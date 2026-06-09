@@ -43,6 +43,8 @@ Three Docker containers orchestrated by `compose.yml`:
 
 The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree creation) then invokes the runner container.
 
+`compose.yml` mounts are keyed on `SCRIPT_DIR` and `OP_REPO`, which `./chomper` exports as absolute host paths so the repo and product checkout mount at their real paths (the agent computes host paths that must resolve identically inside the container). Both default to the current project when unset, so bare `docker compose run …` commands (e.g. tests) work from the repo root with no env prefix. `OP_REPO` is deliberately separate from the `OP_REPO_PATH` env var, whose `.env` value may be relative or `false` and is unusable as a mount path.
+
 ### Core Ruby modules (`lib/chomper/`)
 
 | File | Role |

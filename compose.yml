@@ -3,9 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.runner
+    # SCRIPT_DIR / OP_REPO are set (to absolute paths) by ./chomper, which
+    # mounts the repo and product checkout at their real host paths so the
+    # paths the agent computes resolve identically inside the container. When
+    # unset — e.g. a bare `docker compose run runner …` for tests — they fall
+    # back to mounting the current project at a fixed path, so no SCRIPT_DIR=…
+    # OP_REPO=… prefix is needed. (OP_REPO is separate from the OP_REPO_PATH
+    # env below, whose .env value is a relative path unusable as a mount.)
     volumes:
-      - ${SCRIPT_DIR}:${SCRIPT_DIR}
-      - ${OP_REPO_PATH}:${OP_REPO_PATH}
+      - ${SCRIPT_DIR:-.}:${SCRIPT_DIR:-/chomper}
+      - ${OP_REPO:-.}:${OP_REPO:-/op-repo}
     environment:
       - ANTHROPIC_API_KEY
       - GITHUB_TOKEN
@@ -18,7 +25,7 @@ services:
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - CHOMPER_ALLOWED_EMAILS=${CHOMPER_ALLOWED_EMAILS:-}
       - OP_REPO_PATH
-    working_dir: ${SCRIPT_DIR}
+    working_dir: ${SCRIPT_DIR:-/chomper}
     stdin_open: true
     tty: true
     networks:
@@ -37,9 +44,9 @@ services:
     depends_on:
       - proxy
     volumes:
-      - ${SCRIPT_DIR}/.chomper/claude-auth:/home/node/.claude
-      - ${SCRIPT_DIR}/.chomper/openproject:/repo
-      - ${SCRIPT_DIR}/.chomper:/state
+      - ${SCRIPT_DIR:-.}/.chomper/claude-auth:/home/node/.claude
+      - ${SCRIPT_DIR:-.}/.chomper/openproject:/repo
+      - ${SCRIPT_DIR:-.}/.chomper:/state
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - FORCE_COLOR=1
