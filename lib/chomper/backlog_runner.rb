@@ -494,7 +494,6 @@ module Chomper
         record_progress(st.item_id, st.branch, "shipped")
         st.pr_url_file.write(url)
         puts "  ✓ Draft PR: #{url}"
-        post_note(st.item_id, "draft PR opened from backlog run: #{url}")
       else
         puts "  ⚠ Implemented on #{st.branch} but couldn't open the PR — is GITHUB_TOKEN set?"
       end
