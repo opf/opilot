@@ -21,7 +21,7 @@ module Chomper
         Agent.new(@ctx).run
       when "backlog"
         sub = argv[1]
-        unless sub.nil? || %w[show triage].include?(sub)
+        unless sub.nil? || %w[show triage process].include?(sub)
           $stderr.puts "Unknown argument: backlog #{sub}"
           ui.usage
           raise Chomper::FatalError
@@ -30,9 +30,10 @@ module Chomper
         @ctx.log_file.open("a") { |f| f.puts "\n=== Backlog #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         runner = BacklogRunner.new(@ctx)
         case sub
-        when "show"   then runner.show
-        when "triage" then runner.triage
-        else               runner.run
+        when "show"    then runner.show
+        when "triage"  then runner.triage
+        when "process" then runner.process
+        else                runner.run
         end
       else
         $stderr.puts "Unknown argument: #{cmd}"

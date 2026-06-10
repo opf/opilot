@@ -18,35 +18,24 @@ module Chomper
 
     def run
       filters = @pull.load_or_prompt_backlog_filters
-      clusters, complexity_map, module_key, total = build_queue(filters, triage_mode: :interactive)
-      return unless clusters
+      queue = build_queue(filters, triage_mode: :interactive)
+      return unless queue
 
-      index = 0
-      clusters.each do |mod_name, cluster_items|
-        break if Chomper.stopping?
-        print_cluster_header(mod_name, cluster_items) if module_key
+      walk_queue(*queue)
+    end
 
-        cluster_items.each do |item_data|
-          break if Chomper.stopping?
-          index += 1
-          complexity = complexity_map[item_data["id"].to_s] || "?"
-          puts ""
-          puts "  [#{index}/#{total}] ##{item_data["id"]} — #{item_data["subject"]}  [#{complexity}]"
+    # Work the queue from the cached snapshot without re-fetching — the third
+    # backlog phase (`triage` → `show` → `process`). The per-item approval loop
+    # is identical to a full run. Fails when there is no snapshot: this command
+    # never fetches, so `backlog triage` must have run first.
+    def process
+      filters = @pull.saved_backlog_filters
+      raise Chomper::FatalError, "no saved backlog filters — run `./chomper backlog triage` first" unless filters
 
-          if (prior = prior_outcome(item_data))
-            puts "  ↩ #{prior} — skipping"
-            next
-          end
+      queue = offline_queue(filters)
+      raise Chomper::FatalError, "no cached queue for these filters — run `./chomper backlog triage` first" unless queue
 
-          puts "  #{item_data["url"]}"
-          desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
-          puts "  #{desc[0, 120]}" unless desc.empty?
-          process_item(item_data)
-        end
-      end
-
-      puts ""
-      log_script "Backlog run complete."
+      walk_queue(*queue)
     end
 
     # Preview the queue exactly as `run` would walk it — clusters, order,
@@ -94,6 +83,36 @@ module Chomper
     end
 
     private
+
+    # The interactive per-item approval loop shared by `run` and `process`.
+    def walk_queue(clusters, complexity_map, module_key, total)
+      index = 0
+      clusters.each do |mod_name, cluster_items|
+        break if Chomper.stopping?
+        print_cluster_header(mod_name, cluster_items) if module_key
+
+        cluster_items.each do |item_data|
+          break if Chomper.stopping?
+          index += 1
+          complexity = complexity_map[item_data["id"].to_s] || "?"
+          puts ""
+          puts "  [#{index}/#{total}] ##{item_data["id"]} — #{item_data["subject"]}  [#{complexity}]"
+
+          if (prior = prior_outcome(item_data))
+            puts "  ↩ #{prior} — skipping"
+            next
+          end
+
+          puts "  #{item_data["url"]}"
+          desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
+          puts "  #{desc[0, 120]}" unless desc.empty?
+          process_item(item_data)
+        end
+      end
+
+      puts ""
+      log_script "Backlog run complete."
+    end
 
     # Module field → fetch. Returns [items, module_key]; items is nil when
     # nothing matched.
@@ -153,7 +172,7 @@ module Chomper
       return nil if items.empty?
 
       missing = cached["item_ids"].length - items.length
-      log_script "Previewing #{items.length} cached work package(s) from #{cached["created_at"]}" \
+      log_script "Using cached queue: #{items.length} work package(s) from #{cached["created_at"]}" \
                  "#{" (#{missing} missing on disk)" if missing > 0}."
       map = cached["complexity"] || {}
       [group_and_sort(items, map), map, cached["module_field"], items.length]

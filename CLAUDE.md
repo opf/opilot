@@ -18,11 +18,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run batch backlog mode (terminal approval per item)
 ./chomper backlog
 
-# Preview the backlog queue (clusters + order) without processing
-./chomper backlog show
-
-# Fetch WPs and (re)build the complexity triage only
+# Or phase by phase: triage (fetch + classify) → show (preview) → process (work the cached queue)
 ./chomper backlog triage
+./chomper backlog show
+./chomper backlog process
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
