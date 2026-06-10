@@ -49,8 +49,8 @@ module Chomper
       return unless clusters
 
       index = 0; shipped = 0; dropped = 0
-      clusters.each do |mod_name, cluster_items|
-        print_cluster_header(mod_name, cluster_items) if module_key
+      clusters.each do |cluster_name, cluster_items|
+        print_cluster_header(cluster_name, cluster_items) if module_key
 
         cluster_items.each do |item_data|
           index += 1
@@ -110,9 +110,9 @@ module Chomper
     # The interactive per-item approval loop shared by `run` and `process`.
     def walk_queue(clusters, complexity_map, module_key, total)
       index = 0
-      clusters.each do |mod_name, cluster_items|
+      clusters.each do |cluster_name, cluster_items|
         break if Chomper.stopping?
-        print_cluster_header(mod_name, cluster_items) if module_key
+        print_cluster_header(cluster_name, cluster_items) if module_key
 
         cluster_items.each do |item_data|
           break if Chomper.stopping?
@@ -207,10 +207,10 @@ module Chomper
       color ? Rainbow(label).color(color) : Rainbow(label).dimgray
     end
 
-    def print_cluster_header(mod_name, cluster_items)
+    def print_cluster_header(cluster_name, cluster_items)
       puts ""
-      label = "  ── #{mod_name} (#{cluster_items.length} item#{cluster_items.length == 1 ? "" : "s"}) "
-      puts Rainbow(label).bold + Rainbow("─" * [2, 62 - mod_name.length].max).dimgray
+      label = "  ── #{cluster_name} (#{cluster_items.length} item#{cluster_items.length == 1 ? "" : "s"}) "
+      puts Rainbow(label).bold + Rainbow("─" * [2, 62 - cluster_name.length].max).dimgray
     end
 
     # Find the field named "Module" (case-insensitive) in the WP schemas of the
@@ -353,13 +353,17 @@ module Chomper
       log_script "Warning: could not persist backlog outcome (#{e.message})"
     end
 
-    # Group items by module (alphabetically; multi-module WPs carry their first
-    # module only), sort within each group by complexity.
+    # Queue order: complexity tier first (trivial → complex), then module
+    # alphabetically within each tier (multi-module WPs carry their first
+    # module only) — the easiest wins come up before anything hard, whatever
+    # module they live in. Unknown complexity sorts with moderate.
     def group_and_sort(items, complexity_map)
-      groups = items.group_by { |i| i["module"].to_s.then { |m| m.empty? ? "(unassigned)" : m } }
-      groups.sort_by { |name, _| name }.each_with_object({}) do |(name, group), h|
-        h[name] = group.sort_by { |i| COMPLEXITY_ORDER.fetch(complexity_map[i["id"].to_s] || "moderate", 2) }
+      groups = items.group_by do |i|
+        mod = i["module"].to_s
+        [complexity_map[i["id"].to_s] || "?", mod.empty? ? "(unassigned)" : mod]
       end
+      groups.sort_by { |(cx, mod), _| [COMPLEXITY_ORDER.fetch(cx, 2), mod] }
+            .each_with_object({}) { |((cx, mod), group), h| h["#{cx} · #{mod}"] = group }
     end
 
     def process_item(item_data)
@@ -368,9 +372,22 @@ module Chomper
       type    = item_data["type"].to_s
       st      = state_for(id, subject, type)
 
+      replan_feedback = nil
       loop do
         just_generated = false
-        unless st.plan_file.exist? && st.plan_file.size > 0
+        if replan_feedback
+          log_script "Re-planning ##{id} — #{subject}"
+          # Read-only and branch-agnostic: the branch was already checked out
+          # when the plan was first generated, so no checkout_branch here.
+          @claude.capture(
+            Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
+                           plan: container_path(st.plan_file), feedback: replan_feedback,
+                           item_id: id, title: subject),
+            tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
+          )
+          replan_feedback = nil
+          just_generated = true
+        elsif !(st.plan_file.exist? && st.plan_file.size > 0)
           log_script "Planning ##{id} — #{subject}"
           checkout_branch(st)
           # Pass session_file so a prior chat's context carries into the (re-)plan.
@@ -416,6 +433,7 @@ module Chomper
         case prompt_approval
         when :approve then ship(st); break
         when :chat    then run_chat(st)
+        when :replan  then replan_feedback = prompt_replan_feedback
         when :skip    then log_script "##{id} skipped — will reappear next run."; break
         when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
         end
@@ -437,16 +455,25 @@ module Chomper
 
     def prompt_approval
       loop do
-        print "  [y]es implement / [s]kip / [d]rop / [c]hat: "
+        print "  [y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
         case response
         when "", "y", "yes"  then return :approve
         when "s", "skip"     then return :skip
         when "d", "drop"     then return :drop
         when "c", "chat"     then return :chat
-        else puts "  Please enter y, s, d, or c."
+        when "r", "replan"   then return :replan
+        else puts "  Please enter y, s, d, c, or r."
         end
       end
+    end
+
+    # Feedback for a re-plan. Empty input means "fold in what we discussed in
+    # chat" — the Claude session already carries that conversation.
+    def prompt_replan_feedback
+      print "  Feedback (empty = revise per the chat above): "
+      msg = $stdin.gets&.chomp.to_s
+      msg.empty? ? "Revise the plan to incorporate the changes requested in the preceding conversation." : msg
     end
 
     def run_chat(st)

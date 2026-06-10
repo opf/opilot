@@ -180,7 +180,9 @@ module Chomper
         You are chomper, reviewing OpenProject work package ##{item_id}: #{subject}
         #{READ_ONLY}
         This is a terminal planning session. Answer the user's question about the plan or the issue.
-        When done, the user will approve, skip, or discard the plan in the terminal.
+        When done, the user will approve, skip, discard, or re-plan in the terminal.
+        If the user asks for changes to the plan, discuss them, but make clear the
+        saved plan is unchanged until they pick [r]e-plan — never claim it is updated.
 
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])
         Read this file for full context before answering.

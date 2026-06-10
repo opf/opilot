@@ -141,13 +141,14 @@ On first run, prompts you to save a filter (project / types / statuses / version
 
 1. Resolves the **Module** custom field from the per-type WP schemas (`/work_packages/schemas/<project>-<type>`) and fetches all matching work packages.
 2. Runs a Claude triage pass to estimate complexity for each item. The result is cached in `backlog_triage.json` and reused while the filters stay the same.
-3. Groups items by Module (a multi-module WP counts under its first module) and sorts each group from simplest to most complex.
+3. Orders the queue by complexity (trivial first), grouping by Module within each tier (a multi-module WP counts under its first module) — the easiest items come up first regardless of module.
 4. Steps through items one by one, streaming an implementation plan for each.
-5. Prompts: `[y]es implement / [s]kip / [d]rop / [c]hat`
+5. Prompts: `[y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan`
    - **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
    - **s** — skip; item reappears on the next backlog run
    - **d** — drop; item is permanently excluded from future backlog runs
-   - **c** — open a chat session to ask questions before deciding; plan is re-generated with the chat context afterwards
+   - **c** — open a chat session to ask questions before deciding; chat alone never changes the saved plan
+   - **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
 6. Items already shipped (`pr_url.txt` present) or previously dropped (`backlog_done.txt`) are skipped automatically.
 
 The phases also run separately: `backlog triage` fetches and classifies, `backlog show` previews the cached queue (instant — reads only local caches and starts no containers), and `backlog process` works the cached queue without re-fetching. `fix <id>` runs the same plan/approve loop for one WP by id, ignoring filters (and overriding a previous drop).
