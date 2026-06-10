@@ -136,6 +136,8 @@ module Chomper
       end
 
       process_item(item)
+    rescue Claude::Error => e
+      raise Chomper::FatalError, "Claude run failed: #{e.message}"
     end
 
     private
@@ -162,7 +164,13 @@ module Chomper
           puts "  #{item_data["url"]}"
           desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
           puts "  #{desc[0, 120]}" unless desc.empty?
-          process_item(item_data)
+          begin
+            process_item(item_data)
+          rescue Claude::Error => e
+            # Failed mid-chat or mid-implementation; planning failures are
+            # handled inside process_item. Keep walking the queue.
+            log_script "##{item_data["id"]} — Claude run failed: #{e.message}"
+          end
         end
       end
 
@@ -420,28 +428,54 @@ module Chomper
       replan_feedback = nil
       loop do
         just_generated = false
+        # On Claude::Error the failure was already shown in red; both branches
+        # fall through so the loop can recover instead of crashing the walk.
         if replan_feedback
           log_script "Re-planning ##{id} — #{subject}"
-          # Read-only and branch-agnostic: the branch was already checked out
-          # when the plan was first generated, so no checkout_branch here.
-          @claude.capture(
-            Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
-                           plan: container_path(st.plan_file), feedback: replan_feedback,
-                           item_id: id, title: subject),
-            tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
-          )
+          begin
+            # Read-only and branch-agnostic: the branch was already checked out
+            # when the plan was first generated, so no checkout_branch here.
+            @claude.capture(
+              Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
+                             plan: container_path(st.plan_file), feedback: replan_feedback,
+                             item_id: id, title: subject),
+              tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
+            )
+          rescue Claude::Error
+            # capture didn't write the outfile, so the previous plan survives;
+            # the user just saw the error and can retry from the prompt below.
+          end
           replan_feedback = nil
           just_generated = true
         elsif !(st.plan_file.exist? && st.plan_file.size > 0)
           log_script "Planning ##{id} — #{subject}"
           checkout_branch(st)
-          # Pass session_file so a prior chat's context carries into the (re-)plan.
-          @claude.capture(
-            Prompts.plan(repo: @ctx.worktree_container, item: container_path(st.item_file),
-                         item_id: id, title: subject),
-            tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
-          )
+          begin
+            # Pass session_file so a prior chat's context carries into the (re-)plan.
+            @claude.capture(
+              Prompts.plan(repo: @ctx.worktree_container, item: container_path(st.item_file),
+                           item_id: id, title: subject),
+              tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
+            )
+          rescue Claude::Error
+            # capture didn't write the outfile; the no-plan check below recovers.
+          end
           just_generated = true
+        end
+
+        # A run that dies mid-way (denied tool, max turns, timeout) can leave
+        # preamble text ("Let me look at…") but no actual plan — don't offer to
+        # implement that. The session survives, so a retry resumes with context.
+        unless plan_present?(st)
+          safe_rm(st.plan_file)
+          puts ""
+          puts "  ⚠ Plan generation failed — no plan came back."
+          case prompt_plan_failed
+          when :retry then next   # plan.md is gone, so the loop regenerates it
+          when :chat  then run_chat(st); next
+          when :skip  then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
+          when :drop  then mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
+          end
         end
 
         # Preamble-tolerant NEEDS_INFO check: Claude sometimes writes a sentence
@@ -482,6 +516,28 @@ module Chomper
         when :replan  then replan_feedback = prompt_replan_feedback
         when :skip    then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
         when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
+        end
+      end
+    end
+
+    # A usable generation is either a structured plan (any markdown heading,
+    # possibly after a preamble sentence) or a NEEDS_INFO block (handled
+    # separately). Anything else — missing file, bare preamble from a run that
+    # died ("Let me look at…") — is a failed generation.
+    def plan_present?(st)
+      st.plan_file.exist? && st.plan_file.read.match?(/^#+ |\bNEEDS_INFO\b/)
+    end
+
+    def prompt_plan_failed
+      loop do
+        print "  [r]etry / [c]hat / [s]kip / [d]rop: "
+        response = $stdin.gets&.chomp&.downcase || ""
+        case response
+        when "r", "retry" then return :retry
+        when "c", "chat"  then return :chat
+        when "s", "skip"  then return :skip
+        when "d", "drop"  then return :drop
+        else puts "  Please enter r, c, s, or d."
         end
       end
     end

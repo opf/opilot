@@ -103,7 +103,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 ### Claude container communication
 
 Runner POSTs to `http://claude:47291` with headers:
-- `X-Claude-Tools`: `"Read"` (planning/chat) or `"Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"` (implementation). `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
+- `X-Claude-Tools`: `"Read,Grep,Glob"` (planning/chat) or `"Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"` (implementation). `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
 - `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
 `server.js` spawns `claude -p` with `--output-format stream-json --verbose`, streams NDJSON back, and persists the session ID.

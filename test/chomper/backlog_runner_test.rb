@@ -45,6 +45,24 @@ module Chomper
       end
     end
 
+    # Plays back one scripted outcome per capture call: a string is written to
+    # the outfile, :error raises like a run that died mid-way (no outfile write).
+    class ScriptedPlanClaude
+      def initialize(*outputs); @outputs = outputs; end
+
+      def capture(_prompt, tools: nil, outfile:, session_file: nil)
+        out = @outputs.shift or raise "unexpected capture call"
+        raise Claude::Error, "run died" if out == :error
+        Pathname(outfile).write(out)
+      end
+    end
+
+    # The initial-plan path checks out a branch first; stub out git so the
+    # plan-failure recovery flow can be exercised without a worktree.
+    class NoGitRunner < BacklogRunner
+      private def checkout_branch(_st); end
+    end
+
     def setup
       @tmpdir = Dir.mktmpdir
       @ctx = Struct.new(
@@ -251,6 +269,52 @@ module Chomper
       assert_includes out, "parked until the next triage"
       assert_equal "skipped", (@ctx.state_dir / "items" / "8" / "backlog_done.txt").read
       assert (@ctx.state_dir / "items" / "8" / "plan.md").exist?, "skip must keep the plan for later"
+    end
+
+    def test_process_recovers_when_generation_returns_no_plan
+      write_item(15, "Flaky plan", "Costs")
+      seed_triage({ "15" => "simple" })
+      claude = ScriptedPlanClaude.new("Let me look at the issue.", "## Plan: #15 — Flaky plan")
+      r = NoGitRunner.new(@ctx, pull: FakePull.new, claude: claude, publish: nil)
+
+      # First generation streams only preamble: recovery prompt, [r]etry
+      # regenerates a real plan, then [s]kip at the approval prompt.
+      out, = with_stdin("r\ns\n") { capture_io { r.process } }
+
+      assert_includes out, "Plan generation failed"
+      assert_includes out, "[r]etry"
+      assert_equal "## Plan: #15 — Flaky plan",
+                   (@ctx.state_dir / "items" / "15" / "plan.md").read
+      assert_includes out, "parked until the next triage"
+    end
+
+    def test_process_recovers_when_claude_run_dies
+      write_item(16, "Dead run", "Costs")
+      seed_triage({ "16" => "simple" })
+      claude = ScriptedPlanClaude.new(:error)
+      r = NoGitRunner.new(@ctx, pull: FakePull.new, claude: claude, publish: nil)
+
+      out, = with_stdin("d\n") { capture_io { r.process } }
+
+      assert_includes out, "Plan generation failed"
+      assert_equal "dropped", (@ctx.state_dir / "items" / "16" / "backlog_done.txt").read
+      refute (@ctx.state_dir / "items" / "16" / "plan.md").exist?
+    end
+
+    def test_process_replan_failure_keeps_previous_plan
+      write_item(17, "Replan dies", "Costs")
+      seed_triage({ "17" => "simple" })
+      (@ctx.state_dir / "items" / "17" / "plan.md").write("## Plan: original")
+      claude = ScriptedPlanClaude.new(:error)
+      r = BacklogRunner.new(@ctx, pull: FakePull.new, claude: claude, publish: nil)
+
+      # [r]e-plan with feedback dies; the old plan survives and the approval
+      # prompt returns, where [s]kip parks the item.
+      out, = with_stdin("r\nmake it simpler\ns\n") { capture_io { r.process } }
+
+      refute_includes out, "Plan generation failed"
+      assert_equal "## Plan: original", (@ctx.state_dir / "items" / "17" / "plan.md").read
+      assert_includes out, "parked until the next triage"
     end
 
     def test_show_counts_skipped_separately

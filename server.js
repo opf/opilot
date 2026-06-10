@@ -10,8 +10,8 @@ const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 // unexpected Bash(*)) is refused rather than passed to --allowedTools.
 // Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/claude.rb.
 const ALLOWED_TOOL_GRANTS = new Set([
-  'Read',
-  'Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)',
+  'Read,Grep,Glob',
+  'Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)',
 ]);
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;

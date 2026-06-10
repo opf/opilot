@@ -7,12 +7,19 @@ module Chomper
   class Claude
     include Helpers
 
+    # The claude CLI run ended with an error result (e.g. it requested a tool
+    # that isn't granted, or hit max turns). Whatever text was streamed before
+    # the failure is partial and must not be treated as a finished answer.
+    Error = Class.new(StandardError)
+
     # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
-    # any other grant. The Bash rule needs both forms: the bare command and the
-    # space-separated prefix — "bin/compose*" (no space) would also match
-    # unrelated commands like "bin/composer-evil".
-    TOOLS_READ = "Read"
-    TOOLS_IMPL = "Read,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"
+    # any other grant. Grep and Glob are granted everywhere: without them the
+    # model has no way to search the repo and reaches for Bash find/grep
+    # instead, which is denied and kills the run. The Bash rule needs both
+    # forms: the bare command and the space-separated prefix — "bin/compose*"
+    # (no space) would also match unrelated commands like "bin/composer-evil".
+    TOOLS_READ = "Read,Grep,Glob"
+    TOOLS_IMPL = "Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"
 
     def initialize(ctx)
       @ctx = ctx
@@ -35,10 +42,15 @@ module Chomper
       puts resp_header
       log_append(resp_header)
 
-      text, new_session_id = http_stream(prompt, tools: tools, session_id: session_id)
+      text, new_session_id, error = http_stream(prompt, tools: tools, session_id: session_id)
+      # Save the session even on error, so a retry can resume with context.
       if session_file && new_session_id
         log_append("session: captured #{new_session_id} → #{session_file}")
         session_file.write(new_session_id)
+      end
+      if error
+        log_append("run failed: #{error}")
+        raise Error, error
       end
       log_append(text)
       puts ""
@@ -63,6 +75,7 @@ module Chomper
         at_line_start       = true
         after_tool          = false
         captured_session_id = nil
+        error               = nil
 
         req = Net::HTTP::Post.new(@uri)
         req["X-Claude-Tools"]   = tools      if tools
@@ -78,6 +91,17 @@ module Chomper
                 case parsed["type"]
                 when "session_id"
                   captured_session_id = parsed["session_id"]
+                when "result"
+                  # The CLI's final verdict on the run. An error here (denied
+                  # tool, max turns, …) means the run died mid-way; surface it
+                  # instead of passing the partial text off as the answer.
+                  if parsed["is_error"] || parsed["subtype"].to_s.start_with?("error")
+                    error = parsed["result"].to_s.strip
+                    error = parsed["subtype"].to_s if error.empty?
+                    $stdout.puts "" unless at_line_start
+                    $stdout.puts Rainbow("  ✗ #{error}").red
+                    at_line_start = true
+                  end
                 when "assistant"
                   (parsed.dig("message", "content") || []).each do |part|
                     case part["type"]
@@ -112,7 +136,7 @@ module Chomper
         raise
       end
 
-      [text_parts.join, captured_session_id]
+      [text_parts.join, captured_session_id, error]
     end
 
     def log_append(text)
