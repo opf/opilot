@@ -82,6 +82,7 @@ module Chomper
       return unless items
 
       map = load_or_run_triage(items, filters, module_key: module_key)
+      clear_skipped_markers
       counts = items.group_by { |i| map[i["id"].to_s] || "?" }
       summary = (COMPLEXITY_ORDER.keys + ["?"]).filter_map do |c|
         counts[c] && "#{counts[c].length} #{c}"
@@ -331,12 +332,13 @@ module Chomper
         map = classify(items)
       end
       save_triage_cache(map, filters, module_key, items.map { |i| i["id"].to_s })
-      clear_skipped_markers
       map
     end
 
-    # A new triage snapshot starts a new batch: skipped items re-enter the
-    # queue. Dropped markers are permanent and survive.
+    # Only the explicit `backlog triage` command starts a new batch — skipped
+    # items re-enter the queue then, and nowhere else (a plain `backlog` run
+    # also saves a snapshot, but must respect skips). Dropped markers are
+    # permanent and survive.
     def clear_skipped_markers
       Dir.glob((@ctx.state_dir / "items" / "*" / "backlog_done.txt").to_s).each do |f|
         File.delete(f) if File.read(f).strip == "skipped"

@@ -280,6 +280,21 @@ module Chomper
       assert_equal "dropped", dropped_marker.read, "drop markers must survive a re-triage"
     end
 
+    def test_run_respects_skip_markers
+      items = [item(14, "Parked one", "Costs")]
+      seed_triage({ "14" => "simple" })
+      marker = @ctx.state_dir / "items" / "14" / "backlog_done.txt"
+      marker.dirname.mkpath
+      marker.write("skipped")
+
+      # "\n" accepts the cached-triage reuse prompt; the only item is skipped,
+      # so the walk never needs claude or further stdin.
+      out, = with_stdin("\n") { capture_io { runner(items).run } }
+
+      assert_includes out, "↩ skipped — skipping"
+      assert_equal "skipped", marker.read, "a plain backlog run must not clear skip markers"
+    end
+
     def test_backlog_skip_marks_item_and_refuses_shipped
       write_item(12, "Park me", "Costs")
       write_item(13, "Shipped one", "Costs")
