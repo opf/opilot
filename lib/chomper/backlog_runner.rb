@@ -192,7 +192,8 @@ module Chomper
       log_script "Warning: could not persist backlog outcome (#{e.message})"
     end
 
-    # Group items by module (alphabetically), sort within each group by complexity.
+    # Group items by module (alphabetically; multi-module WPs carry their first
+    # module only), sort within each group by complexity.
     def group_and_sort(items, complexity_map)
       groups = items.group_by { |i| i["module"].to_s.then { |m| m.empty? ? "(unassigned)" : m } }
       groups.sort_by { |name, _| name }.each_with_object({}) do |(name, group), h|

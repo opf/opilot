@@ -363,6 +363,34 @@ module Chomper
       assert_equal [], @pull.poll_intents(FILTERS)
     end
 
+    def test_first_module_title_takes_first_of_multiple
+      wp = { "_links" => { "customField5" => [
+        { "title" => "Costs" }, { "title" => "Meetings" }
+      ] } }
+      assert_equal "Costs", @pull.send(:first_module_title, wp, "customField5")
+    end
+
+    def test_first_module_title_single_link
+      wp = { "_links" => { "customField5" => [{ "title" => "Wiki" }] } }
+      assert_equal "Wiki", @pull.send(:first_module_title, wp, "customField5")
+    end
+
+    def test_first_module_title_single_hash_link
+      wp = { "_links" => { "customField5" => { "title" => "Wiki" } } }
+      assert_equal "Wiki", @pull.send(:first_module_title, wp, "customField5")
+    end
+
+    def test_first_module_title_missing_field_is_empty
+      assert_equal "", @pull.send(:first_module_title, { "_links" => {} }, "customField5")
+    end
+
+    def test_first_module_title_skips_nil_titles
+      wp = { "_links" => { "customField5" => [
+        { "title" => nil }, { "title" => "Backlogs" }
+      ] } }
+      assert_equal "Backlogs", @pull.send(:first_module_title, wp, "customField5")
+    end
+
     def test_save_and_reload_agent_filters
       @pull.send(:save_agent_filters, FILTERS)
       path = Pathname(@tmpdir) / "agent_filters.json"

@@ -84,7 +84,8 @@ module Chomper
 
     # Fetch all work packages matching filters (without requiring @chomper triggers).
     # Saves each WP to item.json (same cache as poll_intents). When module_field_key
-    # is given, enriches item.json with a "module" key from that _links entry.
+    # is given, enriches item.json with a "module" key holding the first module
+    # title from that _links entry.
     def fetch_all_items(filters, module_field_key: nil)
       fj = filters_json(filters)
       items = []
@@ -101,8 +102,7 @@ module Chomper
           next unless path.exist?
           data = JSON.parse(path.read)
           if module_field_key
-            titles = wp.dig("_links", module_field_key)&.map { |l| l["title"] }&.compact
-            data["module"] = titles&.any? ? titles.join(" / ") : ""
+            data["module"] = first_module_title(wp, module_field_key)
             path.write(JSON.generate(data))
           end
           items << data
@@ -283,6 +283,14 @@ module Chomper
       version_clause = filters.version_ids.empty? ? "" :
         %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
       %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_clause}])
+    end
+
+    # Multi-value Module custom field: a WP can carry several modules; we group
+    # by the first one only.
+    def first_module_title(wp, module_field_key)
+      links = wp.dig("_links", module_field_key)
+      links = [links] unless links.is_a?(Array)
+      links.filter_map { |l| l["title"] if l.is_a?(Hash) }.first.to_s
     end
 
     def fetch_work_package_item(wp)
