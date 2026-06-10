@@ -60,8 +60,9 @@ module Chomper
         )
       end
 
-      def work_packages_form(project_id)
-        HTTP.post_json("#{@base}/api/v3/projects/#{project_id}/work_packages/form", {}, token: @token)
+      # Schema for one project/type pair — fields (incl. custom fields) depend on both.
+      def work_package_schema(project_id, type_id)
+        HTTP.get_json("#{@base}/api/v3/work_packages/schemas/#{project_id}-#{type_id}", token: @token)
       end
 
       # Posts a comment to a work package. Returns [code, response_hash].

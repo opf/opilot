@@ -90,6 +90,7 @@ module Chomper
       fj = filters_json(filters)
       items = []
       page = 1; page_size = 50; total_written = 0
+      processed = 0; from_cache = 0
       loop do
         code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
         raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
@@ -97,7 +98,11 @@ module Chomper
         count = resp["count"].to_i; total = resp["total"].to_i
         break if count == 0
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          fetch_work_package_item(wp)
+          cached, = fetch_work_package_item(wp)
+          processed += 1
+          from_cache += 1 if cached
+          print "\r  #{processed}/#{total} work packages (#{from_cache} cached)…"
+          $stdout.flush
           path = @ctx.state_dir / "items" / wp["id"].to_s / "item.json"
           next unless path.exist?
           data = JSON.parse(path.read)
@@ -111,6 +116,7 @@ module Chomper
         break if total_written >= total
         page += 1
       end
+      puts "" if processed > 0
       items
     end
 

@@ -20,7 +20,7 @@ module Chomper
       filters = @pull.load_or_prompt_backlog_filters
 
       log_script "Resolving Module field…"
-      module_key = resolve_module_field(filters.project_id)
+      module_key = resolve_module_field(filters)
 
       log_script "Fetching work packages…"
       items = @pull.fetch_all_items(filters, module_field_key: module_key)
@@ -71,23 +71,25 @@ module Chomper
 
     private
 
-    # Fetch the WP form schema for the project and find the field whose name is
-    # "Module" (case-insensitive). Returns the customFieldN key or nil (falling
-    # back to no module grouping).
-    def resolve_module_field(project_id)
-      code, resp = @api.work_packages_form(project_id)
-      unless code == 200 && resp
-        log_script "Warning: could not fetch WP form schema (HTTP #{code}) — no module grouping."
-        return nil
+    # Find the field named "Module" (case-insensitive) in the WP schemas of the
+    # filtered types. Custom fields are activated per project AND type, so each
+    # /work_packages/schemas/<project>-<type> pair is checked until one has the
+    # field. Returns the customFieldN key or nil (no module grouping).
+    def resolve_module_field(filters)
+      Array(filters.type_ids).each do |type_id|
+        code, schema = @api.work_package_schema(filters.project_id, type_id)
+        unless code == 200 && schema
+          log_script "Warning: could not fetch WP schema for type #{type_id} (HTTP #{code})."
+          next
+        end
+        key = schema.keys.find { |k| schema[k].is_a?(Hash) && schema[k]["name"].to_s.match?(/\Amodule\z/i) }
+        if key
+          log_script "Module field: #{key} (\"#{schema[key]["name"]}\")"
+          return key
+        end
       end
-      schema = resp.dig("_embedded", "schema") || resp["schema"] || {}
-      key = schema.keys.find { |k| schema[k].is_a?(Hash) && schema[k]["name"].to_s.match?(/\Amodule\z/i) }
-      if key
-        log_script "Module field: #{key} (\"#{schema[key]["name"]}\")"
-      else
-        log_script "Module field not found in WP schema — processing without module grouping."
-      end
-      key
+      log_script "Module field not found in WP schemas — processing without module grouping."
+      nil
     rescue => e
       log_script "Warning: module field lookup failed (#{e.message}) — no module grouping."
       nil
