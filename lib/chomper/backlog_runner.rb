@@ -8,6 +8,7 @@ module Chomper
     TRIAGE_BATCH    = 20
     COMPLEXITY_ORDER  = { "trivial" => 0, "simple" => 1, "moderate" => 2, "complex" => 3 }.freeze
     COMPLEXITY_COLORS = { "trivial" => :green, "simple" => :cyan, "moderate" => :yellow, "complex" => :red }.freeze
+    OUTCOME_COLORS    = { "shipped" => :green, "dropped" => :red, "skipped" => :yellow }.freeze
 
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
@@ -396,7 +397,9 @@ module Chomper
     # (it's keyed to pr_url.txt and the progress log); only the ↩ marker in the
     # queue views says "finished".
     def outcome_label(outcome)
-      outcome == "shipped" ? "finished" : outcome
+      label = outcome == "shipped" ? "finished" : outcome
+      color = OUTCOME_COLORS[outcome]
+      color ? Rainbow(label).color(color) : label
     end
 
     def prior_outcome(item_data)
