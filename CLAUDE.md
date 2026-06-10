@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Two modes:
+`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Three modes:
 
 - **agent** — continuous polling loop driven by `@chomper` comments on work packages
-- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat`)
+- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), and `process` (work the cached queue without re-fetching)
+- **fix** — terminal-driven single work package: `./chomper fix <id>` fetches one WP by id (ignoring filters) and runs the same plan/approve loop
 
 ## Commands
 
@@ -60,7 +61,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `context.rb` | Singleton config — env vars, paths, allowed emails |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
-| `backlog_runner.rb` | Batch backlog mode — triage, cluster by Module, terminal approval loop |
+| `backlog_runner.rb` | Batch backlog mode — triage, cluster by Module, terminal approval loop; also single-WP `fix` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch via git credential helper; opens draft PRs via Octokit |
@@ -81,9 +82,8 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 ```
 .chomper/
-├── agent_filters.json       # saved search filters (agent mode)
-├── backlog_filters.json     # saved search filters (backlog mode)
-├── backlog_triage.json      # cached complexity map, Module field key + fetched item ids (keyed by filter fingerprint)
+├── agent_filters.json       # saved search filters (shared by agent and backlog modes)
+├── backlog_triage.json      # cached triage results (keyed by filter fingerprint)
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── items/<wp_id>/

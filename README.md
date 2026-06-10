@@ -4,11 +4,12 @@
 
 An agent that watches OpenProject work packages and fixes bugs — all inside a Docker container. You review and merge when you're happy.
 
-Two modes:
+Three modes:
 
 ```
-./chomper agent   → driven by @chomper comments on work packages
-./chomper backlog → fetch a full WP query, triage by complexity, step through with terminal approval
+./chomper agent    → driven by @chomper comments on work packages
+./chomper backlog  → fetch a full WP query, triage by complexity, step through with terminal approval
+./chomper fix <id> → plan and ship a single work package
 ```
 
 ---
@@ -32,7 +33,7 @@ Two modes:
 
 - **Docker** (runs both the Ruby runner and the Claude Code container)
 - A GitHub token with repo write access (for opening PRs)
-- An OpenProject API token (preferably scoped only to reading your target WPs)
+- An OpenProject API token (needs to read your target WPs and post comments on them)
 - Optionally, a local `openproject` repo — chomper can clone one automatically if you don't have it
 
 ---
@@ -126,17 +127,21 @@ comments), so it is boxed in from several directions:
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
 | `./chomper backlog` | Fetch all WPs matching saved filters, triage by complexity, process one by one with terminal approval |
+| `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
+| `./chomper backlog show` | Preview the queue (clusters, order, URLs) from local caches — instant, starts no containers |
+| `./chomper backlog process` | Work the cached queue without re-fetching (fails if `triage` hasn't run) |
+| `./chomper fix <id>` | Plan and ship a single work package by id, with the same terminal approval loop |
 | `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
 
 ### `./chomper backlog` flow
 
-On first run, prompts you to save a filter (project / types / statuses / version). Then:
+On first run, prompts you to save a filter (project / types / statuses / version — shared with agent mode). Then:
 
-1. Fetches all matching work packages and resolves the **Module** custom field from the WP form schema.
-2. Runs a Claude triage pass to estimate complexity for each item (cached in `backlog_triage.json`; reused on subsequent runs if the filters haven't changed).
-3. Groups items by Module and sorts each group from simplest to most complex.
+1. Resolves the **Module** custom field from the per-type WP schemas (`/work_packages/schemas/<project>-<type>`) and fetches all matching work packages.
+2. Runs a Claude triage pass to estimate complexity for each item. The result is cached in `backlog_triage.json` and reused while the filters stay the same.
+3. Groups items by Module (a multi-module WP counts under its first module) and sorts each group from simplest to most complex.
 4. Steps through items one by one, streaming an implementation plan for each.
 5. Prompts: `[y]es implement / [s]kip / [d]rop / [c]hat`
    - **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
@@ -144,6 +149,8 @@ On first run, prompts you to save a filter (project / types / statuses / version
    - **d** — drop; item is permanently excluded from future backlog runs
    - **c** — open a chat session to ask questions before deciding; plan is re-generated with the chat context afterwards
 6. Items already shipped (`pr_url.txt` present) or previously dropped (`backlog_done.txt`) are skipped automatically.
+
+The phases also run separately: `backlog triage` fetches and classifies, `backlog show` previews the cached queue (instant — reads only local caches and starts no containers), and `backlog process` works the cached queue without re-fetching. `fix <id>` runs the same plan/approve loop for one WP by id, ignoring filters (and overriding a previous drop).
 
 ### `@chomper` comment commands
 
@@ -183,7 +190,7 @@ openproject-chomper/
 ├── chomper                  ← bash entry point (sets up Docker, runs runner)
 ├── bin/chomper              ← Ruby CLI (runs inside the runner container)
 ├── lib/chomper/
-│   ├── cli.rb              ← command dispatch (agent / backlog / status / reset)
+│   ├── cli.rb              ← command dispatch (agent / backlog / fix / status / reset)
 │   ├── context.rb          ← shared config and paths
 │   ├── clients.rb          ← requires clients/
 │   ├── clients/
@@ -193,7 +200,7 @@ openproject-chomper/
 │   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
 │   ├── pull.rb             ← poll OpenProject, turn @chomper comments into intents
 │   ├── agent.rb            ← the loop: handle chat / plan / approve / fix
-│   ├── backlog_runner.rb   ← batch backlog mode: triage, cluster by module, terminal approval
+│   ├── backlog_runner.rb   ← batch backlog mode (triage, cluster by module, terminal approval) + single-WP fix
 │   ├── prompts.rb          ← all Claude prompts
 │   ├── publish.rb          ← push branch, open draft PR
 │   ├── claude.rb           ← HTTP client for the Claude container
@@ -202,6 +209,7 @@ openproject-chomper/
 │   ├── test_helper.rb
 │   └── chomper/
 │       ├── agent_test.rb
+│       ├── backlog_runner_test.rb
 │       ├── context_test.rb
 │       ├── helpers_test.rb
 │       ├── http_test.rb
@@ -219,9 +227,8 @@ openproject-chomper/
 
 ```
 .chomper/
-├── agent_filters.json   ← saved search filters for agent mode
-├── backlog_filters.json ← saved search filters for backlog mode
-├── backlog_triage.json  ← cached complexity map (keyed by filter fingerprint)
+├── agent_filters.json   ← saved search filters (shared by agent and backlog modes)
+├── backlog_triage.json  ← cached triage results (keyed by filter fingerprint)
 ├── progress.txt         ← progress log
 ├── chomp.log            ← full prompt + response log
 ├── claude-auth/         ← persisted Claude container auth
@@ -244,7 +251,7 @@ openproject-chomper/
 | Variable | Default | Purpose |
 |---|---|---|
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
-| `OPENPROJECT_TOKEN` | — | Read-only OpenProject API token (My Account → Access Tokens → View work packages) |
+| `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
 | `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
@@ -286,7 +293,7 @@ Written by the first-run setup wizard (chmod 600, gitignored).
 
 ```bash
 OPENPROJECT_URL=https://community.openproject.org
-OPENPROJECT_TOKEN=your_readonly_token
+OPENPROJECT_TOKEN=your_api_token
 OP_REPO_PATH=../openproject   # or "false" to have chomper clone automatically
 GITHUB_TOKEN=ghp_...
 ```
