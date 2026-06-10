@@ -595,7 +595,7 @@ module Chomper
       return if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
       worktree.commit("fix: #{st.subject} (WP ##{st.item_id})")
-      c = worktree.log(1).first
+      c = worktree.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(st.item_id, st.branch, "committed")
     end
