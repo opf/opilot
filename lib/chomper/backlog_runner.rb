@@ -6,7 +6,8 @@ module Chomper
     include Helpers
 
     TRIAGE_BATCH    = 20
-    COMPLEXITY_ORDER = { "trivial" => 0, "simple" => 1, "moderate" => 2, "complex" => 3 }.freeze
+    COMPLEXITY_ORDER  = { "trivial" => 0, "simple" => 1, "moderate" => 2, "complex" => 3 }.freeze
+    COMPLEXITY_COLORS = { "trivial" => :green, "simple" => :cyan, "moderate" => :yellow, "complex" => :red }.freeze
 
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
@@ -54,11 +55,13 @@ module Chomper
         cluster_items.each do |item_data|
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
-          line = "  [#{index}/#{total}] ##{item_data["id"]} — #{item_data["subject"]}  [#{complexity}]"
+          line = "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
           if (prior = prior_outcome(item_data))
             prior == "shipped" ? shipped += 1 : dropped += 1
             line += "  ↩ #{prior}"
           end
+          url = item_data["url"].to_s
+          line += Rainbow("  #{url}").dimgray unless url.empty?
           puts line
         end
       end
@@ -96,7 +99,7 @@ module Chomper
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
           puts ""
-          puts "  [#{index}/#{total}] ##{item_data["id"]} — #{item_data["subject"]}  [#{complexity}]"
+          puts "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
 
           if (prior = prior_outcome(item_data))
             puts "  ↩ #{prior} — skipping"
@@ -176,6 +179,12 @@ module Chomper
                  "#{" (#{missing} missing on disk)" if missing > 0}."
       map = cached["complexity"] || {}
       [group_and_sort(items, map), map, cached["module_field"], items.length]
+    end
+
+    def complexity_label(complexity)
+      label = "[#{complexity}]"
+      color = COMPLEXITY_COLORS[complexity]
+      color ? Rainbow(label).color(color) : Rainbow(label).dimgray
     end
 
     def print_cluster_header(mod_name, cluster_items)
