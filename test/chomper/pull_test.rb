@@ -259,6 +259,19 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
+    def test_fetch_single_item_returns_item_data
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, %r{/api/v3/work_packages/1\z})
+        .to_return(status: 200, body: JSON.generate(wp(1, "2024-01-02T00:00:00Z")))
+      item = @pull.fetch_single_item("1")
+      assert_equal "2024-01-02T00:00:00Z", item["updated_at"]
+    end
+
+    def test_fetch_single_item_nil_when_wp_not_found
+      stub_request(:get, %r{/api/v3/work_packages/404\z}).to_return(status: 404, body: "{}")
+      assert_nil @pull.fetch_single_item("404")
+    end
+
     def test_returns_empty_when_no_work_packages
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([], total: 0))
       assert_equal [], @pull.poll_intents(FILTERS)

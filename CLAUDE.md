@@ -23,6 +23,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./chomper backlog show
 ./chomper backlog process
 
+# Plan and ship a single work package by id (terminal approval)
+./chomper fix <id>
+
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
 ./chomper reset     # de-register worktree, delete .chomper/

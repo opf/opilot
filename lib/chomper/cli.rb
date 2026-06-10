@@ -19,6 +19,15 @@ module Chomper
         @ctx.load_config!
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
+      when "fix"
+        id = argv[1].to_s
+        unless id.match?(/\A\d+\z/)
+          $stderr.puts "Usage: ./chomper fix <work-package-id>"
+          raise Chomper::FatalError
+        end
+        @ctx.load_config!
+        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix ##{id} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+        BacklogRunner.new(@ctx).fix(id)
       when "backlog"
         sub = argv[1]
         unless sub.nil? || %w[show triage process].include?(sub)

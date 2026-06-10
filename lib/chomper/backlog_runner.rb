@@ -85,6 +85,26 @@ module Chomper
       log_script "Triage complete: #{summary}."
     end
 
+    # Plan/approve/implement a single work package by id, outside any queue or
+    # filter set. Fetches that one WP live; a `dropped` marker from a previous
+    # backlog run is deliberately ignored — naming an id overrides it.
+    def fix(wp_id)
+      log_script "Fetching work package ##{wp_id}…"
+      item = @pull.fetch_single_item(wp_id)
+      raise Chomper::FatalError, "could not fetch work package ##{wp_id} — check the id and OPENPROJECT_TOKEN" unless item
+
+      puts ""
+      puts "  ##{item["id"]} — #{item["subject"]}"
+      puts "  #{item["url"]}"
+
+      if prior_outcome(item) == "shipped"
+        puts "  Already shipped: #{(@ctx.state_dir / "items" / item["id"].to_s / "pr_url.txt").read.strip}"
+        return
+      end
+
+      process_item(item)
+    end
+
     private
 
     # The interactive per-item approval loop shared by `run` and `process`.

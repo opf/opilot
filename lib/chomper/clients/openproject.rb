@@ -36,6 +36,10 @@ module Chomper
         HTTP.get_json("#{@base}/api/v3/projects/#{project_id}/versions", token: @token)
       end
 
+      def work_package(wp_id)
+        HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}", token: @token)
+      end
+
       def work_package_activities(wp_id)
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}/activities", token: @token)
       end

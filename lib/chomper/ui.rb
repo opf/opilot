@@ -85,6 +85,7 @@ module Chomper
           backlog triage    Fetch WPs and (re)build the complexity triage, then stop
           backlog show      Preview the queue (clusters + order) without processing
           backlog process   Work the cached queue (no re-fetch; requires a prior triage)
+          fix <id>          Plan and ship a single work package with terminal approval
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 

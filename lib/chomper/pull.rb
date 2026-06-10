@@ -82,6 +82,17 @@ module Chomper
       load_or_prompt_filters(ask_scan_from: false)
     end
 
+    # Fetch one work package by id (ignoring filters), refresh its item.json,
+    # and return the item data — or nil when the WP can't be fetched.
+    def fetch_single_item(wp_id)
+      code, wp = @api.work_package(wp_id)
+      return nil unless code == 200 && wp
+
+      fetch_work_package_item(wp)
+      path = @ctx.state_dir / "items" / wp["id"].to_s / "item.json"
+      path.exist? ? JSON.parse(path.read) : nil
+    end
+
     # Saved filters without the reuse prompt, or nil when none are saved.
     # `backlog show` presents cached data, so it takes whatever is on disk.
     def saved_backlog_filters
