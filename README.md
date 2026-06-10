@@ -334,6 +334,6 @@ GITHUB_TOKEN=ghp_...
 ### Fixes & Hardening
 * Switch to Anthropic API tokens + simple auth token replacement proxy for better isolation
   * This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
-  * One disadvantage: API tokens are billed separately. However, after 6th of June, we'll have to pay anyway.
+  * One disadvantage: API tokens are billed separately. However, after 14th of June, we'll have to pay anyway.
 * Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
 * Ensure each WP-scoped session is isolated from the rest (current version looks buggy)
