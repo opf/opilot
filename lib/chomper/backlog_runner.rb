@@ -18,33 +18,13 @@ module Chomper
 
     def run
       filters = @pull.load_or_prompt_backlog_filters
+      clusters, complexity_map, module_key, total = build_queue(filters, triage_mode: :interactive)
+      return unless clusters
 
-      log_script "Resolving Module field…"
-      module_key = resolve_module_field(filters)
-
-      log_script "Fetching work packages…"
-      items = @pull.fetch_all_items(filters, module_field_key: module_key)
-
-      if items.empty?
-        puts "  No work packages found."
-        return
-      end
-
-      log_script "Found #{items.length} work package(s)."
-      complexity_map = load_or_run_triage(items, filters)
-
-      clusters = group_and_sort(items, complexity_map)
-      total    = items.length
-      index    = 0
-
+      index = 0
       clusters.each do |mod_name, cluster_items|
         break if Chomper.stopping?
-
-        if module_key
-          puts ""
-          label = "  ── #{mod_name} (#{cluster_items.length} item#{cluster_items.length == 1 ? "" : "s"}) "
-          puts Rainbow(label).bold + Rainbow("─" * [2, 62 - mod_name.length].max).dimgray
-        end
+        print_cluster_header(mod_name, cluster_items) if module_key
 
         cluster_items.each do |item_data|
           break if Chomper.stopping?
@@ -69,7 +49,121 @@ module Chomper
       log_script "Backlog run complete."
     end
 
+    # Preview the queue exactly as `run` would walk it — clusters, order,
+    # complexity, prior outcomes — without processing anything. Renders from
+    # the on-disk caches when possible; only fetches when there is no snapshot.
+    def show
+      filters = @pull.saved_backlog_filters || @pull.load_or_prompt_backlog_filters
+      clusters, complexity_map, module_key, total =
+        offline_queue(filters) || build_queue(filters, triage_mode: :preview)
+      return unless clusters
+
+      index = 0; shipped = 0; dropped = 0
+      clusters.each do |mod_name, cluster_items|
+        print_cluster_header(mod_name, cluster_items) if module_key
+
+        cluster_items.each do |item_data|
+          index += 1
+          complexity = complexity_map[item_data["id"].to_s] || "?"
+          line = "  [#{index}/#{total}] ##{item_data["id"]} — #{item_data["subject"]}  [#{complexity}]"
+          if (prior = prior_outcome(item_data))
+            prior == "shipped" ? shipped += 1 : dropped += 1
+            line += "  ↩ #{prior}"
+          end
+          puts line
+        end
+      end
+
+      puts ""
+      log_script "#{total - shipped - dropped} to process, #{shipped} shipped, #{dropped} dropped."
+    end
+
+    # Pull + triage only: refresh the WP cache and the complexity map, then stop.
+    # A later `backlog` / `backlog show` reuses the saved triage.
+    def triage
+      filters = @pull.load_or_prompt_backlog_filters
+      items, module_key = fetch_items(filters)
+      return unless items
+
+      map = load_or_run_triage(items, filters, module_key: module_key)
+      counts = items.group_by { |i| map[i["id"].to_s] || "?" }
+      summary = (COMPLEXITY_ORDER.keys + ["?"]).filter_map do |c|
+        counts[c] && "#{counts[c].length} #{c}"
+      end.join(", ")
+      log_script "Triage complete: #{summary}."
+    end
+
     private
+
+    # Module field → fetch. Returns [items, module_key]; items is nil when
+    # nothing matched.
+    def fetch_items(filters)
+      module_key = cached_module_field(filters)
+      if module_key == :miss
+        log_script "Resolving Module field…"
+        module_key = resolve_module_field(filters)
+      elsif module_key
+        log_script "Module field: #{module_key} (cached)."
+      end
+
+      log_script "Fetching work packages…"
+      items = @pull.fetch_all_items(filters, module_field_key: module_key)
+
+      if items.empty?
+        puts "  No work packages found."
+        return [nil, module_key]
+      end
+
+      log_script "Found #{items.length} work package(s)."
+      [items, module_key]
+    end
+
+    # The module field key is schema-derived and stable for a given filter set,
+    # so it rides along in the triage cache. Returns the cached key (possibly
+    # nil = "looked up before, project has no Module field") or :miss when the
+    # cache is absent, stale, or predates module_field.
+    def cached_module_field(filters)
+      cached = load_triage_cache(filters)
+      return :miss unless cached&.key?("module_field")
+      cached["module_field"]
+    end
+
+    # Shared prep for run/show: fetch → triage → clusters.
+    # Returns [clusters, complexity_map, module_key, total], or nil when no WPs match.
+    def build_queue(filters, triage_mode:)
+      items, module_key = fetch_items(filters)
+      return nil unless items
+
+      complexity_map = load_or_run_triage(items, filters, module_key: module_key, mode: triage_mode)
+      [group_and_sort(items, complexity_map), complexity_map, module_key, items.length]
+    end
+
+    # Rebuild the queue from the last fetch without touching the API: the triage
+    # cache records which item ids were fetched, and each item's data (incl.
+    # module) lives in items/<id>/item.json. Returns nil when the cache is
+    # absent, stale, or predates item_ids — callers fall back to a live fetch.
+    def offline_queue(filters)
+      cached = load_triage_cache(filters)
+      return nil unless cached && cached["item_ids"].is_a?(Array)
+
+      items = cached["item_ids"].filter_map do |id|
+        path = @ctx.state_dir / "items" / id.to_s / "item.json"
+        JSON.parse(path.read) rescue nil
+      end
+      return nil if items.empty?
+
+      missing = cached["item_ids"].length - items.length
+      log_script "Previewing #{items.length} cached work package(s) from #{cached["created_at"]}" \
+                 "#{" (#{missing} missing on disk)" if missing > 0}."
+      map = cached["complexity"] || {}
+      [group_and_sort(items, map), map, cached["module_field"], items.length]
+    end
+
+    def print_cluster_header(mod_name, cluster_items)
+      puts ""
+      label = "  ── #{mod_name} (#{cluster_items.length} item#{cluster_items.length == 1 ? "" : "s"}) "
+      puts Rainbow(label).bold + Rainbow("─" * [2, 62 - mod_name.length].max).dimgray
+    end
 
     # Find the field named "Module" (case-insensitive) in the WP schemas of the
     # filtered types. Custom fields are activated per project AND type, so each
@@ -97,7 +191,7 @@ module Chomper
 
     # Ask Claude to classify all items by complexity. Returns { id => complexity }.
     # Falls back to an empty map on failure (all items treated as "moderate" by the sorter).
-    def triage(items)
+    def classify(items)
       complexity_map  = {}
       total_batches   = (items.length.to_f / TRIAGE_BATCH).ceil
 
@@ -120,8 +214,23 @@ module Chomper
 
     # Load cached triage if it exists and matches the current filters; otherwise run fresh.
     # Incrementally triages any items not in the cache (new items added since last run).
-    def load_or_run_triage(items, filters)
+    #
+    # mode :interactive — normal run: prompt to reuse a cache, triage what's missing.
+    # mode :preview     — `backlog show`: reuse a valid cache silently (uncached items
+    #                     show as "?"); with no cache, offer to triage, default no.
+    def load_or_run_triage(items, filters, module_key: nil, mode: :interactive)
       cached = load_triage_cache(filters)
+
+      if mode == :preview
+        if cached
+          log_script "Using cached triage from #{cached["created_at"]}."
+          return cached["complexity"]
+        end
+        puts "  No triage cache — `./chomper backlog triage` builds it (show alone doesn't start the Claude container)."
+        print "  Run triage now? [y/N]: "
+        return {} unless $stdin.gets.to_s.chomp.downcase.start_with?("y")
+      end
+
       map = {}
       if cached
         log_script "Cached triage from #{cached["created_at"]}."
@@ -131,17 +240,17 @@ module Chomper
           fresh = items.reject { |i| map.key?(i["id"].to_s) }
           unless fresh.empty?
             log_script "Triaging #{fresh.length} new item(s)…"
-            map = map.merge(triage(fresh))
+            map = map.merge(classify(fresh))
           end
         else
           log_script "Triaging…"
-          map = triage(items)
+          map = classify(items)
         end
       else
         log_script "Triaging…"
-        map = triage(items)
+        map = classify(items)
       end
-      save_triage_cache(map, filters)
+      save_triage_cache(map, filters, module_key, items.map { |i| i["id"].to_s })
       map
     end
 
@@ -153,11 +262,13 @@ module Chomper
       data
     end
 
-    def save_triage_cache(complexity_map, filters)
+    def save_triage_cache(complexity_map, filters, module_key, item_ids)
       tmp = Tempfile.new("backlog_triage", @ctx.state_dir)
       tmp.write(JSON.generate(
         "created_at"         => Time.now.utc.iso8601,
         "filter_fingerprint" => filter_fingerprint(filters),
+        "module_field"       => module_key,
+        "item_ids"           => item_ids,
         "complexity"         => complexity_map
       ))
       tmp.close

@@ -82,6 +82,14 @@ module Chomper
       load_or_prompt_filters(ask_scan_from: false)
     end
 
+    # Saved filters without the reuse prompt, or nil when none are saved.
+    # `backlog show` presents cached data, so it takes whatever is on disk.
+    def saved_backlog_filters
+      saved = read_saved_filters
+      puts "  Filters: #{describe_filters(saved)}" if saved
+      saved
+    end
+
     # Fetch all work packages matching filters (without requiring @chomper triggers).
     # Saves each WP to item.json (same cache as poll_intents). When module_field_key
     # is given, enriches item.json with a "module" key holding the first module
@@ -205,30 +213,39 @@ module Chomper
     private
 
     def load_or_prompt_filters(ask_scan_from:)
-      if agent_filters_path.exist?
-        data = JSON.parse(agent_filters_path.read)
-        if data["type_names"] && data["status_names"]
-          saved = FilterSet.new(
-            project_id:    data["project_id"],
-            project_name:  data["project_name"],
-            type_ids:      data["type_ids"],
-            status_ids:    data["status_ids"],
-            version_ids:   data["version_ids"],
-            type_names:    data["type_names"],
-            status_names:  data["status_names"],
-            version_names: data["version_names"],
-            scan_from_at:  data["scan_from_at"]
-          )
-          version_label = saved.version_names ? "  versions=[#{saved.version_names}]" : ""
-          project_label = saved.project_name ? "#{saved.project_id} — #{saved.project_name}" : saved.project_id
-          puts "  Saved filters: project=[#{project_label}]  types=[#{saved.type_names}]  statuses=[#{saved.status_names}]#{version_label}"
-          print "  Reuse saved filters? [Y/n]: "
-          return saved unless $stdin.gets.chomp.downcase == "n"
-        end
+      if (saved = read_saved_filters)
+        puts "  Saved filters: #{describe_filters(saved)}"
+        print "  Reuse saved filters? [Y/n]: "
+        return saved unless $stdin.gets.chomp.downcase == "n"
       end
       filters = prompt_search_filters(ask_scan_from: ask_scan_from)
       save_agent_filters(filters)
       filters
+    end
+
+    def read_saved_filters
+      return nil unless agent_filters_path.exist?
+      data = JSON.parse(agent_filters_path.read)
+      return nil unless data["type_names"] && data["status_names"]
+      FilterSet.new(
+        project_id:    data["project_id"],
+        project_name:  data["project_name"],
+        type_ids:      data["type_ids"],
+        status_ids:    data["status_ids"],
+        version_ids:   data["version_ids"],
+        type_names:    data["type_names"],
+        status_names:  data["status_names"],
+        version_names: data["version_names"],
+        scan_from_at:  data["scan_from_at"]
+      )
+    rescue JSON::ParserError
+      nil
+    end
+
+    def describe_filters(f)
+      version_label = f.version_names ? "  versions=[#{f.version_names}]" : ""
+      project_label = f.project_name ? "#{f.project_id} — #{f.project_name}" : f.project_id
+      "project=[#{project_label}]  types=[#{f.type_names}]  statuses=[#{f.status_names}]#{version_label}"
     end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an

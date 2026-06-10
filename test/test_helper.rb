@@ -16,6 +16,7 @@ require "chomper/ui"
 require "chomper/pull"
 require "chomper/publish"
 require "chomper/agent"
+require "chomper/backlog_runner"
 require "chomper/cli"
 
 WebMock.disable_net_connect!

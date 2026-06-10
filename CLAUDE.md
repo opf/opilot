@@ -18,6 +18,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run batch backlog mode (terminal approval per item)
 ./chomper backlog
 
+# Preview the backlog queue (clusters + order) without processing
+./chomper backlog show
+
+# Fetch WPs and (re)build the complexity triage only
+./chomper backlog triage
+
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
 ./chomper reset     # de-register worktree, delete .chomper/
@@ -75,7 +81,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 .chomper/
 ├── agent_filters.json       # saved search filters (agent mode)
 ├── backlog_filters.json     # saved search filters (backlog mode)
-├── backlog_triage.json      # cached complexity map (keyed by filter fingerprint)
+├── backlog_triage.json      # cached complexity map, Module field key + fetched item ids (keyed by filter fingerprint)
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── items/<wp_id>/

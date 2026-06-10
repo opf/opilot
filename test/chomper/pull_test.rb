@@ -391,6 +391,21 @@ module Chomper
       assert_equal "Backlogs", @pull.send(:first_module_title, wp, "customField5")
     end
 
+    def test_saved_backlog_filters_returns_saved_set_without_prompting
+      named = FilterSet.new(project_id: "my-project", type_ids: ["1"], status_ids: ["2"],
+                            version_ids: [], type_names: "bug", status_names: "new")
+      @pull.send(:save_agent_filters, named)
+      filters = nil
+      # $stdin untouched: a reuse prompt would raise on read.
+      capture_io { filters = @pull.saved_backlog_filters }
+      assert_equal "my-project", filters.project_id
+      assert_equal ["1"],        filters.type_ids
+    end
+
+    def test_saved_backlog_filters_nil_when_nothing_saved
+      assert_nil @pull.saved_backlog_filters
+    end
+
     def test_save_and_reload_agent_filters
       @pull.send(:save_agent_filters, FILTERS)
       path = Pathname(@tmpdir) / "agent_filters.json"
