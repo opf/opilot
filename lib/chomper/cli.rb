@@ -30,7 +30,7 @@ module Chomper
         BacklogRunner.new(@ctx).fix(id)
       when "backlog"
         sub = argv[1]
-        unless sub.nil? || %w[show triage process].include?(sub)
+        unless sub.nil? || %w[show triage process skip].include?(sub)
           $stderr.puts "Unknown argument: backlog #{sub}"
           ui.usage
           raise Chomper::FatalError
@@ -42,6 +42,7 @@ module Chomper
         when "show"    then runner.show
         when "triage"  then runner.triage
         when "process" then runner.process
+        when "skip"    then runner.skip(argv[2].to_s)
         else                runner.run
         end
       else

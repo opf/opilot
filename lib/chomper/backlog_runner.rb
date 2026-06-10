@@ -48,7 +48,7 @@ module Chomper
         offline_queue(filters) || build_queue(filters, triage_mode: :preview)
       return unless clusters
 
-      index = 0; shipped = 0; dropped = 0
+      index = 0; shipped = 0; dropped = 0; skipped = 0
       clusters.each do |cluster_name, cluster_items|
         print_cluster_header(cluster_name, cluster_items) if module_key
 
@@ -57,7 +57,11 @@ module Chomper
           complexity = complexity_map[item_data["id"].to_s] || "?"
           line = "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
           if (prior = prior_outcome(item_data))
-            prior == "shipped" ? shipped += 1 : dropped += 1
+            case prior
+            when "shipped" then shipped += 1
+            when "skipped" then skipped += 1
+            else                dropped += 1
+            end
             line += "  ↩ #{prior}"
           end
           url = item_data["url"].to_s
@@ -67,7 +71,7 @@ module Chomper
       end
 
       puts ""
-      log_script "#{total - shipped - dropped} to process, #{shipped} shipped, #{dropped} dropped."
+      log_script "#{total - shipped - dropped - skipped} to process, #{shipped} shipped, #{dropped} dropped, #{skipped} skipped."
     end
 
     # Pull + triage only: refresh the WP cache and the complexity map, then stop.
@@ -85,9 +89,37 @@ module Chomper
       log_script "Triage complete: #{summary}."
     end
 
+    # Park a work package until the next triage, without walking the queue.
+    # Pure local file work — no fetch, no containers (like `show`).
+    def skip(wp_id)
+      unless wp_id.match?(/\A\d+\z/)
+        $stderr.puts "Usage: ./chomper backlog skip <work-package-id>"
+        raise Chomper::FatalError
+      end
+
+      dir = @ctx.state_dir / "items" / wp_id
+      case prior_outcome("id" => wp_id)
+      when "shipped"
+        puts "  ##{wp_id} is already shipped: #{(dir / "pr_url.txt").read.strip}"
+      when "dropped"
+        puts "  ##{wp_id} is already dropped — that outlasts a skip. `./chomper fix #{wp_id}` overrides it."
+      when "skipped"
+        puts "  ##{wp_id} is already skipped — it returns with the next `backlog triage`."
+      else
+        dir.mkpath
+        (dir / "backlog_done.txt").write("skipped")
+        subject = (JSON.parse((dir / "item.json").read)["subject"] rescue nil) if (dir / "item.json").exist?
+        if subject
+          log_script "##{wp_id} — #{subject} skipped — parked until the next triage."
+        else
+          log_script "##{wp_id} skipped — not in the cached queue yet; the marker applies when it appears."
+        end
+      end
+    end
+
     # Plan/approve/implement a single work package by id, outside any queue or
-    # filter set. Fetches that one WP live; a `dropped` marker from a previous
-    # backlog run is deliberately ignored — naming an id overrides it.
+    # filter set. Fetches that one WP live; a `dropped` or `skipped` marker from
+    # a previous backlog run is deliberately ignored — naming an id overrides it.
     def fix(wp_id)
       log_script "Fetching work package ##{wp_id}…"
       item = @pull.fetch_single_item(wp_id)
@@ -299,7 +331,18 @@ module Chomper
         map = classify(items)
       end
       save_triage_cache(map, filters, module_key, items.map { |i| i["id"].to_s })
+      clear_skipped_markers
       map
+    end
+
+    # A new triage snapshot starts a new batch: skipped items re-enter the
+    # queue. Dropped markers are permanent and survive.
+    def clear_skipped_markers
+      Dir.glob((@ctx.state_dir / "items" / "*" / "backlog_done.txt").to_s).each do |f|
+        File.delete(f) if File.read(f).strip == "skipped"
+      end
+    rescue => e
+      log_script "Warning: could not clear skip markers (#{e.message})"
     end
 
     def load_triage_cache(filters)
@@ -413,7 +456,8 @@ module Chomper
             run_chat(st)
             next   # retry planning — chat session carries context forward
           when :skip
-            log_script "##{id} skipped (needs info) — will reappear next run."
+            mark_backlog_done(st, "skipped")
+            log_script "##{id} skipped (needs info) — parked until the next triage."
             break
           when :drop
             mark_backlog_done(st, "dropped")
@@ -434,7 +478,7 @@ module Chomper
         when :approve then ship(st); break
         when :chat    then run_chat(st)
         when :replan  then replan_feedback = prompt_replan_feedback
-        when :skip    then log_script "##{id} skipped — will reappear next run."; break
+        when :skip    then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
         when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
         end
       end

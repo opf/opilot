@@ -24,6 +24,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./chomper backlog show
 ./chomper backlog process
 
+# Park a WP until the next triage (local only, no containers)
+./chomper backlog skip <id>
+
 # Plan and ship a single work package by id (terminal approval)
 ./chomper fix <id>
 
@@ -91,7 +94,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 │   ├── plan.md              # implementation plan
 │   ├── pr.md                # PR description
 │   ├── pr_url.txt           # published PR URL
-│   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent skip)
+│   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent) or "skipped" (until next triage)
 │   └── session_id           # Claude session for continuity across turns
 ├── openproject/             # git worktree
 └── claude-auth/             # persisted Claude CLI auth

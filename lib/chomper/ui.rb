@@ -81,10 +81,11 @@ module Chomper
 
         Commands:
           agent     Poll OpenProject every 10s and act on @chomper mentions
-          backlog   Fetch all matching WPs, group by module, process one by one with approval
+          backlog   Fetch all matching WPs, group by complexity then module, process with approval
           backlog triage    Fetch WPs and (re)build the complexity triage, then stop
           backlog show      Preview the queue (clusters + order) without processing
           backlog process   Work the cached queue (no re-fetch; requires a prior triage)
+          backlog skip <id> Park a WP until the next triage (no queue walk)
           fix <id>          Plan and ship a single work package with terminal approval
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)

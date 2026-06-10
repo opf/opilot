@@ -88,10 +88,11 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 
 # ── Run ───────────────────────────────────────────────────────────────────
-# `backlog show` renders from local caches — no worktree, claude, or proxy needed.
+# `backlog show` and `backlog skip` work from local caches — no worktree,
+# claude, or proxy needed.
 CMD="${1:-}"
 SUBCMD="${2:-}"
-if [[ "$CMD" == "agent" || "$CMD" == "fix" || ( "$CMD" == "backlog" && "$SUBCMD" != "show" ) ]]; then
+if [[ "$CMD" == "agent" || "$CMD" == "fix" || ( "$CMD" == "backlog" && "$SUBCMD" != "show" && "$SUBCMD" != "skip" ) ]]; then
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   if [[ "$_CLONE_REPO" == "true" ]]; then
     if [ ! -d "$WORKTREE/.git" ]; then
