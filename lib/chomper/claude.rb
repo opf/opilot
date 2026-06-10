@@ -84,6 +84,13 @@ module Chomper
 
         Net::HTTP.start(@uri.host, @uri.port, read_timeout: 600) do |http|
           http.request(req) do |res|
+            unless res.is_a?(Net::HTTPSuccess)
+              # e.g. 403 "unknown tool grant" when the claude image predates a
+              # grant change — surface the body instead of streaming nothing.
+              error = "claude server HTTP #{res.code}: #{res.body.to_s.strip}"
+              $stdout.puts Rainbow("  ✗ #{error}").red
+              next
+            end
             res.read_body do |chunk|
               buffer << chunk
               while (line = buffer.slice!(/\A[^\n]*\n/))

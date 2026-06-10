@@ -62,7 +62,7 @@ module Chomper
             when "skipped" then skipped += 1
             else                dropped += 1
             end
-            line += "  ↩ #{prior}"
+            line += "  ↩ #{outcome_label(prior)}"
           end
           url = item_data["url"].to_s
           line += Rainbow("  #{url}").dimgray unless url.empty?
@@ -157,7 +157,7 @@ module Chomper
           puts "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
 
           if (prior = prior_outcome(item_data))
-            puts "  ↩ #{prior} — skipping"
+            puts "  ↩ #{outcome_label(prior)} — skipping"
             next
           end
 
@@ -390,6 +390,13 @@ module Chomper
         Array(filters.status_ids).sort.join(","),
         Array(filters.version_ids).sort.join(",")
       ].join("|")
+    end
+
+    # Display name for a prior outcome. The internal value stays "shipped"
+    # (it's keyed to pr_url.txt and the progress log); only the ↩ marker in the
+    # queue views says "finished".
+    def outcome_label(outcome)
+      outcome == "shipped" ? "finished" : outcome
     end
 
     def prior_outcome(item_data)

@@ -72,6 +72,17 @@ module Chomper
       assert_equal "def-456", @session_file.read, "a retry must be able to resume the session"
     end
 
+    def test_run_raises_on_http_error_with_body
+      stub_request(:post, "http://claude.test:47291")
+        .to_return(status: 403, body: "unknown tool grant\n")
+
+      capture_io do
+        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        assert_match(/HTTP 403/, err.message)
+        assert_match(/unknown tool grant/, err.message)
+      end
+    end
+
     def test_capture_does_not_write_outfile_on_error
       stub_claude(ndjson(
         assistant_text("partial preamble"),

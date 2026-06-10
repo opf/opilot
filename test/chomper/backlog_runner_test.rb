@@ -147,7 +147,7 @@ module Chomper
 
       assert_includes out, "[1/5]"
       assert_includes out, "[trivial]"
-      assert_includes out, "↩ shipped"
+      assert_includes out, "↩ finished"
       assert_includes out, "https://op.example.com/wp/1"
       assert_includes out, "4 to process, 1 shipped, 0 dropped"
     end
@@ -225,7 +225,7 @@ module Chomper
       # and the sole item is skipped before any planning.
       out, = capture_io { runner.process }
 
-      assert_includes out, "↩ shipped — skipping"
+      assert_includes out, "↩ finished — skipping"
       assert_includes out, "Backlog run complete."
     end
 
