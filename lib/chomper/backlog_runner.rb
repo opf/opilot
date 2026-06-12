@@ -614,9 +614,12 @@ module Chomper
       checkout_branch(st)
       unless branch_has_commits?(st)
         log_script "Implementing ##{st.item_id}"
+        # Resuming the planning session carries its codebase exploration into
+        # implementation; --allowedTools is per-invocation, so the resumed
+        # session simply gains the write tools.
         @claude.run(
           Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
-          tools: Claude::TOOLS_IMPL
+          tools: Claude::TOOLS_IMPL, session_file: st.session_file
         )
         commit(st)
       end
@@ -677,7 +680,7 @@ module Chomper
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ)
+      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
       pr_body = pr_text[/^#.*/m] || pr_text
       st.pr_desc_file.write(strip_ansi(pr_body))
     end

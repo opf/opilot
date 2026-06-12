@@ -149,14 +149,16 @@ module Chomper
         log_script "Writer: revising plan for ##{st.item_id} from feedback"
         prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject)
-        @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
+        @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
+                        session_file: st.session_file)
         return :ok
       end
 
       log_script "Writer: generating plan for ##{st.item_id} — #{st.subject}"
       prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s)
-      @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
+      @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
+                      session_file: st.session_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
@@ -170,6 +172,8 @@ module Chomper
 
       log_script "Reviewer: checking plan for ##{st.item_id}"
       review_prompt = Prompts.plan_review(plan: plan_c, item_id: st.item_id)
+      # Deliberately no session_file: the reviewer must judge the plan without
+      # inheriting the writer's exploration context.
       @claude.capture(review_prompt, tools: Claude::TOOLS_READ, outfile: st.review_file)
       verdict = st.review_file.read.scan(/\b(PROCEED|REVISE|REJECT)\b/i).last&.first&.upcase || "PROCEED"
 
@@ -183,7 +187,8 @@ module Chomper
       when "REVISE"
         log_script "Revising plan for ##{st.item_id} from reviewer feedback"
         revise_prompt = Prompts.plan_revise(plan: plan_c, review: container_path(st.review_file))
-        @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file)
+        @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
+                        session_file: st.session_file)
       end
 
       safe_rm(st.review_file)
@@ -201,8 +206,11 @@ module Chomper
       checkout_branch(st)
       unless branch_has_commits?(st)
         log_script "Implementing fix for ##{st.item_id}"
+        # Resuming the planning session carries its codebase exploration into
+        # implementation; --allowedTools is per-invocation, so the resumed
+        # session simply gains the write tools.
         @claude.run(Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
-                    tools: Claude::TOOLS_IMPL)
+                    tools: Claude::TOOLS_IMPL, session_file: st.session_file)
         commit(st)
       end
 
@@ -258,7 +266,7 @@ module Chomper
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ)
+      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
       pr_body = pr_text[/^#.*/m] || pr_text
       st.pr_desc_file.write(strip_ansi(pr_body))
     end

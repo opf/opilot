@@ -5,15 +5,16 @@ module Chomper
     # ── fakes ──────────────────────────────────────────────────────────────────
 
     class FakeClaude
-      attr_reader :runs, :captures
+      attr_reader :runs, :captures, :run_sessions, :capture_sessions
       def initialize(plan: "## Plan\nDo the thing.\n", review: "### Verdict\nPROCEED",
                      chat: "Here's my take.", impl: "", pr: "# PR title\nbody")
         @plan, @review, @chat, @impl, @pr = plan, review, chat, impl, pr
-        @runs = []; @captures = []
+        @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
-      def capture(prompt, tools: nil, outfile:)
+      def capture(prompt, tools: nil, outfile:, session_file: nil)
         @captures << prompt
+        @capture_sessions << session_file
         content = prompt.include?("REVIEWER") ? @review : @plan
         Pathname(outfile).write(content)
         content
@@ -21,6 +22,7 @@ module Chomper
 
       def run(prompt, tools: nil, session_file: nil)
         @runs << prompt
+        @run_sessions << session_file
         return @chat if prompt.include?("You are chomper")
         return @pr   if prompt.include?("PR description")
         @impl
@@ -213,6 +215,19 @@ module Chomper
     def test_handle_plan_runs_the_reviewer
       @agent.handle(intent(:plan))
       assert(@claude.captures.any? { |p| p.include?("REVIEWER") }, "plan should run the reviewer")
+    end
+
+    def test_handle_fix_threads_one_session_through_plan_implement_and_pr
+      @agent.handle(intent(:fix))
+      session = @ctx.state_dir / "items" / "42" / "session_id"
+      assert_equal [session], @claude.capture_sessions.uniq, "plan must use the per-WP session"
+      assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
+    end
+
+    def test_handle_plan_keeps_the_reviewer_session_free
+      @agent.handle(intent(:plan))
+      session = @ctx.state_dir / "items" / "42" / "session_id"
+      assert_equal [session, nil], @claude.capture_sessions, "the reviewer must not inherit the writer's session"
     end
 
     def test_handle_plan_posts_the_plan_text_as_a_comment
