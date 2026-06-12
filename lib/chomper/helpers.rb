@@ -30,6 +30,16 @@ module Chomper
       Rainbow.uncolor(str)
     end
 
+    # Calls the user back for an input prompt that typically follows a long
+    # unattended Claude run. OSC 9 posts a desktop notification in terminals
+    # that support it (Ghostty, iTerm2, WezTerm, kitty); others drop the
+    # sequence. The BEL after it rings the bell everywhere else (sound, dock
+    # bounce, tab highlight — whatever the emulator is configured to do).
+    def ping_terminal(message = "chomper is waiting for your input")
+      $stdout.print("\e]9;#{message}\e\\\a")
+      $stdout.flush
+    end
+
     def safe_rm(*paths)
       paths.each do |path|
         path = Pathname(path)

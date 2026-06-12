@@ -480,7 +480,7 @@ module Chomper
           safe_rm(st.plan_file)
           puts ""
           puts "  ⚠ Plan generation failed — no plan came back."
-          case prompt_plan_failed
+          case prompt_plan_failed(id)
           when :retry then next   # plan.md is gone, so the loop regenerates it
           when :chat  then run_chat(st); next
           when :skip  then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
@@ -497,7 +497,7 @@ module Chomper
           puts "  ⚠ More information needed before planning:"
           puts questions.lines.map { |l| "    #{l}" }.join unless questions.empty?
           puts ""
-          case prompt_needs_info
+          case prompt_needs_info(id)
           when :chat
             run_chat(st)
             next   # retry planning — chat session carries context forward
@@ -520,7 +520,7 @@ module Chomper
           puts st.plan_file.read.lines.map { |l| "    #{l}" }.join
         end
         puts ""
-        case prompt_approval
+        case prompt_approval(id)
         when :approve then ship(st); break
         when :chat    then run_chat(st)
         when :replan  then replan_feedback = prompt_replan_feedback
@@ -538,7 +538,8 @@ module Chomper
       st.plan_file.exist? && st.plan_file.read.match?(/^#+ |\bNEEDS_INFO\b/)
     end
 
-    def prompt_plan_failed
+    def prompt_plan_failed(id)
+      ping_terminal("chomper: plan for ##{id} failed — input needed")
       loop do
         print "  [r]etry / [c]hat / [s]kip / [d]rop: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -552,7 +553,8 @@ module Chomper
       end
     end
 
-    def prompt_needs_info
+    def prompt_needs_info(id)
+      ping_terminal("chomper: ##{id} needs more info before planning")
       loop do
         print "  [c]hat to provide context / [s]kip / [d]rop: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -565,7 +567,8 @@ module Chomper
       end
     end
 
-    def prompt_approval
+    def prompt_approval(id)
+      ping_terminal("chomper: plan for ##{id} ready for review")
       loop do
         print "  [y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -600,6 +603,9 @@ module Chomper
           item: container_path(st.item_file), plan: plan_text, message: msg
         )
         @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
+        # Ring after the reply, not before the first message: the user just
+        # chose [c]hat and is present; it's Claude's answers they wander off on.
+        ping_terminal("chomper: chat reply for ##{st.item_id} ready")
         puts ""
         plan_text = st.plan_file.exist? ? st.plan_file.read : plan_text
       end

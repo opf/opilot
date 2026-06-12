@@ -124,6 +124,14 @@ module Chomper
       $stdin = old
     end
 
+    def test_input_prompts_ring_the_terminal_bell
+      r = runner([])
+      out, _err = capture_io { with_stdin("s\n") { r.send(:prompt_approval, "42") } }
+      assert_includes out, "\a", "the approval prompt should ring the bell"
+      assert_includes out, "\e]9;chomper: plan for #42 ready for review\e\\",
+                      "the approval prompt should post an OSC 9 notification naming the WP"
+    end
+
     def test_show_orders_clusters_and_marks_prior_outcomes
       write_item(1, "Costs item", "Costs")
       write_item(2, "No module easy", "")
