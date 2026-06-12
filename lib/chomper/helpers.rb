@@ -77,6 +77,23 @@ module Chomper
       @worktree ||= Git.open(@ctx.worktree_host.to_s)
     end
 
+    # Check out the WP's fix branch, creating it from origin/dev on first use.
+    # `checkout -b` from a remote start point makes the new branch track
+    # origin/dev, which is dangerous: a bare `git pull` merges dev into the
+    # fix branch, and with push.default=upstream a bare `git push` targets dev
+    # itself. Re-point tracking at the branch's own name — the PR branch it is
+    # pushed to — on every checkout, which also repairs branches created
+    # before this fix.
+    def checkout_branch(st)
+      if local_branch_exists?(worktree, st.branch)
+        worktree.checkout(st.branch)
+      else
+        worktree.checkout(st.branch, new_branch: true, start_point: "origin/dev")
+      end
+      worktree.config("branch.#{st.branch}.remote", "origin")
+      worktree.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+    end
+
     # Append a pipe-delimited line to the session progress log.
     def record_progress(id, branch, note)
       @ctx.progress_file.open("a") do |f|

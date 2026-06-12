@@ -232,14 +232,6 @@ module Chomper
 
     # ── git / worktree mechanics ────────────────────────────────────────────
 
-    def checkout_branch(st)
-      if local_branch_exists?(worktree, st.branch)
-        worktree.checkout(st.branch)
-      else
-        worktree.checkout(st.branch, new_branch: true, start_point: 'origin/dev')
-      end
-    end
-
     def branch_has_commits?(st)
       worktree.log.between('origin/dev', st.branch).execute.any?
     end

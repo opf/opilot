@@ -70,14 +70,15 @@ module Chomper
 
     # Minimal stand-in for the ruby-git worktree handle the Agent uses.
     class FakeWorktree
-      attr_reader :checkouts, :commits
+      attr_reader :checkouts, :commits, :configs
       def initialize(has_commits: false, has_changes: true)
         @has_commits = has_commits
         @has_changes = has_changes
-        @checkouts = []; @commits = []
+        @checkouts = []; @commits = []; @configs = []
       end
       def revparse(_ref); "sha"; end                 # branch "exists" → checkout, no create
       def checkout(branch, **_opts); @checkouts << branch; end
+      def config(key, value); @configs << [key, value]; end
       def log(*_args); FakeLog.new(@has_commits); end
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end
@@ -181,6 +182,16 @@ module Chomper
       @agent.send(:ship, st)
       refute(@claude.runs.any? { |p| p.include?("APPROVED PLAN") }, "should not re-run implement")
       assert pr_url_path.exist?
+    end
+
+    def test_checkout_branch_tracks_the_pr_branch_not_dev
+      st = @agent.send(:state_for, "42", "Fix the bug", "bug")
+      @agent.send(:checkout_branch, st)
+
+      configs = @agent.instance_variable_get(:@worktree).configs
+      assert_includes configs, ["branch.#{st.branch}.remote", "origin"]
+      assert_includes configs, ["branch.#{st.branch}.merge", "refs/heads/#{st.branch}"],
+                      "the fix branch must track its own PR branch, never origin/dev"
     end
 
     # ── handlers / routing ────────────────────────────────────────────────────
