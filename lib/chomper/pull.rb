@@ -89,7 +89,7 @@ module Chomper
       return nil unless code == 200 && wp
 
       fetch_work_package_item(wp)
-      path = @ctx.state_dir / "items" / wp["id"].to_s / "item.json"
+      path = @ctx.state_dir / "items" / wp_display_id(wp) / "item.json"
       path.exist? ? JSON.parse(path.read) : nil
     end
 
@@ -122,7 +122,7 @@ module Chomper
           from_cache += 1 if cached
           print "\r  #{processed}/#{total} work packages (#{from_cache} cached)…"
           $stdout.flush
-          path = @ctx.state_dir / "items" / wp["id"].to_s / "item.json"
+          path = @ctx.state_dir / "items" / wp_display_id(wp) / "item.json"
           next unless path.exist?
           data = JSON.parse(path.read)
           if module_field_key
@@ -263,14 +263,14 @@ module Chomper
     # Intent. Acknowledges receipt with 👀 and enforces the email allowlist
     # (a non-allowlisted trigger is marked acted and dropped, never emitted).
     def intent_from_comments(wp, comments)
-      trigger = chomper_trigger_comment(wp["id"], comments)
+      trigger = chomper_trigger_comment(wp_display_id(wp), comments)
       return nil unless trigger
 
       if @ctx.allowed_emails.any?
         email = resolve_user_email(trigger)
         unless @ctx.allowed_emails.include?(email.to_s)
           puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
-          mark_chomper_acted(wp["id"], trigger["created_at"])
+          mark_chomper_acted(wp_display_id(wp), trigger["created_at"])
           return nil
         end
       end
@@ -278,7 +278,7 @@ module Chomper
       react_eyes(trigger["id"])
       command, text = parse_command(trigger["text"].to_s)
       Intent.new(
-        item_id:    wp["id"].to_s,
+        item_id:    wp_display_id(wp),
         subject:    wp["subject"],
         type:       wp.dig("_embedded", "type", "name").to_s,
         command:    command,
@@ -327,8 +327,17 @@ module Chomper
       links.filter_map { |l| l["title"] if l.is_a?(Hash) }.first.to_s
     end
 
+    # The user-facing work package id: semantic ("PROJ-123") when the instance
+    # runs in semantic mode, numeric otherwise. The API accepts either form in
+    # work-package routes, so this is the only id chomper needs to keep.
+    # Falls back to "id" for instances that predate the displayId field.
+    def wp_display_id(wp)
+      id = wp["displayId"]
+      (id.nil? || id.to_s.empty? ? wp["id"] : id).to_s
+    end
+
     def fetch_work_package_item(wp)
-      wp_id = wp["id"]
+      wp_id = wp_display_id(wp)
       item_dir  = @ctx.state_dir / "items" / wp_id.to_s
       item_path = item_dir / "item.json"
 
@@ -383,10 +392,10 @@ module Chomper
 
     def build_full_item(wp, comments)
       {
-        "id"          => wp["id"].to_s,
+        "id"          => wp_display_id(wp),
         "subject"     => wp["subject"],
         "type"        => wp.dig("_embedded", "type", "name"),
-        "url"         => "#{@ctx.op_url}/work_packages/#{wp["id"]}",
+        "url"         => "#{@ctx.op_url}/work_packages/#{wp_display_id(wp)}",
         "status"      => wp.dig("_embedded", "status", "name"),
         "priority"    => wp.dig("_embedded", "priority", "name"),
         "assignee"    => wp.dig("_embedded", "assignee", "name") || "unassigned",

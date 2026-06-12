@@ -21,8 +21,8 @@ module Chomper
         Agent.new(@ctx).run
       when "fix"
         id = wp_id_arg(argv[1])
-        unless id.match?(/\A\d+\z/)
-          $stderr.puts "Usage: ./chomper fix <work-package-id>"
+        unless id.match?(Helpers::WP_ID_PATTERN)
+          $stderr.puts "Usage: ./chomper fix <work-package-id>   (e.g. 59942 or PROJ-123)"
           raise Chomper::FatalError
         end
         @ctx.load_config!
@@ -54,10 +54,12 @@ module Chomper
 
     private
 
-    # Ids pasted from OpenProject often carry the "#" prefix ("#59942") —
-    # accept it; the numeric validation downstream still rejects garbage.
+    # Ids pasted from OpenProject often carry the "#" prefix ("#59942",
+    # "#PROJ-123") — accept it, and upcase semantic ids typed in lowercase
+    # ("proj-123"); the WP_ID_PATTERN validation downstream rejects garbage.
     def wp_id_arg(arg)
-      arg.to_s.strip.delete_prefix("#")
+      id = arg.to_s.strip.delete_prefix("#")
+      id.match?(/\A[A-Za-z][A-Za-z0-9_]*-\d+\z/) ? id.upcase : id
     end
   end
 end

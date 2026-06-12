@@ -28,6 +28,19 @@ module Chomper
       assert_equal "42", item["id"]
     end
 
+    def test_build_full_item_prefers_semantic_display_id
+      wp = WP.merge("displayId" => "PROJ-42")
+      item = @pull.send(:build_full_item, wp, [])
+      assert_equal "PROJ-42", item["id"]
+      assert_equal "https://example.com/work_packages/PROJ-42", item["url"]
+    end
+
+    def test_build_full_item_falls_back_to_id_when_display_id_is_null
+      wp = WP.merge("displayId" => nil)   # render_nil: true on older items
+      item = @pull.send(:build_full_item, wp, [])
+      assert_equal "42", item["id"]
+    end
+
     def test_build_full_item_maps_subject
       item = @pull.send(:build_full_item, WP, [])
       assert_equal "Fix login bug", item["subject"]

@@ -94,8 +94,8 @@ module Chomper
     # Park a work package until the next triage, without walking the queue.
     # Pure local file work — no fetch, no containers (like `show`).
     def skip(wp_id)
-      unless wp_id.match?(/\A\d+\z/)
-        $stderr.puts "Usage: ./chomper backlog skip <work-package-id>"
+      unless wp_id.match?(WP_ID_PATTERN)
+        $stderr.puts "Usage: ./chomper backlog skip <work-package-id>   (e.g. 59942 or PROJ-123)"
         raise Chomper::FatalError
       end
 

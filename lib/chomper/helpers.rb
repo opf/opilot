@@ -2,6 +2,11 @@ require "rainbow"
 
 module Chomper
   module Helpers
+    # A work package id as the user types it: numeric ("59942") or semantic
+    # ("PROJ-123", instances in semantic-identifier mode). Mirrors OpenProject's
+    # WorkPackage::SemanticIdentifier::ID_ROUTE_CONSTRAINT.
+    WP_ID_PATTERN = /\A(?:\d+|[A-Z][A-Z0-9_]*-\d+)\z/
+
     # Single source of truth for log-line timestamps — both the time format and
     # the bracket wrapping — so every line chomper writes shares one format.
     LOG_TIME_FORMAT = "%H:%M:%S"
