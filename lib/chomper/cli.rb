@@ -20,7 +20,7 @@ module Chomper
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
       when "fix"
-        id = argv[1].to_s
+        id = wp_id_arg(argv[1])
         unless id.match?(/\A\d+\z/)
           $stderr.puts "Usage: ./chomper fix <work-package-id>"
           raise Chomper::FatalError
@@ -42,7 +42,7 @@ module Chomper
         when "show"    then runner.show
         when "triage"  then runner.triage
         when "process" then runner.process
-        when "skip"    then runner.skip(argv[2].to_s)
+        when "skip"    then runner.skip(wp_id_arg(argv[2]))
         else                runner.run
         end
       else
@@ -50,6 +50,14 @@ module Chomper
         ui.usage
         raise Chomper::FatalError
       end
+    end
+
+    private
+
+    # Ids pasted from OpenProject often carry the "#" prefix ("#59942") —
+    # accept it; the numeric validation downstream still rejects garbage.
+    def wp_id_arg(arg)
+      arg.to_s.strip.delete_prefix("#")
     end
   end
 end
