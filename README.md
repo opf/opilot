@@ -5,6 +5,7 @@
 An AI agent that implements OpenProject work packages. You review and merge when you're happy.
 
 **Agent mode**: Interacts via WP comments (tagging @chomper)
+
 **Script mode**: Interacts via local terminal
 
 ---
@@ -313,8 +314,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
     1. Instruct the user to fork the `openproject` repo under their own account, then generate a fine-grained token _just for the repo_
     2. Have them insert the token
     3. Take care of the rest automatically:
-      * Point the local repo (no matter if cloned or worktree'd) to the new origin
-      * Make sure the PRs are pointed to the upstream repo
+        * Point the local repo (no matter if cloned or worktree'd) to the new origin
+        * Make sure the PRs are pointed to the upstream repo
 * Plug in a simple Claude auth token replacement proxy for better isolation
   * There is already a proxy container, just have it replace a standalone header string with the actual token
     This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
