@@ -47,10 +47,11 @@ docker compose build runner
 
 ## Architecture
 
-Three Docker containers orchestrated by `compose.yml`:
+Four Docker containers orchestrated by `compose.yml`:
 
 - **Runner** (Ruby 4.0): the agent. Polls OpenProject, dispatches intents, calls Claude, pushes branches, opens PRs.
-- **Claude** (Node 20 + Claude Code CLI): wraps `claude -p` via `server.js` HTTP server on port 47291 (internal network only, never published to the host). Accepts prompts with tool grants and session IDs; streams NDJSON back. A `PreToolUse` hook (`guard-writes.js`, loaded via `--settings /app/claude-settings.json`) blocks file writes outside `/repo`.
+- **Claude** (Node 20 + Claude Code CLI): wraps `claude -p` via `server.js` HTTP server on port 47291 (internal network only, never published to the host). Accepts prompts with tool grants and session IDs; streams NDJSON back. A `PreToolUse` hook (`guard-writes.js`, loaded via `--settings /app/claude-settings.json`) blocks file writes outside `/repo`. Authenticates to Anthropic one of two ways: with an API key (default), via `ANTHROPIC_BASE_URL` → the authgw gateway, carrying only a fixed handshake token so the real key is never in this container; or, with no key set, via stored `claude auth login` OAuth creds (in the claude-auth mount) talking to Anthropic through the proxy.
+- **Authgw** (Node 20, `authgw.js`): holds the real `ANTHROPIC_API_KEY`. Validates the fixed gateway token (`CHOMPER_GW_TOKEN`, a non-secret handshake value set in `compose.yml`), injects `x-api-key`, and forwards (streaming) to a hardcoded `api.anthropic.com`. Not an open proxy, so it egresses directly; only inference traffic is redirected here, everything else still goes via the proxy. Keeps the key out of the untrusted claude container.
 - **Proxy** (tinyproxy): egress allowlist for the claude container — only hosts matching `tinyproxy-filter` (Anthropic endpoints, Rails docs) are reachable; everything else is denied.
 
 The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree creation) then invokes the runner container.
@@ -97,7 +98,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 │   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent) or "skipped" (until next triage)
 │   └── session_id           # Claude session for continuity across turns
 ├── openproject/             # git worktree
-└── claude-auth/             # persisted Claude CLI auth
+└── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
 ```
 
 ### Claude container communication
@@ -117,4 +118,4 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OP_REPO_PATH` | Path to local openproject repo, or `false` to auto-clone |
 | `GITHUB_TOKEN` | For pushing branches and opening PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
-| `ANTHROPIC_API_KEY` | Optional; falls back to `claude auth login` |
+| `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |

@@ -75,17 +75,17 @@ cp .env.example .env
 │                      ▲                                              │
 │                      │ json                                         │
 │                      ▼                                              │
-│   ┌──────────── claude container ────────────┐                      │
-│   │ Node.js server (:47291)                  │    ┌─── proxy ───┐   │
-│   │   POST / → `claude -p`                   │    │ tinyproxy   │   │
-│   │                                          │    │ (:8888)     │   │     ┌───────────────┐
-│   │ volumes:                                 │───▶│             ├───┤────▶│ Anthropic API │
-│   │   .chomper/            → /state  (rw)    │    │ egress      │   │     └───────────────┘
-│   │   .chomper/openproject → /repo   (rw)    │    │ allowlist   │   │
-│   │                                          │    │             │   │
-│   │ internal-only; egress only via proxy     │    └─────────────┘   │
-│   │                                          │                      │
-│   └──────────────────────────────────────────┘                      │
+│   ┌──────────── claude container ────────────┐   ┌─── proxy ───┐    │
+│   │ Node.js server (:47291)                  │   │ tinyproxy   │    │   ┌────────────────────────┐
+│   │   POST / → `claude -p`                   │──▶│ (:8888)     ├────┼──▶│ Anthropic telemetry,   │
+│   │                                          │   │ egress      │    │   │ Rails docs (allowlist) │
+│   │ volumes:                                 │   │ allowlist   │    │   └────────────────────────┘
+│   │   .chomper/            → /state  (ro)    │   └─────────────┘    │
+│   │   .chomper/openproject → /repo   (rw)    │   ┌── authgw ───┐    │   ┌────────────────────────┐
+│   │                                          │   │ injects     │    │   │ api.anthropic.com      │
+│   │ no real API key — inference via authgw,  │──▶│ x-api-key   ├────┼──▶│ (inference)            │
+│   │ everything else via proxy; internal-only │   │ (real key)  │    │   └────────────────────────┘
+│   └──────────────────────────────────────────┘   └─────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -101,11 +101,20 @@ comments), so it is boxed in from several directions:
 * **Egress allowlist** — all outbound traffic goes through a tinyproxy sidecar
   that only permits Anthropic endpoints (plus Rails docs); a prompt injection
   has no channel to exfiltrate data.
+* **API key isolation** — when an API key is configured, the real
+  `ANTHROPIC_API_KEY` lives only in the separate `authgw` gateway, which injects
+  it into inference requests; the claude container carries just a fixed
+  (non-secret) handshake token, so a prompt injection can cause API calls but
+  cannot read or exfiltrate the key. (The optional `claude auth login` fallback
+  trades this away — OAuth creds then live in the claude container, though the
+  egress allowlist still limits where they could go.)
 * **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
-  file mutation outside `/repo`, so plans, state, and Claude credentials can't
-  be tampered with even in the implementation phase.
+  file mutation outside `/repo`, and the `.chomper` state dir is additionally
+  mounted **read-only** (`/state`), so plans, cached state, and session files
+  can't be tampered with even if the hook were bypassed.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
-  `no-new-privileges`, and no OpenProject/GitHub tokens in the environment.
+  `no-new-privileges`, and no OpenProject/GitHub tokens or Anthropic API key in
+  the environment.
 * **Human gate** — everything ships as a *draft* PR; review it as untrusted
   code, since WP content can attempt prompt injection.
 
@@ -223,7 +232,7 @@ openproject-chomper/
 ├── backlog_triage.json  ← cached triage results (keyed by filter fingerprint)
 ├── progress.txt         ← progress log
 ├── chomp.log            ← full prompt + response log
-├── claude-auth/         ← persisted Claude container auth
+├── claude-auth/         ← claude CLI config (holds OAuth login creds when no API key is set)
 ├── openproject/         ← git worktree or fresh clone of openproject
 └── items/
     └── <id>/
@@ -244,7 +253,7 @@ openproject-chomper/
 |---|---|---|
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
-| `ANTHROPIC_API_KEY` | — | Passed into the Claude container; falls back to stored auth if unset |
+| `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
 | `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
@@ -316,15 +325,9 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
     3. Take care of the rest automatically:
         * Point the local repo (no matter if cloned or worktree'd) to the new origin
         * Make sure the PRs are pointed to the upstream repo
-* Plug in a simple Claude auth token replacement proxy for better isolation
-  * There is already a proxy container, just have it replace a standalone header string with the actual token
-    This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
 
 
 ### AI Architecture
-* [BEFORE 2026-06-15] Switch to Anthropic API tokens
-  * After 14th of June, we'll no longer be able to use the OAuth flow via `claude auth login` (which yields insecure long-lived tokens anyway)
-  * Separate billing required: https://platform.claude.com
 * Migrate from `claude -p` to a Claude SDK 
 * Replace Claude Code with a generic AI "file edit engine" layer
   * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
