@@ -14,7 +14,6 @@ services:
       - ${SCRIPT_DIR:-.}:${SCRIPT_DIR:-/chomper}
       - ${OP_REPO:-.}:${OP_REPO:-/op-repo}
     environment:
-      - ANTHROPIC_API_KEY
       - GITHUB_TOKEN
       - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
@@ -43,6 +42,7 @@ services:
       dockerfile: Dockerfile.claude
     depends_on:
       - proxy
+      - authgw
     volumes:
       - ${SCRIPT_DIR:-.}/.chomper/claude-auth:/home/node/.claude
       - ${SCRIPT_DIR:-.}/.chomper/openproject:/repo
@@ -51,10 +51,14 @@ services:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
       - FORCE_COLOR=1
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
-      - ANTHROPIC_API_KEY
+      # API auth is routed through the authgw gateway, which holds the real key;
+      # the container carries only the per-run gateway bearer token.
+      - ANTHROPIC_BASE_URL=http://authgw:47292
+      - ANTHROPIC_AUTH_TOKEN=${CHOMPER_GW_TOKEN}
       - HTTP_PROXY=http://proxy:8888
       - HTTPS_PROXY=http://proxy:8888
-      - NO_PROXY=localhost,127.0.0.1
+      # authgw is reached directly over the internal network, not via tinyproxy.
+      - NO_PROXY=localhost,127.0.0.1,authgw
     networks:
       - internal
     read_only: true
@@ -66,6 +70,34 @@ services:
       - ALL
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:47291/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Auth gateway — holds the real ANTHROPIC_API_KEY and injects it as x-api-key
+  # on requests forwarded to api.anthropic.com. The claude container points
+  # ANTHROPIC_BASE_URL here and authenticates with the per-run gateway token, so
+  # the real key never lives alongside untrusted work-package content. Always
+  # forwards to a hardcoded host, so it is not an open proxy.
+  authgw:
+    build:
+      context: .
+      dockerfile: Dockerfile.authgw
+    environment:
+      - ANTHROPIC_API_KEY
+      - CHOMPER_GW_TOKEN
+    networks:
+      - internal
+      - egress
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:47292/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 2s
       timeout: 5s
       retries: 15

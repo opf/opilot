@@ -8,7 +8,7 @@ module Chomper
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :claude_url, :github_token,
                 :worktree_host, :worktree_container, :state_container,
-                :anthropic_api_key, :op_url, :token, :repo_path
+                :op_url, :token, :repo_path
     attr_reader   :allowed_emails
 
     def self.build(script_dir = nil)
@@ -26,7 +26,6 @@ module Chomper
       @worktree_host      = @state_dir / "openproject"
       @worktree_container = "/repo"
       @state_container    = "/state"
-      @anthropic_api_key  = ENV["ANTHROPIC_API_KEY"]
       @op_url             = ENV["OPENPROJECT_URL"]
       @token              = ENV["OPENPROJECT_TOKEN"]
       @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil

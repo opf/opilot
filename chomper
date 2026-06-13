@@ -65,6 +65,19 @@ if ! grep -q "^CHOMPER_ALLOWED_EMAILS=" "$ENV_FILE" 2>/dev/null; then
   echo ""
 fi
 
+if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
+  # Held only by the authgw gateway at runtime — never passed to the claude
+  # container (which runs untrusted work-package content).
+  ANTHROPIC_API_KEY_ENTRY=""
+  while [ -z "$ANTHROPIC_API_KEY_ENTRY" ]; do
+    printf "  Anthropic API key (sk-ant-…): "
+    read -rs ANTHROPIC_API_KEY_ENTRY; echo ""
+    [ -z "$ANTHROPIC_API_KEY_ENTRY" ] && echo "  An API key is required — please enter a value."
+  done
+  printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY_ENTRY" >> "$ENV_FILE"
+  echo ""
+fi
+
 # ── Load config ───────────────────────────────────────────────────────────
 _OP_REPO_PATH_RAW="$(grep '^OP_REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)"
 if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then
@@ -98,6 +111,18 @@ case "$CMD" in
   backlog)   [[ -z "$SUBCMD" || "$SUBCMD" == "triage" || "$SUBCMD" == "process" ]] && _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == "true" ]]; then
+  # Auth: the real key is held only by the authgw gateway; the claude container
+  # authenticates to it with a per-run bearer token and never sees the key.
+  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    ANTHROPIC_API_KEY="$(grep '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  fi
+  if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+    echo "Error: ANTHROPIC_API_KEY is required — add it to .env." >&2
+    exit 1
+  fi
+  export ANTHROPIC_API_KEY
+  export CHOMPER_GW_TOKEN="$(openssl rand -hex 24)"
+
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   if [[ "$_CLONE_REPO" == "true" ]]; then
     if [ ! -d "$WORKTREE/.git" ]; then
@@ -117,14 +142,8 @@ if [[ "$_needs_claude" == "true" ]]; then
       echo ""
     fi
   fi
-  if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
-      claude claude auth status &>/dev/null; then
-    echo "[ Claude auth required — follow the prompts below ]"
-    docker compose -f "$SCRIPT_DIR/compose.yml" run --rm --remove-orphans \
-      claude claude auth login
-    echo ""
-  fi
+  # Brings up proxy + authgw (claude's dependencies) and waits for them healthy.
   docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
-  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude proxy 2>/dev/null || true' EXIT INT TERM
+  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude proxy authgw 2>/dev/null || true' EXIT INT TERM
 fi
 docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"
