@@ -1,8 +1,9 @@
 // Auth gateway — runs in its own container, holds the real ANTHROPIC_API_KEY.
 //
 // The claude container points ANTHROPIC_BASE_URL here and authenticates with a
-// per-run bearer token (ANTHROPIC_AUTH_TOKEN == CHOMPER_GW_TOKEN), so the real
-// key never lives alongside the untrusted work-package content. This forwarder
+// fixed handshake token (ANTHROPIC_AUTH_TOKEN == CHOMPER_GW_TOKEN — not a
+// secret, just a sanity gate), so the real key never lives alongside the
+// untrusted work-package content. This forwarder
 // always targets a hardcoded api.anthropic.com regardless of the request, so it
 // is not an open proxy: a prompt-injected claude can cause Anthropic API calls
 // but can neither read the key nor reach any other host through it.

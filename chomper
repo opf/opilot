@@ -112,7 +112,8 @@ case "$CMD" in
 esac
 if [[ "$_needs_claude" == "true" ]]; then
   # Auth: the real key is held only by the authgw gateway; the claude container
-  # authenticates to it with a per-run bearer token and never sees the key.
+  # reaches it with a fixed handshake token (set in compose.yml) and never sees
+  # the key.
   if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
     ANTHROPIC_API_KEY="$(grep '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
   fi
@@ -121,7 +122,6 @@ if [[ "$_needs_claude" == "true" ]]; then
     exit 1
   fi
   export ANTHROPIC_API_KEY
-  export CHOMPER_GW_TOKEN="$(openssl rand -hex 24)"
 
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   if [[ "$_CLONE_REPO" == "true" ]]; then

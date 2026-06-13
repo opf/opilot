@@ -103,7 +103,7 @@ comments), so it is boxed in from several directions:
   has no channel to exfiltrate data.
 * **API key isolation** — the real `ANTHROPIC_API_KEY` lives only in the separate
   `authgw` gateway, which injects it into inference requests. The claude container
-  carries just a per-run bearer token, so a prompt injection can cause API calls
+  carries just a fixed (non-secret) handshake token, so a prompt injection can cause API calls
   but cannot read or exfiltrate the key.
 * **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
   file mutation outside `/repo`, so plans, state, and Claude credentials can't
