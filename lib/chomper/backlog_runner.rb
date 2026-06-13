@@ -56,7 +56,7 @@ module Chomper
         cluster_items.each do |item_data|
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
-          line = "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
+          line = "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
           if (prior = prior_outcome(item_data))
             case prior
             when "shipped" then shipped += 1
@@ -102,19 +102,19 @@ module Chomper
       dir = @ctx.state_dir / "items" / wp_id
       case prior_outcome("id" => wp_id)
       when "shipped"
-        puts "  ##{wp_id} is already shipped: #{(dir / "pr_url.txt").read.strip}"
+        puts "  #{wp_label(wp_id)} is already shipped: #{(dir / "pr_url.txt").read.strip}"
       when "dropped"
-        puts "  ##{wp_id} is already dropped — that outlasts a skip. `./chomper fix #{wp_id}` overrides it."
+        puts "  #{wp_label(wp_id)} is already dropped — that outlasts a skip. `./chomper fix #{wp_id}` overrides it."
       when "skipped"
-        puts "  ##{wp_id} is already skipped — it returns with the next `backlog triage`."
+        puts "  #{wp_label(wp_id)} is already skipped — it returns with the next `backlog triage`."
       else
         dir.mkpath
         (dir / "backlog_done.txt").write("skipped")
         subject = (JSON.parse((dir / "item.json").read)["subject"] rescue nil) if (dir / "item.json").exist?
         if subject
-          log_script "##{wp_id} — #{subject} skipped — parked until the next triage."
+          log_script "#{wp_label(wp_id)} — #{subject} skipped — parked until the next triage."
         else
-          log_script "##{wp_id} skipped — not in the cached queue yet; the marker applies when it appears."
+          log_script "#{wp_label(wp_id)} skipped — not in the cached queue yet; the marker applies when it appears."
         end
       end
     end
@@ -123,12 +123,12 @@ module Chomper
     # filter set. Fetches that one WP live; a `dropped` or `skipped` marker from
     # a previous backlog run is deliberately ignored — naming an id overrides it.
     def fix(wp_id)
-      log_script "Fetching work package ##{wp_id}…"
+      log_script "Fetching work package #{wp_label(wp_id)}…"
       item = @pull.fetch_single_item(wp_id)
-      raise Chomper::FatalError, "could not fetch work package ##{wp_id} — check the id and OPENPROJECT_TOKEN" unless item
+      raise Chomper::FatalError, "could not fetch work package #{wp_label(wp_id)} — check the id and OPENPROJECT_TOKEN" unless item
 
       puts ""
-      puts "  ##{item["id"]} — #{item["subject"]}"
+      puts "  #{wp_label(item["id"])} — #{item["subject"]}"
       puts "  #{item["url"]}"
 
       if prior_outcome(item) == "shipped"
@@ -155,7 +155,7 @@ module Chomper
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
           puts ""
-          puts "  #{Rainbow("[#{index}/#{total}]").dimgray} ##{item_data["id"]} — #{item_data["subject"]}  #{complexity_label(complexity)}"
+          puts "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
 
           if (prior = prior_outcome(item_data))
             puts "  ↩ #{outcome_label(prior)} — skipping"
@@ -170,7 +170,7 @@ module Chomper
           rescue Claude::Error => e
             # Failed mid-chat or mid-implementation; planning failures are
             # handled inside process_item. Keep walking the queue.
-            log_script "##{item_data["id"]} — Claude run failed: #{e.message}"
+            log_script "#{wp_label(item_data["id"])} — Claude run failed: #{e.message}"
           end
         end
       end
@@ -441,7 +441,7 @@ module Chomper
         # On Claude::Error the failure was already shown in red; both branches
         # fall through so the loop can recover instead of crashing the walk.
         if replan_feedback
-          log_script "Re-planning ##{id} — #{subject}"
+          log_script "Re-planning #{wp_label(id)} — #{subject}"
           begin
             # Read-only and branch-agnostic: the branch was already checked out
             # when the plan was first generated, so no checkout_branch here.
@@ -458,7 +458,7 @@ module Chomper
           replan_feedback = nil
           just_generated = true
         elsif !(st.plan_file.exist? && st.plan_file.size > 0)
-          log_script "Planning ##{id} — #{subject}"
+          log_script "Planning #{wp_label(id)} — #{subject}"
           checkout_branch(st)
           begin
             # Pass session_file so a prior chat's context carries into the (re-)plan.
@@ -483,8 +483,8 @@ module Chomper
           case prompt_plan_failed(id)
           when :retry then next   # plan.md is gone, so the loop regenerates it
           when :chat  then run_chat(st); next
-          when :skip  then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
-          when :drop  then mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
+          when :skip  then mark_backlog_done(st, "skipped"); log_script "#{wp_label(id)} skipped — parked until the next triage."; break
+          when :drop  then mark_backlog_done(st, "dropped"); log_script "#{wp_label(id)} dropped."; break
           end
         end
 
@@ -503,11 +503,11 @@ module Chomper
             next   # retry planning — chat session carries context forward
           when :skip
             mark_backlog_done(st, "skipped")
-            log_script "##{id} skipped (needs info) — parked until the next triage."
+            log_script "#{wp_label(id)} skipped (needs info) — parked until the next triage."
             break
           when :drop
             mark_backlog_done(st, "dropped")
-            log_script "##{id} dropped."
+            log_script "#{wp_label(id)} dropped."
             break
           end
           break
@@ -524,8 +524,8 @@ module Chomper
         when :approve then ship(st); break
         when :chat    then run_chat(st)
         when :replan  then replan_feedback = prompt_replan_feedback
-        when :skip    then mark_backlog_done(st, "skipped"); log_script "##{id} skipped — parked until the next triage."; break
-        when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "##{id} dropped."; break
+        when :skip    then mark_backlog_done(st, "skipped"); log_script "#{wp_label(id)} skipped — parked until the next triage."; break
+        when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "#{wp_label(id)} dropped."; break
         end
       end
     end
@@ -539,7 +539,7 @@ module Chomper
     end
 
     def prompt_plan_failed(id)
-      ping_terminal("chomper: plan for ##{id} failed — input needed")
+      ping_terminal("chomper: plan for #{wp_label(id)} failed — input needed")
       loop do
         print "  [r]etry / [c]hat / [s]kip / [d]rop: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -554,7 +554,7 @@ module Chomper
     end
 
     def prompt_needs_info(id)
-      ping_terminal("chomper: ##{id} needs more info before planning")
+      ping_terminal("chomper: #{wp_label(id)} needs more info before planning")
       loop do
         print "  [c]hat to provide context / [s]kip / [d]rop: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -568,7 +568,7 @@ module Chomper
     end
 
     def prompt_approval(id)
-      ping_terminal("chomper: plan for ##{id} ready for review")
+      ping_terminal("chomper: plan for #{wp_label(id)} ready for review")
       loop do
         print "  [y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -605,7 +605,7 @@ module Chomper
         @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
         # Ring after the reply, not before the first message: the user just
         # chose [c]hat and is present; it's Claude's answers they wander off on.
-        ping_terminal("chomper: chat reply for ##{st.item_id} ready")
+        ping_terminal("chomper: chat reply for #{wp_label(st.item_id)} ready")
         puts ""
         plan_text = st.plan_file.exist? ? st.plan_file.read : plan_text
       end
@@ -619,7 +619,7 @@ module Chomper
 
       checkout_branch(st)
       unless branch_has_commits?(st)
-        log_script "Implementing ##{st.item_id}"
+        log_script "Implementing #{wp_label(st.item_id)}"
         # Resuming the planning session carries its codebase exploration into
         # implementation; --allowedTools is per-invocation, so the resumed
         # session simply gains the write tools.
@@ -631,7 +631,7 @@ module Chomper
       end
 
       unless branch_has_commits?(st)
-        log_script "##{st.item_id} — no changes produced."
+        log_script "#{wp_label(st.item_id)} — no changes produced."
         puts "  ⚠ No changes produced — plan may be a no-op or already applied."
         return
       end
@@ -649,7 +649,7 @@ module Chomper
 
     def post_note(item_id, text)
       code, _body = @api.post_activity(item_id, comment: text)
-      log_script "Note posted to WP ##{item_id}" if code == 201
+      log_script "Note posted to WP #{wp_label(item_id)}" if code == 201
     end
 
     def branch_has_commits?(st)
@@ -661,7 +661,7 @@ module Chomper
       diff = worktree.diff("HEAD")
       return if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("fix: #{st.subject} (WP ##{st.item_id})")
+      worktree.commit("fix: #{st.subject} (WP #{wp_label(st.item_id)})")
       c = worktree.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(st.item_id, st.branch, "committed")

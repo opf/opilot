@@ -26,7 +26,7 @@ module Chomper
           raise Chomper::FatalError
         end
         @ctx.load_config!
-        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix ##{id} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix #{Helpers.wp_label(id)} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         BacklogRunner.new(@ctx).fix(id)
       when "backlog"
         sub = argv[1]

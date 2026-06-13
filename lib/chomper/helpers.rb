@@ -35,6 +35,17 @@ module Chomper
       Rainbow.uncolor(str)
     end
 
+    # Inline label for a work package id, mirroring OpenProject's
+    # WorkPackage::SemanticIdentifier.format_display_id: semantic ids are
+    # self-describing ("PROJ-42"); classic numeric ids keep the "#42" prefix.
+    def self.wp_label(id)
+      id.to_s.match?(/[A-Za-z]/) ? id.to_s : "##{id}"
+    end
+
+    def wp_label(id)
+      Helpers.wp_label(id)
+    end
+
     # Calls the user back for an input prompt that typically follows a long
     # unattended Claude run. OSC 9 posts a desktop notification in terminals
     # that support it (Ghostty, iTerm2, WezTerm, kitty); others drop the

@@ -64,14 +64,14 @@ module Chomper
     def handle_and_ack(intent)
       handle(intent)   # sets @requester as its first step
     rescue => e
-      log_script "Error on ##{intent.item_id} (#{intent.command}): #{e.message}"
+      log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.message}"
       post_note(intent.item_id, addressed("sorry — I hit an error handling `@chomper #{intent.command}`:\n\n#{e.message}")) rescue nil
     ensure
       @pull.mark_acted(intent.item_id, intent.comment_at)
     end
 
     def handle(intent)
-      log_script "##{intent.item_id} — #{intent.command} — #{intent.subject}"
+      log_script "#{wp_label(intent.item_id)} — #{intent.command} — #{intent.subject}"
       @requester = requester_mention(intent)   # who to address in replies
       case intent.command
       when :chat    then handle_chat(intent)
@@ -146,7 +146,7 @@ module Chomper
       plan_c = container_path(st.plan_file)
 
       if feedback && !feedback.empty? && st.plan_file.exist?
-        log_script "Writer: revising plan for ##{st.item_id} from feedback"
+        log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
         prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject)
         @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
@@ -154,7 +154,7 @@ module Chomper
         return :ok
       end
 
-      log_script "Writer: generating plan for ##{st.item_id} — #{st.subject}"
+      log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
       prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s)
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
@@ -163,14 +163,14 @@ module Chomper
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
         safe_rm(st.plan_file)
-        log_script "Plan NEEDS_INFO for ##{st.item_id} — requesting clarification."
+        log_script "Plan NEEDS_INFO for #{wp_label(st.item_id)} — requesting clarification."
         post_note(st.item_id, addressed("I need more information before I can plan a fix:\n\n#{questions}"))
         return :needs_info
       end
 
       return :ok unless review   # express lane: skip the reviewer
 
-      log_script "Reviewer: checking plan for ##{st.item_id}"
+      log_script "Reviewer: checking plan for #{wp_label(st.item_id)}"
       review_prompt = Prompts.plan_review(plan: plan_c, item_id: st.item_id)
       # Deliberately no session_file: the reviewer must judge the plan without
       # inheriting the writer's exploration context.
@@ -181,11 +181,11 @@ module Chomper
       when "REJECT"
         issues = st.review_file.read.strip
         safe_rm(st.review_file, st.plan_file)
-        log_script "Plan REJECTED for ##{st.item_id}."
+        log_script "Plan REJECTED for #{wp_label(st.item_id)}."
         post_note(st.item_id, addressed("I don't think this is safe to fix as specified:\n\n#{issues}"))
         return :rejected
       when "REVISE"
-        log_script "Revising plan for ##{st.item_id} from reviewer feedback"
+        log_script "Revising plan for #{wp_label(st.item_id)} from reviewer feedback"
         revise_prompt = Prompts.plan_revise(plan: plan_c, review: container_path(st.review_file))
         @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                         session_file: st.session_file)
@@ -205,7 +205,7 @@ module Chomper
 
       checkout_branch(st)
       unless branch_has_commits?(st)
-        log_script "Implementing fix for ##{st.item_id}"
+        log_script "Implementing fix for #{wp_label(st.item_id)}"
         # Resuming the planning session carries its codebase exploration into
         # implementation; --allowedTools is per-invocation, so the resumed
         # session simply gains the write tools.
@@ -215,7 +215,7 @@ module Chomper
       end
 
       unless branch_has_commits?(st)
-        log_script "##{st.item_id} — no changes produced, nothing to ship."
+        log_script "#{wp_label(st.item_id)} — no changes produced, nothing to ship."
         post_note(st.item_id, addressed("I couldn't produce any changes for this — the plan may be a no-op or already applied."))
         return
       end
@@ -241,7 +241,7 @@ module Chomper
       diff = worktree.diff('HEAD')
       return if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("fix: #{st.subject} (WP ##{st.item_id})")
+      worktree.commit("fix: #{st.subject} (WP #{wp_label(st.item_id)})")
       c = worktree.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(st.item_id, st.branch, "committed")
@@ -289,11 +289,11 @@ module Chomper
     def post_note(item_id, raw)
       code, body = @api.post_activity(item_id, comment: raw)
       if code == 201
-        log_script "Note posted to WP ##{item_id}"
+        log_script "Note posted to WP #{wp_label(item_id)}"
         comment_id = body&.dig("id")&.to_s
         @pull.record_chomper_comment(item_id, comment_id) if comment_id
       else
-        log_script "Note failed for WP ##{item_id} (HTTP #{code})"
+        log_script "Note failed for WP #{wp_label(item_id)} (HTTP #{code})"
       end
       code
     end

@@ -76,7 +76,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents.
 2. **Plan** — Claude (Read-only tools) produces `plan.md`. Optional reviewer pass gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
-3. **Implement** — Claude (Read/Write/Edit/Bash) works in an isolated worktree branch (`bug/<id>-<slug>`), commits `fix: <subject> (WP #<id>)`.
+3. **Implement** — Claude (Read/Write/Edit/Bash) works in an isolated worktree branch (`bug/<id>-<slug>`), commits `fix: <subject> (WP <label>)` where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
 4. **Publish** — Branch pushed, draft PR opened against `dev`, reply posted to WP with PR link.
 
 `:fix` intent skips the reviewer and combines plan + implement in one pass.

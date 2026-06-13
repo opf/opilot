@@ -18,6 +18,12 @@ module Chomper
       assert_equal "red text", h.strip_ansi("\e[31mred text\e[0m")
     end
 
+    def test_wp_label_prefixes_numeric_ids_only
+      assert_equal "#59942",   h.wp_label("59942")
+      assert_equal "STC-162",  h.wp_label("STC-162")
+      assert_equal "#42",      Helpers.wp_label(42)
+    end
+
     def test_strip_ansi_passthrough_plain_string
       assert_equal "plain text", h.strip_ansi("plain text")
     end

@@ -36,23 +36,16 @@ module Chomper
         return existing
       end
 
-      log_script "Publishing ##{item_id} — #{subject}"
+      log_script "Publishing #{wp_label(item_id)} — #{subject}"
 
-      # Point reviewers at the work package, where the plan and discussion live as
-      # comments. Inject it under the template's "accomplish" heading when present,
-      # otherwise prepend it so the link is never lost.
-      wp_url = "#{@ctx.op_url}/work_packages/#{item_id}"
-      ref    = "**Work package:** #{wp_url} — plan & discussion in the comments."
-      body   = pr_desc_file.read
-      pr_body = if body.match?(/^##[^\n]*accomplish[^\n]*$/i)
-                  body.sub(/^(##[^\n]*accomplish[^\n]*\n)/i) { "#{$1}\n#{ref}\n" }
-                else
-                  "#{ref}\n\n#{body}"
-                end
+      # Point reviewers at the work package, where the plan and discussion live
+      # as comments — a standalone section at the top so the link is never lost.
+      wp_url  = "#{@ctx.op_url}/work_packages/#{item_id}"
+      pr_body = "# Ticket\n#{wp_url}\n\n#{pr_desc_file.read}"
 
       @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
-      title = "[##{item_id}] #{subject}"
+      title = "[#{wp_label(item_id)}] #{subject}"
       url = @github.create_draft_pr(github_repo, base: "dev", head: branch, title: title, body: pr_body)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published")

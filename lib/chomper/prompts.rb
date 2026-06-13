@@ -40,7 +40,7 @@ module Chomper
 
         Otherwise, produce the plan:
 
-        ## Plan: ##{item_id} — #{title}
+        ## Plan: #{Helpers.wp_label(item_id)} — #{title}
         ### Files to change
         ### Approach
         ### Tests to run
@@ -61,7 +61,7 @@ module Chomper
         Produce a plan only.
         #{READ_ONLY}
 
-        ## Plan: ##{item_id} — #{title}
+        ## Plan: #{Helpers.wp_label(item_id)} — #{title}
         ### Files to change
         ### Approach
         ### Tests to run
@@ -76,7 +76,7 @@ module Chomper
         #{READ_ONLY}
         Flag: wrong file paths, missing edge cases, unnecessary complexity, blast radius.
 
-        ## Review: ##{item_id}
+        ## Review: #{Helpers.wp_label(item_id)}
         ### Issues found  (or 'None')
         ### Suggested adjustments  (or 'None')
         ### Verdict  PROCEED | REVISE | REJECT
@@ -152,7 +152,7 @@ module Chomper
     # Conversational reply to an @chomper comment on a work package (read-only tools).
     def self.chat(item_id:, subject:, item:, plan:, message:)
       <<~PROMPT
-        You are chomper, an AI code assistant working on OpenProject work package ##{item_id}: #{subject}
+        You are chomper, an AI code assistant working on OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
         This is a conversation: answer the user's question. Do not implement the plan
         here — if they want it built, tell them to comment `@chomper approve` or `@chomper fix`.
@@ -177,7 +177,7 @@ module Chomper
     # Like chat but terminal-adapted: no OP reply instruction, no command list.
     def self.backlog_chat(item_id:, subject:, item:, plan:, message:)
       <<~PROMPT
-        You are chomper, reviewing OpenProject work package ##{item_id}: #{subject}
+        You are chomper, reviewing OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
         This is a terminal planning session. Answer the user's question about the plan or the issue.
         When done, the user will approve, skip, discard, or re-plan in the terminal.

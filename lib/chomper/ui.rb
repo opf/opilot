@@ -36,7 +36,7 @@ module Chomper
       puts ""
       rows.each do |r|
         flag = r[:pr_url] ? "🚀" : "📝"
-        puts "    #{flag} #{Rainbow("##{r[:id].ljust(6)}").bold}  #{Rainbow(r[:subject]).bold}"
+        puts "    #{flag} #{Rainbow(Helpers.wp_label(r[:id]).ljust(7)).bold}  #{Rainbow(r[:subject]).bold}"
         puts "               #{r[:url]}"        if r[:url]
         puts "               PR: #{r[:pr_url]}" if r[:pr_url]
       end
