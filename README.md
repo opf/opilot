@@ -2,15 +2,10 @@
 
 # openproject-chomper
 
-An agent that watches OpenProject work packages and fixes bugs — all inside a Docker container. You review and merge when you're happy.
+An AI agent that implements OpenProject work packages. You review and merge when you're happy.
 
-Three modes:
-
-```
-./chomper agent    → driven by @chomper comments on work packages
-./chomper backlog  → fetch a full WP query, triage by complexity, step through with terminal approval
-./chomper fix <id> → plan and ship a single work package
-```
+**Agent mode**: Interacts via WP comments (tagging @chomper)
+**Script mode**: Interacts via local terminal
 
 ---
 
@@ -31,10 +26,9 @@ Three modes:
 
 ## Requirements
 
-- **Docker** (runs both the Ruby runner and the Claude Code container)
+- **Docker**
 - A GitHub token with repo write access (for opening PRs)
-- An OpenProject API token (needs to read your target WPs and post comments on them)
-- Optionally, a local `openproject` repo — chomper can clone one automatically if you don't have it
+- An OpenProject API token (read-only for script mode, comment-writable for agent mode)
 
 ---
 
@@ -44,19 +38,14 @@ Three modes:
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
 cp .env.example .env
-# edit .env — set OPENPROJECT_URL, OPENPROJECT_TOKEN, GITHUB_TOKEN
+# edit .env OR just leave it to the first startup wizard
 
-# Run the agent: it polls OpenProject and acts on @chomper mentions
+# Run the agent: it polls OpenProject WPs via the configured query and acts on @chomper mentions
 ./chomper agent
-
-# Then, on any watched work package, comment:
-#   @chomper plan        → draft an implementation plan
-#   @chomper approve     → implement the plan and open a draft PR
-#   @chomper fix         → plan and ship in one step
-#   @chomper <question>  → chat (replies with the plan as context)
-
-# See what's been planned / shipped
-./chomper status
+# OR let it process your whole backlog
+./chomper backlog <triage|show|process>
+# OR run a one-time E2E fix of a specific WP
+./chomper fix <id>
 ```
 
 ## Bird's-eye view
@@ -126,14 +115,14 @@ comments), so it is boxed in from several directions:
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper backlog` | Fetch all WPs matching saved filters, triage by complexity, process one by one with terminal approval |
+| `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
-| `./chomper backlog show` | Preview the queue (clusters, order, URLs) from local caches — instant, starts no containers |
+| `./chomper backlog show` | Preview the backlog queue |
 | `./chomper backlog process` | Work the cached queue without re-fetching (fails if `triage` hasn't run) |
 | `./chomper backlog skip <id>` | Park a WP until the next triage, without walking the queue — local only, starts no containers |
 | `./chomper fix <id>` | Plan and ship a single work package by id, with the same terminal approval loop |
 | `./chomper status` | List the work packages chomper has planned or shipped |
-| `./chomper reset` | De-register the worktree and delete `.chomper/` (fresh start) |
+| `./chomper reset` | De-register any git worktrees and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
 
 ### `./chomper backlog` flow
@@ -288,18 +277,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ---
 
 ## Reference
-
-**`.env`**
-
-Written by the first-run setup wizard (chmod 600, gitignored).
-
-```bash
-OPENPROJECT_URL=https://community.openproject.org
-OPENPROJECT_TOKEN=your_api_token
-OP_REPO_PATH=../openproject   # or "false" to have chomper clone automatically
-GITHUB_TOKEN=ghp_...
-```
-
 **`items/<id>/item.json` schema** (full WP metadata, written at poll time)
 
 ```json
@@ -348,15 +325,16 @@ GITHUB_TOKEN=ghp_...
   * After 14th of June, we'll no longer be able to use the OAuth flow via `claude auth login` (which yields insecure long-lived tokens anyway)
   * Separate billing required: https://platform.claude.com
 * Migrate from `claude -p` to a Claude SDK 
-* Explore alternatives to Claude Code. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
+* Replace Claude Code with a generic AI "file edit engine" layer
+  * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
 * Use separate agents for development and review to clearly split domain ownership
   
 ### Features
-* Make the agent mode leverage dedicated sub-WPs or categories/labels instead of brute-force polling
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
-* Tweak the README for better distinction between "script mode" (terminal-driven) vs. "agent mode" (WP comment-driven)
+* Extend search filters to be able to target a backlog bucket or a set of modules
+* Idea: Use sub-WPs for any Chomper interactions in agent mode
