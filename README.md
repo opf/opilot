@@ -80,7 +80,7 @@ cp .env.example .env
 │   │   POST / → `claude -p`                   │──▶│ (:8888)     ├────┼──▶│ Anthropic telemetry,   │
 │   │                                          │   │ egress      │    │   │ Rails docs (allowlist) │
 │   │ volumes:                                 │   │ allowlist   │    │   └────────────────────────┘
-│   │   .chomper/            → /state  (rw)    │   └─────────────┘    │
+│   │   .chomper/            → /state  (ro)    │   └─────────────┘    │
 │   │   .chomper/openproject → /repo   (rw)    │   ┌── authgw ───┐    │   ┌────────────────────────┐
 │   │                                          │   │ injects     │    │   │ api.anthropic.com      │
 │   │ no real API key — inference via authgw,  │──▶│ x-api-key   ├────┼──▶│ (inference)            │
@@ -109,8 +109,9 @@ comments), so it is boxed in from several directions:
   trades this away — OAuth creds then live in the claude container, though the
   egress allowlist still limits where they could go.)
 * **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
-  file mutation outside `/repo`, so plans, state, and Claude credentials can't
-  be tampered with even in the implementation phase.
+  file mutation outside `/repo`, and the `.chomper` state dir is additionally
+  mounted **read-only** (`/state`), so plans, cached state, and session files
+  can't be tampered with even if the hook were bypassed.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
   `no-new-privileges`, and no OpenProject/GitHub tokens or Anthropic API key in
   the environment.
