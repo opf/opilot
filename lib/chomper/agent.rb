@@ -21,10 +21,6 @@ module Chomper
   class Agent
     include Helpers
 
-    ItemState = Struct.new(:item_id, :subject, :branch, :item_dir, :plan_file,
-                           :item_file, :review_file, :pr_desc_file, :pr_url_file,
-                           :session_file, keyword_init: true)
-
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
       @pull    = pull
@@ -230,61 +226,7 @@ module Chomper
       end
     end
 
-    # ── git / worktree mechanics ────────────────────────────────────────────
-
-    def branch_has_commits?(st)
-      worktree.log.between('origin/dev', st.branch).execute.any?
-    end
-
-    def commit(st)
-      worktree.add(all: true)
-      diff = worktree.diff('HEAD')
-      return if diff.entries.empty?
-      diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("fix: #{st.subject} (WP #{wp_label(st.item_id)})")
-      c = worktree.log(1).execute.first
-      log_script "Committed: #{c.sha[0, 7]} #{c.message}"
-      record_progress(st.item_id, st.branch, "committed")
-    end
-
-    def generate_pr_description(st)
-      return if st.pr_desc_file.exist? && st.pr_desc_file.size > 0
-      template_file    = @ctx.repo_path / ".github" / "pull_request_template.md"
-      template_section = template_file.exist? ? "Fill in this PR template exactly: #{template_file}" : ""
-      diff_stat = worktree.diff('HEAD~1', 'HEAD').stats[:files]
-        .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-        .join("\n")
-      prompt = Prompts.pr_description(
-        item: container_path(st.item_file), plan: container_path(st.plan_file),
-        diff_stat: diff_stat, template_section: template_section
-      )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
-      pr_body = pr_text[/^#.*/m] || pr_text
-      st.pr_desc_file.write(strip_ansi(pr_body))
-    end
-
-    # ── helpers ───────────────────────────────────────────────────────────────
-
-    def state_for(item_id, subject, type = nil)
-      dir = @ctx.state_dir / "items" / item_id.to_s
-      dir.mkpath
-      ItemState.new(
-        item_id:      item_id.to_s,
-        subject:      subject.to_s,
-        branch:       branch_slug(item_id, type.to_s, subject.to_s),
-        item_dir:     dir,
-        plan_file:    dir / "plan.md",
-        item_file:    dir / "item.json",
-        review_file:  dir / "review.txt",
-        pr_desc_file: dir / "pr.md",
-        pr_url_file:  dir / "pr_url.txt",
-        session_file: dir / "session_id"
-      )
-    end
-
-    def container_path(host_path)
-      host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
-    end
+    # ── notifications ─────────────────────────────────────────────────────────
 
     def post_note(item_id, raw)
       code, body = @api.post_activity(item_id, comment: raw)

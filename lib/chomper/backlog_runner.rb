@@ -110,7 +110,7 @@ module Chomper
       else
         dir.mkpath
         (dir / "backlog_done.txt").write("skipped")
-        subject = (JSON.parse((dir / "item.json").read)["subject"] rescue nil) if (dir / "item.json").exist?
+        subject = JSON.parse((dir / "item.json").read)["subject"] rescue nil
         if subject
           log_script "#{wp_label(wp_id)} — #{subject} skipped — parked until the next triage."
         else
@@ -338,20 +338,19 @@ module Chomper
         return {} unless $stdin.gets.to_s.chomp.downcase.start_with?("y")
       end
 
-      map = {}
+      reuse = false
       if cached
         log_script "Cached triage from #{cached["created_at"]}."
         print "  Reuse cached complexity? [Y/n]: "
-        if $stdin.gets.chomp.downcase != "n"
-          map = cached["complexity"]
-          fresh = items.reject { |i| map.key?(i["id"].to_s) }
-          unless fresh.empty?
-            log_script "Triaging #{fresh.length} new item(s)…"
-            map = map.merge(classify(fresh))
-          end
-        else
-          log_script "Triaging…"
-          map = classify(items)
+        reuse = $stdin.gets.chomp.downcase != "n"
+      end
+
+      if reuse
+        map = cached["complexity"]
+        fresh = items.reject { |i| map.key?(i["id"].to_s) }
+        unless fresh.empty?
+          log_script "Triaging #{fresh.length} new item(s)…"
+          map = map.merge(classify(fresh))
         end
       else
         log_script "Triaging…"
@@ -667,58 +666,6 @@ module Chomper
     def post_note(item_id, text)
       code, _body = @api.post_activity(item_id, comment: text)
       log_script "Note posted to WP #{wp_label(item_id)}" if code == 201
-    end
-
-    def branch_has_commits?(st)
-      worktree.log.between("origin/dev", st.branch).execute.any?
-    end
-
-    def commit(st)
-      worktree.add(all: true)
-      diff = worktree.diff("HEAD")
-      return if diff.entries.empty?
-      diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("fix: #{st.subject} (WP #{wp_label(st.item_id)})")
-      c = worktree.log(1).execute.first
-      log_script "Committed: #{c.sha[0, 7]} #{c.message}"
-      record_progress(st.item_id, st.branch, "committed")
-    end
-
-    def generate_pr_description(st)
-      return if st.pr_desc_file.exist? && st.pr_desc_file.size > 0
-      template_file    = @ctx.repo_path / ".github" / "pull_request_template.md"
-      template_section = template_file.exist? ? "Fill in this PR template exactly: #{template_file}" : ""
-      diff_stat = worktree.diff("HEAD~1", "HEAD").stats[:files]
-        .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-        .join("\n")
-      prompt = Prompts.pr_description(
-        item: container_path(st.item_file), plan: container_path(st.plan_file),
-        diff_stat: diff_stat, template_section: template_section
-      )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
-      pr_body = pr_text[/^#.*/m] || pr_text
-      st.pr_desc_file.write(strip_ansi(pr_body))
-    end
-
-    def state_for(id, subject, type)
-      dir = @ctx.state_dir / "items" / id.to_s
-      dir.mkpath
-      Agent::ItemState.new(
-        item_id:      id.to_s,
-        subject:      subject.to_s,
-        branch:       branch_slug(id, type, subject),
-        item_dir:     dir,
-        plan_file:    dir / "plan.md",
-        item_file:    dir / "item.json",
-        review_file:  dir / "review.txt",
-        pr_desc_file: dir / "pr.md",
-        pr_url_file:  dir / "pr_url.txt",
-        session_file: dir / "session_id"
-      )
-    end
-
-    def container_path(host_path)
-      host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
     end
   end
 end
