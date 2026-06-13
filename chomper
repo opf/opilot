@@ -5,6 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export SCRIPT_DIR
 ENV_FILE="$SCRIPT_DIR/.env"
 
+# Read a single KEY=value from .env (empty if absent).
+_env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-; }
+
 # ── First-run setup ───────────────────────────────────────────────────────
 if ! grep -q "^OPENPROJECT_URL=" "$ENV_FILE" 2>/dev/null; then
   mkdir -p "$SCRIPT_DIR/.chomper"
@@ -45,7 +48,7 @@ if ! grep -q "^OP_REPO_PATH=" "$ENV_FILE" 2>/dev/null; then
 fi
 
 if ! grep -q "^CHOMPER_ALLOWED_EMAILS=" "$ENV_FILE" 2>/dev/null; then
-  _OP_URL="$(grep '^OPENPROJECT_URL=' "$ENV_FILE" | cut -d= -f2-)"
+  _OP_URL="$(_env_get OPENPROJECT_URL)"
   echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
   while :; do
     printf "  Emails allowed to trigger @chomper (comma-separated): "
@@ -78,7 +81,7 @@ if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
 fi
 
 # ── Load config ───────────────────────────────────────────────────────────
-_OP_REPO_PATH_RAW="$(grep '^OP_REPO_PATH=' "$ENV_FILE" | cut -d= -f2-)"
+_OP_REPO_PATH_RAW="$(_env_get OP_REPO_PATH)"
 if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then
   OP_REPO_PATH="$SCRIPT_DIR/.chomper/openproject"
   _CLONE_REPO=true
@@ -115,7 +118,7 @@ if [[ "$_needs_claude" == "true" ]]; then
   # `claude auth login` — its OAuth creds live in the claude container's config
   # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
   if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    ANTHROPIC_API_KEY="$(grep '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+    ANTHROPIC_API_KEY="$(_env_get ANTHROPIC_API_KEY)"
   fi
   _USE_GATEWAY=false
   if [[ -n "$ANTHROPIC_API_KEY" ]]; then

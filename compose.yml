@@ -1,3 +1,14 @@
+# Shared hardening for the sidecar containers (claude/authgw/proxy). The runner
+# is the trusted orchestrator and deliberately not hardened this way.
+x-hardened: &hardened
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
 services:
   runner:
     build:
@@ -65,13 +76,7 @@ services:
       - NO_PROXY=localhost,127.0.0.1,authgw
     networks:
       - internal
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    <<: *hardened
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:47291/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 2s
@@ -91,18 +96,12 @@ services:
       - ANTHROPIC_API_KEY
       # Fixed handshake value (not a secret); must match claude's
       # ANTHROPIC_AUTH_TOKEN. authgw only runs in API-key mode, where chomper
-      # exports this; the default keeps it self-consistent if run standalone.
-      - CHOMPER_GW_TOKEN=${CHOMPER_GW_TOKEN:-chomper-internal-gateway}
+      # exports this (the single source for the value).
+      - CHOMPER_GW_TOKEN
     networks:
       - internal
       - egress
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    <<: *hardened
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:47292/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 2s
@@ -118,13 +117,7 @@ services:
     networks:
       - internal
       - egress
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
+    <<: *hardened
 
 networks:
   # No route to the outside world — claude can only talk to runner and proxy.

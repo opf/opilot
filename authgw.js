@@ -19,6 +19,10 @@ const GW_TOKEN  = process.env.CHOMPER_GW_TOKEN;
 if (!API_KEY)  { process.stderr.write('authgw: ANTHROPIC_API_KEY is not set\n'); process.exit(1); }
 if (!GW_TOKEN) { process.stderr.write('authgw: CHOMPER_GW_TOKEN is not set\n');  process.exit(1); }
 
+// Reuse upstream TLS connections so inference calls don't pay a fresh handshake
+// each time. Pinned explicitly rather than relying on the global agent default.
+const upstreamAgent = new https.Agent({ keepAlive: true });
+
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200); res.end('ok'); return;
@@ -37,14 +41,12 @@ const server = http.createServer((req, res) => {
   // the host. Everything else (anthropic-version/-beta, content-type, etc.) and
   // the request body stream straight through.
   const headers = { ...req.headers };
-  delete headers['authorization'];
-  delete headers['x-api-key'];
-  delete headers['host'];
-  headers['host']      = UPSTREAM;
+  delete headers['authorization'];   // strip the gateway token; never forwarded
+  headers['host']      = UPSTREAM;    // assignment overwrites any incoming value
   headers['x-api-key'] = API_KEY;
 
   const upstream = https.request(
-    { hostname: UPSTREAM, port: 443, method: req.method, path: req.url, headers },
+    { hostname: UPSTREAM, port: 443, method: req.method, path: req.url, headers, agent: upstreamAgent },
     up => {
       res.writeHead(up.statusCode, up.headers);
       up.pipe(res);
