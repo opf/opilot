@@ -15,6 +15,13 @@ const ALLOWED_TOOL_GRANTS = new Set([
 ]);
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+// Model is validated by shape, not against an allowlist: it grants no
+// privilege (unlike the tool grants above), so the only risk is a malformed
+// value reaching --model. The pattern forbids spaces and a leading dash, so it
+// can't smuggle extra CLI args; it stays permissive on the ID itself so model
+// strings don't need syncing here on every release. The runner picks the model
+// (claude.rb MODEL_WORK / MODEL_FAST).
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 // Serialise requests so sessions are never interleaved.
 const queue = [];
@@ -23,19 +30,20 @@ let busy = false;
 function drain() {
   if (queue.length === 0) { busy = false; return; }
   busy = true;
-  const { body, tools, sessionId, res } = queue.shift();
-  runClaude(body, tools, sessionId, res, drain);
+  const { body, tools, model, sessionId, res } = queue.shift();
+  runClaude(body, tools, model, sessionId, res, drain);
 }
 
-function enqueue(body, tools, sessionId, res) {
-  queue.push({ body, tools, sessionId, res });
+function enqueue(body, tools, model, sessionId, res) {
+  queue.push({ body, tools, model, sessionId, res });
   if (!busy) drain();
 }
 
-function runClaude(body, tools, sessionId, res, done) {
+function runClaude(body, tools, model, sessionId, res, done) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose',
                 '--settings', '/app/claude-settings.json'];
   if (tools) args.push('--allowedTools', tools);
+  if (model) args.push('--model', model);
   if (sessionId) {
     args.push('--resume', sessionId);
   }
@@ -108,11 +116,17 @@ const server = http.createServer((req, res) => {
   }
 
   const tools     = req.headers['x-claude-tools'];
+  const model     = req.headers['x-claude-model'] || null;
   const sessionId = req.headers['x-claude-session'] || null;
 
   if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
     res.writeHead(403, { 'Content-Type': 'text/plain' });
     res.end('unknown tool grant\n');
+    return;
+  }
+  if (model && !MODEL_RE.test(model)) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    res.end('malformed model\n');
     return;
   }
   if (sessionId && !SESSION_ID_RE.test(sessionId)) {
@@ -123,7 +137,7 @@ const server = http.createServer((req, res) => {
 
   const chunks = [];
   req.on('data', chunk => chunks.push(chunk));
-  req.on('end', () => enqueue(Buffer.concat(chunks), tools, sessionId, res));
+  req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, res));
 });
 
 server.listen(PORT, '0.0.0.0', () => {

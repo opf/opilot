@@ -28,7 +28,7 @@ module Chomper
     class FakeTriageClaude
       def initialize(map); @map = map; end
 
-      def run(_prompt, tools: nil, session_file: nil)
+      def run(_prompt, tools: nil, model: nil, session_file: nil)
         rows = @map.map { |id, cx| %({"id": "#{id}", "complexity": "#{cx}"}) }
         "---BEGIN JSON---\n[#{rows.join(",")}]\n---END JSON---\n"
       end
@@ -41,7 +41,7 @@ module Chomper
 
       def initialize; @prompts = []; end
 
-      def capture(prompt, tools: nil, outfile:, session_file: nil)
+      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
         @prompts << prompt
         Pathname(outfile).write("## Revised plan")
       end
@@ -52,7 +52,7 @@ module Chomper
     class ScriptedPlanClaude
       def initialize(*outputs); @outputs = outputs; end
 
-      def capture(_prompt, tools: nil, outfile:, session_file: nil)
+      def capture(_prompt, tools: nil, model: nil, outfile:, session_file: nil)
         out = @outputs.shift or raise "unexpected capture call"
         raise Claude::Error, "run died" if out == :error
         Pathname(outfile).write(out)

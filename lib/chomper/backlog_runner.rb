@@ -305,7 +305,7 @@ module Chomper
       items.each_slice(TRIAGE_BATCH).with_index(1) do |batch, n|
         log_script "Triage batch #{n}/#{total_batches}…"
         paths = batch.map { |i| container_path(@ctx.state_dir / "items" / i["id"].to_s / "item.json") }.join("\n")
-        text  = @claude.run(Prompts.triage(paths: paths), tools: Claude::TOOLS_READ)
+        text  = @claude.run(Prompts.triage(paths: paths), tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
         json_str = text[/---BEGIN JSON---\n(.*?)---END JSON---/m, 1]
         next unless json_str
         parsed = JSON.parse(json_str) rescue nil

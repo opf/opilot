@@ -21,6 +21,16 @@ module Chomper
     TOOLS_READ = "Read,Grep,Glob"
     TOOLS_IMPL = "Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"
 
+    # Models, pinned so behaviour doesn't drift when the CLI's default changes.
+    # MODEL_WORK is shared by every session-bound phase (chat, plan, review,
+    # implement, PR description) — they resume one per-WP session, and switching
+    # models mid-session would discard the cache and resumed context. MODEL_FAST
+    # is for triage only: a stateless classification pass where a cheaper model
+    # suffices. server.js validates the value by format, not an allowlist —
+    # model choice grants no privilege (unlike the tool grants above).
+    MODEL_WORK = ENV.fetch("CHOMPER_MODEL", "claude-opus-4-8")
+    MODEL_FAST = ENV.fetch("CHOMPER_TRIAGE_MODEL", "claude-haiku-4-5")
+
     def initialize(ctx)
       @ctx = ctx
       @uri = URI(@ctx.claude_url)
@@ -29,10 +39,10 @@ module Chomper
     # Runs Claude with the given prompt. Streams tool-use lines to tty, returns text output.
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.
-    def run(prompt, tools: nil, session_file: nil)
+    def run(prompt, tools: nil, model: MODEL_WORK, session_file: nil)
       session_id = session_file&.exist? ? session_file.read.strip : nil
 
-      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT (session: #{session_id || "fresh"})").bold
+      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
@@ -42,7 +52,7 @@ module Chomper
       puts resp_header
       log_append(resp_header)
 
-      text, new_session_id, error = http_stream(prompt, tools: tools, session_id: session_id)
+      text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: session_id)
       # Save the session even on error, so a retry can resume with context.
       if session_file && new_session_id
         log_append("session: captured #{new_session_id} → #{session_file}")
@@ -58,15 +68,15 @@ module Chomper
     end
 
     # Like run, but also writes ANSI-stripped output to outfile.
-    def capture(prompt, tools: nil, outfile:, session_file: nil)
-      text = run(prompt, tools: tools, session_file: session_file)
+    def capture(prompt, tools: nil, model: MODEL_WORK, outfile:, session_file: nil)
+      text = run(prompt, tools: tools, model: model, session_file: session_file)
       Pathname(outfile).write(strip_ansi(text))
       text
     end
 
     private
 
-    def http_stream(prompt, tools:, session_id: nil)
+    def http_stream(prompt, tools:, model:, session_id: nil)
       attempts = 0
       begin
         attempts += 1
@@ -79,6 +89,7 @@ module Chomper
 
         req = Net::HTTP::Post.new(@uri)
         req["X-Claude-Tools"]   = tools      if tools
+        req["X-Claude-Model"]   = model      if model
         req["X-Claude-Session"] = session_id if session_id
         req.body = prompt
 

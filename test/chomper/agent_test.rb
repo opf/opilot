@@ -12,7 +12,7 @@ module Chomper
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
-      def capture(prompt, tools: nil, outfile:, session_file: nil)
+      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
         content = prompt.include?("REVIEWER") ? @review : @plan
@@ -20,7 +20,7 @@ module Chomper
         content
       end
 
-      def run(prompt, tools: nil, session_file: nil)
+      def run(prompt, tools: nil, model: nil, session_file: nil)
         @runs << prompt
         @run_sessions << session_file
         return @chat if prompt.include?("You are chomper")

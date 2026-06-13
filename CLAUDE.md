@@ -105,9 +105,10 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 Runner POSTs to `http://claude:47291` with headers:
 - `X-Claude-Tools`: `"Read,Grep,Glob"` (planning/chat) or `"Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"` (implementation). `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
+- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb` (`MODEL_WORK` for every session-bound phase, `MODEL_FAST` for the stateless triage pass). Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
 - `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
-`server.js` spawns `claude -p` with `--output-format stream-json --verbose`, streams NDJSON back, and persists the session ID.
+`server.js` spawns `claude -p` with `--output-format stream-json --verbose --model <model>`, streams NDJSON back, and persists the session ID.
 
 ### Required environment variables (`.env`)
 
@@ -119,3 +120,5 @@ Runner POSTs to `http://claude:47291` with headers:
 | `GITHUB_TOKEN` | For pushing branches and opening PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
+| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by all session-bound phases |
+| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the triage model (default `claude-haiku-4-5`) |

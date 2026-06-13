@@ -34,6 +34,8 @@ services:
       - OPENPROJECT_URL=${OPENPROJECT_URL}
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - CHOMPER_ALLOWED_EMAILS=${CHOMPER_ALLOWED_EMAILS:-}
+      - CHOMPER_MODEL
+      - CHOMPER_TRIAGE_MODEL
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/chomper}
     stdin_open: true
