@@ -119,26 +119,43 @@ module Chomper
       end
     end
 
-    # Plan/approve/implement a single work package by id, outside any queue or
-    # filter set. Fetches that one WP live; a `dropped` or `skipped` marker from
-    # a previous backlog run is deliberately ignored — naming an id overrides it.
-    def fix(wp_id)
-      log_script "Fetching work package #{wp_label(wp_id)}…"
-      item = @pull.fetch_single_item(wp_id)
-      raise Chomper::FatalError, "could not fetch work package #{wp_label(wp_id)} — check the id and OPENPROJECT_TOKEN" unless item
+    # Plan/approve/implement one or more work packages by id, outside any queue
+    # or filter set. Each WP is fetched live; a `dropped` or `skipped` marker
+    # from a previous backlog run is deliberately ignored — naming an id
+    # overrides it. With several ids a failure on one (bad id, Claude error) is
+    # logged and the rest still run, like walking a queue; with a single id the
+    # failure is fatal since there is nothing else to do.
+    def fix(*wp_ids)
+      total = wp_ids.length
+      wp_ids.each_with_index do |wp_id, idx|
+        break if Chomper.stopping?
+        counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""
 
-      puts ""
-      puts "  #{wp_label(item["id"])} — #{item["subject"]}"
-      puts "  #{item["url"]}"
+        log_script "Fetching work package #{wp_label(wp_id)}…"
+        item = @pull.fetch_single_item(wp_id)
+        unless item
+          msg = "could not fetch work package #{wp_label(wp_id)} — check the id and OPENPROJECT_TOKEN"
+          raise Chomper::FatalError, msg if total == 1
+          log_script "#{wp_label(wp_id)} — #{msg}"
+          next
+        end
 
-      if prior_outcome(item) == "shipped"
-        puts "  Already shipped: #{(@ctx.state_dir / "items" / item["id"].to_s / "pr_url.txt").read.strip}"
-        return
+        puts ""
+        puts "  #{counter}#{wp_label(item["id"])} — #{item["subject"]}"
+        puts "  #{item["url"]}"
+
+        if prior_outcome(item) == "shipped"
+          puts "  Already shipped: #{(@ctx.state_dir / "items" / item["id"].to_s / "pr_url.txt").read.strip}"
+          next
+        end
+
+        begin
+          process_item(item)
+        rescue Claude::Error => e
+          raise Chomper::FatalError, "Claude run failed: #{e.message}" if total == 1
+          log_script "#{wp_label(wp_id)} — Claude run failed: #{e.message}"
+        end
       end
-
-      process_item(item)
-    rescue Claude::Error => e
-      raise Chomper::FatalError, "Claude run failed: #{e.message}"
     end
 
     private

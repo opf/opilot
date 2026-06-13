@@ -86,7 +86,7 @@ module Chomper
           backlog show      Preview the queue (clusters + order) without processing
           backlog process   Work the cached queue (no re-fetch; requires a prior triage)
           backlog skip <id> Park a WP until the next triage (no queue walk)
-          fix <id>          Plan and ship a single work package with terminal approval
+          fix <id>...       Plan and ship one or more work packages with terminal approval
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 

@@ -8,13 +8,15 @@ module Chomper
                             version_ids: [], scan_from_at: nil)
 
     class FakePull
-      def initialize(items = nil, saved: FILTERS, single: nil)
-        @items = items; @saved = saved; @single = single
+      def initialize(items = nil, saved: FILTERS, single: nil, singles: nil)
+        @items = items; @saved = saved; @single = single; @singles = singles
       end
 
       def saved_backlog_filters; @saved; end
       def load_or_prompt_backlog_filters; FILTERS; end
-      def fetch_single_item(_wp_id); @single; end
+      # singles maps an id to its item (or nil for "not found"); single is the
+      # id-agnostic fallback used by the single-WP tests.
+      def fetch_single_item(wp_id); @singles ? @singles[wp_id] : @single; end
 
       def fetch_all_items(_filters, module_field_key: nil)
         raise "unexpected fetch_all_items call" if @items.nil?
@@ -395,6 +397,21 @@ module Chomper
 
       out, = capture_io { r.fix("4") }
 
+      assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
+    end
+
+    # With several ids a fetch failure on one is logged, not fatal, and the
+    # remaining ids still run. Both items here resolve without Claude (one
+    # missing, one already shipped) so the walk completes without an agent.
+    def test_fix_with_multiple_ids_continues_past_a_fetch_failure
+      shipped = write_item(7, "Shipped one", "Costs")
+      (@ctx.state_dir / "items" / "7" / "pr_url.txt").write("https://github.com/o/r/pull/9")
+      pull = FakePull.new(singles: { "999" => nil, "7" => shipped })
+      r = BacklogRunner.new(@ctx, pull: pull, claude: nil, publish: nil)
+
+      out, = capture_io { r.fix("999", "7") }
+
+      assert_match(/could not fetch work package #999/, out)
       assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
     end
 

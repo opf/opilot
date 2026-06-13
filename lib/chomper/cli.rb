@@ -20,14 +20,15 @@ module Chomper
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
       when "fix"
-        id = wp_id_arg(argv[1])
-        unless id.match?(Helpers::WP_ID_PATTERN)
-          $stderr.puts "Usage: ./chomper fix <work-package-id>   (e.g. 59942 or PROJ-123)"
+        ids = argv[1..].to_a.map { |a| wp_id_arg(a) }
+        if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
+          $stderr.puts "Usage: ./chomper fix <work-package-id>...   (e.g. 59942 or PROJ-123 STC-7)"
           raise Chomper::FatalError
         end
         @ctx.load_config!
-        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix #{Helpers.wp_label(id)} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
-        BacklogRunner.new(@ctx).fix(id)
+        labels = ids.map { |id| Helpers.wp_label(id) }.join(", ")
+        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix #{labels} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+        BacklogRunner.new(@ctx).fix(*ids)
       when "backlog"
         sub = argv[1]
         unless sub.nil? || %w[show triage process skip].include?(sub)

@@ -45,8 +45,8 @@ cp .env.example .env
 ./chomper agent
 # OR let it process your whole backlog
 ./chomper backlog <triage|show|process>
-# OR run a one-time E2E fix of a specific WP
-./chomper fix <id>
+# OR run a one-time E2E fix of one or more specific WPs
+./chomper fix <id>...
 ```
 
 ## Bird's-eye view
@@ -121,7 +121,7 @@ comments), so it is boxed in from several directions:
 | `./chomper backlog show` | Preview the backlog queue |
 | `./chomper backlog process` | Work the cached queue without re-fetching (fails if `triage` hasn't run) |
 | `./chomper backlog skip <id>` | Park a WP until the next triage, without walking the queue — local only, starts no containers |
-| `./chomper fix <id>` | Plan and ship a single work package by id, with the same terminal approval loop |
+| `./chomper fix <id>...` | Plan and ship one or more work packages by id, with the same terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
 | `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | De-register any git worktrees and delete `.chomper/` (fresh start) |
 | `./chomper --help` | Show usage |
@@ -142,7 +142,7 @@ On first run, prompts you to save a filter (project / types / statuses / version
    - **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
 6. Items already shipped (`pr_url.txt` present), dropped, or skipped (`backlog_done.txt`) are passed over automatically. A fresh triage clears skips; drops are permanent.
 
-The phases also run separately: `backlog triage` fetches and classifies, `backlog show` previews the cached queue (instant — reads only local caches and starts no containers), and `backlog process` works the cached queue without re-fetching. `backlog skip <id>` parks an item from outside the queue walk. `fix <id>` runs the same plan/approve loop for one WP by id, ignoring filters (and overriding a previous drop or skip).
+The phases also run separately: `backlog triage` fetches and classifies, `backlog show` previews the cached queue (instant — reads only local caches and starts no containers), and `backlog process` works the cached queue without re-fetching. `backlog skip <id>` parks an item from outside the queue walk. `fix <id>...` runs the same plan/approve loop for one or more WPs by id, ignoring filters (and overriding a previous drop or skip); with several ids each runs in turn and one failure doesn't abort the rest.
 
 ### `@chomper` comment commands
 

@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **agent** — continuous polling loop driven by `@chomper` comments on work packages
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), and `process` (work the cached queue without re-fetching)
-- **fix** — terminal-driven single work package: `./chomper fix <id>` fetches one WP by id (ignoring filters) and runs the same plan/approve loop
+- **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 
 ## Commands
 
@@ -27,8 +27,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Park a WP until the next triage (local only, no containers)
 ./chomper backlog skip <id>
 
-# Plan and ship a single work package by id (terminal approval)
-./chomper fix <id>
+# Plan and ship one or more work packages by id (terminal approval)
+./chomper fix <id>...
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
