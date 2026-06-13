@@ -102,7 +102,7 @@ module Chomper
         Environment:
           OPENPROJECT_URL         OpenProject instance URL
           OPENPROJECT_TOKEN       OpenProject API token
-          ANTHROPIC_API_KEY       Required; held by the authgw gateway, never the claude container
+          ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
           GITHUB_TOKEN            Required for pushing branches and opening PRs
           CHOMPER_ALLOWED_EMAILS  Comma-separated allowlist of @chomper triggerers
 
@@ -111,7 +111,7 @@ module Chomper
           items/<id>/         Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
           openproject/        Isolated git worktree for fixes
           progress.txt        Progress log
-          claude-auth/        Writable scratch/config dir for the claude CLI (no credentials)
+          claude-auth/        claude CLI config; holds OAuth login creds when no API key is set
           chomp.log           Full prompt + response log
 
       USAGE

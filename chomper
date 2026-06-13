@@ -66,14 +66,13 @@ if ! grep -q "^CHOMPER_ALLOWED_EMAILS=" "$ENV_FILE" 2>/dev/null; then
 fi
 
 if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
-  # Held only by the authgw gateway at runtime — never passed to the claude
-  # container (which runs untrusted work-package content).
-  ANTHROPIC_API_KEY_ENTRY=""
-  while [ -z "$ANTHROPIC_API_KEY_ENTRY" ]; do
-    printf "  Anthropic API key (sk-ant-…): "
-    read -rs ANTHROPIC_API_KEY_ENTRY; echo ""
-    [ -z "$ANTHROPIC_API_KEY_ENTRY" ] && echo "  An API key is required — please enter a value."
-  done
+  # With a key, it's held only by the authgw gateway — never passed to the claude
+  # container. Left blank, chomper falls back to interactive `claude auth login`
+  # (OAuth creds live in the claude container, so that path is less isolated).
+  echo "  Anthropic API key — recommended; kept out of the claude container."
+  echo "  Leave blank to log in interactively instead (OAuth)."
+  printf "  Anthropic API key (sk-ant-…), or blank: "
+  read -rs ANTHROPIC_API_KEY_ENTRY; echo ""
   printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY_ENTRY" >> "$ENV_FILE"
   echo ""
 fi
@@ -111,17 +110,23 @@ case "$CMD" in
   backlog)   [[ -z "$SUBCMD" || "$SUBCMD" == "triage" || "$SUBCMD" == "process" ]] && _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == "true" ]]; then
-  # Auth: the real key is held only by the authgw gateway; the claude container
-  # reaches it with a fixed handshake token (set in compose.yml) and never sees
-  # the key.
+  # Auth: an API key (preferred) is held only by the authgw gateway and never
+  # reaches the claude container. With no key, fall back to interactive
+  # `claude auth login` — its OAuth creds live in the claude container's config
+  # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
   if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
     ANTHROPIC_API_KEY="$(grep '^ANTHROPIC_API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
   fi
-  if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-    echo "Error: ANTHROPIC_API_KEY is required — add it to .env." >&2
-    exit 1
+  _USE_GATEWAY=false
+  if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+    export ANTHROPIC_API_KEY
+    export CHOMPER_GW_TOKEN="chomper-internal-gateway"
+    export CHOMPER_CLAUDE_BASE_URL="http://authgw:47292"
+    _USE_GATEWAY=true
+    echo "[ Claude auth: API key via authgw gateway ]"
+  else
+    echo "[ Claude auth: no API key set — using LESS SECURE interactive login (OAuth) ]"
   fi
-  export ANTHROPIC_API_KEY
 
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   if [[ "$_CLONE_REPO" == "true" ]]; then
@@ -142,8 +147,21 @@ if [[ "$_needs_claude" == "true" ]]; then
       echo ""
     fi
   fi
-  # Brings up proxy + authgw (claude's dependencies) and waits for them healthy.
-  docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
+  if [[ "$_USE_GATEWAY" == "true" ]]; then
+    # proxy starts as claude's dependency; authgw is named explicitly so it only
+    # runs in API-key mode (it requires the real key and would exit otherwise).
+    docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans authgw claude
+  else
+    # OAuth: ensure the CLI is logged in (creds persist in .chomper/claude-auth).
+    if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
+        claude claude auth status &>/dev/null; then
+      echo "[ Claude auth required — follow the prompts below ]"
+      docker compose -f "$SCRIPT_DIR/compose.yml" run --rm --remove-orphans \
+        claude claude auth login
+      echo ""
+    fi
+    docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
+  fi
   trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude proxy authgw 2>/dev/null || true' EXIT INT TERM
 fi
 docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"

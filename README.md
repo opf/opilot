@@ -101,10 +101,13 @@ comments), so it is boxed in from several directions:
 * **Egress allowlist** — all outbound traffic goes through a tinyproxy sidecar
   that only permits Anthropic endpoints (plus Rails docs); a prompt injection
   has no channel to exfiltrate data.
-* **API key isolation** — the real `ANTHROPIC_API_KEY` lives only in the separate
-  `authgw` gateway, which injects it into inference requests. The claude container
-  carries just a fixed (non-secret) handshake token, so a prompt injection can cause API calls
-  but cannot read or exfiltrate the key.
+* **API key isolation** — when an API key is configured, the real
+  `ANTHROPIC_API_KEY` lives only in the separate `authgw` gateway, which injects
+  it into inference requests; the claude container carries just a fixed
+  (non-secret) handshake token, so a prompt injection can cause API calls but
+  cannot read or exfiltrate the key. (The optional `claude auth login` fallback
+  trades this away — OAuth creds then live in the claude container, though the
+  egress allowlist still limits where they could go.)
 * **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
   file mutation outside `/repo`, so plans, state, and Claude credentials can't
   be tampered with even in the implementation phase.
@@ -228,7 +231,7 @@ openproject-chomper/
 ├── backlog_triage.json  ← cached triage results (keyed by filter fingerprint)
 ├── progress.txt         ← progress log
 ├── chomp.log            ← full prompt + response log
-├── claude-auth/         ← writable scratch/config dir for the claude CLI (no credentials)
+├── claude-auth/         ← claude CLI config (holds OAuth login creds when no API key is set)
 ├── openproject/         ← git worktree or fresh clone of openproject
 └── items/
     └── <id>/
@@ -249,7 +252,7 @@ openproject-chomper/
 |---|---|---|
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
-| `ANTHROPIC_API_KEY` | — | **Required.** Held only by the `authgw` gateway container, which injects it into Anthropic requests; never passed to the claude container. The setup wizard prompts for it. |
+| `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
 | `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
