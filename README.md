@@ -329,20 +329,34 @@ GITHUB_TOKEN=ghp_...
 
 ## TODO
 
-### Architecture & Refactoring
+### Security
+* Isolate git operations by pushing everything into a separate fork
+  * https://www.openproject.org/docs/development/git-workflow/#fork-openproject
+  * We could do this automatically during the initial setup:  
+    1. Instruct the user to fork the `openproject` repo under their own account, then generate a fine-grained token _just for the repo_
+    2. Have them insert the token
+    3. Take care of the rest automatically:
+      * Point the local repo (no matter if cloned or worktree'd) to the new origin
+      * Make sure the PRs are pointed to the upstream repo
+* Plug in a simple Claude auth token replacement proxy for better isolation
+  * There is already a proxy container, just have it replace a standalone header string with the actual token
+    This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
+
+
+### AI Architecture
+* [BEFORE 2026-06-15] Switch to Anthropic API tokens
+  * After 14th of June, we'll no longer be able to use the OAuth flow via `claude auth login` (which yields insecure long-lived tokens anyway)
+  * Separate billing required: https://platform.claude.com
+* Migrate from `claude -p` to a Claude SDK 
 * Explore alternatives to Claude Code. This has multiple reasons, and one of them is the [hostility towards non-interactive users](https://www.reddit.com/r/ClaudeCode/comments/1tccd7c/its_official_anthropic_pulled_the_plug_on_all/).
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
 * Use separate agents for development and review to clearly split domain ownership
-
+  
 ### Features
 * Make the agent mode leverage dedicated sub-WPs or categories/labels instead of brute-force polling
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
-  * Or, just set it manually for now. Or, explicitly prompt for it.
-
-### Fixes & Hardening
-* Switch to Anthropic API tokens + simple auth token replacement proxy for better isolation
-  * This setup will make it harder for anyone to extradite the Anthropic auth token, since the container won't have access to it 
-  * One disadvantage: API tokens are billed separately. However, after 14th of June, we'll have to pay anyway.
-* Re-enable test runs as part of the fix gate once runner container has access to the OpenProject test suite
-* Ensure each WP-scoped session is isolated from the rest (current version looks buggy)
+  * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
+* Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
+  * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
+* Tweak the README for better distinction between "script mode" (terminal-driven) vs. "agent mode" (WP comment-driven)
