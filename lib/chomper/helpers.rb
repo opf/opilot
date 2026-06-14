@@ -1,4 +1,5 @@
 require "rainbow"
+require "tty-markdown"
 
 module Chomper
   module Helpers
@@ -16,6 +17,22 @@ module Chomper
     # Single source of truth for log-line timestamps — both the time format and
     # the bracket wrapping — so every line chomper writes shares one format.
     LOG_TIME_FORMAT = "%H:%M:%S"
+
+    # Render Markdown as ANSI for the terminal — used both for Claude's streamed
+    # text and for re-displaying saved plans from disk, so they look the same.
+    # Skipped when stdout isn't a tty (piped, captured by tests, redirected) or
+    # when CHOMPER_MARKDOWN is off; then the raw, cyan-tinted text is shown.
+    # Falls back to the raw text if rendering raises (e.g. a partial fence).
+    def render_markdown(text)
+      return Rainbow(text).cyan unless $stdout.tty? && markdown_enabled?
+      TTY::Markdown.parse(text)
+    rescue StandardError
+      Rainbow(text).cyan
+    end
+
+    def markdown_enabled?
+      !%w[0 false no off].include?(ENV["CHOMPER_MARKDOWN"].to_s.strip.downcase)
+    end
 
     def log_timestamp
       Time.now.strftime(LOG_TIME_FORMAT)

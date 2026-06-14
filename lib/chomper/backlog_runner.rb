@@ -536,7 +536,7 @@ module Chomper
         # a prior run, or returning from a chat loop on a subsequent iteration).
         unless just_generated
           puts ""
-          puts st.plan_file.read.lines.map { |l| "    #{l}" }.join
+          puts render_markdown(st.plan_file.read)
         end
         puts ""
         case prompt_approval(id)

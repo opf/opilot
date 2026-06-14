@@ -2,6 +2,7 @@ require "net/http"
 require "uri"
 require "json"
 require "rainbow"
+require "tty-markdown"
 
 module Chomper
   class Claude
@@ -143,8 +144,11 @@ module Chomper
                         text_parts << "\n\n"
                       end
                       after_tool    = false
-                      print Rainbow(part["text"]).cyan
-                      at_line_start = part["text"].end_with?("\n")
+                      # Display the rendered Markdown; keep the raw text for the
+                      # return value, the log, and capture's outfile.
+                      shown = render_markdown(part["text"])
+                      print shown
+                      at_line_start = shown.end_with?("\n")
                       text_parts << part["text"]
                     end
                   end
