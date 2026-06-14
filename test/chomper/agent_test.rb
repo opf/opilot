@@ -91,13 +91,14 @@ module Chomper
       @tmpdir = Dir.mktmpdir
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :worktree_container, :state_container,
-        :repo_path, :allowed_emails, :log_file, :progress_file, :plan_review
+        :repo_path, :allowed_emails, :log_file, :progress_file, :plan_review, :auto_plan_approval
       ) do
-        def plan_review?; plan_review; end   # opt-in agent self-review (off by default)
+        def plan_review?; plan_review; end                 # opt-in agent self-review (off by default)
+        def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
       end.new(
         Pathname(@tmpdir), Pathname(@tmpdir) / ".chomper", "https://op.example.com", "tok",
         "/repo", "/state", Pathname(@tmpdir), [],
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, false
       )
       (Pathname(@tmpdir) / ".chomper").mkpath
 
@@ -257,6 +258,16 @@ module Chomper
       note = @notes.find { |n| n.include?("Do the thing.") }
       assert note, "the plan content should be posted to the WP"
       assert_includes note, "@chomper approve"
+    end
+
+    def test_handle_plan_auto_approves_and_ships_when_env_set
+      @ctx.auto_plan_approval = true
+      @agent.handle(intent(:plan))
+      assert pr_url_path.exist?, "AUTO_PLAN_APPROVAL should implement the plan without waiting for approve"
+      assert(@notes.any? { |n| n.include?("implementing it now") })
+      assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
+      refute(@notes.any? { |n| n.include?("@chomper approve") },
+             "auto-approval shouldn't ask the user to approve")
     end
 
     def test_handle_chat_posts_reply_and_changes_no_files

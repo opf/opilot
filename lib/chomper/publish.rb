@@ -17,7 +17,7 @@ module Chomper
         return nil
       end
 
-      item_dir     = @ctx.state_dir / "items" / item_id.to_s
+      item_dir     = Helpers.item_dir(@ctx, item_id)
       pr_desc_file = item_dir / "pr.md"
       pr_url_file  = item_dir / "pr_url.txt"
 
@@ -25,7 +25,7 @@ module Chomper
         puts "  Error: branch #{branch} not found — has this item been committed?"
         return nil
       end
-      unless pr_desc_file.exist? && pr_desc_file.size > 0
+      unless Helpers.file_has_content?(pr_desc_file)
         puts "  Error: no PR description at #{pr_desc_file} (missing or empty)"
         return nil
       end

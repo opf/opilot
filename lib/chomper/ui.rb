@@ -8,13 +8,13 @@ module Chomper
     end
 
     def status
-      items_dir = @ctx.state_dir / "items"
+      items_dir = Helpers.items_dir(@ctx)
       dirs = items_dir.exist? ? items_dir.children.select(&:directory?).sort : []
 
       rows = dirs.filter_map do |dir|
         # Only work packages chomper has acted on — not every polled (cached) WP.
         next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? || (dir / "pr_url.txt").exist?
-        item    = (JSON.parse((dir / "item.json").read) rescue {})
+        item    = Helpers.safe_json_read(dir / "item.json") || {}
         pr_file = dir / "pr_url.txt"
         {
           id:      dir.basename.to_s,
@@ -107,6 +107,7 @@ module Chomper
           ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
           GITHUB_TOKEN            Required for pushing branches and opening PRs
           CHOMPER_ALLOWED_EMAILS  Comma-separated allowlist of @chomper triggerers
+          AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
 
         State (all in .chomper/, gitignored):
           agent_filters.json  Saved search filters (created on first agent run)

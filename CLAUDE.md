@@ -131,4 +131,5 @@ Runner POSTs to `http://claude:47291` with headers:
 | `CHOMPER_SIMPLE_MODEL` | Optional; overrides the model (default `claude-sonnet-4-6`) used for backlog items triaged `trivial` or `simple` |
 | `CHOMPER_TRIAGE_MODEL` | Optional; overrides the triage model (default `claude-haiku-4-5`) |
 | `CHOMPER_PLAN_REVIEW` | Optional; set `1`/`true` to re-enable the agent-mode self-review pass (off by default — a human approves every plan via `@chomper approve`) |
+| `AUTO_PLAN_APPROVAL` | Optional; set `1`/`true` to auto-approve every plan (off by default). Backlog/fix skip the terminal approval prompt; agent mode implements a planned WP immediately instead of waiting for `@chomper approve`. Unattended — use with care |
 | `CHOMPER_MARKDOWN` | Optional; set `0`/`false` to disable terminal Markdown rendering of Claude's streamed output (on by default; auto-skipped when stdout isn't a tty) |

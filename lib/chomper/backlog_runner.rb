@@ -123,7 +123,7 @@ module Chomper
         raise Chomper::FatalError
       end
 
-      dir = @ctx.state_dir / "items" / wp_id
+      dir = Helpers.item_dir(@ctx, wp_id)
       case prior_outcome("id" => wp_id)
       when "shipped"
         puts "  #{wp_label(wp_id)} is already shipped: #{(dir / "pr_url.txt").read.strip}"
@@ -134,7 +134,7 @@ module Chomper
       else
         dir.mkpath
         (dir / "backlog_done.txt").write("skipped")
-        subject = JSON.parse((dir / "item.json").read)["subject"] rescue nil
+        subject = Helpers.safe_json_read(dir / "item.json")&.dig("subject")
         if subject
           log_script "#{wp_label(wp_id)} — #{subject} skipped — parked until the next triage."
         else
@@ -181,7 +181,7 @@ module Chomper
         puts "  #{item["url"]}"
 
         if prior_outcome(item) == "shipped"
-          puts "  Already shipped: #{(@ctx.state_dir / "items" / item["id"].to_s / "pr_url.txt").read.strip}"
+          puts "  Already shipped: #{(Helpers.item_dir(@ctx, item["id"]) / "pr_url.txt").read.strip}"
           next
         end
 
@@ -293,8 +293,7 @@ module Chomper
       return nil unless cached && cached["item_ids"].is_a?(Array)
 
       items = cached["item_ids"].filter_map do |id|
-        path = @ctx.state_dir / "items" / id.to_s / "item.json"
-        JSON.parse(path.read) rescue nil
+        Helpers.safe_json_read(Helpers.item_dir(@ctx, id) / "item.json")
       end
       return nil if items.empty?
 
@@ -349,7 +348,7 @@ module Chomper
 
       items.each_slice(TRIAGE_BATCH).with_index(1) do |batch, n|
         log_script "Triage batch #{n}/#{total_batches}…"
-        paths = batch.map { |i| container_path(@ctx.state_dir / "items" / i["id"].to_s / "item.json") }.join("\n")
+        paths = batch.map { |i| container_path(Helpers.item_dir(@ctx, i["id"]) / "item.json") }.join("\n")
         text  = @claude.run(Prompts.triage(paths: paths), tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
         json_str = text[/---BEGIN JSON---\n(.*?)---END JSON---/m, 1]
         next unless json_str
@@ -410,7 +409,7 @@ module Chomper
     # also saves a snapshot, but must respect skips). Dropped markers are
     # permanent and survive.
     def clear_skipped_markers
-      Dir.glob((@ctx.state_dir / "items" / "*" / "backlog_done.txt").to_s).each do |f|
+      Dir.glob((Helpers.items_dir(@ctx) / "*" / "backlog_done.txt").to_s).each do |f|
         File.delete(f) if File.read(f).strip == "skipped"
       end
     rescue => e
@@ -419,26 +418,22 @@ module Chomper
 
     def load_triage_cache(filters)
       return nil unless triage_cache_path.exist?
-      data = JSON.parse(triage_cache_path.read) rescue nil
+      data = Helpers.safe_json_read(triage_cache_path)
       return nil unless data.is_a?(Hash) && data["complexity"].is_a?(Hash)
       return nil unless data["filter_fingerprint"] == filter_fingerprint(filters)
       data
     end
 
     def save_triage_cache(complexity_map, filters, module_key, item_ids)
-      tmp = Tempfile.new("backlog_triage", @ctx.state_dir)
-      tmp.write(JSON.generate(
+      Helpers.write_json_atomic(triage_cache_path, {
         "created_at"         => Time.now.utc.iso8601,
         "filter_fingerprint" => filter_fingerprint(filters),
         "module_field"       => module_key,
         "item_ids"           => item_ids,
         "complexity"         => complexity_map
-      ))
-      tmp.close
-      File.rename(tmp.path, triage_cache_path.to_s)
+      }, "backlog_triage")
     rescue => e
       log_script "Warning: could not save triage cache (#{e.message})"
-      tmp&.unlink
     end
 
     def triage_cache_path
@@ -464,7 +459,7 @@ module Chomper
     end
 
     def prior_outcome(item_data)
-      dir = @ctx.state_dir / "items" / item_data["id"].to_s
+      dir = Helpers.item_dir(@ctx, item_data["id"])
       return "shipped"       if (dir / "pr_url.txt").exist?
       f = dir / "backlog_done.txt"
       return f.read.strip    if f.exist?
@@ -474,7 +469,7 @@ module Chomper
     # A saved, structured plan is already on disk for this WP (a markdown
     # heading, not a discarded NEEDS_INFO stub, which process_item deletes).
     def already_planned?(item_data)
-      plan = @ctx.state_dir / "items" / item_data["id"].to_s / "plan.md"
+      plan = Helpers.item_dir(@ctx, item_data["id"]) / "plan.md"
       plan.exist? && plan.read.match?(/^#+ /)
     end
 
@@ -528,7 +523,7 @@ module Chomper
           end
           replan_feedback = nil
           just_generated = true
-        elsif !(st.plan_file.exist? && st.plan_file.size > 0)
+        elsif !Helpers.file_has_content?(st.plan_file)
           log_script "Planning #{wp_label(id)} — #{subject}"
           checkout_branch(st)
           begin
@@ -647,6 +642,10 @@ module Chomper
     end
 
     def prompt_approval(id, plan_only: false)
+      if @ctx.auto_plan_approval?
+        log_script "#{wp_label(id)} — auto-approving plan (AUTO_PLAN_APPROVAL set)."
+        return :approve
+      end
       ping_terminal("chomper: plan for #{wp_label(id)} ready for review")
       yes = plan_only ? "[y]es accept plan" : "[y]es implement"
       loop do
@@ -693,7 +692,7 @@ module Chomper
     end
 
     def ship(st, model = Claude::MODEL_WORK)
-      if st.pr_url_file.exist? && st.pr_url_file.size > 0
+      if Helpers.file_has_content?(st.pr_url_file)
         puts "  Already shipped: #{st.pr_url_file.read.strip}"
         return
       end

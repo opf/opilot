@@ -112,14 +112,20 @@ module Chomper
     def handle_plan(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       return unless produce_plan(st, intent.text) == :ok
-      post_note(st.item_id, addressed(
-        "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
-        "Reply `@chomper approve` to implement it, or `@chomper plan <feedback>` to revise."))
+      if @ctx.auto_plan_approval?
+        post_note(st.item_id, addressed(
+          "here's the plan:\n\n#{st.plan_file.read.strip}\n\nAUTO_PLAN_APPROVAL is set — implementing it now."))
+        ship(st)
+      else
+        post_note(st.item_id, addressed(
+          "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
+          "Reply `@chomper approve` to implement it, or `@chomper plan <feedback>` to revise."))
+      end
     end
 
     def handle_approve(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
-      unless st.plan_file.exist? && st.plan_file.size > 0
+      unless Helpers.file_has_content?(st.plan_file)
         post_note(st.item_id, addressed("there's no plan yet — comment `@chomper plan` first, or `@chomper fix` to plan and ship in one go."))
         return
       end
@@ -197,7 +203,7 @@ module Chomper
     # Turn the saved plan into a draft PR. Idempotent/resumable: re-reports an
     # existing PR, and skips implementation when the branch already has commits.
     def ship(st)
-      if st.pr_url_file.exist? && st.pr_url_file.size > 0
+      if Helpers.file_has_content?(st.pr_url_file)
         post_note(st.item_id, addressed("this is already shipped — #{st.pr_url_file.read.strip}"))
         return
       end

@@ -1,8 +1,50 @@
+require "json"
+require "tempfile"
 require "rainbow"
 require "tty-markdown"
 
 module Chomper
   module Helpers
+    # File/JSON idioms shared across classes that don't all `include Helpers`
+    # (Pull, UI), so they're module functions like .wp_label below.
+
+    # Per-WP state lives under .chomper/items/<id>/ — one source of truth for
+    # that path, used everywhere instead of re-joining the literal.
+    def self.items_dir(ctx)
+      ctx.state_dir / "items"
+    end
+
+    def self.item_dir(ctx, id)
+      items_dir(ctx) / id.to_s
+    end
+
+    # A file exists and is non-empty — the "has real content" check used for
+    # plans, PR descriptions, session ids, and shipped markers.
+    def self.file_has_content?(path)
+      path.exist? && path.size > 0
+    end
+
+    # Parse a JSON file, returning nil on any read/parse error. Callers add
+    # their own `|| {}` / `|| []` fallback where they depend on one.
+    def self.safe_json_read(path)
+      JSON.parse(path.read)
+    rescue StandardError
+      nil
+    end
+
+    # Write JSON to `path` atomically (tempfile in the same dir, then rename),
+    # so a crash mid-write never leaves a half-written cache. `name` is the
+    # tempfile prefix.
+    def self.write_json_atomic(path, data, name)
+      tmp = Tempfile.new(name, path.dirname)
+      tmp.write(JSON.generate(data))
+      tmp.close
+      File.rename(tmp.path, path.to_s)
+    rescue StandardError
+      tmp&.unlink
+      raise
+    end
+
     # Per-WP working state: just the paths under items/<id>/ plus the branch.
     # Shared by both runners (agent and backlog) via #state_for below.
     ItemState = Struct.new(:item_id, :subject, :branch, :item_dir, :plan_file,
@@ -142,7 +184,7 @@ module Chomper
 
     # Build the ItemState for a WP, creating its items/<id>/ directory.
     def state_for(item_id, subject, type = nil)
-      dir = @ctx.state_dir / "items" / item_id.to_s
+      dir = Helpers.item_dir(@ctx, item_id)
       dir.mkpath
       ItemState.new(
         item_id:      item_id.to_s,
@@ -172,7 +214,7 @@ module Chomper
     # call, or after the session was cleared — where the prompt must tell Claude
     # to read the plan instead of assuming it.
     def session_resumable?(st)
-      st.session_file.exist? && st.session_file.size > 0
+      Helpers.file_has_content?(st.session_file)
     end
 
     def commit(st)
@@ -187,7 +229,7 @@ module Chomper
     end
 
     def generate_pr_description(st, model: Claude::MODEL_WORK)
-      return if st.pr_desc_file.exist? && st.pr_desc_file.size > 0
+      return if Helpers.file_has_content?(st.pr_desc_file)
       template_file    = @ctx.repo_path / ".github" / "pull_request_template.md"
       template_section = template_file.exist? ? "Fill in this PR template exactly: #{template_file}" : ""
       diff_stat = worktree.diff("HEAD~1", "HEAD").stats[:files]

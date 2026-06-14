@@ -67,7 +67,7 @@ module Chomper
     # Record the ID of a note posted by chomper so it is never re-detected as a
     # trigger. Called by the agent after successfully posting a reply.
     def record_chomper_comment(wp_id, comment_id)
-      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
+      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
       return unless item_path.exist?
       data = JSON.parse(item_path.read)
       data["last_chomper_comment_id"] = comment_id.to_s
@@ -89,7 +89,7 @@ module Chomper
       return nil unless code == 200 && wp
 
       fetch_work_package_item(wp)
-      path = @ctx.state_dir / "items" / wp_display_id(wp) / "item.json"
+      path = Helpers.item_dir(@ctx, wp_display_id(wp)) / "item.json"
       path.exist? ? JSON.parse(path.read) : nil
     end
 
@@ -122,7 +122,7 @@ module Chomper
           from_cache += 1 if cached
           print "\r  #{processed}/#{total} work packages (#{from_cache} cached)…"
           $stdout.flush
-          path = @ctx.state_dir / "items" / wp_display_id(wp) / "item.json"
+          path = Helpers.item_dir(@ctx, wp_display_id(wp)) / "item.json"
           next unless path.exist?
           data = JSON.parse(path.read)
           if module_field_key
@@ -156,45 +156,25 @@ module Chomper
       end
       _pc, project_data = @api.project(project_id)
       project_name = project_data&.dig("name")
-      type_names = types_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
-      puts "  Types available: #{type_names}"
-      print "  Type(s), comma-separated [bug]: "
-      sel_types = $stdin.gets.chomp
-      sel_types = "bug" if sel_types.empty?
 
-      sel_names = sel_types.split(",").map(&:strip).map(&:downcase)
-      type_ids = (types_data.dig("_embedded", "elements") || [])
-        .select { |e| sel_names.include?(e["name"].downcase) }
-        .map { |e| e["id"].to_s }
-      raise Chomper::FatalError, "None of the specified types found: #{sel_names.join(", ")}" if type_ids.empty?
+      type_ids, sel_names = select_by_name(
+        types_data.dig("_embedded", "elements") || [],
+        label: "Types", prompt: "Type(s), comma-separated [bug]", default: "bug"
+      )
 
       _code, statuses_data = @api.statuses
-      status_names = statuses_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
-      puts "  Statuses available: #{status_names}"
-      print "  Status(es), comma-separated [new, confirmed]: "
-      sel_statuses = $stdin.gets.chomp
-      sel_statuses = "new, confirmed" if sel_statuses.empty?
-
-      sel_status_names = sel_statuses.split(",").map(&:strip).map(&:downcase)
-      status_ids = (statuses_data.dig("_embedded", "elements") || [])
-        .select { |e| sel_status_names.include?(e["name"].downcase) }
-        .map { |e| e["id"].to_s }
-      raise Chomper::FatalError, "None of the specified statuses found: #{sel_status_names.join(", ")}" if status_ids.empty?
+      status_ids, sel_status_names = select_by_name(
+        statuses_data.dig("_embedded", "elements") || [],
+        label: "Statuses", prompt: "Status(es), comma-separated [new, confirmed]", default: "new, confirmed"
+      )
 
       version_ids = []; sel_ver_names = []
       ver_code, versions_data = @api.project_versions(project_id)
       if ver_code == 200
-        ver_names = versions_data.dig("_embedded", "elements")&.map { |e| e["name"] }&.join(", ") || ""
-        puts "  Versions available: #{ver_names}"
-        print "  Version(s), comma-separated (leave blank to skip): "
-        sel_versions = $stdin.gets.chomp
-        unless sel_versions.empty?
-          sel_ver_names = sel_versions.split(",").map(&:strip).map(&:downcase)
-          version_ids = (versions_data.dig("_embedded", "elements") || [])
-            .select { |e| sel_ver_names.include?(e["name"].downcase) }
-            .map { |e| e["id"].to_s }
-          raise Chomper::FatalError, "None of the specified versions found: #{sel_ver_names.join(", ")}" if version_ids.empty?
-        end
+        version_ids, sel_ver_names = select_by_name(
+          versions_data.dig("_embedded", "elements") || [],
+          label: "Versions", prompt: "Version(s), comma-separated (leave blank to skip)", default: ""
+        )
       else
         puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
       end
@@ -222,6 +202,24 @@ module Chomper
     end
 
     private
+
+    # Prompt for a comma-separated subset of named API `elements` (types,
+    # statuses, versions). Prints the available names, reads a reply (falling
+    # back to `default`), and returns [selected_ids, selected_names_downcased].
+    # An empty effective reply returns [[], []] (only reachable when `default`
+    # is blank, i.e. the optional version filter); otherwise no match is fatal.
+    def select_by_name(elements, label:, prompt:, default:)
+      puts "  #{label} available: #{elements.map { |e| e["name"] }.join(", ")}"
+      print "  #{prompt}: "
+      reply = $stdin.gets.chomp
+      reply = default if reply.empty?
+      return [[], []] if reply.empty?
+
+      selected = reply.split(",").map(&:strip).map(&:downcase)
+      ids = elements.select { |e| selected.include?(e["name"].downcase) }.map { |e| e["id"].to_s }
+      raise Chomper::FatalError, "None of the specified #{label.downcase} found: #{selected.join(", ")}" if ids.empty?
+      [ids, selected]
+    end
 
     def load_or_prompt_filters(ask_scan_from:)
       if (saved = read_saved_filters)
@@ -338,7 +336,7 @@ module Chomper
 
     def fetch_work_package_item(wp)
       wp_id = wp_display_id(wp)
-      item_dir  = @ctx.state_dir / "items" / wp_id.to_s
+      item_dir  = Helpers.item_dir(@ctx, wp_id)
       item_path = item_dir / "item.json"
 
       if item_path.exist?
@@ -361,7 +359,7 @@ module Chomper
 
       full = build_full_item(wp, comments)
       if item_path.exist?
-        prev = JSON.parse(item_path.read) rescue {}
+        prev = Helpers.safe_json_read(item_path) || {}
         full["last_acted_comment_at"]  = prev["last_acted_comment_at"]  if prev.key?("last_acted_comment_at")
         full["last_chomper_comment_id"] = prev["last_chomper_comment_id"] if prev.key?("last_chomper_comment_id")
       end
@@ -415,8 +413,7 @@ module Chomper
     end
 
     def save_agent_filters(filters)
-      tmp = Tempfile.new("agent_filters", @ctx.state_dir)
-      tmp.write(JSON.generate(
+      Helpers.write_json_atomic(agent_filters_path, {
         "project_id"    => filters.project_id,
         "project_name"  => filters.project_name,
         "type_ids"      => filters.type_ids,
@@ -426,12 +423,7 @@ module Chomper
         "status_names"  => filters.status_names,
         "version_names" => filters.version_names,
         "scan_from_at"  => filters.scan_from_at
-      ))
-      tmp.close
-      File.rename(tmp.path, agent_filters_path.to_s)
-    rescue
-      tmp&.unlink
-      raise
+      }, "agent_filters")
     end
 
     def parse_scan_from_input(input)
@@ -474,8 +466,8 @@ module Chomper
     end
 
     def chomper_trigger_comment(wp_id, comments)
-      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
-      saved = item_path.exist? ? (JSON.parse(item_path.read) rescue {}) : {}
+      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
+      saved = Helpers.safe_json_read(item_path) || {}
       cutoff = [saved["last_acted_comment_at"], @scan_from_at].compact.max
       last_chomper_id = saved["last_chomper_comment_id"]
       comments
@@ -492,7 +484,7 @@ module Chomper
     end
 
     def mark_chomper_acted(wp_id, created_at)
-      item_path = @ctx.state_dir / "items" / wp_id.to_s / "item.json"
+      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
       return unless item_path.exist?
       data = JSON.parse(item_path.read)
       data["last_acted_comment_at"] = created_at

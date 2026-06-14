@@ -69,11 +69,13 @@ module Chomper
       @tmpdir = Dir.mktmpdir
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :worktree_container, :state_container,
-        :repo_path, :log_file, :progress_file
-      ).new(
+        :repo_path, :log_file, :progress_file, :auto_plan_approval
+      ) do
+        def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
+      end.new(
         Pathname(@tmpdir), Pathname(@tmpdir) / ".chomper", "https://op.example.com", "tok",
         "/repo", "/state", Pathname(@tmpdir),
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false
       )
       @ctx.state_dir.mkpath
 
@@ -132,6 +134,15 @@ module Chomper
       assert_includes out, "\a", "the approval prompt should ring the bell"
       assert_includes out, "\e]9;chomper: plan for #42 ready for review\e\\",
                       "the approval prompt should post an OSC 9 notification naming the WP"
+    end
+
+    def test_auto_plan_approval_skips_the_prompt
+      @ctx.auto_plan_approval = true
+      r = runner([])
+      verdict = nil
+      # $stdin untouched: auto-approval must not read a keystroke.
+      capture_io { verdict = r.send(:prompt_approval, "42") }
+      assert_equal :approve, verdict
     end
 
     def test_show_orders_clusters_and_marks_prior_outcomes

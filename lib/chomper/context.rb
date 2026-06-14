@@ -48,5 +48,13 @@ module Chomper
     def plan_review?
       %w[1 true yes].include?(ENV["CHOMPER_PLAN_REVIEW"].to_s.strip.downcase)
     end
+
+    # Auto-approve every plan instead of waiting for a human (default off). In
+    # backlog/fix the terminal approval prompt resolves to "yes"; in agent mode a
+    # planned WP is implemented immediately rather than waiting for `@chomper
+    # approve`. Unattended — use with care.
+    def auto_plan_approval?
+      %w[1 true yes].include?(ENV["AUTO_PLAN_APPROVAL"].to_s.strip.downcase)
+    end
   end
 end

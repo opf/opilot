@@ -38,6 +38,7 @@ services:
       - CHOMPER_SIMPLE_MODEL
       - CHOMPER_TRIAGE_MODEL
       - CHOMPER_PLAN_REVIEW
+      - AUTO_PLAN_APPROVAL
       - CHOMPER_MARKDOWN
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/chomper}
