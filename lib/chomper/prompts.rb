@@ -49,17 +49,22 @@ module Chomper
     end
 
     # WRITER: revise an existing plan to incorporate reviewer/user feedback.
-    def self.replan(repo:, item:, plan:, feedback:, item_id:, title:)
+    # `resumed:` — true when the call resumes a session that already holds the
+    # plan and issue (skip the re-read); false for a fresh session (read first).
+    def self.replan(repo:, item:, plan:, feedback:, item_id:, title:, resumed: true)
+      context_line =
+        if resumed
+          "The existing plan and the issue are already in this session's context — do NOT re-read them."
+        else
+          "Read the existing plan and the issue from the paths above first."
+        end
       <<~PROMPT
         PRODUCT REPO:  #{repo}
         ISSUE:         #{item}
         EXISTING PLAN: #{plan}
         FEEDBACK:      #{feedback}
 
-        You are the WRITER. The existing plan and the issue are already in this session's
-        context — do NOT re-read them. Revise the plan to incorporate the feedback above.
-        (The paths are only a fallback for the rare case where they are genuinely missing
-        from your context.)
+        You are the WRITER. #{context_line} Revise the plan to incorporate the feedback above.
         Preserve structure and content that is still valid; only change what the feedback requires.
         Produce a plan only.
         #{READ_ONLY}
@@ -97,14 +102,20 @@ module Chomper
     end
 
     # IMPLEMENTER: apply the approved plan to the worktree (tools: Read/Write/Edit/Bash).
-    def self.implement(repo:, plan:)
+    # `resumed:` — true when the call resumes the planning session (the plan is
+    # already in context); false for a fresh session (must read the plan first).
+    def self.implement(repo:, plan:, resumed: true)
+      plan_line =
+        if resumed
+          "The approved plan is already in this session's context — you produced it earlier.\n        Implement it now; do NOT re-read the plan file."
+        else
+          "Read the approved plan at the path above, then implement it."
+        end
       <<~PROMPT
         PRODUCT REPO: #{repo}
         APPROVED PLAN: #{plan}
 
-        The approved plan is already in this session's context — you produced it earlier.
-        Implement it now; do NOT re-read the plan file. (The path above is only a fallback
-        for the rare case where it is genuinely missing from your context.)
+        #{plan_line}
 
         This is the IMPLEMENTATION step — the one phase where you should edit files
         in the worktree. The plan has been approved; apply it now.

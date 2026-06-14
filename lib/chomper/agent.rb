@@ -146,7 +146,8 @@ module Chomper
       if feedback && !feedback.empty? && st.plan_file.exist?
         log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
         prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
-                                feedback: feedback, item_id: st.item_id, title: st.subject)
+                                feedback: feedback, item_id: st.item_id, title: st.subject,
+                                resumed: session_resumable?(st))
         @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                         session_file: st.session_file)
         return :ok
@@ -207,7 +208,8 @@ module Chomper
         # Resuming the planning session carries its codebase exploration into
         # implementation; --allowedTools is per-invocation, so the resumed
         # session simply gains the write tools.
-        @claude.run(Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
+        @claude.run(Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file),
+                                      resumed: session_resumable?(st)),
                     tools: Claude::TOOLS_IMPL, session_file: st.session_file)
         commit(st)
       end

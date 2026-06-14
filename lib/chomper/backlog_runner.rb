@@ -467,7 +467,7 @@ module Chomper
             @claude.capture(
               Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
-                             item_id: id, title: subject),
+                             item_id: id, title: subject, resumed: session_resumable?(st)),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
           rescue Claude::Error
@@ -644,7 +644,8 @@ module Chomper
         # implementation; --allowedTools is per-invocation, so the resumed
         # session simply gains the write tools.
         @claude.run(
-          Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
+          Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file),
+                            resumed: session_resumable?(st)),
           tools: Claude::TOOLS_IMPL, model: model, session_file: st.session_file
         )
         commit(st)

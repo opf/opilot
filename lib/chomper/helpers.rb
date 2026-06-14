@@ -150,6 +150,14 @@ module Chomper
       worktree.log.between("origin/dev", st.branch).execute.any?
     end
 
+    # True when a phase will resume an existing per-WP session (so the plan and
+    # issue are already in context). False for a fresh session — e.g. the first
+    # call, or after the session was cleared — where the prompt must tell Claude
+    # to read the plan instead of assuming it.
+    def session_resumable?(st)
+      st.session_file.exist? && st.session_file.size > 0
+    end
+
     def commit(st)
       worktree.add(all: true)
       diff = worktree.diff("HEAD")
