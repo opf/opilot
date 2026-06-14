@@ -52,13 +52,14 @@ module Chomper
     def self.replan(repo:, item:, plan:, feedback:, item_id:, title:)
       <<~PROMPT
         PRODUCT REPO:  #{repo}
-        ISSUE:         #{item}  (JSON — re-read only if you don't already have it)
-        EXISTING PLAN: #{plan}  (already in your context from this session — re-read only if needed)
+        ISSUE:         #{item}
+        EXISTING PLAN: #{plan}
         FEEDBACK:      #{feedback}
 
-        You are the WRITER. Revise the existing plan — already in your session context —
-        to incorporate the feedback above. Don't re-read the issue or plan files unless
-        they aren't in context.
+        You are the WRITER. The existing plan and the issue are already in this session's
+        context — do NOT re-read them. Revise the plan to incorporate the feedback above.
+        (The paths are only a fallback for the rare case where they are genuinely missing
+        from your context.)
         Preserve structure and content that is still valid; only change what the feedback requires.
         Produce a plan only.
         #{READ_ONLY}
@@ -99,8 +100,11 @@ module Chomper
     def self.implement(repo:, plan:)
       <<~PROMPT
         PRODUCT REPO: #{repo}
-        APPROVED PLAN: #{plan}  (you produced this earlier in this same session — it's already
-        in your context; re-read the file only if it isn't)
+        APPROVED PLAN: #{plan}
+
+        The approved plan is already in this session's context — you produced it earlier.
+        Implement it now; do NOT re-read the plan file. (The path above is only a fallback
+        for the rare case where it is genuinely missing from your context.)
 
         This is the IMPLEMENTATION step — the one phase where you should edit files
         in the worktree. The plan has been approved; apply it now.
@@ -119,8 +123,9 @@ module Chomper
         Write a GitHub PR description for this fix.
         #{READ_ONLY}
 
-        The issue and plan are already in your context from this session — don't re-read them
-        unless they aren't (paths given as a fallback). Base the description on the diff below.
+        The issue and plan are already in this session's context — do NOT re-read them.
+        Base the description on the diff below. (The paths are only a fallback for the rare
+        case where they are genuinely missing from your context.)
 
         ISSUE: #{item}
         PLAN:  #{plan}
