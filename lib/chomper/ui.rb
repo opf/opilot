@@ -85,7 +85,7 @@ module Chomper
           backlog triage    Fetch WPs and (re)build the complexity triage, then stop
           backlog show      Preview the queue (clusters + order) without processing
           backlog process   Work the cached queue (no re-fetch; requires a prior triage)
-          backlog plan      Walk the cached queue but stop at each approved plan (no shipping)
+          backlog plan      Draft+approve a plan per WP without shipping; skips already-planned WPs
           backlog skip <id> Park a WP until the next triage (no queue walk)
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping

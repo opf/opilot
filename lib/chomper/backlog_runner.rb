@@ -42,7 +42,9 @@ module Chomper
 
     # Like `process`, but stops at each WP once its plan is approved instead of
     # implementing and shipping — draft plans for the whole queue, then ship them
-    # later with `backlog process`. Same cached-snapshot requirement as `process`.
+    # later with `backlog process`. WPs that already have a saved plan are
+    # skipped, so re-running is incremental. Same cached-snapshot requirement as
+    # `process`.
     def plan
       filters = @pull.saved_backlog_filters
       raise Chomper::FatalError, "no saved backlog filters — run `./chomper backlog triage` first" unless filters
@@ -62,30 +64,39 @@ module Chomper
         offline_queue(filters) || build_queue(filters, triage_mode: :preview)
       return unless clusters
 
-      index = 0; shipped = 0; dropped = 0; skipped = 0
+      index = 0; shipped = 0; dropped = 0; skipped = 0; planned = 0
       clusters.each do |cluster_name, cluster_items|
         print_cluster_header(cluster_name, cluster_items) if module_key
 
         cluster_items.each do |item_data|
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
-          line = "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
+          # First line ends at the complexity rating; status and url wrap onto an
+          # indented second line so long subjects/urls don't run off the screen.
+          puts "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
+
+          status = nil
           if (prior = prior_outcome(item_data))
             case prior
             when "shipped" then shipped += 1
             when "skipped" then skipped += 1
             else                dropped += 1
             end
-            line += "  ↩ #{outcome_label(prior)}"
+            status = "↩ #{outcome_label(prior)}"
+          elsif already_planned?(item_data)
+            # Has a saved plan but isn't shipped yet — drafted, awaiting ship.
+            planned += 1
+            status = "↩ #{Rainbow("planned").cyan}"
           end
+
           url = item_data["url"].to_s
-          line += Rainbow("  #{url}").dimgray unless url.empty?
-          puts line
+          detail = [status, (Rainbow(url).dimgray unless url.empty?)].compact.join("   ")
+          puts "       #{detail}" unless detail.empty?
         end
       end
 
       puts ""
-      log_script "#{total - shipped - dropped - skipped} to process, #{shipped} shipped, #{dropped} dropped, #{skipped} skipped."
+      log_script "#{total - shipped - dropped - skipped} to process, #{shipped} shipped, #{dropped} dropped, #{skipped} skipped, #{planned} planned."
     end
 
     # Pull + triage only: refresh the WP cache and the complexity map, then stop.
@@ -195,14 +206,24 @@ module Chomper
           break if Chomper.stopping?
           index += 1
           complexity = complexity_map[item_data["id"].to_s] || "?"
-          puts ""
-          puts "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
+          header = "  #{Rainbow("[#{index}/#{total}]").dimgray} #{wp_label(item_data["id"])} — #{item_data["subject"]}  #{complexity_label(complexity)}"
 
-          if (prior = prior_outcome(item_data))
+          # In plan-only mode a WP that already has a saved plan is done for this
+          # pass — re-running `backlog plan` shouldn't re-prompt it. (`process`
+          # still picks the plan up to ship it.)
+          prior = prior_outcome(item_data)
+          if prior || (plan_only && already_planned?(item_data))
+            # plan mode stays quiet about skips so a re-run doesn't dump the whole
+            # (mostly-planned) queue; run/process announce them as progress.
+            next if plan_only
+            puts ""
+            puts header
             puts "  ↩ #{outcome_label(prior)} — skipping"
             next
           end
 
+          puts ""
+          puts header
           puts "  #{item_data["url"]}"
           desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
           puts "  #{desc[0, 120]}" unless desc.empty?
@@ -448,6 +469,13 @@ module Chomper
       f = dir / "backlog_done.txt"
       return f.read.strip    if f.exist?
       nil
+    end
+
+    # A saved, structured plan is already on disk for this WP (a markdown
+    # heading, not a discarded NEEDS_INFO stub, which process_item deletes).
+    def already_planned?(item_data)
+      plan = @ctx.state_dir / "items" / item_data["id"].to_s / "plan.md"
+      plan.exist? && plan.read.match?(/^#+ /)
     end
 
     def mark_backlog_done(st, outcome)

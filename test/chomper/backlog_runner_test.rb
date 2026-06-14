@@ -327,20 +327,37 @@ module Chomper
       assert_includes out, "parked until the next triage"
     end
 
-    def test_plan_walks_cached_queue_and_stops_at_approved_plan
+    def test_plan_plans_a_fresh_wp_and_stops_without_shipping
       write_item(20, "Plannable", "Costs")
       seed_triage({ "20" => "simple" })
-      (@ctx.state_dir / "items" / "20" / "plan.md").write("## A plan")
+      claude = FakePlanClaude.new
+      r = NoGitRunner.new(@ctx, pull: FakePull.new, claude: claude, publish: nil)
 
-      # Existing plan.md: no claude/publish needed; [y] accepts the plan only.
-      out, = with_stdin("y\n") { capture_io { runner.plan } }
+      # No plan.md yet: claude generates one, [y] accepts it without shipping.
+      out, = with_stdin("y\n") { capture_io { r.plan } }
 
       assert_includes out, "[y]es accept plan", "approval prompt reflects plan-only mode"
       assert_includes out, "plan approved"
+      assert_equal "## Revised plan", (@ctx.state_dir / "items" / "20" / "plan.md").read
       refute (@ctx.state_dir / "items" / "20" / "pr_url.txt").exist?, "plan must not ship"
       refute (@ctx.state_dir / "items" / "20" / "backlog_done.txt").exist?,
              "plan leaves the WP processable later"
-      assert (@ctx.state_dir / "items" / "20" / "plan.md").exist?, "the approved plan is kept"
+    end
+
+    def test_plan_silently_skips_wps_that_already_have_a_plan
+      write_item(21, "Distinctive Subject", "Costs")
+      seed_triage({ "21" => "simple" })
+      (@ctx.state_dir / "items" / "21" / "plan.md").write("## A plan")
+
+      # An existing plan means this WP is done for the plan pass: no prompt, no
+      # claude, and — unlike process/run — no per-item line, so a re-run of
+      # `backlog plan` doesn't dump the (mostly-planned) queue.
+      out, = capture_io { runner.plan }
+
+      refute_includes out, "accept plan", "must not prompt for an already-planned WP"
+      refute_includes out, "Distinctive Subject", "plan mode stays quiet about already-planned WPs"
+      assert_includes out, "Backlog run complete."
+      assert (@ctx.state_dir / "items" / "21" / "plan.md").exist?, "the existing plan is kept"
     end
 
     def test_plan_fails_without_cached_queue
@@ -358,6 +375,18 @@ module Chomper
       assert_equal "## Revised plan", (@ctx.state_dir / "items" / "5" / "plan.md").read
       refute (@ctx.state_dir / "items" / "5" / "pr_url.txt").exist?, "plan must not ship"
       assert_includes out, "plan approved"
+    end
+
+    def test_show_marks_wps_that_already_have_a_plan
+      write_item(22, "Drafted", "Costs")
+      seed_triage({ "22" => "simple" })
+      (@ctx.state_dir / "items" / "22" / "plan.md").write("## A plan")
+
+      out, = capture_io { runner.show }
+
+      assert_includes out, "planned"
+      assert_includes out, "1 planned"
+      assert_includes out, "1 to process", "a drafted plan still counts as to-process until shipped"
     end
 
     def test_show_counts_skipped_separately
