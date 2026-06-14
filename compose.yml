@@ -55,6 +55,11 @@ services:
       dockerfile: Dockerfile.claude
     depends_on:
       - proxy
+    # Run the CLI in the product repo so Claude Code auto-loads /repo/CLAUDE.md
+    # (OpenProject's AGENTS.md) as project memory, and so the Bash(bin/compose)
+    # grant resolves relative to the repo. Without this the CLI runs in / and
+    # never sees the product's contributor guide.
+    working_dir: /repo
     volumes:
       - ${SCRIPT_DIR:-.}/.chomper/claude-auth:/home/node/.claude
       - ${SCRIPT_DIR:-.}/.chomper/openproject:/repo
