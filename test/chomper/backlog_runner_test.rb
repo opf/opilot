@@ -327,6 +327,39 @@ module Chomper
       assert_includes out, "parked until the next triage"
     end
 
+    def test_plan_walks_cached_queue_and_stops_at_approved_plan
+      write_item(20, "Plannable", "Costs")
+      seed_triage({ "20" => "simple" })
+      (@ctx.state_dir / "items" / "20" / "plan.md").write("## A plan")
+
+      # Existing plan.md: no claude/publish needed; [y] accepts the plan only.
+      out, = with_stdin("y\n") { capture_io { runner.plan } }
+
+      assert_includes out, "[y]es accept plan", "approval prompt reflects plan-only mode"
+      assert_includes out, "plan approved"
+      refute (@ctx.state_dir / "items" / "20" / "pr_url.txt").exist?, "plan must not ship"
+      refute (@ctx.state_dir / "items" / "20" / "backlog_done.txt").exist?,
+             "plan leaves the WP processable later"
+      assert (@ctx.state_dir / "items" / "20" / "plan.md").exist?, "the approved plan is kept"
+    end
+
+    def test_plan_fails_without_cached_queue
+      err = assert_raises(Chomper::FatalError) { capture_io { runner.plan } }
+      assert_match(/no cached queue/, err.message)
+    end
+
+    def test_plan_ids_plans_a_live_wp_without_shipping
+      claude = FakePlanClaude.new
+      single = item(5, "By id", "Costs")
+      r = NoGitRunner.new(@ctx, pull: FakePull.new(singles: { "5" => single }), claude: claude, publish: nil)
+
+      out, = with_stdin("y\n") { capture_io { r.plan_ids("5") } }
+
+      assert_equal "## Revised plan", (@ctx.state_dir / "items" / "5" / "plan.md").read
+      refute (@ctx.state_dir / "items" / "5" / "pr_url.txt").exist?, "plan must not ship"
+      assert_includes out, "plan approved"
+    end
+
     def test_show_counts_skipped_separately
       write_item(9, "Parked one", "Costs")
       seed_triage({ "9" => "simple" })

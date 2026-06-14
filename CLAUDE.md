@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Three modes:
+`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Modes:
 
 - **agent** — continuous polling loop driven by `@chomper` comments on work packages
-- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), and `process` (work the cached queue without re-fetching)
+- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
+- **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
 
 ## Commands
 
@@ -24,11 +25,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./chomper backlog show
 ./chomper backlog process
 
+# Walk the cached queue but stop at each approved plan (no shipping)
+./chomper backlog plan
+
 # Park a WP until the next triage (local only, no containers)
 ./chomper backlog skip <id>
 
 # Plan and ship one or more work packages by id (terminal approval)
 ./chomper fix <id>...
+
+# Plan one or more work packages by id, stopping before shipping
+./chomper plan <id>...
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
@@ -65,7 +72,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `context.rb` | Singleton config — env vars, paths, allowed emails |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
-| `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also single-WP `fix` |
+| `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch via git credential helper; opens draft PRs via Octokit |

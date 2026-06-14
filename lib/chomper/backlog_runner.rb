@@ -40,6 +40,19 @@ module Chomper
       walk_queue(*queue)
     end
 
+    # Like `process`, but stops at each WP once its plan is approved instead of
+    # implementing and shipping — draft plans for the whole queue, then ship them
+    # later with `backlog process`. Same cached-snapshot requirement as `process`.
+    def plan
+      filters = @pull.saved_backlog_filters
+      raise Chomper::FatalError, "no saved backlog filters — run `./chomper backlog triage` first" unless filters
+
+      queue = offline_queue(filters)
+      raise Chomper::FatalError, "no cached queue for these filters — run `./chomper backlog triage` first" unless queue
+
+      walk_queue(*queue, plan_only: true)
+    end
+
     # Preview the queue exactly as `run` would walk it — clusters, order,
     # complexity, prior outcomes — without processing anything. Renders from
     # the on-disk caches when possible; only fetches when there is no snapshot.
@@ -126,6 +139,18 @@ module Chomper
     # logged and the rest still run, like walking a queue; with a single id the
     # failure is fatal since there is nothing else to do.
     def fix(*wp_ids)
+      process_ids(wp_ids, plan_only: false)
+    end
+
+    # Like `fix`, but stops once each plan is approved instead of shipping —
+    # the id-based counterpart of `backlog plan`.
+    def plan_ids(*wp_ids)
+      process_ids(wp_ids, plan_only: true)
+    end
+
+    private
+
+    def process_ids(wp_ids, plan_only:)
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         break if Chomper.stopping?
@@ -150,7 +175,7 @@ module Chomper
         end
 
         begin
-          process_item(item)
+          process_item(item, plan_only: plan_only)
         rescue Claude::Error => e
           raise Chomper::FatalError, "Claude run failed: #{e.message}" if total == 1
           log_script "#{wp_label(wp_id)} — Claude run failed: #{e.message}"
@@ -158,10 +183,9 @@ module Chomper
       end
     end
 
-    private
-
-    # The interactive per-item approval loop shared by `run` and `process`.
-    def walk_queue(clusters, complexity_map, module_key, total)
+    # The interactive per-item approval loop shared by `run`, `process`, and
+    # `plan` (plan_only stops each WP once its plan is approved).
+    def walk_queue(clusters, complexity_map, module_key, total, plan_only: false)
       index = 0
       clusters.each do |cluster_name, cluster_items|
         break if Chomper.stopping?
@@ -183,7 +207,7 @@ module Chomper
           desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
           puts "  #{desc[0, 120]}" unless desc.empty?
           begin
-            process_item(item_data, complexity)
+            process_item(item_data, complexity, plan_only: plan_only)
           rescue Claude::Error => e
             # Failed mid-chat or mid-implementation; planning failures are
             # handled inside process_item. Keep walking the queue.
@@ -445,7 +469,7 @@ module Chomper
             .each_with_object({}) { |((cx, mod), group), h| h["#{cx} · #{mod}"] = group }
     end
 
-    def process_item(item_data, complexity = nil)
+    def process_item(item_data, complexity = nil, plan_only: false)
       id      = item_data["id"].to_s
       subject = item_data["subject"].to_s
       type    = item_data["type"].to_s
@@ -539,8 +563,16 @@ module Chomper
           puts render_markdown(st.plan_file.read)
         end
         puts ""
-        case prompt_approval(id)
-        when :approve then ship(st, model); break
+        case prompt_approval(id, plan_only: plan_only)
+        when :approve
+          # plan_only: leave the approved plan.md in place (no outcome marker) so
+          # a later `backlog process` / `fix` ships it; otherwise ship now.
+          if plan_only
+            log_script "#{wp_label(id)} — plan approved; ship it later with `backlog process` or `fix #{id}`."
+          else
+            ship(st, model)
+          end
+          break
         when :chat    then run_chat(st, model)
         when :replan  then replan_feedback = prompt_replan_feedback
         when :skip    then mark_backlog_done(st, "skipped"); log_script "#{wp_label(id)} skipped — parked until the next triage."; break
@@ -586,10 +618,11 @@ module Chomper
       end
     end
 
-    def prompt_approval(id)
+    def prompt_approval(id, plan_only: false)
       ping_terminal("chomper: plan for #{wp_label(id)} ready for review")
+      yes = plan_only ? "[y]es accept plan" : "[y]es implement"
       loop do
-        print "  [y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan: "
+        print "  #{yes} / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
         case response
         when "", "y", "yes"  then return :approve

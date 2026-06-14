@@ -20,18 +20,12 @@ module Chomper
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
       when "fix"
-        ids = argv[1..].to_a.map { |a| wp_id_arg(a) }
-        if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
-          $stderr.puts "Usage: ./chomper fix <work-package-id>...   (e.g. 59942 or PROJ-123 STC-7)"
-          raise Chomper::FatalError
-        end
-        @ctx.load_config!
-        labels = ids.map { |id| Helpers.wp_label(id) }.join(", ")
-        @ctx.log_file.open("a") { |f| f.puts "\n=== Fix #{labels} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
-        BacklogRunner.new(@ctx).fix(*ids)
+        with_ids(argv, "Fix", "fix") { |ids| BacklogRunner.new(@ctx).fix(*ids) }
+      when "plan"
+        with_ids(argv, "Plan", "plan") { |ids| BacklogRunner.new(@ctx).plan_ids(*ids) }
       when "backlog"
         sub = argv[1]
-        unless sub.nil? || %w[show triage process skip].include?(sub)
+        unless sub.nil? || %w[show triage process plan skip].include?(sub)
           $stderr.puts "Unknown argument: backlog #{sub}"
           ui.usage
           raise Chomper::FatalError
@@ -43,6 +37,7 @@ module Chomper
         when "show"    then runner.show
         when "triage"  then runner.triage
         when "process" then runner.process
+        when "plan"    then runner.plan
         when "skip"    then runner.skip(wp_id_arg(argv[2]))
         else                runner.run
         end
@@ -54,6 +49,20 @@ module Chomper
     end
 
     private
+
+    # Shared setup for the id-based commands (`fix`, `plan`): validate the ids,
+    # load config, write a log header, then yield the ids to the runner call.
+    def with_ids(argv, label, usage)
+      ids = argv[1..].to_a.map { |a| wp_id_arg(a) }
+      if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
+        $stderr.puts "Usage: ./chomper #{usage} <work-package-id>...   (e.g. 59942 or PROJ-123 STC-7)"
+        raise Chomper::FatalError
+      end
+      @ctx.load_config!
+      labels = ids.map { |id| Helpers.wp_label(id) }.join(", ")
+      @ctx.log_file.open("a") { |f| f.puts "\n=== #{label} #{labels} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+      yield ids
+    end
 
     # Ids pasted from OpenProject often carry the "#" prefix ("#59942",
     # "#PROJ-123") — accept it, and upcase semantic ids typed in lowercase
