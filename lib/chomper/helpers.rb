@@ -161,7 +161,7 @@ module Chomper
       record_progress(st.item_id, st.branch, "committed")
     end
 
-    def generate_pr_description(st)
+    def generate_pr_description(st, model: Claude::MODEL_WORK)
       return if st.pr_desc_file.exist? && st.pr_desc_file.size > 0
       template_file    = @ctx.repo_path / ".github" / "pull_request_template.md"
       template_section = template_file.exist? ? "Fill in this PR template exactly: #{template_file}" : ""
@@ -172,7 +172,7 @@ module Chomper
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
+      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, model: model, session_file: st.session_file)
       pr_body = pr_text[/^#.*/m] || pr_text
       st.pr_desc_file.write(strip_ansi(pr_body))
     end

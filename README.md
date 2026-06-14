@@ -323,7 +323,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
     1. Instruct the user to fork the `openproject` repo under their own account, then generate a fine-grained token _just for the repo_
     2. Have them insert the token
     3. Take care of the rest automatically:
-        * Point the local repo (no matter if cloned or worktree'd) to the new origin
+        * Point the local repo (no matter if cloned or worktr`ee'd) to the new origin
         * Make sure the PRs are pointed to the upstream repo
 
 
@@ -332,6 +332,10 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Replace Claude Code with a generic AI "file edit engine" layer
   * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
+* Replace Claude!
+  * We can likely save a lot on costs by switching to Codex. 
+  * Or, lean away from US by switching to Mistral. 
+  * Or, **ideally**, plug in an open model.
 * Use separate agents for development and review to clearly split domain ownership
   
 ### Features

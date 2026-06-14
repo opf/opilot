@@ -76,11 +76,11 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 ### Per-work-package state machine
 
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents.
-2. **Plan** — Claude (Read-only tools) produces `plan.md`. Optional reviewer pass gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
+2. **Plan** — Claude (Read-only tools) produces `plan.md`. Opt-in reviewer pass (`CHOMPER_PLAN_REVIEW`, off by default) gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
 3. **Implement** — Claude (Read/Write/Edit/Bash) works in an isolated worktree branch (`bug/<id>-<slug>`), commits `fix: <subject> (WP <label>)` where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
 4. **Publish** — Branch pushed, draft PR opened against `dev`, reply posted to WP with PR link.
 
-`:fix` intent skips the reviewer and combines plan + implement in one pass.
+`:fix` intent always skips the reviewer (even when `CHOMPER_PLAN_REVIEW` is on) and combines plan + implement in one pass.
 
 ### State on disk (`.chomper/` — gitignored)
 
@@ -105,7 +105,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 Runner POSTs to `http://claude:47291` with headers:
 - `X-Claude-Tools`: `"Read,Grep,Glob"` (planning/chat) or `"Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"` (implementation). `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
-- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb` (`MODEL_WORK` for every session-bound phase, `MODEL_FAST` for the stateless triage pass). Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
+- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb`. One model per WP, chosen once and shared by every session-bound phase (`MODEL_WORK` by default; backlog mode downgrades `trivial`/`simple` items to `MODEL_SIMPLE` via `Claude.model_for`), plus `MODEL_FAST` for the stateless triage pass. Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
 - `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
 `server.js` spawns `claude -p` with `--output-format stream-json --verbose --model <model>`, streams NDJSON back, and persists the session ID.
@@ -120,5 +120,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `GITHUB_TOKEN` | For pushing branches and opening PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
-| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by all session-bound phases |
+| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by moderate/complex items and all agent-mode phases |
+| `CHOMPER_SIMPLE_MODEL` | Optional; overrides the model (default `claude-sonnet-4-6`) used for backlog items triaged `trivial` or `simple` |
 | `CHOMPER_TRIAGE_MODEL` | Optional; overrides the triage model (default `claude-haiku-4-5`) |
+| `CHOMPER_PLAN_REVIEW` | Optional; set `1`/`true` to re-enable the agent-mode self-review pass (off by default — a human approves every plan via `@chomper approve`) |

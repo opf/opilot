@@ -52,11 +52,13 @@ module Chomper
     def self.replan(repo:, item:, plan:, feedback:, item_id:, title:)
       <<~PROMPT
         PRODUCT REPO:  #{repo}
-        ISSUE:         #{item}  (JSON — fields: subject, description, comments[], version, files_touched)
-        EXISTING PLAN: #{plan}
+        ISSUE:         #{item}  (JSON — re-read only if you don't already have it)
+        EXISTING PLAN: #{plan}  (already in your context from this session — re-read only if needed)
         FEEDBACK:      #{feedback}
 
-        You are the WRITER. Revise the existing plan to incorporate the feedback above.
+        You are the WRITER. Revise the existing plan — already in your session context —
+        to incorporate the feedback above. Don't re-read the issue or plan files unless
+        they aren't in context.
         Preserve structure and content that is still valid; only change what the feedback requires.
         Produce a plan only.
         #{READ_ONLY}
@@ -97,7 +99,8 @@ module Chomper
     def self.implement(repo:, plan:)
       <<~PROMPT
         PRODUCT REPO: #{repo}
-        APPROVED PLAN: #{plan}
+        APPROVED PLAN: #{plan}  (you produced this earlier in this same session — it's already
+        in your context; re-read the file only if it isn't)
 
         This is the IMPLEMENTATION step — the one phase where you should edit files
         in the worktree. The plan has been approved; apply it now.
@@ -115,6 +118,9 @@ module Chomper
       <<~PROMPT
         Write a GitHub PR description for this fix.
         #{READ_ONLY}
+
+        The issue and plan are already in your context from this session — don't re-read them
+        unless they aren't (paths given as a fallback). Base the description on the diff below.
 
         ISSUE: #{item}
         PLAN:  #{plan}
@@ -160,8 +166,8 @@ module Chomper
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])
         Read this file for full context, including prior comments, before answering.
 
-        CURRENT PLAN:
-        #{plan}
+        CURRENT PLAN: #{plan}
+        (likely already in your session context — read the file only if it isn't)
 
         AVAILABLE COMMANDS (mention these when relevant):
         - @chomper fix [feedback]   — plan and ship in one step (use this for most tasks)
@@ -187,8 +193,8 @@ module Chomper
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])
         Read this file for full context before answering.
 
-        CURRENT PLAN:
-        #{plan}
+        CURRENT PLAN: #{plan}
+        (likely already in your session context — read the file only if it isn't)
 
         USER: #{message}
 

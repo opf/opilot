@@ -42,5 +42,11 @@ module Chomper
       raise FatalError, "Config not found — add OPENPROJECT_URL, OPENPROJECT_TOKEN, OP_REPO_PATH to .env and re-run." \
         unless @op_url && @token && @repo_path
     end
+
+    # Opt-in agent self-review of plans (default off). A human approves every plan
+    # via `@chomper approve`, so the reviewer pass is redundant unless re-enabled.
+    def plan_review?
+      %w[1 true yes].include?(ENV["CHOMPER_PLAN_REVIEW"].to_s.strip.downcase)
+    end
   end
 end

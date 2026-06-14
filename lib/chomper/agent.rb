@@ -99,10 +99,12 @@ module Chomper
 
     def handle_chat(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
-      plan_text = st.plan_file.exist? ? st.plan_file.read : "(no plan yet)"
+      # Pass the plan's path, not its text: a resumed session already holds the
+      # plan, so re-embedding it every turn just burns tokens.
+      plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
       prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
-                            plan: plan_text, message: intent.text.to_s)
+                            plan: plan_ref, message: intent.text.to_s)
       reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
@@ -164,7 +166,7 @@ module Chomper
         return :needs_info
       end
 
-      return :ok unless review   # express lane: skip the reviewer
+      return :ok unless review && @ctx.plan_review?   # reviewer is opt-in; human approval is the gate
 
       log_script "Reviewer: checking plan for #{wp_label(st.item_id)}"
       review_prompt = Prompts.plan_review(plan: plan_c, item_id: st.item_id)

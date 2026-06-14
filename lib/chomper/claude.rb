@@ -22,14 +22,23 @@ module Chomper
     TOOLS_IMPL = "Read,Grep,Glob,Write,Edit,Bash(bin/compose),Bash(bin/compose *)"
 
     # Models, pinned so behaviour doesn't drift when the CLI's default changes.
-    # MODEL_WORK is shared by every session-bound phase (chat, plan, review,
-    # implement, PR description) — they resume one per-WP session, and switching
-    # models mid-session would discard the cache and resumed context. MODEL_FAST
-    # is for triage only: a stateless classification pass where a cheaper model
-    # suffices. server.js validates the value by format, not an allowlist —
-    # model choice grants no privilege (unlike the tool grants above).
-    MODEL_WORK = ENV.fetch("CHOMPER_MODEL", "claude-opus-4-8")
-    MODEL_FAST = ENV.fetch("CHOMPER_TRIAGE_MODEL", "claude-haiku-4-5")
+    # A WP's work model is shared by every session-bound phase (chat, plan,
+    # review, implement, PR description) — they resume one per-WP session, and
+    # switching models mid-session would discard the cache and resumed context.
+    # MODEL_WORK is the default; backlog mode downgrades trivial/simple items to
+    # MODEL_SIMPLE (chosen once per WP via .model_for, so it stays constant across
+    # the session). MODEL_FAST is for triage only: a stateless classification pass
+    # where a cheaper model suffices. server.js validates the value by format, not
+    # an allowlist — model choice grants no privilege (unlike the tool grants above).
+    MODEL_WORK   = ENV.fetch("CHOMPER_MODEL", "claude-opus-4-8")
+    MODEL_SIMPLE = ENV.fetch("CHOMPER_SIMPLE_MODEL", "claude-sonnet-4-6")
+    MODEL_FAST   = ENV.fetch("CHOMPER_TRIAGE_MODEL", "claude-haiku-4-5")
+
+    # Pick the work model for a WP from its triage complexity. Trivial and simple
+    # fixes don't need the top model. Unknown/nil complexity → MODEL_WORK.
+    def self.model_for(complexity)
+      %w[trivial simple].include?(complexity.to_s.downcase) ? MODEL_SIMPLE : MODEL_WORK
+    end
 
     def initialize(ctx)
       @ctx = ctx

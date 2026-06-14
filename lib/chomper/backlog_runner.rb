@@ -183,7 +183,7 @@ module Chomper
           desc = item_data["description"].to_s.strip.lines.first(2).map(&:strip).reject(&:empty?).join(" ")
           puts "  #{desc[0, 120]}" unless desc.empty?
           begin
-            process_item(item_data)
+            process_item(item_data, complexity)
           rescue Claude::Error => e
             # Failed mid-chat or mid-implementation; planning failures are
             # handled inside process_item. Keep walking the queue.
@@ -445,11 +445,14 @@ module Chomper
             .each_with_object({}) { |((cx, mod), group), h| h["#{cx} · #{mod}"] = group }
     end
 
-    def process_item(item_data)
+    def process_item(item_data, complexity = nil)
       id      = item_data["id"].to_s
       subject = item_data["subject"].to_s
       type    = item_data["type"].to_s
       st      = state_for(id, subject, type)
+      # One model for every session-bound phase of this WP (plan, chat, replan,
+      # implement, PR description) — switching mid-session would drop the context.
+      model   = Claude.model_for(complexity)
 
       replan_feedback = nil
       loop do
@@ -465,7 +468,7 @@ module Chomper
               Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject),
-              tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
+              tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
           rescue Claude::Error
             # capture didn't write the outfile, so the previous plan survives;
@@ -481,7 +484,7 @@ module Chomper
             @claude.capture(
               Prompts.plan(repo: @ctx.worktree_container, item: container_path(st.item_file),
                            item_id: id, title: subject),
-              tools: Claude::TOOLS_READ, outfile: st.plan_file, session_file: st.session_file
+              tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
           rescue Claude::Error
             # capture didn't write the outfile; the no-plan check below recovers.
@@ -498,7 +501,7 @@ module Chomper
           puts "  ⚠ Plan generation failed — no plan came back."
           case prompt_plan_failed(id)
           when :retry then next   # plan.md is gone, so the loop regenerates it
-          when :chat  then run_chat(st); next
+          when :chat  then run_chat(st, model); next
           when :skip  then mark_backlog_done(st, "skipped"); log_script "#{wp_label(id)} skipped — parked until the next triage."; break
           when :drop  then mark_backlog_done(st, "dropped"); log_script "#{wp_label(id)} dropped."; break
           end
@@ -515,7 +518,7 @@ module Chomper
           puts ""
           case prompt_needs_info(id)
           when :chat
-            run_chat(st)
+            run_chat(st, model)
             next   # retry planning — chat session carries context forward
           when :skip
             mark_backlog_done(st, "skipped")
@@ -537,8 +540,8 @@ module Chomper
         end
         puts ""
         case prompt_approval(id)
-        when :approve then ship(st); break
-        when :chat    then run_chat(st)
+        when :approve then ship(st, model); break
+        when :chat    then run_chat(st, model)
         when :replan  then replan_feedback = prompt_replan_feedback
         when :skip    then mark_backlog_done(st, "skipped"); log_script "#{wp_label(id)} skipped — parked until the next triage."; break
         when :drop    then safe_rm(st.plan_file); mark_backlog_done(st, "dropped"); log_script "#{wp_label(id)} dropped."; break
@@ -607,8 +610,10 @@ module Chomper
       msg.empty? ? "Revise the plan to incorporate the changes requested in the preceding conversation." : msg
     end
 
-    def run_chat(st)
-      plan_text = st.plan_file.exist? ? st.plan_file.read : "(no plan yet)"
+    def run_chat(st, model = Claude::MODEL_WORK)
+      # The session already holds the plan (just generated/revised), so pass its
+      # path as a fallback rather than re-embedding the full text on every turn.
+      plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
       puts ""
       loop do
         print "\n  You (empty line to exit): "
@@ -616,18 +621,17 @@ module Chomper
         break if msg.nil? || msg.empty?
         prompt = Prompts.backlog_chat(
           item_id: st.item_id, subject: st.subject,
-          item: container_path(st.item_file), plan: plan_text, message: msg
+          item: container_path(st.item_file), plan: plan_ref, message: msg
         )
-        @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
+        @claude.run(prompt, tools: Claude::TOOLS_READ, model: model, session_file: st.session_file)
         # Ring after the reply, not before the first message: the user just
         # chose [c]hat and is present; it's Claude's answers they wander off on.
         ping_terminal("chomper: chat reply for #{wp_label(st.item_id)} ready")
         puts ""
-        plan_text = st.plan_file.exist? ? st.plan_file.read : plan_text
       end
     end
 
-    def ship(st)
+    def ship(st, model = Claude::MODEL_WORK)
       if st.pr_url_file.exist? && st.pr_url_file.size > 0
         puts "  Already shipped: #{st.pr_url_file.read.strip}"
         return
@@ -641,7 +645,7 @@ module Chomper
         # session simply gains the write tools.
         @claude.run(
           Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file)),
-          tools: Claude::TOOLS_IMPL, session_file: st.session_file
+          tools: Claude::TOOLS_IMPL, model: model, session_file: st.session_file
         )
         commit(st)
       end
@@ -652,7 +656,7 @@ module Chomper
         return
       end
 
-      generate_pr_description(st)
+      generate_pr_description(st, model: model)
       url = @publish.open_pr(st.item_id, st.subject, st.branch)
       if url
         record_progress(st.item_id, st.branch, "shipped")

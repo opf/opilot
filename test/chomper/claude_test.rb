@@ -83,6 +83,19 @@ module Chomper
       end
     end
 
+    def test_model_for_routes_light_tiers_to_the_simple_model
+      assert_equal Claude::MODEL_SIMPLE, Claude.model_for("trivial")
+      assert_equal Claude::MODEL_SIMPLE, Claude.model_for("simple")
+      assert_equal Claude::MODEL_SIMPLE, Claude.model_for("SIMPLE")
+    end
+
+    def test_model_for_keeps_heavy_and_unknown_tiers_on_the_work_model
+      assert_equal Claude::MODEL_WORK, Claude.model_for("moderate")
+      assert_equal Claude::MODEL_WORK, Claude.model_for("complex")
+      assert_equal Claude::MODEL_WORK, Claude.model_for(nil)
+      assert_equal Claude::MODEL_WORK, Claude.model_for("?")
+    end
+
     def test_capture_does_not_write_outfile_on_error
       stub_claude(ndjson(
         assistant_text("partial preamble"),

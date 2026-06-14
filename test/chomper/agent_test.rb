@@ -91,11 +91,13 @@ module Chomper
       @tmpdir = Dir.mktmpdir
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :worktree_container, :state_container,
-        :repo_path, :allowed_emails, :log_file, :progress_file
-      ).new(
+        :repo_path, :allowed_emails, :log_file, :progress_file, :plan_review
+      ) do
+        def plan_review?; plan_review; end   # opt-in agent self-review (off by default)
+      end.new(
         Pathname(@tmpdir), Pathname(@tmpdir) / ".chomper", "https://op.example.com", "tok",
         "/repo", "/state", Pathname(@tmpdir), [],
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false
       )
       (Pathname(@tmpdir) / ".chomper").mkpath
 
@@ -145,6 +147,7 @@ module Chomper
     end
 
     def test_produce_plan_reject_posts_concerns_and_drops_plan
+      @ctx.plan_review = true   # reviewer is opt-in
       @claude = FakeClaude.new(review: "### Issues found\nUnsafe.\n### Verdict\nREJECT")
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
       @agent.instance_variable_set(:@worktree, FakeWorktree.new)
@@ -223,9 +226,16 @@ module Chomper
       refute(@claude.captures.any? { |p| p.include?("REVIEWER") }, "fix should not run the reviewer")
     end
 
-    def test_handle_plan_runs_the_reviewer
+    def test_handle_plan_runs_the_reviewer_when_opted_in
+      @ctx.plan_review = true
       @agent.handle(intent(:plan))
-      assert(@claude.captures.any? { |p| p.include?("REVIEWER") }, "plan should run the reviewer")
+      assert(@claude.captures.any? { |p| p.include?("REVIEWER") }, "plan should run the reviewer when opted in")
+    end
+
+    def test_handle_plan_skips_the_reviewer_by_default
+      @agent.handle(intent(:plan))
+      refute(@claude.captures.any? { |p| p.include?("REVIEWER") },
+             "plan should not run the reviewer unless CHOMPER_PLAN_REVIEW is set")
     end
 
     def test_handle_fix_threads_one_session_through_plan_implement_and_pr
@@ -236,6 +246,7 @@ module Chomper
     end
 
     def test_handle_plan_keeps_the_reviewer_session_free
+      @ctx.plan_review = true
       @agent.handle(intent(:plan))
       session = @ctx.state_dir / "items" / "42" / "session_id"
       assert_equal [session, nil], @claude.capture_sessions, "the reviewer must not inherit the writer's session"
