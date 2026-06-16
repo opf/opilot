@@ -318,7 +318,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ## TODO
 
 ### Security
-* Isolate git operations by pushing everything into a separate fork
+* Add optional isolation of git operations by pushing everything into a separate fork
   * https://www.openproject.org/docs/development/git-workflow/#fork-openproject
   * We could do this automatically during the initial setup:  
     1. Instruct the user to fork the `openproject` repo under their own account, then generate a fine-grained token _just for the repo_
@@ -340,6 +340,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Use separate agents for development and review to clearly split domain ownership
   
 ### Features
+* **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
 * Correctly set the target branch for release-specific fixes
   * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
