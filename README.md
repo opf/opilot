@@ -2,12 +2,13 @@
 
 # openproject-chomper
 
-An OpenProject AI development agent that helps you implement work packages.
+An OpenProject AI development orchestrator that helps you implement work packages, end to end.
 
 **Agent mode**: Talks to you via the WP Activity tab -- just tag `@chomper` to chat, plan together, and generate a draft PR.
 
 **Script mode**: Plans & implements WPs entirely via your terminal. Point it to a specific package by ID, or even to an entire project backlog.
 
+<img width="817" height="597" alt="Screenshot 2026-06-16 at 15 15 26" src="https://github.com/user-attachments/assets/706ddeb1-df10-485d-af48-8821135eafda" />
 
 ---
 
