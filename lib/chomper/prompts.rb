@@ -124,6 +124,8 @@ module Chomper
         Continue from wherever things are — there may already be partial or complete work in place.
         Implement what's missing to fix the issue according to the plan.
         - Write tests as specified in the plan, then implement the fix
+        - You have no shell here: do NOT run tests, linters, builds, git, or any
+          command — only read and edit files. They are run later in review / CI.
         - Do not commit
       PROMPT
     end
