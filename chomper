@@ -109,7 +109,7 @@ CMD="${1:-}"
 SUBCMD="${2:-}"
 _needs_claude=false
 case "$CMD" in
-  agent|fix|plan) _needs_claude=true ;;
+  agent|gh-agent|fix|plan) _needs_claude=true ;;
   backlog)   [[ -z "$SUBCMD" || "$SUBCMD" == "triage" || "$SUBCMD" == "process" || "$SUBCMD" == "plan" ]] && _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == "true" ]]; then

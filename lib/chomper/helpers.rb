@@ -1,5 +1,6 @@
 require "json"
 require "tempfile"
+require "time"
 require "rainbow"
 require "tty-markdown"
 
@@ -43,6 +44,31 @@ module Chomper
     rescue StandardError
       tmp&.unlink
       raise
+    end
+
+    # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
+    # span ("1h", "2 days", "1 week"), an absolute time, or blank/"now" (= now).
+    # Shared by the OpenProject agent (Pull) and the GitHub agent (GhPull) so the
+    # "scan from" prompt parses identically in both.
+    def self.parse_scan_from(input)
+      input = input.to_s.strip.downcase
+      return Time.now.utc.iso8601 if input.empty? || input == "now"
+      if (m = input.match(/\A(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)\z/))
+        n = m[1].to_i
+        seconds = case m[2][0]
+                  when "m" then n * 60
+                  when "h" then n * 3600
+                  when "d" then n * 86400
+                  when "w" then n * 604800
+                  end
+        return (Time.now - seconds).utc.iso8601
+      end
+      begin
+        Time.parse(input).utc.iso8601
+      rescue ArgumentError
+        puts "  Could not parse '#{input}' — defaulting to now"
+        Time.now.utc.iso8601
+      end
     end
 
     # Per-WP working state: just the paths under items/<id>/ plus the branch.
@@ -182,6 +208,23 @@ module Chomper
       end
       worktree.config("branch.#{st.branch}.remote", "origin")
       worktree.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+    end
+
+    # Check out an existing PR's branch and sync it to the PR's current head.
+    # Unlike #checkout_branch (which starts new work from origin/dev), gh-agent
+    # acts on a branch that already lives on the remote. The caller must first
+    # fetch that head into FETCH_HEAD over HTTPS (Clients::GitHub#fetch_branch) —
+    # we then hard-reset onto FETCH_HEAD, building on the latest PR head and
+    # never diverging. We reset to FETCH_HEAD rather than a remote-tracking ref
+    # so this works without relying on the worktree's `origin` (which may be SSH
+    # and unreachable in the container).
+    def checkout_pr_branch(branch)
+      if local_branch_exists?(worktree, branch)
+        worktree.checkout(branch)
+        worktree.reset_hard("FETCH_HEAD")
+      else
+        worktree.checkout(branch, new_branch: true, start_point: "FETCH_HEAD")
+      end
     end
 
     # Append a pipe-delimited line to the session progress log.

@@ -36,6 +36,22 @@ module Chomper
         ) or raise "git push failed for branch #{branch}"
       end
 
+      # Fetches a branch's current head from GitHub into FETCH_HEAD, over HTTPS
+      # with the credential helper — never the worktree's `origin`, which may be
+      # an SSH remote (git@github.com:…) with no key/known_hosts in the
+      # container, dropping git into an interactive host-key prompt. Read-only,
+      # so unlike push_branch it needs no protected-branch guard.
+      def fetch_branch(repo, branch:, worktree_path:)
+        cred_helper = '!f() { echo username=x-access-token; echo "password=$CHOMPER_GH_TOKEN"; }; f'
+        system(
+          { "CHOMPER_GH_TOKEN" => @token },
+          "git", "-C", worktree_path.to_s,
+          "-c", "credential.helper=",           # clear any inherited helpers
+          "-c", "credential.helper=#{cred_helper}",
+          "fetch", "--no-tags", "https://github.com/#{repo}.git", branch
+        ) or raise "git fetch failed for branch #{branch}"
+      end
+
       # Returns the URL of an open PR for the given head branch, or nil.
       def find_open_pr(repo, branch:)
         owner = repo.split("/").first
@@ -49,6 +65,52 @@ module Chomper
       def create_draft_pr(repo, base:, head:, title:, body:)
         pr = @octokit.create_pull_request(repo, base, head, title, body, draft: true)
         pr.html_url
+      end
+
+      # Fetch a pull request's metadata (used for the head branch and title).
+      def pull_request(repo, number)
+        @octokit.pull_request(repo, number)
+      end
+
+      # Comments in the PR's main conversation thread (the "issue" timeline).
+      def issue_comments(repo, number)
+        @octokit.issue_comments(repo, number)
+      end
+
+      # Inline review comments anchored to diff lines (a separate stream from the
+      # conversation thread above). Includes findings from automated reviewers
+      # such as GitHub Copilot.
+      def review_comments(repo, number)
+        @octokit.pull_request_comments(repo, number)
+      end
+
+      # Submitted reviews (the top-level review bodies + verdicts — e.g. Copilot's
+      # review summary, a human's "changes requested"). Separate from the inline
+      # review_comments above.
+      def reviews(repo, number)
+        @octokit.pull_request_reviews(repo, number)
+      end
+
+      # Post a comment to the PR's conversation thread; returns the new comment.
+      def add_issue_comment(repo, number, body)
+        @octokit.add_comment(repo, number, body)
+      end
+
+      # Reply to an inline review comment, keeping the reply in its thread;
+      # returns the new comment.
+      def reply_to_review_comment(repo, number, body, in_reply_to)
+        @octokit.create_pull_request_comment_reply(repo, number, body, in_reply_to)
+      end
+
+      # The PR number embedded in a chomper-stored PR URL
+      # ("https://github.com/owner/repo/pull/123" → 123), or nil.
+      def self.pr_number_from_url(url)
+        url.to_s[%r{/pull/(\d+)\b}, 1]&.to_i
+      end
+
+      # The "owner/repo" embedded in a PR URL, or nil.
+      def self.repo_from_url(url)
+        url.to_s[%r{github\.com/([^/]+/[^/]+)/pull/\d+}, 1]
       end
     end
   end

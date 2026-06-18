@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Modes:
 
 - **agent** — continuous polling loop driven by `@chomper` comments on work packages
+- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. It **never pushes** — a code change is committed to the worktree and a `git push` command is printed for the human to run. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `agent`)
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
@@ -16,6 +17,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Run the agent (polls every 10s for @chomper mentions)
 ./chomper agent
+
+# Run the GitHub PR agent (polls chomper's PRs for @chomper comments; replies and,
+# if asked, writes code + prints a git push command — never pushes itself)
+./chomper gh-agent
 
 # Run batch backlog mode (terminal approval per item)
 ./chomper backlog
@@ -72,6 +77,8 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `context.rb` | Singleton config — env vars, paths, allowed emails |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
+| `gh_pull.rb` | Polls chomper's open PRs; caches each PR's content (comments + reviews) in `pr.json` keyed by the PR's `updated_at`, skips closed/merged PRs, and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist) |
+| `gh_agent.rb` | `gh-agent` event loop — replies to each PR comment, writes code when asked, commits, and prints a push command |
 | `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
@@ -103,7 +110,10 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 │   ├── pr.md                # PR description
 │   ├── pr_url.txt           # published PR URL
 │   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent) or "skipped" (until next triage)
-│   └── session_id           # Claude session for continuity across turns
+│   ├── session_id           # Claude session for continuity across turns
+│   ├── pr.json              # gh-agent cache of PR content (comments + reviews), keyed by PR updated_at
+│   ├── gh_pr.json           # gh-agent act-state: last_acted_comment_at + chomper's own reply ids
+│   └── gh_session_id        # gh-agent's Claude session (separate from session_id)
 ├── openproject/             # git worktree
 └── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
 ```
@@ -126,6 +136,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OP_REPO_PATH` | Path to local openproject repo, or `false` to auto-clone |
 | `GITHUB_TOKEN` | For pushing branches and opening PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
+| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch); set empty to disable the gate |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
 | `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by moderate/complex items and all agent-mode phases |
 | `CHOMPER_SIMPLE_MODEL` | Optional; overrides the model (default `claude-sonnet-4-6`) used for backlog items triaged `trivial` or `simple` |

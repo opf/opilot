@@ -9,7 +9,7 @@ module Chomper
                 :log_file, :claude_url, :github_token,
                 :worktree_host, :worktree_container, :state_container,
                 :op_url, :token, :repo_path
-    attr_reader   :allowed_emails
+    attr_reader   :allowed_emails, :allowed_gh_users
 
     def self.build(script_dir = nil)
       script_dir = Pathname(script_dir || File.expand_path("../../..", __FILE__))
@@ -33,6 +33,11 @@ module Chomper
       # every OpenProject user may trigger the agent.
       @allowed_emails        = ENV.fetch("CHOMPER_ALLOWED_EMAILS", "")
                                   .split(",").map { |e| e.strip.downcase }.reject(&:empty?)
+      # GitHub logins allowed to trigger `gh-agent` on a chomper PR. Unlike the
+      # email allowlist, this defaults to a single user rather than "everyone" —
+      # an open trigger on a public PR would let anyone push code to your branch.
+      @allowed_gh_users      = ENV.fetch("CHOMPER_ALLOWED_GH_USERS", "thykel")
+                                  .split(",").map { |u| u.strip.downcase.delete_prefix("@") }.reject(&:empty?)
 
       @state_dir.mkpath
       @progress_file.open("a") {} # touch

@@ -81,6 +81,8 @@ module Chomper
 
         Commands:
           agent     Poll OpenProject every 10s and act on @chomper mentions
+          gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
+                    (if asked) write code, committing it and printing a push command
           backlog   Fetch all matching WPs, group by complexity then module, process with approval
           backlog triage    Fetch WPs and (re)build the complexity triage, then stop
           backlog show      Preview the queue (clusters + order) without processing
@@ -101,12 +103,17 @@ module Chomper
           @chomper approve         Implement the plan and open a draft PR
           @chomper fix [feedback]  Plan and ship in one step, skipping approval
 
+        @chomper PR comments (gh-agent, on a chomper-opened PR):
+          @chomper <text>          Reply to the comment; if it asks for a code change,
+                                   chomper writes it, commits, and prints a git push command
+
         Environment:
           OPENPROJECT_URL         OpenProject instance URL
           OPENPROJECT_TOKEN       OpenProject API token
           ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
           GITHUB_TOKEN            Required for pushing branches and opening PRs
           CHOMPER_ALLOWED_EMAILS  Comma-separated allowlist of @chomper triggerers
+          CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent (default thykel)
           AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
 
         State (all in .chomper/, gitignored):
