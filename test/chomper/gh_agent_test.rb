@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "stringio"
 
 module Chomper
   class GhAgentTest < Minitest::Test
@@ -17,10 +18,13 @@ module Chomper
     end
 
     class FakeGitHub
-      attr_reader :issue_posts, :review_posts, :fetched
-      def initialize; @issue_posts = []; @review_posts = []; @fetched = []; end
+      attr_reader :issue_posts, :review_posts, :fetched, :pushed
+      def initialize; @issue_posts = []; @review_posts = []; @fetched = []; @pushed = []; end
       def fetch_branch(repo, branch:, worktree_path:)
         @fetched << [repo, branch, worktree_path]
+      end
+      def push_branch(repo, branch:, worktree_path:)
+        @pushed << [repo, branch, worktree_path]
       end
       def add_issue_comment(repo, num, body)
         @issue_posts << [repo, num, body]; PostedComment.new(id: 1000)
@@ -76,7 +80,10 @@ module Chomper
         :github_token, :allowed_gh_users, :log_file, :progress_file
       ).new(
         Pathname(@tmpdir) / ".chomper", "/repo", "/state", Pathname(@tmpdir) / ".chomper" / "openproject",
-        "ghtok", ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
+        # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
+        # a no-op so the suite never makes a real GitHub call; handle() uses the
+        # injected @github, not ctx.github_token.
+        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
       )
       (@ctx.state_dir / "items" / "42").mkpath
 
@@ -85,9 +92,15 @@ module Chomper
       @pull    = FakePull.new
       @agent   = GhAgent.new(@ctx, pull: @pull, claude: @claude, github: @github)
       @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: true))
+
+      # push_followup reads a [y/N] answer from stdin; default to "no" so tests
+      # that don't care about the push don't block. Override per-test for "yes".
+      @orig_stdin = $stdin
+      $stdin = StringIO.new("n\n")
     end
 
     def teardown
+      $stdin = @orig_stdin
       FileUtils.rm_rf(@tmpdir)
     end
 
@@ -98,24 +111,35 @@ module Chomper
                    comment_at: "2024-02-01T00:00:00Z")
     end
 
-    def test_code_request_posts_reply_commits_and_prints_push_command
-      out, = capture_io { @agent.handle(gh_intent) }
+    def test_code_request_replies_commits_and_pushes_to_fork_on_confirm
+      $stdin = StringIO.new("y\n")
+      capture_io { @agent.handle(gh_intent) }
 
       assert_equal 1, @github.issue_posts.length, "reply should be posted to the PR conversation"
       assert_equal "🤖 Done — guarded the nil case.", @github.issue_posts.first[2]
       assert_equal ["[#42] address PR feedback"], @agent.instance_variable_get(:@worktree).commits
-      assert_includes out, "git -C #{@ctx.worktree_host} push https://github.com/fork/r.git bug/42-fix-the-bug:bug/42-fix-the-bug"
+      assert_equal [["fork/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.pushed,
+                   "on yes, push the commit to the PR's head repo (the fork) via the bot token"
       assert_equal [["42", 1000]], @pull.recorded, "chomper's own reply id is recorded"
+    end
+
+    def test_declining_the_push_leaves_the_commit_local
+      $stdin = StringIO.new("n\n")
+      out, = capture_io { @agent.handle(gh_intent) }
+
+      assert_equal ["[#42] address PR feedback"], @agent.instance_variable_get(:@worktree).commits
+      assert_empty @github.pushed, "on no, nothing is pushed"
+      assert_includes out, "git -C #{@ctx.worktree_host} push https://github.com/fork/r.git bug/42-fix-the-bug:bug/42-fix-the-bug",
+                      "the manual push command is offered as a fallback"
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push
       @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: false))
-      out, = capture_io { @agent.handle(gh_intent(text: "@chomper does this handle empty input?")) }
+      @agent.handle(gh_intent(text: "@chomper does this handle empty input?"))
 
       assert_equal 1, @github.issue_posts.length
       assert_empty @agent.instance_variable_get(:@worktree).commits
-      refute_includes out, "git push"
-      refute_includes out, "push https://github.com"
+      assert_empty @github.pushed
     end
 
     def test_review_comment_reply_lands_in_thread

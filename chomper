@@ -81,17 +81,20 @@ if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
 fi
 
 if ! grep -q "^GITHUB_TOKEN=" "$ENV_FILE" 2>/dev/null; then
-  # chomper pushes fix branches to YOUR fork and opens draft PRs against upstream,
-  # so the token never needs write access to the canonical repo. A classic token
-  # with only the 'public_repo' scope covers both the push and the cross-repo PR;
-  # fine-grained tokens currently can't open fork→upstream PRs.
-  echo "  GitHub token — chomper pushes fix branches to YOUR fork of the product repo"
-  echo "  and opens draft PRs against upstream; it never writes to the canonical repo."
-  echo "  A classic token with ONLY the 'public_repo' scope is enough (fine-grained"
-  echo "  tokens currently can't open fork→upstream PRs)."
-  echo "  Create one at https://github.com/settings/tokens (classic → public_repo)."
+  # chomper acts as a dedicated GitHub BOT account: it forks the product repo,
+  # pushes fix branches to that fork, and opens draft PRs against upstream. The
+  # isolation comes from the bot account having NO access to the canonical repo —
+  # so even a classic 'public_repo' token can't write there. Classic public_repo
+  # is required (fine-grained tokens can't open fork→upstream PRs).
+  echo "  GitHub token — chomper runs as a dedicated BOT account, not you."
+  echo "  Create a SEPARATE GitHub account that is NOT a collaborator on the product"
+  echo "  repo (a personal/user account — org accounts can't grant maintainer edits),"
+  echo "  then make a classic token for IT with ONLY the 'public_repo' scope:"
+  echo "    https://github.com/settings/tokens (classic → public_repo)"
+  echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
+  echo "  access to the canonical repo, it physically cannot push there."
   echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
-  printf "  GitHub token (ghp_…), or blank: "
+  printf "  Bot GitHub token (ghp_…), or blank: "
   read -rs GITHUB_TOKEN_ENTRY; echo ""
   printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN_ENTRY" >> "$ENV_FILE"
   echo ""

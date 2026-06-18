@@ -190,11 +190,15 @@ one step, posting the PR link back to the work package. This is idempotent — i
 PR already exists for the branch, the existing URL is reported instead of opening
 a new one, and re-sending `approve` after a shipped fix just re-reports it.
 
-The branch is pushed to **your fork** (chomper ensures it exists on first publish),
-and the draft PR is opened from the fork against the canonical repo's `dev`
-(`fork_owner:branch`). So nothing — not even a branch ref — lands in the canonical
-repo, and `GITHUB_TOKEN` only needs write access to your fork. (`gh-agent`
-follow-up commits target the same fork; the push command it prints points there.)
+chomper runs as a dedicated **bot account** (see `GITHUB_TOKEN` below). The branch
+is pushed to the **bot's fork** (auto-created on first publish), commits are
+**authored by the bot** (its GitHub no-reply email, so your address never appears
+on a public PR), and the draft PR is opened from the fork against the canonical
+repo's `dev` (`fork_owner:branch`) with **Allow edits by maintainers** on. So
+nothing — not even a branch ref — lands in the canonical repo, and the bot account
+has no access to write there in the first place. opf maintainers can still push to
+the PR branch or take it over. (`gh-agent` follow-up commits target the same fork;
+it asks `[y/N]` and pushes with the bot token on yes.)
 
 `./chomper status` lists each watched work package with its OpenProject link and
 PR link so you can see what's been planned and shipped at a glance.
@@ -273,7 +277,7 @@ openproject-chomper/
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
-| `GITHUB_TOKEN` | — | Pushes branches to your fork and opens draft PRs against upstream (also read/comment for `gh-agent`). The setup wizard prompts for it. A **classic token with only the `public_repo` scope** is enough — it never needs write to the canonical repo. (Fine-grained tokens cover the push but currently can't open fork→upstream PRs.) |
+| `GITHUB_TOKEN` | — | Token for a **dedicated bot account** (not you) that is **not a collaborator on the product repo**. chomper forks as the bot, pushes branches to that fork, and opens draft PRs against upstream (also read/comment for `gh-agent`). The setup wizard prompts for it. Use a **classic `public_repo`** token from that account — the isolation comes from the account having no canonical-repo access, so it physically can't write there. Must be a **personal (user) account** (org forks can't grant "Allow edits by maintainers"). Fine-grained tokens can't open fork→upstream PRs. |
 | `CHOMPER_ALLOWED_GH_USERS` | `thykel` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to a single user rather than "everyone" — an open trigger on a public PR would let anyone push code to the branch. Set empty to disable the gate. |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
@@ -337,14 +341,16 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ## TODO
 
 ### Security
-* ✅ Isolate git operations by pushing everything into a separate fork — done:
-  `Publish` ensures the user's fork (`Clients::GitHub#ensure_fork`), pushes the
-  branch there, and opens a cross-repo draft PR against upstream `dev`. Nothing
-  lands in the canonical repo and the token only needs write to the fork.
-  * ✅ The setup wizard now prompts for the token and recommends a **classic
-    token scoped to `public_repo` only** (enough to push to the fork and open the
-    cross-repo PR; no write to the canonical repo). Fine-grained tokens cover the
-    push but currently can't open fork→upstream PRs, so they aren't recommended.
+* ✅ Isolate git operations behind a dedicated bot account + fork — done:
+  chomper authenticates as a bot account with **no access to the canonical repo**,
+  forks the product repo (`Clients::GitHub#ensure_fork`), pushes branches to that
+  fork, and opens cross-repo draft PRs against upstream `dev`. The isolation is
+  enforced by GitHub (the account can't write to the canonical repo), not by
+  chomper's behavior. Commits are authored by the bot, and PRs are opened with
+  "Allow edits by maintainers" so opf maintainers can take them over.
+  * ✅ The setup wizard prompts for the token and walks through creating the bot
+    account with a **classic `public_repo`** token (fine-grained tokens can't open
+    fork→upstream PRs).
   * https://www.openproject.org/docs/development/git-workflow/#fork-openproject
 
 

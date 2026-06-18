@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Modes:
 
 - **agent** — continuous polling loop driven by `@chomper` comments on work packages
-- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. It **never pushes** — a code change is committed to the worktree and a `git push` command is printed for the human to run. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `agent`)
+- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the worktree and, after a terminal `[y/N]` confirmation, pushed to the bot's fork (with the bot token) to update the draft PR. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `agent`)
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./chomper agent
 
 # Run the GitHub PR agent (polls chomper's PRs for @chomper comments; replies and,
-# if asked, writes code + prints a git push command — never pushes itself)
+# if asked, writes code, then pushes to the bot's fork after a [y/N] confirmation)
 ./chomper gh-agent
 
 # Run batch backlog mode (terminal approval per item)
@@ -78,7 +78,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
 | `gh_pull.rb` | Polls chomper's open PRs; caches each PR's content (comments + reviews) in `pr.json` keyed by the PR's `updated_at`, skips closed/merged PRs, and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist) |
-| `gh_agent.rb` | `gh-agent` event loop — replies to each PR comment, writes code when asked, commits, and prints a push command |
+| `gh_agent.rb` | `gh-agent` event loop — replies to each PR comment, writes code when asked, commits, and pushes to the bot's fork after a `[y/N]` confirmation |
 | `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
@@ -92,7 +92,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents.
 2. **Plan** — Claude (Read-only tools) produces `plan.md`. Opt-in reviewer pass (`CHOMPER_PLAN_REVIEW`, off by default) gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
 3. **Implement** — Claude (Read/Write/Edit/Bash) works in an isolated worktree branch (`bug/<id>-<slug>`), commits `[<label>] <subject>` (matching the PR title) where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
-4. **Publish** — Branch pushed to the user's **fork** (`Clients::GitHub#ensure_fork`), a draft PR opened against upstream `dev` with a cross-repo head (`fork_owner:branch`), and a reply posted to the WP with the PR link. The token never needs write access to the canonical repo — only to the fork.
+4. **Publish** — Branch pushed to the **bot's fork** (`Clients::GitHub#ensure_fork`), commits authored by the bot (`Helpers.adopt_github_author!` sets the bot's no-reply identity), a draft PR opened against upstream `dev` with a cross-repo head (`fork_owner:branch`) and `maintainer_can_modify: true`, and a reply posted to the WP with the PR link. chomper runs as a dedicated bot account with no access to the canonical repo.
 
 `:fix` intent always skips the reviewer (even when `CHOMPER_PLAN_REVIEW` is on) and combines plan + implement in one pass.
 
@@ -134,7 +134,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token (needs read access to WPs and write access to post comments) |
 | `OP_REPO_PATH` | Path to local openproject repo, or `false` to auto-clone |
-| `GITHUB_TOKEN` | For pushing branches to the user's fork and opening cross-repo PRs against upstream. Prompted by the setup wizard; a classic `public_repo`-scoped token suffices (no write to the canonical repo). Fine-grained tokens can't open fork→upstream PRs |
+| `GITHUB_TOKEN` | Token for a **dedicated bot account** (not the operator) that is **not a collaborator on the canonical repo**. chomper forks as the bot, pushes branches there, and opens cross-repo PRs against upstream. Prompted by the setup wizard; use a classic `public_repo` token (the account's lack of canonical-repo access is what enforces isolation). Must be a personal/user account. Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch); set empty to disable the gate |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
