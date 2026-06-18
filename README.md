@@ -341,6 +341,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
+* Try to compact token usage
+  * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
 * **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
