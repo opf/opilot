@@ -38,10 +38,7 @@ module Chomper
 
       log_script "Publishing #{wp_label(item_id)} — #{subject}"
 
-      # Point reviewers at the work package, where the plan and discussion live
-      # as comments — a standalone section at the top so the link is never lost.
-      wp_url  = "#{@ctx.op_url}/work_packages/#{item_id}"
-      pr_body = "# Ticket\n#{wp_url}\n\n#{pr_desc_file.read}"
+      pr_body = pr_desc_file.read
 
       @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
