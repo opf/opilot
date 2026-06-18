@@ -111,6 +111,15 @@ module Chomper
       Helpers.wp_label(id)
     end
 
+    # Shared by the commit subject and the PR title so the two stay identical.
+    def self.pr_title(id, subject)
+      "[#{wp_label(id)}] #{subject}"
+    end
+
+    def pr_title(id, subject)
+      Helpers.pr_title(id, subject)
+    end
+
     # Calls the user back for an input prompt that typically follows a long
     # unattended Claude run. OSC 9 posts a desktop notification in terminals
     # that support it (Ghostty, iTerm2, WezTerm, kitty); others drop the
@@ -222,7 +231,7 @@ module Chomper
       diff = worktree.diff("HEAD")
       return if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("fix: #{st.subject} (WP #{wp_label(st.item_id)})")
+      worktree.commit(pr_title(st.item_id, st.subject))
       c = worktree.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(st.item_id, st.branch, "committed")

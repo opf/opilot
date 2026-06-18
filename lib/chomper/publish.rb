@@ -42,7 +42,7 @@ module Chomper
 
       @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
-      title = "[#{wp_label(item_id)}] #{subject}"
+      title = pr_title(item_id, subject)
       url = @github.create_draft_pr(github_repo, base: "dev", head: branch, title: title, body: pr_body)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published")
