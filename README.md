@@ -338,6 +338,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * We can likely save a lot on costs by switching to Codex. 
   * Or, lean away from US by switching to Mistral. 
   * Or, **ideally**, plug in an open model.
+* Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
+  * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
   
 ### Feature ideas
