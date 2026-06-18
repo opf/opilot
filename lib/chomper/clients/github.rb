@@ -6,6 +6,14 @@ module Chomper
     # Octokit and branch pushes via git; callers never touch Octokit or
     # construct GitHub URLs directly.
     class GitHub
+      # Branches the runner must never push to, regardless of what a work
+      # package's type/title produces. `dev` and `release*` are deploy targets;
+      # a fix branch always looks like `bug/<id>-<slug>`, so a push to one of
+      # these can only be a bug or a crafted WP and is refused outright.
+      def self.protected_branch?(branch)
+        branch == "dev" || branch.start_with?("release")
+      end
+
       def initialize(token)
         @token   = token
         @octokit = Octokit::Client.new(access_token: token)
@@ -14,6 +22,10 @@ module Chomper
       # Pushes a local branch to GitHub. Authenticates via a credential helper
       # so the token never appears in argv (visible via ps/proc).
       def push_branch(repo, branch:, worktree_path:)
+        if self.class.protected_branch?(branch)
+          raise "Refusing to push to protected branch #{branch.inspect}"
+        end
+
         cred_helper = '!f() { echo username=x-access-token; echo "password=$CHOMPER_GH_TOKEN"; }; f'
         system(
           { "CHOMPER_GH_TOKEN" => @token },

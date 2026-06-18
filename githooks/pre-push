@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Git-level backstop: refuse any push to a deploy branch, no matter who or what
+# initiates it from this checkout. Mirrors Chomper::Clients::GitHub.protected_branch?
+# (lib/chomper/clients/github.rb) — keep the two in sync.
+#
+# Chomper points the worktree's core.hooksPath here (see ./chomper). git feeds
+# pre-push one line per ref on stdin: "<local ref> <local sha> <remote ref> <remote sha>".
+set -euo pipefail
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  branch="${remote_ref#refs/heads/}"
+  if [[ "$branch" == "dev" || "$branch" == release* ]]; then
+    echo "pre-push: refusing to push to protected branch '$branch'" >&2
+    exit 1
+  fi
+done
+
+exit 0

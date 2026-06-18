@@ -132,6 +132,11 @@ if [[ "$_needs_claude" == "true" ]]; then
   fi
 
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
+  # Git-level backstop (defense in depth on top of Clients::GitHub.protected_branch?):
+  # point this throwaway checkout at chomper's pre-push hook so no push from it can
+  # ever reach dev/release*, keyed on the destination ref. $SCRIPT_DIR resolves
+  # identically inside the runner container (same mount invariant as the worktree).
+  HOOKS_DIR="$SCRIPT_DIR/githooks"
   if [[ "$_CLONE_REPO" == "true" ]]; then
     if [ ! -d "$WORKTREE/.git" ]; then
       echo "[ Cloning opf/openproject — this may take a few minutes ]"
@@ -141,6 +146,8 @@ if [[ "$_needs_claude" == "true" ]]; then
     else
       git -C "$WORKTREE" fetch --quiet origin dev
     fi
+    # Standalone clone — its config is chomper-owned, so a plain local setting is isolated.
+    git -C "$WORKTREE" config core.hooksPath "$HOOKS_DIR"
   else
     git -C "$OP_REPO_PATH" fetch --quiet origin dev
     if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
@@ -149,6 +156,10 @@ if [[ "$_needs_claude" == "true" ]]; then
       echo "  ✓ Worktree at $WORKTREE"
       echo ""
     fi
+    # Linked worktree — scope hooksPath to this worktree (config.worktree) so the
+    # user's own repo and its hooks stay untouched.
+    git -C "$WORKTREE" config extensions.worktreeConfig true
+    git -C "$WORKTREE" config --worktree core.hooksPath "$HOOKS_DIR"
   fi
   if [[ "$_USE_GATEWAY" == "true" ]]; then
     # proxy starts as claude's dependency; authgw is named explicitly so it only
