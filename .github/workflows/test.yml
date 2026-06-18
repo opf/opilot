@@ -1,7 +1,11 @@
 name: Test
 
 on:
+  # Only the default branch on push (post-merge); PR branches are covered by
+  # pull_request below. Without this, a push to a branch with an open PR runs
+  # the suite twice (once for push, once for pull_request).
   push:
+    branches: [main]
   pull_request:
 
 jobs:
