@@ -190,6 +190,12 @@ one step, posting the PR link back to the work package. This is idempotent — i
 PR already exists for the branch, the existing URL is reported instead of opening
 a new one, and re-sending `approve` after a shipped fix just re-reports it.
 
+The branch is pushed to **your fork** (chomper ensures it exists on first publish),
+and the draft PR is opened from the fork against the canonical repo's `dev`
+(`fork_owner:branch`). So nothing — not even a branch ref — lands in the canonical
+repo, and `GITHUB_TOKEN` only needs write access to your fork. (`gh-agent`
+follow-up commits target the same fork; the push command it prints points there.)
+
 `./chomper status` lists each watched work package with its OpenProject link and
 PR link so you can see what's been planned and shipped at a glance.
 
@@ -267,7 +273,7 @@ openproject-chomper/
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
-| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API; `gh-agent` also uses it to read and comment on PRs |
+| `GITHUB_TOKEN` | — | Pushes branches to your fork and opens draft PRs against upstream (also read/comment for `gh-agent`). The setup wizard prompts for it. A **classic token with only the `public_repo` scope** is enough — it never needs write to the canonical repo. (Fine-grained tokens cover the push but currently can't open fork→upstream PRs.) |
 | `CHOMPER_ALLOWED_GH_USERS` | `thykel` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to a single user rather than "everyone" — an open trigger on a public PR would let anyone push code to the branch. Set empty to disable the gate. |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
@@ -331,14 +337,15 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ## TODO
 
 ### Security
-* Isolate git operations by pushing everything into a separate fork
+* ✅ Isolate git operations by pushing everything into a separate fork — done:
+  `Publish` ensures the user's fork (`Clients::GitHub#ensure_fork`), pushes the
+  branch there, and opens a cross-repo draft PR against upstream `dev`. Nothing
+  lands in the canonical repo and the token only needs write to the fork.
+  * ✅ The setup wizard now prompts for the token and recommends a **classic
+    token scoped to `public_repo` only** (enough to push to the fork and open the
+    cross-repo PR; no write to the canonical repo). Fine-grained tokens cover the
+    push but currently can't open fork→upstream PRs, so they aren't recommended.
   * https://www.openproject.org/docs/development/git-workflow/#fork-openproject
-  * We could do this automatically during the initial setup:  
-    1. Instruct the user to fork the `openproject` repo under their own account, then generate a fine-grained token _just for the repo_
-    2. Have them insert the token
-    3. Take care of the rest automatically:
-        * Point the local repo (no matter if cloned or worktr`ee'd) to the new origin
-        * Make sure the PRs are pointed to the upstream repo
 
 
 ### AI Architecture

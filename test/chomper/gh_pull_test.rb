@@ -3,7 +3,8 @@ require_relative "../test_helper"
 module Chomper
   class GhPullTest < Minitest::Test
     User          = Struct.new(:login)
-    Head          = Struct.new(:ref, :sha)
+    Repo          = Struct.new(:full_name)
+    Head          = Struct.new(:ref, :sha, :repo)
     PR            = Struct.new(:state, :updated_at, :html_url, :title, :head, keyword_init: true)
     IssueC        = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
     ReviewC       = Struct.new(:id, :body, :user, :created_at, :in_reply_to_id, :path, :line, :diff_hunk, keyword_init: true)
@@ -35,9 +36,11 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
-    def pr(state: "open", updated_at: "2026-06-18T18:00:00Z", title: "PR title", ref: "bug/42-fix-the-bug")
+    def pr(state: "open", updated_at: "2026-06-18T18:00:00Z", title: "PR title",
+           ref: "bug/42-fix-the-bug", head_repo: "fork/r")
       PR.new(state: state, updated_at: Time.parse(updated_at),
-             html_url: "https://github.com/o/r/pull/7", title: title, head: Head.new(ref, "sha123"))
+             html_url: "https://github.com/o/r/pull/7", title: title,
+             head: Head.new(ref, "sha123", Repo.new(head_repo)))
     end
 
     def issue_c(id:, body:, login:, at:)
@@ -68,6 +71,14 @@ module Chomper
       assert_equal 7, i.pr_number
       assert_equal :issue, i.kind
       assert_equal "thykel", i.user_login
+    end
+
+    def test_carries_the_head_repo_fork_for_fetch_and_push
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper go", login: "thykel", at: "2026-06-18T18:05:00Z")],
+                pr_obj: pr(head_repo: "thykel/openproject"))
+      i = gh.poll_intents("2000-01-01T00:00:00Z").first
+      assert_equal "o/r", i.repo, "comments are posted on the base repo"
+      assert_equal "thykel/openproject", i.head_repo, "the branch lives in the fork"
     end
 
     def test_uses_the_real_pr_head_ref_for_the_branch

@@ -80,6 +80,23 @@ if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
   echo ""
 fi
 
+if ! grep -q "^GITHUB_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+  # chomper pushes fix branches to YOUR fork and opens draft PRs against upstream,
+  # so the token never needs write access to the canonical repo. A classic token
+  # with only the 'public_repo' scope covers both the push and the cross-repo PR;
+  # fine-grained tokens currently can't open fork→upstream PRs.
+  echo "  GitHub token — chomper pushes fix branches to YOUR fork of the product repo"
+  echo "  and opens draft PRs against upstream; it never writes to the canonical repo."
+  echo "  A classic token with ONLY the 'public_repo' scope is enough (fine-grained"
+  echo "  tokens currently can't open fork→upstream PRs)."
+  echo "  Create one at https://github.com/settings/tokens (classic → public_repo)."
+  echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
+  printf "  GitHub token (ghp_…), or blank: "
+  read -rs GITHUB_TOKEN_ENTRY; echo ""
+  printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN_ENTRY" >> "$ENV_FILE"
+  echo ""
+fi
+
 # ── Load config ───────────────────────────────────────────────────────────
 _OP_REPO_PATH_RAW="$(_env_get OP_REPO_PATH)"
 if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then

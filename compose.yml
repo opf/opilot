@@ -25,7 +25,7 @@ services:
       - ${SCRIPT_DIR:-.}:${SCRIPT_DIR:-/chomper}
       - ${OP_REPO:-.}:${OP_REPO:-/op-repo}
     environment:
-      - GITHUB_TOKEN
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL

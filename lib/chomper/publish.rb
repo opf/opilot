@@ -30,7 +30,13 @@ module Chomper
         return nil
       end
 
-      existing = @github.find_open_pr(github_repo, branch: branch)
+      # The branch lives in the user's fork; the PR is opened against upstream
+      # with a cross-repo head ("fork_owner:branch"). This keeps the token off
+      # the canonical repo — it only needs write to the fork.
+      fork_repo = @github.ensure_fork(upstream_repo)
+      head      = "#{fork_repo.split('/').first}:#{branch}"
+
+      existing = @github.find_open_pr(upstream_repo, head: head)
       if existing
         pr_url_file.write(existing)
         return existing
@@ -41,10 +47,10 @@ module Chomper
       banner  = "🤖 AI-generated PR! Please review it for accuracy and then remove this line."
       pr_body = "#{banner}\n\n#{pr_desc_file.read}"
 
-      @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
+      @github.push_branch(fork_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
       title = pr_title(item_id, subject)
-      url = @github.create_draft_pr(github_repo, base: "dev", head: branch, title: title, body: pr_body)
+      url = @github.create_draft_pr(upstream_repo, base: "dev", head: head, title: title, body: pr_body)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published")
       url
@@ -52,8 +58,10 @@ module Chomper
 
     private
 
-    def github_repo
-      @github_repo ||= begin
+    # The canonical repo the PR targets, derived from the worktree's origin
+    # remote (chomper's worktree is checked out from the product clone).
+    def upstream_repo
+      @upstream_repo ||= begin
         url = worktree.remote('origin').url
         url.match(%r{github\.com[:/](.+?)(?:\.git)?$})&.captures&.first ||
           raise("Could not determine GitHub repo from remote URL: #{url}")
