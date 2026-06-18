@@ -38,7 +38,8 @@ module Chomper
 
       log_script "Publishing #{wp_label(item_id)} — #{subject}"
 
-      pr_body = pr_desc_file.read
+      banner  = "🤖 AI-generated PR! Please review it for accuracy and then remove this line."
+      pr_body = "#{banner}\n\n#{pr_desc_file.read}"
 
       @github.push_branch(github_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
