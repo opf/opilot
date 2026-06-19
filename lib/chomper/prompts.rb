@@ -199,11 +199,11 @@ module Chomper
         Reply helpfully and concisely. Your response will be posted as an internal note.
       PROMPT
     end
-    # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit/Bash).
+    # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit).
     # "Always reply, code if asked": Claude answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
-    # git — the runner commits any changes and hands the human a push command, so
-    # nothing reaches the open PR without a person running it.
+    # git — the runner commits any changes and pushes them to the bot's fork to
+    # update the draft PR; merging still requires a maintainer.
     def self.gh_reply(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:,
                       comment:, author:, comment_id:, in_reply_to: nil)
       reply_line =

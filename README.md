@@ -127,7 +127,7 @@ comments), so it is boxed in from several directions:
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` PR comments and, when asked, write code (committing it and printing a `git push` command — never pushes itself) |
+| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` PR comments and, when asked, write code (committing it and pushing to the bot's fork to update the draft PR) |
 | `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
 | `./chomper backlog show` | Preview the backlog queue |
@@ -173,7 +173,7 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 
 | Comment | Behaviour |
 |---|---|
-| `@chomper <anything>` | Always replies on the PR. If the comment asks for a concrete code change, chomper edits the PR's branch in the worktree, commits the change, and **prints a `git push` command for you to run** — it never pushes on its own |
+| `@chomper <anything>` | Always replies on the PR. If the comment asks for a concrete code change, chomper edits the PR's branch in the worktree, commits it, and **pushes to the bot's fork** to update the draft PR. Merging into the canonical repo still requires a maintainer. |
 
 Triggers are gated by the `CHOMPER_ALLOWED_GH_USERS` allowlist (GitHub logins, default `thykel`). Because a code change here lands on an open PR, the human reviews chomper's commit and runs the printed push themselves.
 
@@ -198,7 +198,7 @@ repo's `dev` (`fork_owner:branch`) with **Allow edits by maintainers** on. So
 nothing — not even a branch ref — lands in the canonical repo, and the bot account
 has no access to write there in the first place. opf maintainers can still push to
 the PR branch or take it over. (`gh-agent` follow-up commits target the same fork;
-it asks `[y/N]` and pushes with the bot token on yes.)
+it pushes them to the same fork with the bot token to update the draft PR.)
 
 `./chomper status` lists each watched work package with its OpenProject link and
 PR link so you can see what's been planned and shipped at a glance.

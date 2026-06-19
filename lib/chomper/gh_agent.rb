@@ -6,9 +6,9 @@ module Chomper
   # The GitHub counterpart of Agent: poll the PRs chomper has already opened for
   # @chomper comments and act on each. "Always reply, code if asked" — every
   # comment gets a reply, and Claude edits the worktree only when the comment
-  # asks for a change. A code change is committed locally and, after a terminal
-  # [y/N] confirmation, pushed to the bot's fork to update the draft PR — so a
-  # person stays in the loop on anything that lands on an open PR.
+  # asks for a change. A code change is committed and pushed to the bot's fork to
+  # update the draft PR; merging into the canonical repo still needs a maintainer,
+  # so a person stays in the loop on anything that actually lands.
   class GhAgent
     include Helpers
 
@@ -130,25 +130,14 @@ module Chomper
       true
     end
 
-    # Confirm with the operator, then push the new commit to the PR's head repo
-    # (the bot's fork) using the bot token — which is why this can't just print a
-    # command for the human to run: only the runner holds the bot's credentials.
-    # The draft PR + maintainer review still gate anything reaching the canonical
-    # repo, so a [y/N] confirmation is enough human-in-the-loop.
+    # Push the new commit to the PR's head repo (the bot's fork) with the bot
+    # token, updating the draft PR. No confirmation: it's a draft PR on the bot's
+    # fork and a maintainer still gates the merge, so nothing reaches the
+    # canonical repo without human review.
     def push_followup(intent)
       target = head_repo(intent)
-      print "  Push this commit to PR ##{intent.pr_number} (#{target})? [y/N] "
-      ping_terminal("chomper wrote code for PR ##{intent.pr_number} — confirm the push")
-      answer = $stdin.gets.to_s.strip.downcase
-      if answer.start_with?("y")
-        @github.push_branch(target, branch: intent.branch, worktree_path: @ctx.worktree_host)
-        log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
-      else
-        log_script "Left the commit local on `#{intent.branch}`. To push it later:"
-        puts ""
-        puts "    git -C #{@ctx.worktree_host} push https://github.com/#{target}.git #{intent.branch}:#{intent.branch}"
-        puts ""
-      end
+      @github.push_branch(target, branch: intent.branch, worktree_path: @ctx.worktree_host)
+      log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
     end
 
     # The repo holding the PR's branch — the fork. Falls back to the base repo

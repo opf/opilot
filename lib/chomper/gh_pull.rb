@@ -10,7 +10,7 @@ module Chomper
   # answering a Copilot finding) so Claude can be pointed at the right feedback.
   # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
   # is where the PR's branch actually lives (the user's fork) — what gh-agent
-  # fetches from and prints a push command against.
+  # fetches from and pushes to.
   GhIntent = Struct.new(:item_id, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
                         keyword_init: true)
