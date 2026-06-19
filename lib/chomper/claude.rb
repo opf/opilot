@@ -93,6 +93,7 @@ module Chomper
         at_line_start       = true
         after_tool          = false
         captured_session_id = nil
+        final_result        = nil
         error               = nil
 
         req = Net::HTTP::Post.new(@uri)
@@ -127,6 +128,12 @@ module Chomper
                     $stdout.puts "" unless at_line_start
                     $stdout.puts Rainbow("  ✗ #{error}").red
                     at_line_start = true
+                  else
+                    # The CLI's final answer — just the last message, not the
+                    # per-turn reasoning streamed along the way. Prefer it as the
+                    # return value so callers (PR comments, plan.md, …) get the
+                    # conclusion, not the narration.
+                    final_result = parsed["result"]
                   end
                 when "assistant"
                   (parsed.dig("message", "content") || []).each do |part|
@@ -165,7 +172,10 @@ module Chomper
         raise
       end
 
-      [text_parts.join, captured_session_id, error]
+      # Fall back to the streamed parts only if the run somehow ended without a
+      # final result (e.g. a transport cut-off before the result event).
+      text = final_result.to_s.strip.empty? ? text_parts.join : final_result
+      [text, captured_session_id, error]
     end
 
     def log_append(text)
