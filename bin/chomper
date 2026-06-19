@@ -16,6 +16,8 @@ require "chomper/ui"
 require "chomper/pull"
 require "chomper/publish"
 require "chomper/agent"
+require "chomper/gh_pull"
+require "chomper/gh_agent"
 require "chomper/backlog_runner"
 require "chomper/cli"
 

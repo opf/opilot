@@ -427,24 +427,7 @@ module Chomper
     end
 
     def parse_scan_from_input(input)
-      input = input.strip.downcase
-      return Time.now.utc.iso8601 if input.empty? || input == "now"
-      if (m = input.match(/\A(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)\z/))
-        n = m[1].to_i
-        seconds = case m[2][0]
-                  when "m" then n * 60
-                  when "h" then n * 3600
-                  when "d" then n * 86400
-                  when "w" then n * 604800
-                  end
-        return (Time.now - seconds).utc.iso8601
-      end
-      begin
-        Time.parse(input).utc.iso8601
-      rescue ArgumentError
-        puts "  Could not parse '#{input}' — defaulting to now"
-        Time.now.utc.iso8601
-      end
+      Helpers.parse_scan_from(input)
     end
 
     def resolve_user_email(comment)

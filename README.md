@@ -127,6 +127,7 @@ comments), so it is boxed in from several directions:
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` PR comments and, when asked, write code (committing it and printing a `git push` command — never pushes itself) |
 | `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
 | `./chomper backlog show` | Preview the backlog queue |
@@ -165,6 +166,16 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 | `@chomper plan [feedback]` | For complex tasks: draft a plan for human review before touching any code (optional feedback revises an existing plan) |
 | `@chomper approve` | Implement and ship a plan that was drafted with `@chomper plan` |
 | `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
+
+### `@chomper` PR comments (`gh-agent`)
+
+`gh-agent` watches the PRs chomper has already opened (those with an `items/<id>/pr_url.txt`) and acts on `@chomper` comments left on them — in both the conversation thread and inline review comments. At startup it asks how far back to scan (same prompt as `agent`), then polls every 10s.
+
+| Comment | Behaviour |
+|---|---|
+| `@chomper <anything>` | Always replies on the PR. If the comment asks for a concrete code change, chomper edits the PR's branch in the worktree, commits the change, and **prints a `git push` command for you to run** — it never pushes on its own |
+
+Triggers are gated by the `CHOMPER_ALLOWED_GH_USERS` allowlist (GitHub logins, default `thykel`). Because a code change here lands on an open PR, the human reviews chomper's commit and runs the printed push themselves.
 
 Triggers are gated by the `CHOMPER_ALLOWED_EMAILS` allowlist (when set). A work
 package's status is just the files in `.chomper/items/<id>/`: `plan.md` present
@@ -256,7 +267,8 @@ openproject-chomper/
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
-| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
+| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API; `gh-agent` also uses it to read and comment on PRs |
+| `CHOMPER_ALLOWED_GH_USERS` | `thykel` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to a single user rather than "everyone" — an open trigger on a public PR would let anyone push code to the branch. Set empty to disable the gate. |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
 ---

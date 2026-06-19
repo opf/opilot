@@ -19,6 +19,10 @@ module Chomper
         @ctx.load_config!
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
+      when "gh-agent"
+        @ctx.load_config!
+        @ctx.log_file.open("a") { |f| f.puts "\n=== GH Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+        GhAgent.new(@ctx).run
       when "fix"
         with_ids(argv, "Fix", "fix") { |ids| BacklogRunner.new(@ctx).fix(*ids) }
       when "plan"
