@@ -96,10 +96,12 @@ module Chomper
       # Creates a draft PR and returns its URL. `maintainer_can_modify` lets
       # anyone with push access to the base repo push to the PR's branch in the
       # fork ("Allow edits by maintainers") — so opf maintainers can take the PR
-      # over. Only works because the fork is a personal (user) account.
-      def create_draft_pr(repo, base:, head:, title:, body:)
+      # over. Only works because the fork is a personal (user) account, and must
+      # be false for a same-repo (direct-mode) PR: GitHub rejects the flag with a
+      # 422 when head and base live in the same repository.
+      def create_draft_pr(repo, base:, head:, title:, body:, maintainer_can_modify: true)
         pr = @octokit.create_pull_request(
-          repo, base, head, title, body, draft: true, maintainer_can_modify: true
+          repo, base, head, title, body, draft: true, maintainer_can_modify: maintainer_can_modify
         )
         pr.html_url
       end

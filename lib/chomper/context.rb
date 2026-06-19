@@ -61,5 +61,15 @@ module Chomper
     def auto_plan_approval?
       %w[1 true yes].include?(ENV["AUTO_PLAN_APPROVAL"].to_s.strip.downcase)
     end
+
+    # PR delivery mode (`CHOMPER_PR_MODE`, default "fork"). When "direct", the
+    # fix branch is pushed straight to the canonical repo and a same-repo PR is
+    # opened — which requires the token to have push access to that repo, and
+    # trades the fork's isolation for the protected-branch guard + human-gated
+    # merge. The default "fork" path forks, pushes to the fork, and opens a
+    # cross-repo PR, so the token never needs write access to the canonical repo.
+    def direct_pr?
+      ENV["CHOMPER_PR_MODE"].to_s.strip.downcase == "direct"
+    end
   end
 end

@@ -80,21 +80,52 @@ if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
   echo ""
 fi
 
+if ! grep -q "^CHOMPER_PR_MODE=" "$ENV_FILE" 2>/dev/null; then
+  # How chomper delivers PRs decides what kind of GitHub token it needs, so ask
+  # this before the token. Fork mode (default) is the isolated path; direct mode
+  # trades that isolation for a token with push access to the canonical repo.
+  echo "  How should chomper deliver PRs?"
+  echo "    [f]ork   (default) — runs as a dedicated BOT account with NO access to the"
+  echo "                         canonical repo; forks it, pushes to the fork, opens a"
+  echo "                         cross-repo draft PR. Most isolated."
+  echo "    [d]irect           — pushes the fix branch straight to the canonical repo and"
+  echo "                         opens a same-repo draft PR. Needs a token with push"
+  echo "                         access; the protected-branch guard is the only backstop."
+  printf "  Mode [F/d]: "
+  read -r _PR_MODE_ENTRY
+  if [[ "${_PR_MODE_ENTRY:-f}" =~ ^[Dd] ]]; then CHOMPER_PR_MODE=direct; else CHOMPER_PR_MODE=fork; fi
+  printf 'CHOMPER_PR_MODE=%s\n' "$CHOMPER_PR_MODE" >> "$ENV_FILE"
+  echo ""
+fi
+
 if ! grep -q "^GITHUB_TOKEN=" "$ENV_FILE" 2>/dev/null; then
-  # chomper acts as a dedicated GitHub BOT account: it forks the product repo,
-  # pushes fix branches to that fork, and opens draft PRs against upstream. The
-  # isolation comes from the bot account having NO access to the canonical repo —
-  # so even a classic 'public_repo' token can't write there. Classic public_repo
-  # is required (fine-grained tokens can't open fork→upstream PRs).
-  echo "  GitHub token — chomper runs as a dedicated BOT account, not you."
-  echo "  Create a SEPARATE GitHub account that is NOT a collaborator on the product"
-  echo "  repo (a personal/user account — org accounts can't grant maintainer edits),"
-  echo "  then make a classic token for IT with ONLY the 'public_repo' scope:"
-  echo "    https://github.com/settings/tokens (classic → public_repo)"
-  echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
-  echo "  access to the canonical repo, it physically cannot push there."
-  echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
-  printf "  Bot GitHub token (ghp_…), or blank: "
+  if [[ "${CHOMPER_PR_MODE:-$(_env_get CHOMPER_PR_MODE)}" == "direct" ]]; then
+    # Direct mode: the token pushes branches to the canonical repo and opens
+    # same-repo PRs, so it MUST have push access there. No fork, no isolation —
+    # the protected-branch guard + draft-PR-with-human-merge are the only safety.
+    echo "  GitHub token — DIRECT mode: chomper pushes branches to the canonical repo."
+    echo "  Use a token for an account WITH push access to the product repo, with the"
+    echo "  classic 'repo' scope ('public_repo' is enough for a public repo):"
+    echo "    https://github.com/settings/tokens (classic → repo)"
+    echo "  chomper still opens DRAFT PRs; merging stays gated on a maintainer."
+    echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
+    printf "  GitHub token (ghp_…), or blank: "
+  else
+    # Fork mode: chomper acts as a dedicated GitHub BOT account — it forks the
+    # product repo, pushes fix branches to that fork, and opens draft PRs against
+    # upstream. The isolation comes from the bot account having NO access to the
+    # canonical repo — so even a classic 'public_repo' token can't write there.
+    # Classic public_repo is required (fine-grained tokens can't open fork→upstream PRs).
+    echo "  GitHub token — chomper runs as a dedicated BOT account, not you."
+    echo "  Create a SEPARATE GitHub account that is NOT a collaborator on the product"
+    echo "  repo (a personal/user account — org accounts can't grant maintainer edits),"
+    echo "  then make a classic token for IT with ONLY the 'public_repo' scope:"
+    echo "    https://github.com/settings/tokens (classic → public_repo)"
+    echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
+    echo "  access to the canonical repo, it physically cannot push there."
+    echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
+    printf "  Bot GitHub token (ghp_…), or blank: "
+  fi
   read -rs GITHUB_TOKEN_ENTRY; echo ""
   printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN_ENTRY" >> "$ENV_FILE"
   echo ""

@@ -50,6 +50,19 @@ module Chomper
         assert_requested(stub)
       end
 
+      def test_create_draft_pr_can_disable_maintainer_edits_for_same_repo
+        stub = stub_request(:post, "https://api.github.com/repos/opf/openproject/pulls")
+               .with(body: hash_including("draft" => true, "maintainer_can_modify" => false))
+               .to_return(status: 201, headers: { "Content-Type" => "application/json" },
+                          body: JSON.generate("html_url" => "https://github.com/opf/openproject/pull/9"))
+
+        GitHub.new("token").create_draft_pr(
+          "opf/openproject", base: "dev", head: "opf:bug/42-x", title: "T", body: "B",
+          maintainer_can_modify: false
+        )
+        assert_requested(stub)
+      end
+
       def test_react_routes_issue_and_review_comments_to_their_endpoints
         issue  = stub_request(:post, "https://api.github.com/repos/o/r/issues/comments/11/reactions")
                  .with(body: hash_including("content" => "eyes")).to_return(status: 201, body: "{}")
