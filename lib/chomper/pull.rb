@@ -409,7 +409,7 @@ module Chomper
     end
 
     def agent_filters_path
-      @ctx.state_dir / "agent_filters.json"
+      @ctx.state_dir / "op_agent_filters.json"
     end
 
     def save_agent_filters(filters)

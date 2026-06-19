@@ -434,7 +434,7 @@ module Chomper
 
     def test_save_and_reload_agent_filters
       @pull.send(:save_agent_filters, FILTERS)
-      path = Pathname(@tmpdir) / "agent_filters.json"
+      path = Pathname(@tmpdir) / "op_agent_filters.json"
       assert path.exist?
       data = JSON.parse(path.read)
       assert_equal FILTERS.project_id,  data["project_id"]

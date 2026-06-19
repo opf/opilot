@@ -15,7 +15,7 @@ module Chomper
         ui.status
       when "reset"
         ui.reset
-      when "agent"
+      when "op-agent"
         @ctx.load_config!
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
