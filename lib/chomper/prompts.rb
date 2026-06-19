@@ -241,7 +241,10 @@ module Chomper
         - Do NOT commit, do NOT push, and do NOT run any git command — the human
           reviews your commit and pushes it themselves.
 
-        Reply helpfully and concisely. Your reply text will be posted as a comment on the PR.
+        Keep the reply terse — usually 1–3 sentences. Answer directly, or state what
+        you changed and why. Do NOT restate the question, the plan, or the diff, and
+        skip any preamble, summary, or sign-off. Your reply is posted verbatim as a
+        PR comment.
       PROMPT
     end
 
