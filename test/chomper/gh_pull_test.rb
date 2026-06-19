@@ -21,6 +21,7 @@ module Chomper
       def review_comments(_repo, _num); @review;  end
       def reviews(_repo, _num);         @reviews; end
       def react(repo, comment_id, kind:, content: "eyes"); @reacted << [repo, comment_id, kind, content]; end
+      def login; "chomper-bot"; end
     end
 
     def setup
@@ -119,6 +120,11 @@ module Chomper
     def test_ignores_comments_without_mention
       gh = pull(issue: [issue_c(id: 1, body: "looks good to me", login: "thykel", at: "2026-06-18T18:05:00Z")])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
+    end
+
+    def test_mentioning_the_bots_github_login_triggers
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper-bot please guard nil", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal 1, gh.poll_intents("2000-01-01T00:00:00Z").length
     end
 
     def test_allowlist_rejects_other_users_and_advances_cutoff

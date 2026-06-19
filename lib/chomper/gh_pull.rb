@@ -29,7 +29,16 @@ module Chomper
   class GhPull
     include Helpers
 
-    MENTION = /@chomper\b/i
+    # A comment triggers chomper when it contains the literal `@chomper` or an
+    # @-mention of the bot's own GitHub login (e.g. `@chomper-bot`).
+    def mention_re
+      @mention_re ||= begin
+        handles = ["chomper"]
+        login = (@github.login rescue nil)
+        handles << login if login && !login.empty?
+        /(?:#{handles.uniq.map { |h| "@#{Regexp.escape(h)}" }.join("|")})\b/i
+      end
+    end
 
     def initialize(ctx, github: Clients::GitHub.new(ctx.github_token))
       @ctx    = ctx
@@ -102,7 +111,7 @@ module Chomper
 
       fresh = content["comments"]
         .reject { |c| acted.include?(c["id"].to_s) }
-        .select { |c| c["body"] =~ MENTION }
+        .select { |c| c["body"] =~ mention_re }
         .select { |c| cutoff.nil? || c["created_at"] > cutoff }
         .sort_by { |c| c["created_at"] }
 

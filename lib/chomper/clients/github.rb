@@ -45,6 +45,12 @@ module Chomper
         ["#{u.name || u.login}", "#{u.id}+#{u.login}@users.noreply.github.com"]
       end
 
+      # The authenticated account's login (the bot's username), memoized — used
+      # to recognise an @-mention of the bot itself as a trigger.
+      def login
+        @login ||= @octokit.user.login
+      end
+
       # Pushes a local branch to GitHub. Authenticates via a credential helper
       # so the token never appears in argv (visible via ps/proc).
       def push_branch(repo, branch:, worktree_path:)
