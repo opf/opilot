@@ -4,71 +4,72 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export SCRIPT_DIR
 ENV_FILE="$SCRIPT_DIR/.env"
+CMD="${1:-}"; SUBCMD="${2:-}"
 
-# Read a single KEY=value from .env (empty if absent).
+# Read / append a single KEY=value in .env.
 _env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2-; }
+_save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
+# docker compose bound to chomper's compose file.
+dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
+
+# Teardown commands like `reset` must never run the first-run wizard — it would
+# prompt for config (and tokens) it's about to discard.
+case "$CMD" in reset) _WIZARD=false ;; *) _WIZARD=true ;; esac
+# True when the wizard should prompt for KEY (enabled and not yet in .env).
+_need() { [[ "$_WIZARD" == true ]] && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 
 # ── First-run setup ───────────────────────────────────────────────────────
-if ! grep -q "^OPENPROJECT_URL=" "$ENV_FILE" 2>/dev/null; then
+if _need OPENPROJECT_URL; then
   mkdir -p "$SCRIPT_DIR/.chomper"
-  echo ""
-  echo "=== First run — quick setup ==="
-  echo ""
+  echo ""; echo "=== First run — quick setup ==="; echo ""
   printf "  OpenProject URL [https://community.openproject.org]: "
   read -r OPENPROJECT_URL; OPENPROJECT_URL="${OPENPROJECT_URL:-https://community.openproject.org}"
   OPENPROJECT_TOKEN=""
   while [ -z "$OPENPROJECT_TOKEN" ]; do
-    printf "  API token (read-only, View work packages only): "
+    printf "  API token (view work packages + comment on them): "
     read -rs OPENPROJECT_TOKEN; echo ""
     [ -z "$OPENPROJECT_TOKEN" ] && echo "  Token is required — please enter a value."
   done
-  {
-    printf 'OPENPROJECT_URL=%s\n' "$OPENPROJECT_URL"
-    printf 'OPENPROJECT_TOKEN=%s\n' "$OPENPROJECT_TOKEN"
-  } > "$ENV_FILE"
+  _save OPENPROJECT_URL "$OPENPROJECT_URL"
+  _save OPENPROJECT_TOKEN "$OPENPROJECT_TOKEN"
   chmod 600 "$ENV_FILE"
-  echo ""
-  echo "  ✓ Saved to .env (gitignored, chmod 600)"
   echo ""
 fi
 
-if ! grep -q "^OP_REPO_PATH=" "$ENV_FILE" 2>/dev/null; then
+if _need OP_REPO_PATH; then
   printf "  Do you have a local OpenProject repo to reuse? [Y/n]: "
   read -r HAS_REPO
   if [[ "${HAS_REPO:-Y}" =~ ^[Nn] ]]; then
-    OP_REPO_PATH_ENTRY="false"
-    echo "  Will clone opf/openproject when first needed (no auth required)."
+    OP_REPO_PATH_ENTRY=false
+    echo "  Will clone opf/openproject when first needed."
   else
     printf "  Path to your product repo [../openproject]: "
-    read -r OP_REPO_PATH_INPUT; OP_REPO_PATH_INPUT="${OP_REPO_PATH_INPUT:-../openproject}"
-    OP_REPO_PATH_ENTRY="$OP_REPO_PATH_INPUT"
+    read -r OP_REPO_PATH_ENTRY; OP_REPO_PATH_ENTRY="${OP_REPO_PATH_ENTRY:-../openproject}"
   fi
-  printf 'OP_REPO_PATH=%s\n' "$OP_REPO_PATH_ENTRY" >> "$ENV_FILE"
+  _save OP_REPO_PATH "$OP_REPO_PATH_ENTRY"
   echo ""
 fi
 
-if ! grep -q "^CHOMPER_ALLOWED_EMAILS=" "$ENV_FILE" 2>/dev/null; then
-  _OP_URL="$(_env_get OPENPROJECT_URL)"
+if _need CHOMPER_ALLOWED_EMAILS; then
   echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
   while :; do
     printf "  Emails allowed to trigger @chomper (comma-separated): "
     read -r CHOMPER_ALLOWED_EMAILS
     [ -n "$CHOMPER_ALLOWED_EMAILS" ] && break
-    # On the public community instance an open trigger means anyone on the
-    # internet can spend your tokens — refuse to proceed without a list.
-    if [[ "$_OP_URL" != *community.openproject.org* ]]; then
-      printf "  Leave empty to allow ALL users — are you sure? [y/N]: "
-      read -r _CONFIRM_OPEN
-      [[ "${_CONFIRM_OPEN:-N}" =~ ^[Yy] ]] && break
-    else
+    # On the public community instance an open trigger lets anyone on the
+    # internet spend your tokens — refuse to proceed without a list.
+    if [[ "$(_env_get OPENPROJECT_URL)" == *community.openproject.org* ]]; then
       echo "  An allowlist is required when targeting the public community instance."
+    else
+      printf "  Leave empty to allow ALL users — are you sure? [y/N]: "
+      read -r _CONFIRM; [[ "${_CONFIRM:-N}" =~ ^[Yy] ]] && break
     fi
   done
-  printf 'CHOMPER_ALLOWED_EMAILS=%s\n' "$CHOMPER_ALLOWED_EMAILS" >> "$ENV_FILE"
+  _save CHOMPER_ALLOWED_EMAILS "$CHOMPER_ALLOWED_EMAILS"
   echo ""
 fi
 
-if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
+if _need ANTHROPIC_API_KEY; then
   # With a key, it's held only by the authgw gateway — never passed to the claude
   # container. Left blank, chomper falls back to interactive `claude auth login`
   # (OAuth creds live in the claude container, so that path is less isolated).
@@ -76,11 +77,11 @@ if ! grep -q "^ANTHROPIC_API_KEY=" "$ENV_FILE" 2>/dev/null; then
   echo "  Leave blank to log in interactively instead (OAuth)."
   printf "  Anthropic API key (sk-ant-…), or blank: "
   read -rs ANTHROPIC_API_KEY_ENTRY; echo ""
-  printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY_ENTRY" >> "$ENV_FILE"
+  _save ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY_ENTRY"
   echo ""
 fi
 
-if ! grep -q "^CHOMPER_PR_MODE=" "$ENV_FILE" 2>/dev/null; then
+if _need CHOMPER_PR_MODE; then
   # How chomper delivers PRs decides what kind of GitHub token it needs, so ask
   # this before the token. Fork mode (default) is the isolated path; direct mode
   # trades that isolation for a token with push access to the canonical repo.
@@ -92,13 +93,13 @@ if ! grep -q "^CHOMPER_PR_MODE=" "$ENV_FILE" 2>/dev/null; then
   echo "                         opens a same-repo draft PR. Needs a token with push"
   echo "                         access; the protected-branch guard is the only backstop."
   printf "  Mode [F/d]: "
-  read -r _PR_MODE_ENTRY
-  if [[ "${_PR_MODE_ENTRY:-f}" =~ ^[Dd] ]]; then CHOMPER_PR_MODE=direct; else CHOMPER_PR_MODE=fork; fi
-  printf 'CHOMPER_PR_MODE=%s\n' "$CHOMPER_PR_MODE" >> "$ENV_FILE"
+  read -r _MODE
+  if [[ "${_MODE:-f}" =~ ^[Dd] ]]; then CHOMPER_PR_MODE=direct; else CHOMPER_PR_MODE=fork; fi
+  _save CHOMPER_PR_MODE "$CHOMPER_PR_MODE"
   echo ""
 fi
 
-if ! grep -q "^GITHUB_TOKEN=" "$ENV_FILE" 2>/dev/null; then
+if _need GITHUB_TOKEN; then
   if [[ "${CHOMPER_PR_MODE:-$(_env_get CHOMPER_PR_MODE)}" == "direct" ]]; then
     # Direct mode: the token pushes branches to the canonical repo and opens
     # same-repo PRs, so it MUST have push access there. No fork, no isolation —
@@ -127,7 +128,23 @@ if ! grep -q "^GITHUB_TOKEN=" "$ENV_FILE" 2>/dev/null; then
     printf "  Bot GitHub token (ghp_…), or blank: "
   fi
   read -rs GITHUB_TOKEN_ENTRY; echo ""
-  printf 'GITHUB_TOKEN=%s\n' "$GITHUB_TOKEN_ENTRY" >> "$ENV_FILE"
+  _save GITHUB_TOKEN "$GITHUB_TOKEN_ENTRY"
+  echo ""
+fi
+
+# Only meaningful once a token is set (gh-agent needs it); skip otherwise.
+if _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_TOKEN)" ]; then
+  # gh-agent lets the listed GitHub users push code to chomper's PR branches, so
+  # an empty list (any user can trigger on a public PR) needs explicit confirmation.
+  echo "  GitHub logins allowed to trigger @chomper on a PR (gh-agent), comma-separated."
+  while :; do
+    printf "  Allowed GitHub users: "
+    read -r CHOMPER_ALLOWED_GH_USERS
+    [ -n "$CHOMPER_ALLOWED_GH_USERS" ] && break
+    printf "  Empty = ANY GitHub user can push code to your PR branch — sure? [y/N]: "
+    read -r _CONFIRM; [[ "${_CONFIRM:-N}" =~ ^[Yy] ]] && break
+  done
+  _save CHOMPER_ALLOWED_GH_USERS "$CHOMPER_ALLOWED_GH_USERS"
   echo ""
 fi
 
@@ -146,40 +163,33 @@ export OP_REPO_PATH
 export OP_REPO="$OP_REPO_PATH"
 mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
 
-# ── Git identity — passed into the runner container so commits are authored
-#    by the host user rather than the container's default identity.
+# Git identity — passed into the runner container so commits are authored by the
+# host user rather than the container's default identity.
 GIT_AUTHOR_NAME="$(git config user.name 2>/dev/null || true)"
 GIT_AUTHOR_EMAIL="$(git config user.email 2>/dev/null || true)"
 export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 
 # ── Run ───────────────────────────────────────────────────────────────────
-# `backlog show` and `backlog skip` work from local caches — no worktree,
-# claude, or proxy needed. Unknown subcommands are passed through to Ruby.
-CMD="${1:-}"
-SUBCMD="${2:-}"
+# `backlog show`/`skip` work from local caches — no worktree, claude, or proxy
+# needed. Unknown subcommands are passed through to Ruby.
 _needs_claude=false
 case "$CMD" in
   agent|gh-agent|fix|plan) _needs_claude=true ;;
-  backlog)   [[ -z "$SUBCMD" || "$SUBCMD" == "triage" || "$SUBCMD" == "process" || "$SUBCMD" == "plan" ]] && _needs_claude=true ;;
+  backlog) [[ -z "$SUBCMD" || "$SUBCMD" =~ ^(triage|process|plan)$ ]] && _needs_claude=true ;;
 esac
-if [[ "$_needs_claude" == "true" ]]; then
+if [[ "$_needs_claude" == true ]]; then
   # Auth: an API key (preferred) is held only by the authgw gateway and never
   # reaches the claude container. With no key, fall back to interactive
   # `claude auth login` — its OAuth creds live in the claude container's config
   # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
-  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    ANTHROPIC_API_KEY="$(_env_get ANTHROPIC_API_KEY)"
-  fi
+  : "${ANTHROPIC_API_KEY:=$(_env_get ANTHROPIC_API_KEY)}"
   _USE_GATEWAY=false
   if [[ -n "$ANTHROPIC_API_KEY" ]]; then
     export ANTHROPIC_API_KEY
     export CHOMPER_GW_TOKEN="chomper-internal-gateway"
     export CHOMPER_CLAUDE_BASE_URL="http://authgw:47292"
     _USE_GATEWAY=true
-    echo "[ Claude auth: API key via authgw gateway ]"
-  else
-    echo "[ Claude auth: no API key set — using LESS SECURE interactive login (OAuth) ]"
   fi
 
   WORKTREE="$SCRIPT_DIR/.chomper/openproject"
@@ -188,12 +198,10 @@ if [[ "$_needs_claude" == "true" ]]; then
   # ever reach dev/release*, keyed on the destination ref. $SCRIPT_DIR resolves
   # identically inside the runner container (same mount invariant as the worktree).
   HOOKS_DIR="$SCRIPT_DIR/githooks"
-  if [[ "$_CLONE_REPO" == "true" ]]; then
+  if [[ "$_CLONE_REPO" == true ]]; then
     if [ ! -d "$WORKTREE/.git" ]; then
       echo "[ Cloning opf/openproject — this may take a few minutes ]"
       git clone https://github.com/opf/openproject.git "$WORKTREE"
-      echo "  ✓ Cloned to $WORKTREE"
-      echo ""
     else
       git -C "$WORKTREE" fetch --quiet origin dev
     fi
@@ -204,29 +212,24 @@ if [[ "$_needs_claude" == "true" ]]; then
     if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
       echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
       git -C "$OP_REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
-      echo "  ✓ Worktree at $WORKTREE"
-      echo ""
     fi
     # Linked worktree — scope hooksPath to this worktree (config.worktree) so the
     # user's own repo and its hooks stay untouched.
     git -C "$WORKTREE" config extensions.worktreeConfig true
     git -C "$WORKTREE" config --worktree core.hooksPath "$HOOKS_DIR"
   fi
-  if [[ "$_USE_GATEWAY" == "true" ]]; then
+  if [[ "$_USE_GATEWAY" == true ]]; then
     # proxy starts as claude's dependency; authgw is named explicitly so it only
     # runs in API-key mode (it requires the real key and would exit otherwise).
-    docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans authgw claude
+    dc up -d --wait --remove-orphans authgw claude
   else
     # OAuth: ensure the CLI is logged in (creds persist in .chomper/claude-auth).
-    if ! docker compose -f "$SCRIPT_DIR/compose.yml" run --rm \
-        claude claude auth status &>/dev/null; then
+    if ! dc run --rm claude claude auth status &>/dev/null; then
       echo "[ Claude auth required — follow the prompts below ]"
-      docker compose -f "$SCRIPT_DIR/compose.yml" run --rm --remove-orphans \
-        claude claude auth login
-      echo ""
+      dc run --rm --remove-orphans claude claude auth login
     fi
-    docker compose -f "$SCRIPT_DIR/compose.yml" up -d --wait --remove-orphans claude
+    dc up -d --wait --remove-orphans claude
   fi
-  trap 'docker compose -f "$SCRIPT_DIR/compose.yml" stop claude proxy authgw 2>/dev/null || true' EXIT INT TERM
+  trap 'dc stop claude proxy authgw 2>/dev/null || true' EXIT INT TERM
 fi
-docker compose --progress quiet -f "$SCRIPT_DIR/compose.yml" run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"
+dc --progress quiet run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"
