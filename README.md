@@ -4,7 +4,7 @@
 
 An OpenProject AI development orchestrator that helps you implement work packages, end to end.
 
-**Agent mode**: Talks to you via the WP Activity tab -- just tag `@chomper` to chat, plan together, and generate a draft PR.
+**Agent mode**: Assists you inside both WP Activity tabs and GitHub PRs. Just tag `@chomper` to ask questions, plan together, and even generate PRs.
 
 **Script mode**: Plans & implements WPs entirely via your terminal. Point it to a specific package by ID, or even to an entire project backlog.
 
@@ -43,8 +43,8 @@ cd openproject-chomper
 cp .env.example .env
 # edit .env OR just leave it to the first startup wizard
 
-# Run the agent: it polls OpenProject WPs via the configured query and acts on @chomper mentions
-./chomper op-agent
+# Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
+./chomper agent
 # OR let it process your whole backlog
 ./chomper backlog <triage|show|process>
 # OR run a one-time E2E fix of one or more specific WPs
