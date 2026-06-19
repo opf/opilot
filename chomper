@@ -175,7 +175,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # needed. Unknown subcommands are passed through to Ruby.
 _needs_claude=false
 case "$CMD" in
-  op-agent|gh-agent|fix|plan) _needs_claude=true ;;
+  agent|op-agent|gh-agent|fix|plan) _needs_claude=true ;;
   backlog) [[ -z "$SUBCMD" || "$SUBCMD" =~ ^(triage|process|plan)$ ]] && _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == true ]]; then

@@ -295,6 +295,24 @@ module Chomper
       @pull.poll_intents(FILTERS)
     end
 
+    def test_stops_paging_at_first_wp_below_scan_floor
+      # Sorted updatedAt desc: WP 1 is above the floor, WP 2 below it. WP 2's
+      # activities are deliberately left unstubbed — if the poll tried to fetch
+      # it, WebMock would raise. So a clean run proves we stopped at the floor.
+      filters = FilterSet.new(project_id: "my-project", type_ids: ["1"],
+                              status_ids: ["2"], version_ids: [],
+                              scan_from_at: "2024-02-01T00:00:00Z")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp(1, "2024-03-01T00:00:00Z"), wp(2, "2024-01-01T00:00:00Z")], total: 2))
+      stub_request(:get, %r{/work_packages/1/activities\z})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, %r{/work_packages/1/activities_emoji_reactions\z})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      assert_equal [], @pull.poll_intents(filters)
+      assert_equal 1, @pull.scanned_count   # only WP 1 examined; stopped at WP 2
+    end
+
     MENTION = %q(<mention class="mention" data-id="1" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 
     def test_emits_intent_for_chomper_comment

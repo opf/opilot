@@ -80,6 +80,7 @@ module Chomper
         Usage: ./chomper [COMMAND]
 
         Commands:
+          agent     Run op-agent and gh-agent together (one loop: PRs first, then WPs)
           op-agent  Poll OpenProject every 10s and act on @chomper mentions
           gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
                     (if asked) write code, committing it and pushing to the bot's fork
