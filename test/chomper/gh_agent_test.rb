@@ -93,7 +93,7 @@ module Chomper
 
     def gh_intent(kind: :issue, text: "@chomper please guard nil", login: "thykel", id: 99)
       GhIntent.new(item_id: "42", subject: "Fix the bug", branch: "bug/42-fix-the-bug",
-                   repo: "o/r", pr_number: 7, pr_url: "https://github.com/o/r/pull/7",
+                   repo: "o/r", head_repo: "fork/r", pr_number: 7, pr_url: "https://github.com/o/r/pull/7",
                    kind: kind, comment_id: id, text: text, user_login: login,
                    comment_at: "2024-02-01T00:00:00Z")
     end
@@ -104,7 +104,7 @@ module Chomper
       assert_equal 1, @github.issue_posts.length, "reply should be posted to the PR conversation"
       assert_equal "🤖 Done — guarded the nil case.", @github.issue_posts.first[2]
       assert_equal ["[#42] address PR feedback"], @agent.instance_variable_get(:@worktree).commits
-      assert_includes out, "git -C #{@ctx.worktree_host} push origin bug/42-fix-the-bug:bug/42-fix-the-bug"
+      assert_includes out, "git -C #{@ctx.worktree_host} push https://github.com/fork/r.git bug/42-fix-the-bug:bug/42-fix-the-bug"
       assert_equal [["42", 1000]], @pull.recorded, "chomper's own reply id is recorded"
     end
 
@@ -114,7 +114,8 @@ module Chomper
 
       assert_equal 1, @github.issue_posts.length
       assert_empty @agent.instance_variable_get(:@worktree).commits
-      refute_includes out, "push origin"
+      refute_includes out, "git push"
+      refute_includes out, "push https://github.com"
     end
 
     def test_review_comment_reply_lands_in_thread
@@ -128,8 +129,8 @@ module Chomper
 
     def test_fetches_pr_head_over_https_and_resets_to_it
       capture_io { @agent.handle(gh_intent) }
-      assert_equal [["o/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.fetched,
-                   "must fetch the PR head over HTTPS, not the worktree's (SSH) origin"
+      assert_equal [["fork/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.fetched,
+                   "must fetch from the PR's head repo (the fork), not the base repo or the worktree's SSH origin"
       assert_includes @agent.instance_variable_get(:@worktree).resets, "FETCH_HEAD"
     end
 

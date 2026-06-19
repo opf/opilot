@@ -68,8 +68,9 @@ module Chomper
       session_file = dir / "gh_session_id"
 
       # Fetch the PR head over HTTPS (never the worktree's possibly-SSH origin),
-      # then sync the branch to it before Claude touches anything.
-      @github.fetch_branch(intent.repo, branch: intent.branch, worktree_path: @ctx.worktree_host)
+      # then sync the branch to it before Claude touches anything. The branch
+      # lives in the PR's head repo — the user's fork — not the base repo.
+      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: @ctx.worktree_host)
       checkout_pr_branch(intent.branch)
 
       plan_ref = Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
@@ -130,14 +131,21 @@ module Chomper
 
     # We never push — print the exact command so the human pushes it themselves.
     # $SCRIPT_DIR (hence worktree_host) resolves identically on the host, so the
-    # path is runnable as-is from the user's shell.
+    # path is runnable as-is from the user's shell. The push targets the PR's
+    # head repo (the fork) by explicit URL, not the worktree's origin (upstream).
     def emit_push_command(intent)
-      cmd = "git -C #{@ctx.worktree_host} push origin #{intent.branch}:#{intent.branch}"
+      cmd = "git -C #{@ctx.worktree_host} push https://github.com/#{head_repo(intent)}.git #{intent.branch}:#{intent.branch}"
       log_script "Wrote code for #{intent.repo}##{intent.pr_number} (not pushed). To update the PR, run:"
       puts ""
       puts "    #{cmd}"
       puts ""
       ping_terminal("chomper wrote code for PR ##{intent.pr_number} — run the push command")
+    end
+
+    # The repo holding the PR's branch — the fork. Falls back to the base repo
+    # for a same-repo PR or a cached intent from before head_repo was tracked.
+    def head_repo(intent)
+      intent.head_repo || intent.repo
     end
   end
 end

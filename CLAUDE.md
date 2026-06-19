@@ -82,7 +82,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 | `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
-| `publish.rb` | Pushes branch via git credential helper; opens draft PRs via Octokit |
+| `publish.rb` | Pushes branch to the user's fork via git credential helper; opens cross-repo draft PRs against upstream via Octokit |
 | `clients/openproject.rb` | OpenProject REST API |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
@@ -92,7 +92,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents.
 2. **Plan** — Claude (Read-only tools) produces `plan.md`. Opt-in reviewer pass (`CHOMPER_PLAN_REVIEW`, off by default) gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
 3. **Implement** — Claude (Read/Write/Edit/Bash) works in an isolated worktree branch (`bug/<id>-<slug>`), commits `[<label>] <subject>` (matching the PR title) where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
-4. **Publish** — Branch pushed, draft PR opened against `dev`, reply posted to WP with PR link.
+4. **Publish** — Branch pushed to the user's **fork** (`Clients::GitHub#ensure_fork`), a draft PR opened against upstream `dev` with a cross-repo head (`fork_owner:branch`), and a reply posted to the WP with the PR link. The token never needs write access to the canonical repo — only to the fork.
 
 `:fix` intent always skips the reviewer (even when `CHOMPER_PLAN_REVIEW` is on) and combines plan + implement in one pass.
 
@@ -134,7 +134,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token (needs read access to WPs and write access to post comments) |
 | `OP_REPO_PATH` | Path to local openproject repo, or `false` to auto-clone |
-| `GITHUB_TOKEN` | For pushing branches and opening PRs |
+| `GITHUB_TOKEN` | For pushing branches to the user's fork and opening cross-repo PRs against upstream. Prompted by the setup wizard; a classic `public_repo`-scoped token suffices (no write to the canonical repo). Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch); set empty to disable the gate |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |

@@ -8,7 +8,10 @@ module Chomper
   # on a diff line); review comments carry `comment_id`, and `in_reply_to` points
   # at the parent comment when the trigger is a reply in a review thread (e.g. you
   # answering a Copilot finding) so Claude can be pointed at the right feedback.
-  GhIntent = Struct.new(:item_id, :subject, :branch, :repo, :pr_number, :pr_url,
+  # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
+  # is where the PR's branch actually lives (the user's fork) — what gh-agent
+  # fetches from and prints a push command against.
+  GhIntent = Struct.new(:item_id, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
                         keyword_init: true)
 
@@ -112,9 +115,9 @@ module Chomper
         end
         GhIntent.new(
           item_id: item_id, subject: subject, branch: content["head_ref"], repo: repo,
-          pr_number: number, pr_url: pr_url, kind: c["kind"].to_sym, comment_id: c["id"],
-          in_reply_to: c["in_reply_to"], text: c["body"], user_login: c["author"],
-          comment_at: c["created_at"]
+          head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,
+          kind: c["kind"].to_sym, comment_id: c["id"], in_reply_to: c["in_reply_to"],
+          text: c["body"], user_login: c["author"], comment_at: c["created_at"]
         )
       end
     rescue => e
@@ -142,6 +145,9 @@ module Chomper
         "url"        => pr.html_url,    "title"      => pr.title,
         "state"      => pr.state,       "updated_at" => updated_at,
         "head_ref"   => pr.head.ref,    "head_sha"   => pr.head.sha,
+        # Where the branch lives — the fork for a cross-repo PR (nil only if the
+        # head fork was deleted, which would have closed the PR anyway).
+        "head_repo"  => pr.head.repo&.full_name,
         "comments"   => comments,       "reviews"    => reviews
       }
       Helpers.write_json_atomic(cache_path, data, "pr")

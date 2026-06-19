@@ -19,6 +19,15 @@ module Chomper
         @octokit = Octokit::Client.new(access_token: token)
       end
 
+      # Ensure the authenticated user's fork of `upstream` ("owner/repo") exists
+      # and return its full name ("me/repo"). Idempotent: GitHub returns the
+      # existing fork if one is already present, otherwise creates it. chomper
+      # pushes branches to this fork and opens the PR against upstream, so the
+      # token never needs write access to upstream itself.
+      def ensure_fork(upstream)
+        @octokit.fork(upstream).full_name
+      end
+
       # Pushes a local branch to GitHub. Authenticates via a credential helper
       # so the token never appears in argv (visible via ps/proc).
       def push_branch(repo, branch:, worktree_path:)
@@ -52,10 +61,10 @@ module Chomper
         ) or raise "git fetch failed for branch #{branch}"
       end
 
-      # Returns the URL of an open PR for the given head branch, or nil.
-      def find_open_pr(repo, branch:)
-        owner = repo.split("/").first
-        prs = @octokit.pull_requests(repo, head: "#{owner}:#{branch}", state: "open")
+      # Returns the URL of an open PR on `base_repo` whose head is `head`
+      # ("fork_owner:branch" for a cross-repo fork PR), or nil.
+      def find_open_pr(base_repo, head:)
+        prs = @octokit.pull_requests(base_repo, head: head, state: "open")
         prs.first&.html_url
       rescue Octokit::Error
         nil
