@@ -24,6 +24,35 @@ module Chomper
       assert_equal "#42",      Helpers.wp_label(42)
     end
 
+    def test_adopt_github_author_sets_git_identity_from_the_bot
+      Helpers.instance_variable_set(:@github_author_adopted, nil)
+      stub_request(:get, "https://api.github.com/user").to_return(
+        status: 200, headers: { "Content-Type" => "application/json" },
+        body: JSON.generate("login" => "chomper-bot", "id" => 7, "name" => "Chomper Bot")
+      )
+      ctx  = Struct.new(:github_token).new("tok")
+      keys = %w[GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL]
+      saved = keys.to_h { |k| [k, ENV[k]] }
+      begin
+        Helpers.adopt_github_author!(ctx)
+        assert_equal "Chomper Bot", ENV["GIT_AUTHOR_NAME"]
+        assert_equal "7+chomper-bot@users.noreply.github.com", ENV["GIT_AUTHOR_EMAIL"]
+        assert_equal "Chomper Bot", ENV["GIT_COMMITTER_NAME"]
+        assert_equal "7+chomper-bot@users.noreply.github.com", ENV["GIT_COMMITTER_EMAIL"]
+      ensure
+        saved.each { |k, v| ENV[k] = v }
+        Helpers.instance_variable_set(:@github_author_adopted, nil)
+      end
+    end
+
+    def test_adopt_github_author_is_a_noop_without_a_token
+      Helpers.instance_variable_set(:@github_author_adopted, nil)
+      # No WebMock stub: if it tried to reach GitHub, the request would raise.
+      Helpers.adopt_github_author!(Struct.new(:github_token).new(nil))
+    ensure
+      Helpers.instance_variable_set(:@github_author_adopted, nil)
+    end
+
     def test_strip_ansi_passthrough_plain_string
       assert_equal "plain text", h.strip_ansi("plain text")
     end

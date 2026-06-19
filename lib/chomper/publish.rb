@@ -30,11 +30,14 @@ module Chomper
         return nil
       end
 
-      # The branch lives in the user's fork; the PR is opened against upstream
-      # with a cross-repo head ("fork_owner:branch"). This keeps the token off
-      # the canonical repo — it only needs write to the fork.
-      fork_repo = @github.ensure_fork(upstream_repo)
-      head      = "#{fork_repo.split('/').first}:#{branch}"
+      # In the default "fork" mode the branch goes to the bot's fork and the PR
+      # is opened against upstream with a cross-repo head ("fork_owner:branch"),
+      # keeping the token off the canonical repo. In "direct" mode the branch is
+      # pushed straight to upstream and a same-repo PR is opened — the token
+      # needs push access there, and maintainer-edits must be disabled (GitHub
+      # 422s on a same-repo PR). Either way the head is "owner:branch".
+      target_repo = @ctx.direct_pr? ? upstream_repo : @github.ensure_fork(upstream_repo)
+      head        = "#{target_repo.split('/').first}:#{branch}"
 
       existing = @github.find_open_pr(upstream_repo, head: head)
       if existing
@@ -47,10 +50,11 @@ module Chomper
       banner  = "🤖 AI-generated PR! Please review it for accuracy and then remove this line."
       pr_body = "#{banner}\n\n#{pr_desc_file.read}"
 
-      @github.push_branch(fork_repo, branch: branch, worktree_path: @ctx.worktree_host)
+      @github.push_branch(target_repo, branch: branch, worktree_path: @ctx.worktree_host)
 
       title = pr_title(item_id, subject)
-      url = @github.create_draft_pr(upstream_repo, base: "dev", head: head, title: title, body: pr_body)
+      url = @github.create_draft_pr(upstream_repo, base: "dev", head: head, title: title, body: pr_body,
+                                    maintainer_can_modify: !@ctx.direct_pr?)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published")
       url

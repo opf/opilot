@@ -19,13 +19,36 @@ module Chomper
         @octokit = Octokit::Client.new(access_token: token)
       end
 
-      # Ensure the authenticated user's fork of `upstream` ("owner/repo") exists
-      # and return its full name ("me/repo"). Idempotent: GitHub returns the
-      # existing fork if one is already present, otherwise creates it. chomper
-      # pushes branches to this fork and opens the PR against upstream, so the
-      # token never needs write access to upstream itself.
+      # Ensure the authenticated account's fork of `upstream` ("owner/repo")
+      # exists and return its full name ("me/repo"). Idempotent: GitHub returns
+      # the existing fork if one is already present, otherwise creates it.
+      # chomper pushes branches to this fork and opens the PR against upstream,
+      # so the token never needs write access to upstream itself.
+      #
+      # Forking is asynchronous: on first creation the repo may not be pushable
+      # for a moment, so we wait until the API reports it exists before returning.
       def ensure_fork(upstream)
-        @octokit.fork(upstream).full_name
+        full_name = @octokit.fork(upstream).full_name
+        10.times do
+          break if @octokit.repository?(full_name)
+          sleep 1
+        end
+        full_name
+      end
+
+      # The bot account's git identity, as [name, email], for authoring commits.
+      # Uses GitHub's no-reply email (`<id>+<login>@users.noreply.github.com`) so
+      # commits attribute to the bot account and the operator's address is never
+      # exposed on a public PR.
+      def author_identity
+        u = @octokit.user
+        ["#{u.name || u.login}", "#{u.id}+#{u.login}@users.noreply.github.com"]
+      end
+
+      # The authenticated account's login (the bot's username), memoized — used
+      # to recognise an @-mention of the bot itself as a trigger.
+      def login
+        @login ||= @octokit.user.login
       end
 
       # Pushes a local branch to GitHub. Authenticates via a credential helper
@@ -70,9 +93,16 @@ module Chomper
         nil
       end
 
-      # Creates a draft PR and returns its URL.
-      def create_draft_pr(repo, base:, head:, title:, body:)
-        pr = @octokit.create_pull_request(repo, base, head, title, body, draft: true)
+      # Creates a draft PR and returns its URL. `maintainer_can_modify` lets
+      # anyone with push access to the base repo push to the PR's branch in the
+      # fork ("Allow edits by maintainers") — so opf maintainers can take the PR
+      # over. Only works because the fork is a personal (user) account, and must
+      # be false for a same-repo (direct-mode) PR: GitHub rejects the flag with a
+      # 422 when head and base live in the same repository.
+      def create_draft_pr(repo, base:, head:, title:, body:, maintainer_can_modify: true)
+        pr = @octokit.create_pull_request(
+          repo, base, head, title, body, draft: true, maintainer_can_modify: maintainer_can_modify
+        )
         pr.html_url
       end
 
@@ -109,6 +139,20 @@ module Chomper
       # returns the new comment.
       def reply_to_review_comment(repo, number, body, in_reply_to)
         @octokit.create_pull_request_comment_reply(repo, number, body, in_reply_to)
+      end
+
+      # Add an emoji reaction (default 👀) to a PR comment, acknowledging that
+      # chomper saw it before it starts working. `kind` is :issue (conversation
+      # thread) or :review (inline diff comment) — they live on different
+      # endpoints. Best-effort: a failed reaction must never block handling.
+      def react(repo, comment_id, kind:, content: "eyes")
+        if kind == :review
+          @octokit.create_pull_request_review_comment_reaction(repo, comment_id, content)
+        else
+          @octokit.create_issue_comment_reaction(repo, comment_id, content)
+        end
+      rescue Octokit::Error
+        nil
       end
 
       # The PR number embedded in a chomper-stored PR URL

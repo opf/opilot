@@ -10,7 +10,7 @@ module Chomper
   # answering a Copilot finding) so Claude can be pointed at the right feedback.
   # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
   # is where the PR's branch actually lives (the user's fork) — what gh-agent
-  # fetches from and prints a push command against.
+  # fetches from and pushes to.
   GhIntent = Struct.new(:item_id, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
                         keyword_init: true)
@@ -29,7 +29,16 @@ module Chomper
   class GhPull
     include Helpers
 
-    MENTION = /@chomper\b/i
+    # A comment triggers chomper when it contains the literal `@chomper` or an
+    # @-mention of the bot's own GitHub login (e.g. `@chomper-bot`).
+    def mention_re
+      @mention_re ||= begin
+        handles = ["chomper"]
+        login = (@github.login rescue nil)
+        handles << login if login && !login.empty?
+        /(?:#{handles.uniq.map { |h| "@#{Regexp.escape(h)}" }.join("|")})\b/i
+      end
+    end
 
     def initialize(ctx, github: Clients::GitHub.new(ctx.github_token))
       @ctx    = ctx
@@ -102,7 +111,7 @@ module Chomper
 
       fresh = content["comments"]
         .reject { |c| acted.include?(c["id"].to_s) }
-        .select { |c| c["body"] =~ MENTION }
+        .select { |c| c["body"] =~ mention_re }
         .select { |c| cutoff.nil? || c["created_at"] > cutoff }
         .sort_by { |c| c["created_at"] }
 
@@ -113,6 +122,9 @@ module Chomper
           mark_acted(item_id, c["created_at"])
           next nil
         end
+        # 👀 the trigger comment so the commenter sees it's being worked on,
+        # mirroring the OpenProject agent's react_eyes.
+        @github.react(repo, c["id"], kind: c["kind"].to_sym)
         GhIntent.new(
           item_id: item_id, subject: subject, branch: content["head_ref"], repo: repo,
           head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,

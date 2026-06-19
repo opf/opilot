@@ -82,7 +82,7 @@ module Chomper
         Commands:
           agent     Poll OpenProject every 10s and act on @chomper mentions
           gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
-                    (if asked) write code, committing it and printing a push command
+                    (if asked) write code, committing it and pushing to the bot's fork
           backlog   Fetch all matching WPs, group by complexity then module, process with approval
           backlog triage    Fetch WPs and (re)build the complexity triage, then stop
           backlog show      Preview the queue (clusters + order) without processing
@@ -105,7 +105,7 @@ module Chomper
 
         @chomper PR comments (gh-agent, on a chomper-opened PR):
           @chomper <text>          Reply to the comment; if it asks for a code change,
-                                   chomper writes it, commits, and prints a git push command
+                                   chomper writes it, commits, and pushes to the bot's fork
 
         Environment:
           OPENPROJECT_URL         OpenProject instance URL

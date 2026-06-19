@@ -46,6 +46,22 @@ module Chomper
       raise
     end
 
+    # Set the process git identity (author + committer) to the GitHub bot
+    # account the token belongs to, so commits are attributed to the bot and the
+    # operator's email never lands on a public PR. Runs once per process; a no-op
+    # when no token is set (planning-only). Falls back silently to the host
+    # identity ./chomper exported if the lookup fails.
+    def self.adopt_github_author!(ctx)
+      return if @github_author_adopted
+      return unless ctx.respond_to?(:github_token) && ctx.github_token
+      name, email = Clients::GitHub.new(ctx.github_token).author_identity
+      ENV["GIT_AUTHOR_NAME"]  = ENV["GIT_COMMITTER_NAME"]  = name
+      ENV["GIT_AUTHOR_EMAIL"] = ENV["GIT_COMMITTER_EMAIL"] = email
+      @github_author_adopted = true
+    rescue StandardError => e
+      warn "  Warning: couldn't resolve bot git identity (#{e.message}); using host git identity"
+    end
+
     # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
     # span ("1h", "2 days", "1 week"), an absolute time, or blank/"now" (= now).
     # Shared by the OpenProject agent (Pull) and the GitHub agent (GhPull) so the
@@ -270,6 +286,7 @@ module Chomper
     end
 
     def commit(st)
+      Helpers.adopt_github_author!(@ctx)
       worktree.add(all: true)
       diff = worktree.diff("HEAD")
       return if diff.entries.empty?

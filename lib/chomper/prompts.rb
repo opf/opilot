@@ -147,6 +147,8 @@ module Chomper
         #{template_section}
         Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
         even if empty (write "N/A" or "No visual changes").
+        Keep it tight: a sentence or two per section. Don't restate the issue, narrate
+        the diff file-by-file, or pad — fill the template and stop.
         Output only the PR description — no preamble.
       PROMPT
     end
@@ -197,11 +199,11 @@ module Chomper
         Reply helpfully and concisely. Your response will be posted as an internal note.
       PROMPT
     end
-    # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit/Bash).
+    # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit).
     # "Always reply, code if asked": Claude answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
-    # git — the runner commits any changes and hands the human a push command, so
-    # nothing reaches the open PR without a person running it.
+    # git — the runner commits any changes and pushes them to the bot's fork to
+    # update the draft PR; merging still requires a maintainer.
     def self.gh_reply(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:,
                       comment:, author:, comment_id:, in_reply_to: nil)
       reply_line =
@@ -238,10 +240,14 @@ module Chomper
         - Edit only what is being asked for; keep the change minimal and focused.
         - Never modify CI/workflow/build/credential files (.github/, Gemfile, build or
           deploy config) unless the request is explicitly and solely about them.
-        - Do NOT commit, do NOT push, and do NOT run any git command — the human
-          reviews your commit and pushes it themselves.
+        - Do NOT commit or push — the human reviews your commit and pushes it.
+        - You have no shell: do NOT run (or try to run) git, tests, linters, or builds,
+          and do NOT mention them or ask anyone to run them. CI runs lint and tests.
 
-        Reply helpfully and concisely. Your reply text will be posted as a comment on the PR.
+        Keep the reply terse — usually 1–3 sentences. Answer directly, or state what
+        you changed and why. Do NOT restate the question, the plan, or the diff, and
+        skip any preamble, summary, or sign-off. Your reply is posted verbatim as a
+        PR comment.
       PROMPT
     end
 

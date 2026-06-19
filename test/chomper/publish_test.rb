@@ -12,8 +12,8 @@ module Chomper
       def ensure_fork(upstream); @forked << upstream; "me/openproject"; end
       def find_open_pr(_base_repo, head:); @existing; end
       def push_branch(repo, branch:, worktree_path:); @pushed << [repo, branch]; end
-      def create_draft_pr(repo, base:, head:, title:, body:)
-        @pr_calls << { repo: repo, base: base, head: head, title: title }
+      def create_draft_pr(repo, base:, head:, title:, body:, maintainer_can_modify: true)
+        @pr_calls << { repo: repo, base: base, head: head, title: title, mcm: maintainer_can_modify }
         "https://github.com/opf/openproject/pull/7"
       end
     end
@@ -27,11 +27,15 @@ module Chomper
       def remote(_name); FakeRemote.new; end
     end
 
+    CtxStruct = Struct.new(:github_token, :worktree_host, :state_dir, :log_file, :progress_file, :pr_mode) do
+      def direct_pr?; pr_mode == "direct"; end
+    end
+
     def setup
       @tmpdir = Dir.mktmpdir
-      @ctx = Struct.new(:github_token, :worktree_host, :state_dir, :log_file, :progress_file).new(
+      @ctx = CtxStruct.new(
         "ghtok", Pathname(@tmpdir) / ".chomper" / "openproject", Pathname(@tmpdir) / ".chomper",
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", "fork"
       )
       @dir = @ctx.state_dir / "items" / "42"
       @dir.mkpath
@@ -58,8 +62,24 @@ module Chomper
       assert_equal "opf/openproject", call[:repo], "the PR is opened against upstream"
       assert_equal "dev", call[:base]
       assert_equal "me:bug/42-fix-the-bug", call[:head], "cross-repo head is fork_owner:branch"
+      assert_equal true, call[:mcm], "fork PRs allow maintainer edits"
       assert_equal "https://github.com/opf/openproject/pull/7", url
       assert_equal url, (@dir / "pr_url.txt").read
+    end
+
+    def test_direct_mode_pushes_to_upstream_and_opens_same_repo_pr
+      @ctx.pr_mode = "direct"
+      url = nil
+      capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug") }
+
+      assert_empty @github.forked, "direct mode must not fork"
+      assert_equal [["opf/openproject", "bug/42-fix-the-bug"]], @github.pushed,
+                   "direct mode pushes the branch straight to upstream"
+      call = @github.pr_calls.first
+      assert_equal "opf/openproject", call[:repo]
+      assert_equal "opf:bug/42-fix-the-bug", call[:head], "same-repo head is upstream_owner:branch"
+      assert_equal false, call[:mcm], "same-repo PRs must disable maintainer edits (GitHub 422s otherwise)"
+      assert_equal "https://github.com/opf/openproject/pull/7", url
     end
 
     def test_existing_pr_is_reported_without_pushing

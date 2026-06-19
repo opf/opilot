@@ -11,14 +11,17 @@ module Chomper
     ReviewSummary = Struct.new(:id, :body, :user, :state, :submitted_at, keyword_init: true)
 
     class FakeGitHub
-      attr_reader :comment_fetches
+      attr_reader :comment_fetches, :reacted
       def initialize(pr:, issue: [], review: [], reviews: [])
-        @pr = pr; @issue = issue; @review = review; @reviews = reviews; @comment_fetches = 0
+        @pr = pr; @issue = issue; @review = review; @reviews = reviews
+        @comment_fetches = 0; @reacted = []
       end
       def pull_request(_repo, _num);   @pr;      end
       def issue_comments(_repo, _num); @comment_fetches += 1; @issue; end
       def review_comments(_repo, _num); @review;  end
       def reviews(_repo, _num);         @reviews; end
+      def react(repo, comment_id, kind:, content: "eyes"); @reacted << [repo, comment_id, kind, content]; end
+      def login; "chomper-bot"; end
     end
 
     def setup
@@ -87,6 +90,18 @@ module Chomper
       assert_equal "renamed/branch-after-edit", gh.poll_intents("2000-01-01T00:00:00Z").first.branch
     end
 
+    def test_reacts_eyes_to_the_trigger_comment
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper go", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal [["o/r", 1, :issue, "eyes"]], @github.reacted
+    end
+
+    def test_does_not_react_to_off_allowlist_comments
+      gh = pull(issue: [issue_c(id: 9, body: "@chomper go", login: "rando", at: "2026-06-18T18:05:00Z")])
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_empty @github.reacted
+    end
+
     def test_review_reply_carries_kind_and_parent
       gh = pull(review: [review_c(id: 5, body: "@chomper fix this", login: "thykel",
                                   at: "2026-06-18T18:05:00Z", in_reply_to: 999, path: "app/x.rb", line: 12)])
@@ -105,6 +120,11 @@ module Chomper
     def test_ignores_comments_without_mention
       gh = pull(issue: [issue_c(id: 1, body: "looks good to me", login: "thykel", at: "2026-06-18T18:05:00Z")])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
+    end
+
+    def test_mentioning_the_bots_github_login_triggers
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper-bot please guard nil", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal 1, gh.poll_intents("2000-01-01T00:00:00Z").length
     end
 
     def test_allowlist_rejects_other_users_and_advances_cutoff

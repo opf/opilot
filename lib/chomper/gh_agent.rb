@@ -6,9 +6,9 @@ module Chomper
   # The GitHub counterpart of Agent: poll the PRs chomper has already opened for
   # @chomper comments and act on each. "Always reply, code if asked" — every
   # comment gets a reply, and Claude edits the worktree only when the comment
-  # asks for a change. Nothing is pushed: a code change is committed locally and
-  # the human is handed a `git push` command to run, so a person stays in the
-  # loop on anything that lands on an open PR.
+  # asks for a change. A code change is committed and pushed to the bot's fork to
+  # update the draft PR; merging into the canonical repo still needs a maintainer,
+  # so a person stays in the loop on anything that actually lands.
   class GhAgent
     include Helpers
 
@@ -83,7 +83,7 @@ module Chomper
       reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
-      emit_push_command(intent) if commit_followup(intent)
+      push_followup(intent) if commit_followup(intent)
     end
 
     private
@@ -118,6 +118,7 @@ module Chomper
     # Commit whatever Claude changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
     def commit_followup(intent)
+      Helpers.adopt_github_author!(@ctx)
       worktree.add(all: true)
       diff = worktree.diff("HEAD")
       return false if diff.entries.empty?
@@ -129,17 +130,14 @@ module Chomper
       true
     end
 
-    # We never push — print the exact command so the human pushes it themselves.
-    # $SCRIPT_DIR (hence worktree_host) resolves identically on the host, so the
-    # path is runnable as-is from the user's shell. The push targets the PR's
-    # head repo (the fork) by explicit URL, not the worktree's origin (upstream).
-    def emit_push_command(intent)
-      cmd = "git -C #{@ctx.worktree_host} push https://github.com/#{head_repo(intent)}.git #{intent.branch}:#{intent.branch}"
-      log_script "Wrote code for #{intent.repo}##{intent.pr_number} (not pushed). To update the PR, run:"
-      puts ""
-      puts "    #{cmd}"
-      puts ""
-      ping_terminal("chomper wrote code for PR ##{intent.pr_number} — run the push command")
+    # Push the new commit to the PR's head repo (the bot's fork) with the bot
+    # token, updating the draft PR. No confirmation: it's a draft PR on the bot's
+    # fork and a maintainer still gates the merge, so nothing reaches the
+    # canonical repo without human review.
+    def push_followup(intent)
+      target = head_repo(intent)
+      @github.push_branch(target, branch: intent.branch, worktree_path: @ctx.worktree_host)
+      log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
     end
 
     # The repo holding the PR's branch — the fork. Falls back to the base repo
