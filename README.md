@@ -44,7 +44,7 @@ cp .env.example .env
 # edit .env OR just leave it to the first startup wizard
 
 # Run the agent: it polls OpenProject WPs via the configured query and acts on @chomper mentions
-./chomper agent
+./chomper op-agent
 # OR let it process your whole backlog
 ./chomper backlog <triage|show|process>
 # OR run a one-time E2E fix of one or more specific WPs
@@ -126,7 +126,9 @@ comments), so it is boxed in from several directions:
 
 | Invocation | Behaviour |
 |---|---|
-| `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
+| `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
 | `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
 | `./chomper backlog show` | Preview the backlog queue |
@@ -230,7 +232,7 @@ openproject-chomper/
 
 ```
 .chomper/
-├── agent_filters.json   ← saved search filters (shared by agent and backlog modes)
+├── op_agent_filters.json   ← saved search filters (shared by op-agent and backlog modes)
 ├── backlog_triage.json  ← cached triage results (keyed by filter fingerprint)
 ├── progress.txt         ← progress log
 ├── chomp.log            ← full prompt + response log

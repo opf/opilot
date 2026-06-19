@@ -25,7 +25,7 @@ module Chomper
       end
 
       if rows.empty?
-        puts "Nothing yet. Run ./chomper agent and mention @chomper on a work package."
+        puts "Nothing yet. Run ./chomper op-agent and mention @chomper on a work package."
         return
       end
 
@@ -80,7 +80,8 @@ module Chomper
         Usage: ./chomper [COMMAND]
 
         Commands:
-          agent     Poll OpenProject every 10s and act on @chomper mentions
+          agent     Run op-agent and gh-agent together (one loop: PRs first, then WPs)
+          op-agent  Poll OpenProject every 10s and act on @chomper mentions
           gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
                     (if asked) write code, committing it and pushing to the bot's fork
           backlog   Fetch all matching WPs, group by complexity then module, process with approval
@@ -117,7 +118,7 @@ module Chomper
           AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
 
         State (all in .chomper/, gitignored):
-          agent_filters.json  Saved search filters (created on first agent run)
+          op_agent_filters.json  Saved search filters (created on first op-agent run)
           items/<id>/         Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
           openproject/        Isolated git worktree for fixes
           progress.txt        Progress log

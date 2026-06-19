@@ -30,26 +30,39 @@ module Chomper
     end
 
     def run
+      filters = setup
+      puts "  Agent started — polling every 10s. Ctrl-C to stop."
+
+      until Chomper.stopping?
+        tick(filters)
+        sleep 10 unless Chomper.stopping?
+      end
+      puts "  Stopped."
+    end
+
+    # Resolve the search filters and print the allowlist banner. Returned filters
+    # are passed to #tick. Split out from #run so CombinedAgent can drive the loop.
+    def setup
       filters = @pull.load_or_prompt_agent_filters
       if @ctx.allowed_emails.any?
         puts "  Allowlist active — only triggers from: #{@ctx.allowed_emails.join(", ")}"
       else
         puts "  No allowlist set (CHOMPER_ALLOWED_EMAILS) — any user can trigger @chomper."
       end
-      puts "  Agent started — polling every 10s. Ctrl-C to stop."
+      filters
+    end
 
-      until Chomper.stopping?
-        intents = @pull.poll_intents(filters)
-        n = intents.length
-        log_script "Polled #{@pull.scanned_count} work package(s) — " \
-                   "#{@pull.changed_count} changed — #{n} @chomper trigger#{n == 1 ? "" : "s"}"
-        intents.each do |intent|
-          break if Chomper.stopping?
-          handle_and_ack(intent)
-        end
-        sleep 10 unless Chomper.stopping?
+    # One poll-and-handle pass over OpenProject @chomper triggers (no sleep).
+    def tick(filters)
+      log_script "Polling OpenProject…"
+      intents = @pull.poll_intents(filters)
+      n = intents.length
+      log_script "Polled #{@pull.scanned_count} work package(s) — " \
+                 "#{@pull.changed_count} changed — #{n} @chomper trigger#{n == 1 ? "" : "s"}"
+      intents.each do |intent|
+        break if Chomper.stopping?
+        handle_and_ack(intent)
       end
-      puts "  Stopped."
     end
 
     # Handle one intent, then mark its trigger acted. A *handled* error (raised

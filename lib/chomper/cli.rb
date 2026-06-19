@@ -17,6 +17,10 @@ module Chomper
         ui.reset
       when "agent"
         @ctx.load_config!
+        @ctx.log_file.open("a") { |f| f.puts "\n=== Combined Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+        CombinedAgent.new(@ctx).run
+      when "op-agent"
+        @ctx.load_config!
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
       when "gh-agent"

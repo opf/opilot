@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Modes:
 
-- **agent** — continuous polling loop driven by `@chomper` comments on work packages
-- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the worktree and pushed to the bot's fork (with the bot token) to update the draft PR; merging into the canonical repo still needs a maintainer. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `agent`)
+- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages
+- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the worktree and pushed to the bot's fork (with the bot token) to update the draft PR; merging into the canonical repo still needs a maintainer. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `op-agent`)
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Run the agent (polls every 10s for @chomper mentions)
-./chomper agent
+./chomper op-agent
 
 # Run the GitHub PR agent (polls chomper's PRs for @chomper comments; replies and,
 # if asked, writes code and pushes it to the bot's fork to update the draft PR)
@@ -100,7 +100,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 ```
 .chomper/
-├── agent_filters.json       # saved search filters (shared by agent and backlog modes)
+├── op_agent_filters.json    # saved search filters (shared by op-agent and backlog modes)
 ├── backlog_triage.json      # cached triage results (keyed by filter fingerprint)
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log

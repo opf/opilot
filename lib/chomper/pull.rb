@@ -31,8 +31,10 @@ module Chomper
 
       intents = []
       changed = 0
+      processed = 0; progressed = false; reached_floor = false
       page = 1; page_size = 50; total_written = 0; total = 0
       loop do
+        break if Chomper.stopping?
         code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
         raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
         raise Chomper::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
@@ -42,18 +44,39 @@ module Chomper
         break if count == 0
 
         (resp.dig("_embedded", "elements") || []).each do |wp|
+          break if Chomper.stopping?
+          # Results are sorted updatedAt desc, and posting a @chomper comment bumps
+          # the WP's updatedAt — so a WP last touched before the scan floor can't
+          # carry a trigger newer than the floor, and neither can any WP after it.
+          # Stop here instead of re-listing the whole backlog every cycle.
+          if @scan_from_at && wp["updatedAt"] && wp["updatedAt"] < @scan_from_at
+            reached_floor = true
+            break
+          end
           cached, comments = fetch_work_package_item(wp)
           changed += 1 unless cached
+          processed += 1
+          # Each changed WP costs two more API calls; on a first or large poll
+          # that's a long, silent stretch. Show a self-clearing heartbeat (only the
+          # moment we actually hit the network, and only on a tty) so it's clearly
+          # working rather than hung.
+          if !cached && $stdout.tty?
+            print "\r  Polling OpenProject — #{processed} work package(s)…"
+            $stdout.flush
+            progressed = true
+          end
           intent = intent_from_comments(wp, comments)
           intents << intent if intent
         end
 
+        break if reached_floor || Chomper.stopping?
         total_written += count
         break if total_written >= total
         page += 1
       end
+      print "\r\033[K" if progressed   # clear the heartbeat before the poll summary
 
-      @scanned_count = total_written
+      @scanned_count = processed
       @changed_count = changed
       intents
     end
@@ -409,7 +432,7 @@ module Chomper
     end
 
     def agent_filters_path
-      @ctx.state_dir / "agent_filters.json"
+      @ctx.state_dir / "op_agent_filters.json"
     end
 
     def save_agent_filters(filters)

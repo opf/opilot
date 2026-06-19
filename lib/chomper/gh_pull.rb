@@ -62,7 +62,12 @@ module Chomper
       @scan_from_at = scan_from_at
       dirs = shipped_item_dirs
       @scanned_count = dirs.length
-      dirs.flat_map { |d| intents_for_dir(d) }
+      intents = []
+      dirs.each do |d|
+        break if Chomper.stopping?
+        intents.concat(intents_for_dir(d))
+      end
+      intents
     end
 
     # Advance a PR's replay cutoff past a comment we've acted on (mirrors

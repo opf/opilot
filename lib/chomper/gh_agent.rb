@@ -25,26 +25,38 @@ module Chomper
         puts "  Error: GITHUB_TOKEN is not set — gh-agent needs it to read and comment on PRs."
         return
       end
+      scan_from_at = setup
+      puts "  gh-agent started — polling chomper PRs every 10s. Ctrl-C to stop."
+
+      until Chomper.stopping?
+        tick(scan_from_at)
+        sleep 10 unless Chomper.stopping?
+      end
+      puts "  Stopped."
+    end
+
+    # Prompt for the scan window and print the allowlist banner. Returned value
+    # is passed to #tick. Split out from #run so CombinedAgent can drive the loop.
+    def setup
       scan_from_at = prompt_scan_from
       if @ctx.allowed_gh_users.any?
         puts "  Allowlist active — only @chomper from: #{@ctx.allowed_gh_users.map { |u| "@#{u}" }.join(", ")}"
       else
         puts "  No allowlist set (CHOMPER_ALLOWED_GH_USERS) — any GitHub user can trigger @chomper."
       end
-      puts "  gh-agent started — polling chomper PRs every 10s. Ctrl-C to stop."
+      scan_from_at
+    end
 
-      until Chomper.stopping?
-        intents = @pull.poll_intents(scan_from_at)
-        n = intents.length
-        log_script "Polled #{@pull.scanned_count} chomper PR(s) — " \
-                   "#{n} @chomper trigger#{n == 1 ? "" : "s"}"
-        intents.each do |intent|
-          break if Chomper.stopping?
-          handle_and_ack(intent)
-        end
-        sleep 10 unless Chomper.stopping?
+    # One poll-and-handle pass over chomper's open PRs (no sleep).
+    def tick(scan_from_at)
+      intents = @pull.poll_intents(scan_from_at)
+      n = intents.length
+      log_script "Polled #{@pull.scanned_count} chomper PR(s) — " \
+                 "#{n} @chomper trigger#{n == 1 ? "" : "s"}"
+      intents.each do |intent|
+        break if Chomper.stopping?
+        handle_and_ack(intent)
       end
-      puts "  Stopped."
     end
 
     # Handle one comment, then mark it acted. As in Agent#handle_and_ack, a
