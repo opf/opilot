@@ -133,6 +133,20 @@ module Chomper
         @octokit.create_pull_request_comment_reply(repo, number, body, in_reply_to)
       end
 
+      # Add an emoji reaction (default 👀) to a PR comment, acknowledging that
+      # chomper saw it before it starts working. `kind` is :issue (conversation
+      # thread) or :review (inline diff comment) — they live on different
+      # endpoints. Best-effort: a failed reaction must never block handling.
+      def react(repo, comment_id, kind:, content: "eyes")
+        if kind == :review
+          @octokit.create_pull_request_review_comment_reaction(repo, comment_id, content)
+        else
+          @octokit.create_issue_comment_reaction(repo, comment_id, content)
+        end
+      rescue Octokit::Error
+        nil
+      end
+
       # The PR number embedded in a chomper-stored PR URL
       # ("https://github.com/owner/repo/pull/123" → 123), or nil.
       def self.pr_number_from_url(url)

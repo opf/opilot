@@ -113,6 +113,9 @@ module Chomper
           mark_acted(item_id, c["created_at"])
           next nil
         end
+        # 👀 the trigger comment so the commenter sees it's being worked on,
+        # mirroring the OpenProject agent's react_eyes.
+        @github.react(repo, c["id"], kind: c["kind"].to_sym)
         GhIntent.new(
           item_id: item_id, subject: subject, branch: content["head_ref"], repo: repo,
           head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,

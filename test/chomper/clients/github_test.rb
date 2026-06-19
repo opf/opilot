@@ -49,6 +49,26 @@ module Chomper
         assert_equal "https://github.com/opf/openproject/pull/9", url
         assert_requested(stub)
       end
+
+      def test_react_routes_issue_and_review_comments_to_their_endpoints
+        issue  = stub_request(:post, "https://api.github.com/repos/o/r/issues/comments/11/reactions")
+                 .with(body: hash_including("content" => "eyes")).to_return(status: 201, body: "{}")
+        review = stub_request(:post, "https://api.github.com/repos/o/r/pulls/comments/22/reactions")
+                 .with(body: hash_including("content" => "eyes")).to_return(status: 201, body: "{}")
+
+        gh = GitHub.new("token")
+        gh.react("o/r", 11, kind: :issue)
+        gh.react("o/r", 22, kind: :review)
+
+        assert_requested(issue)
+        assert_requested(review)
+      end
+
+      def test_react_swallows_errors_so_it_never_blocks_handling
+        stub_request(:post, "https://api.github.com/repos/o/r/issues/comments/11/reactions")
+          .to_return(status: 403, body: "{}")
+        assert_nil GitHub.new("token").react("o/r", 11, kind: :issue)
+      end
     end
   end
 end
