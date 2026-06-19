@@ -40,8 +40,7 @@ An OpenProject AI development orchestrator that helps you implement work package
 ```bash
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
-cp .env.example .env
-# edit .env OR just leave it to the first startup wizard
+# Create .env based on .env.example OR just leave it to the first startup wizard
 
 # Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
 ./chomper agent
