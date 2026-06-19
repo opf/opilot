@@ -240,8 +240,9 @@ module Chomper
         - Edit only what is being asked for; keep the change minimal and focused.
         - Never modify CI/workflow/build/credential files (.github/, Gemfile, build or
           deploy config) unless the request is explicitly and solely about them.
-        - Do NOT commit, do NOT push, and do NOT run any git command — the human
-          reviews your commit and pushes it themselves.
+        - Do NOT commit or push — the human reviews your commit and pushes it.
+        - You have no shell: do NOT run (or try to run) git, tests, linters, or builds,
+          and do NOT mention them or ask anyone to run them. CI runs lint and tests.
 
         Keep the reply terse — usually 1–3 sentences. Answer directly, or state what
         you changed and why. Do NOT restate the question, the plan, or the diff, and
