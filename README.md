@@ -126,7 +126,9 @@ comments), so it is boxed in from several directions:
 
 | Invocation | Behaviour |
 |---|---|
+| `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
 | `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
+| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
 | `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
 | `./chomper backlog show` | Preview the backlog queue |
