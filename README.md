@@ -127,7 +127,6 @@ comments), so it is boxed in from several directions:
 | Invocation | Behaviour |
 |---|---|
 | `./chomper agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` PR comments and, when asked, write code (committing it and pushing to the bot's fork to update the draft PR) |
 | `./chomper backlog` | Run `triage` + `show` + `process` |
 | `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
 | `./chomper backlog show` | Preview the backlog queue |
@@ -167,16 +166,6 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 | `@chomper approve` | Implement and ship a plan that was drafted with `@chomper plan` |
 | `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
 
-### `@chomper` PR comments (`gh-agent`)
-
-`gh-agent` watches the PRs chomper has already opened (those with an `items/<id>/pr_url.txt`) and acts on `@chomper` comments left on them — in both the conversation thread and inline review comments. At startup it asks how far back to scan (same prompt as `agent`), then polls every 10s.
-
-| Comment | Behaviour |
-|---|---|
-| `@chomper <anything>` | Always replies on the PR. If the comment asks for a concrete code change, chomper edits the PR's branch in the worktree, commits it, and **pushes to the bot's fork** to update the draft PR. Merging into the canonical repo still requires a maintainer. |
-
-Triggers are gated by the `CHOMPER_ALLOWED_GH_USERS` allowlist (GitHub logins, default `thykel`). Because a code change here lands on an open PR, the human reviews chomper's commit and runs the printed push themselves.
-
 Triggers are gated by the `CHOMPER_ALLOWED_EMAILS` allowlist (when set). A work
 package's status is just the files in `.chomper/items/<id>/`: `plan.md` present
 means it has a plan, `pr_url.txt` present means it shipped.
@@ -189,16 +178,6 @@ means it has a plan, `pr_url.txt` present means it shipped.
 one step, posting the PR link back to the work package. This is idempotent — if a
 PR already exists for the branch, the existing URL is reported instead of opening
 a new one, and re-sending `approve` after a shipped fix just re-reports it.
-
-chomper runs as a dedicated **bot account** (see `GITHUB_TOKEN` below). The branch
-is pushed to the **bot's fork** (auto-created on first publish), commits are
-**authored by the bot** (its GitHub no-reply email, so your address never appears
-on a public PR), and the draft PR is opened from the fork against the canonical
-repo's `dev` (`fork_owner:branch`) with **Allow edits by maintainers** on. So
-nothing — not even a branch ref — lands in the canonical repo, and the bot account
-has no access to write there in the first place. opf maintainers can still push to
-the PR branch or take it over. (`gh-agent` follow-up commits target the same fork;
-it pushes them to the same fork with the bot token to update the draft PR.)
 
 `./chomper status` lists each watched work package with its OpenProject link and
 PR link so you can see what's been planned and shipped at a glance.
@@ -277,8 +256,7 @@ openproject-chomper/
 | `OPENPROJECT_URL` | — | URL of your OpenProject instance |
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
-| `GITHUB_TOKEN` | — | Token for a **dedicated bot account** (not you) that is **not a collaborator on the product repo**. chomper forks as the bot, pushes branches to that fork, and opens draft PRs against upstream (also read/comment for `gh-agent`). The setup wizard prompts for it. Use a **classic `public_repo`** token from that account — the isolation comes from the account having no canonical-repo access, so it physically can't write there. Must be a **personal (user) account** (org forks can't grant "Allow edits by maintainers"). Fine-grained tokens can't open fork→upstream PRs. |
-| `CHOMPER_ALLOWED_GH_USERS` | `thykel` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to a single user rather than "everyone" — an open trigger on a public PR would let anyone push code to the branch. Set empty to disable the gate. |
+| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
 | `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
 ---
@@ -341,18 +319,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ## TODO
 
 ### Security
-* ✅ Isolate git operations behind a dedicated bot account + fork — done:
-  chomper authenticates as a bot account with **no access to the canonical repo**,
-  forks the product repo (`Clients::GitHub#ensure_fork`), pushes branches to that
-  fork, and opens cross-repo draft PRs against upstream `dev`. The isolation is
-  enforced by GitHub (the account can't write to the canonical repo), not by
-  chomper's behavior. Commits are authored by the bot, and PRs are opened with
-  "Allow edits by maintainers" so opf maintainers can take them over.
-  * ✅ The setup wizard prompts for the token and walks through creating the bot
-    account with a **classic `public_repo`** token (fine-grained tokens can't open
-    fork→upstream PRs).
-  * https://www.openproject.org/docs/development/git-workflow/#fork-openproject
-
 
 ### AI Architecture
 * Migrate from `claude -p` to a Claude SDK 
