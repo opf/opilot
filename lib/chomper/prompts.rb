@@ -147,6 +147,8 @@ module Chomper
         #{template_section}
         Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
         even if empty (write "N/A" or "No visual changes").
+        Keep it tight: a sentence or two per section. Don't restate the issue, narrate
+        the diff file-by-file, or pad — fill the template and stop.
         Output only the PR description — no preamble.
       PROMPT
     end
