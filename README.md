@@ -327,6 +327,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Make sure the GitHub CLA is signed in PRs
 
 ### AI Architecture
+* Set up token limits & cleanly handle threshold breaches
 * Migrate from `claude -p` to a Claude SDK 
 * Replace Claude Code with a generic AI "file edit engine" layer
   * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
