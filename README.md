@@ -319,11 +319,12 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 
 ## TODO
 
-### Security
-
-### Hosting infra
-* Do a trial run: Agent on personal VPS + comment access to a single unpriviledged project on QA Edge
-  * We can demo the agent workflow by copying over a real ticket description
+### Security & Hosting
+* Set up a trial run:
+  * Full-blown: Agent on personal VPS + write access to a single unpriviledged project on QA Edge
+    * We can demo the agent workflow by copying over a real ticket description
+  * Lite: Agent on personal VPS + comment-only access to Communicator projects on Community
+* Make sure the GitHub CLA is signed in PRs
 
 ### AI Architecture
 * Migrate from `claude -p` to a Claude SDK 
