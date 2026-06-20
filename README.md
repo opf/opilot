@@ -321,6 +321,10 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 
 ### Security
 
+### Hosting infra
+* Do a trial run: Agent on personal VPS + comment access to a single unpriviledged project on QA Edge
+  * We can demo the agent workflow by copying over a real ticket description
+
 ### AI Architecture
 * Migrate from `claude -p` to a Claude SDK 
 * Replace Claude Code with a generic AI "file edit engine" layer
