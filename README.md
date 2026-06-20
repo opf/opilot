@@ -343,6 +343,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   
 ### Feature ideas
 * **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
+* Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
 * Re-add `<mention>` support for agent interactions
