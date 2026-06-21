@@ -324,6 +324,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Full-blown: Agent on personal VPS + write access to a single unpriviledged project on QA Edge
     * We can demo the agent workflow by copying over a real ticket description
   * Lite: Agent on personal VPS + comment-only access to Communicator projects on Community
+  * Load up token balance
 * Make sure the GitHub CLA is signed in PRs
 
 ### AI Architecture
@@ -343,15 +344,20 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
-* **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
-* Trigger agent interaction by assigning a WP to the chomper user
+First Communicator PoC:
+  * **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
+  * Trigger agent interaction by assigning a WP to the chomper user
+  * Load in related tickets (if scoped to the watched project)
+  * Scan also other upstream OP PRs for any new mentions
+  * Re-add OP `<mention>` support for agent interactions
+  * Extend OP polling to support multiple projects at once
+  * Re-add linking of the plan as a gist & compact description
+  * Correctly set the target branch for release-specific fixes
+    * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
+    * Maybe explore the idea of prompting for this interactively
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
-* Re-add `<mention>` support for agent interactions
-* Correctly set the target branch for release-specific fixes
-  * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
   * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
-* Extend search filters to be able to target a backlog bucket or a set of modules
 * Idea: Use sub-WPs for any Chomper interactions in agent mode
