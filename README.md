@@ -344,8 +344,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
-First Communicator PoC:
-  * **Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.**
+* **First Communicator PoC** (late June 2026):
+  * Plug in the other repos: `commonmark-ckeditor-build`, `op-blocknote-extensions` etc.
   * Trigger agent interaction by assigning a WP to the chomper user
   * Load in related tickets (if scoped to the watched project)
   * Scan also other upstream OP PRs for any new mentions
