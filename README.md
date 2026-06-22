@@ -352,8 +352,9 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Re-add OP `<mention>` support for agent interactions
   * Extend OP polling to support multiple projects at once
   * Re-add linking of the plan as a gist & compact description
-  * Craft a better feedback commit message than "[<ID>] address PR feedback"
+  * Craft a better feedback commit message than "[#ID] address PR feedback"
   * Make sure chomper can see GitHub CI run results and act on them
+  * Run at least basic linter in the runner & pass results to Claude
   * Correctly set the target branch for release-specific fixes
     * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
     * Maybe explore the idea of prompting for this interactively
