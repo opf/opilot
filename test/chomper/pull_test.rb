@@ -235,7 +235,7 @@ module Chomper
 
   class PullPollIntentsTest < Minitest::Test
     FILTERS = FilterSet.new(
-      project_id:  "my-project",
+      project_ids: ["123"],
       type_ids:    ["1"],
       status_ids:  ["2"],
       version_ids: []
@@ -303,7 +303,7 @@ module Chomper
       # Sorted updatedAt desc: WP 1 is above the floor, WP 2 below it. WP 2's
       # activities are deliberately left unstubbed — if the poll tried to fetch
       # it, WebMock would raise. So a clean run proves we stopped at the floor.
-      filters = FilterSet.new(project_id: "my-project", type_ids: ["1"],
+      filters = FilterSet.new(project_ids: ["123"], type_ids: ["1"],
                               status_ids: ["2"], version_ids: [],
                               scan_from_at: "2024-02-01T00:00:00Z")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
@@ -475,18 +475,73 @@ module Chomper
     end
 
     def test_saved_backlog_filters_returns_saved_set_without_prompting
-      named = FilterSet.new(project_id: "my-project", type_ids: ["1"], status_ids: ["2"],
+      named = FilterSet.new(project_ids: ["123"], project_idents: ["my-project"],
+                            project_names: ["My Project"],
+                            type_ids: ["1"], status_ids: ["2"],
                             version_ids: [], type_names: "bug", status_names: "new")
       @pull.send(:save_agent_filters, named)
       filters = nil
       # $stdin untouched: a reuse prompt would raise on read.
       capture_io { filters = @pull.saved_backlog_filters }
-      assert_equal "my-project", filters.project_id
-      assert_equal ["1"],        filters.type_ids
+      assert_equal ["123"], filters.project_ids
+      assert_equal ["1"],   filters.type_ids
     end
 
     def test_saved_backlog_filters_nil_when_nothing_saved
       assert_nil @pull.saved_backlog_filters
+    end
+
+    def test_filters_json_scopes_to_all_selected_projects
+      filters = FilterSet.new(project_ids: ["10", "20"], type_ids: ["1"],
+                              status_ids: ["2"], version_ids: [])
+      clauses = JSON.parse(@pull.send(:filters_json, filters))
+      project = clauses.find { |c| c.key?("project_id") }
+      refute_nil project, "the query must carry a project_id filter"
+      assert_equal "=",          project.dig("project_id", "operator")
+      assert_equal ["10", "20"], project.dig("project_id", "values")
+    end
+
+    def test_read_saved_filters_upgrades_legacy_single_project
+      # Pre-multi-project file: one identifier under "project_id". It must be
+      # resolved to a numeric id (the project_id filter coerces values with to_i)
+      # while keeping the semantic identifier for display.
+      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+        "project_id" => "TTP2", "project_name" => "Trial",
+        "type_ids" => ["1"], "status_ids" => ["2"], "version_ids" => [],
+        "type_names" => "bug", "status_names" => "new"
+      ))
+      stub_request(:get, "https://example.com/api/v3/projects/TTP2")
+        .to_return(status: 200, body: JSON.generate({ "id" => 42, "identifier" => "ttp2", "name" => "Trial" }))
+
+      filters = @pull.send(:read_saved_filters)
+      assert_equal ["42"],    filters.project_ids
+      assert_equal ["ttp2"],  filters.project_idents
+      assert_equal ["Trial"], filters.project_names
+    end
+
+    def test_read_saved_filters_upgrades_multi_project_file_without_idents
+      # A file written after multi-project support but before project_idents:
+      # has project_ids but no project_idents. Each id is resolved to its
+      # identifier on read so the display shows the semantic id.
+      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+        "project_ids" => ["1182"], "project_names" => ["Chomper testing area"],
+        "type_ids" => ["7"], "status_ids" => ["1"], "version_ids" => [],
+        "type_names" => "bug", "status_names" => "new"
+      ))
+      stub_request(:get, "https://example.com/api/v3/projects/1182")
+        .to_return(status: 200, body: JSON.generate({ "id" => 1182, "identifier" => "chomper-testing", "name" => "Chomper testing area" }))
+
+      filters = @pull.send(:read_saved_filters)
+      assert_equal ["1182"],            filters.project_ids
+      assert_equal ["chomper-testing"], filters.project_idents
+    end
+
+    def test_describe_filters_prefers_semantic_identifier
+      filters = FilterSet.new(project_ids: ["1182"], project_idents: ["chomper-testing"],
+                              project_names: ["Chomper testing area"], type_names: "bug",
+                              status_names: "new")
+      assert_includes @pull.send(:describe_filters, filters), "chomper-testing — Chomper testing area"
+      refute_includes @pull.send(:describe_filters, filters), "1182"
     end
 
     def test_save_and_reload_agent_filters
@@ -494,7 +549,7 @@ module Chomper
       path = Pathname(@tmpdir) / "op_agent_filters.json"
       assert path.exist?
       data = JSON.parse(path.read)
-      assert_equal FILTERS.project_id,  data["project_id"]
+      assert_equal FILTERS.project_ids, data["project_ids"]
       assert_equal FILTERS.type_ids,    data["type_ids"]
       assert_equal FILTERS.status_ids,  data["status_ids"]
       assert_equal FILTERS.version_ids, data["version_ids"]

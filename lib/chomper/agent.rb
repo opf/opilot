@@ -54,7 +54,7 @@ module Chomper
 
     # One poll-and-handle pass over OpenProject @chomper triggers (no sleep).
     def tick(filters)
-      log_script "Polling OpenProject…"
+      log_script "Polling OpenProject (#{@ctx.op_url})…"
       intents = @pull.poll_intents(filters)
       n = intents.length
       log_script "Polled #{@pull.scanned_count} work package(s) — " \

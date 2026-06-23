@@ -321,10 +321,10 @@ module Chomper
     # /work_packages/schemas/<project>-<type> pair is checked until one has the
     # field. Returns the customFieldN key or nil (no module grouping).
     def resolve_module_field(filters)
-      Array(filters.type_ids).each do |type_id|
-        code, schema = @api.work_package_schema(filters.project_id, type_id)
+      Array(filters.project_ids).product(Array(filters.type_ids)).each do |project_id, type_id|
+        code, schema = @api.work_package_schema(project_id, type_id)
         unless code == 200 && schema
-          log_script "Warning: could not fetch WP schema for type #{type_id} (HTTP #{code})."
+          log_script "Warning: could not fetch WP schema for #{project_id}-#{type_id} (HTTP #{code})."
           next
         end
         key = schema.keys.find { |k| schema[k].is_a?(Hash) && schema[k]["name"].to_s.match?(/\Amodule\z/i) }
@@ -442,7 +442,7 @@ module Chomper
 
     def filter_fingerprint(filters)
       [
-        filters.project_id,
+        Array(filters.project_ids).sort.join(","),
         Array(filters.type_ids).sort.join(","),
         Array(filters.status_ids).sort.join(","),
         Array(filters.version_ids).sort.join(",")

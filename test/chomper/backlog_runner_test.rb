@@ -4,7 +4,7 @@ require "stringio"
 
 module Chomper
   class BacklogRunnerTest < Minitest::Test
-    FILTERS = FilterSet.new(project_id: "STC", type_ids: ["1"], status_ids: ["1"],
+    FILTERS = FilterSet.new(project_ids: ["STC"], type_ids: ["1"], status_ids: ["1"],
                             version_ids: [], scan_from_at: nil)
 
     class FakePull

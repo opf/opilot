@@ -102,7 +102,7 @@ module Chomper
 
     def prompt_scan_from
       puts "  How far back should the PR comment scanner look?"
-      puts "  Formats: \"1h\", \"2 days\", \"1 week\""
+      puts "  Formats: \"2h\", \"3 days\", \"1 week\", \"1 month\""
       print "  Scan from [now]: "
       Helpers.parse_scan_from($stdin.gets.to_s.chomp)
     end

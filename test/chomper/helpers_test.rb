@@ -99,5 +99,37 @@ module Chomper
     def test_branch_slug_string_id
       assert_match(/^bug\/ABC-123-/, h.branch_slug("ABC-123", "Bug", "Some title"))
     end
+
+    # parse_scan_from returns an ISO8601 cutoff `seconds_ago` before now.
+    def assert_scan_from(seconds_ago, input)
+      parsed = Time.parse(Helpers.parse_scan_from(input))
+      assert_in_delta (Time.now.utc - seconds_ago), parsed, 5,
+                      "#{input.inspect} should resolve to ~#{seconds_ago}s ago"
+    end
+
+    def test_parse_scan_from_blank_and_now_mean_now
+      assert_scan_from(0, "")
+      assert_scan_from(0, "now")
+    end
+
+    def test_parse_scan_from_minutes_hours_days_weeks
+      assert_scan_from(60,        "1m")
+      assert_scan_from(120,       "2 mins")
+      assert_scan_from(3 * 3600,  "3h")
+      assert_scan_from(2 * 86400, "2 days")
+      assert_scan_from(604800,    "1 week")
+    end
+
+    def test_parse_scan_from_months_and_years
+      assert_scan_from(2592000,     "1 month")
+      assert_scan_from(2 * 2592000, "2 months")
+      assert_scan_from(2592000,     "1mo")
+      assert_scan_from(31536000,    "1 year")
+    end
+
+    def test_parse_scan_from_unparseable_defaults_to_now
+      out, = capture_io { assert_scan_from(0, "next tuesday-ish") }
+      assert_match(/Could not parse/, out)
+    end
   end
 end

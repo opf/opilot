@@ -63,21 +63,26 @@ module Chomper
     end
 
     # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
-    # span ("1h", "2 days", "1 week"), an absolute time, or blank/"now" (= now).
-    # Shared by the OpenProject agent (Pull) and the GitHub agent (GhPull) so the
-    # "scan from" prompt parses identically in both.
+    # span ("1h", "2 days", "1 week", "1 month", "1 year"), an absolute time, or
+    # blank/"now" (= now). Months and years use 30- and 365-day approximations,
+    # which is plenty for a scan floor. Shared by the OpenProject agent (Pull)
+    # and the GitHub agent (GhPull) so the "scan from" prompt parses identically.
     def self.parse_scan_from(input)
       input = input.to_s.strip.downcase
       return Time.now.utc.iso8601 if input.empty? || input == "now"
-      if (m = input.match(/\A(\d+)\s*(m(?:in(?:ute)?s?)?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)\z/))
+      if (m = input.match(/\A(\d+)\s*([a-z]+)\z/))
         n = m[1].to_i
-        seconds = case m[2][0]
-                  when "m" then n * 60
-                  when "h" then n * 3600
-                  when "d" then n * 86400
-                  when "w" then n * 604800
+        # Classify on the whole unit, not the first letter: "m" is minutes but
+        # "mo"/"month" is months, so a first-char test can't tell them apart.
+        seconds = case m[2]
+                  when "m", /\Amin(ute)?s?\z/   then n * 60
+                  when /\Ah(our)?s?\z/           then n * 3600
+                  when /\Ad(ay)?s?\z/            then n * 86400
+                  when /\Aw(eek)?s?\z/           then n * 604800
+                  when /\Amo(n(th)?)?s?\z/       then n * 2592000
+                  when /\Ay(ear)?s?\z/           then n * 31536000
                   end
-        return (Time.now - seconds).utc.iso8601
+        return (Time.now - seconds).utc.iso8601 if seconds
       end
       begin
         Time.parse(input).utc.iso8601

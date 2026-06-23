@@ -4,7 +4,11 @@ require "time"
 require_relative "clients"
 
 module Chomper
-  FilterSet = Struct.new(:project_id, :project_name, :type_ids, :status_ids, :version_ids,
+  # `project_ids` / `project_idents` / `project_names` are parallel arrays.
+  # `project_ids` (numeric) scope the query; `project_idents` are the semantic
+  # identifiers, used for display when present (see Pull#describe_filters).
+  FilterSet = Struct.new(:project_ids, :project_idents, :project_names,
+                         :type_ids, :status_ids, :version_ids,
                          :type_names, :status_names, :version_names, :scan_from_at, keyword_init: true)
 
   class Pull
@@ -35,7 +39,7 @@ module Chomper
       page = 1; page_size = 50; total_written = 0; total = 0
       loop do
         break if Chomper.stopping?
-        code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
+        code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
         raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
         raise Chomper::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
 
@@ -134,7 +138,7 @@ module Chomper
       page = 1; page_size = 50; total_written = 0
       processed = 0; from_cache = 0
       loop do
-        code, resp = @api.work_packages(filters.project_id, filters_json: fj, page: page, page_size: page_size)
+        code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
         raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
         raise Chomper::FatalError, "API returned unparseable response" if resp.nil?
         count = resp["count"].to_i; total = resp["total"].to_i
@@ -167,18 +171,31 @@ module Chomper
       puts "=== Search filters ==="
       puts ""
 
-      project_id = nil
-      types_data = nil
+      # One or more projects. Each is validated (and resolved to its numeric id,
+      # which the project_id filter requires) while also keeping its semantic
+      # identifier for display. The type list is drawn from the first project —
+      # types are defined per project but typically shared across an instance,
+      # and a single source keeps the prompt simple.
+      project_ids = nil; project_idents = nil; project_names = nil; types_data = nil
       loop do
-        print "  Project [TTP2]: "
-        project_id = $stdin.gets.chomp
-        project_id = "TTP2" if project_id.empty?
-        code, types_data = @api.project_types(project_id)
-        break if code == 200
-        puts "  Project '#{project_id}' not found (HTTP #{code}) — please try again."
+        print "  Project(s), comma-separated [TTP2]: "
+        reply = $stdin.gets.chomp
+        reply = "TTP2" if reply.empty?
+        idents = reply.split(",").map(&:strip).reject(&:empty?).uniq
+
+        resolved = idents.map { |ident| [ident, *@api.project(ident)] }   # [ident, code, data]
+        bad = resolved.select { |_ident, code, _| code != 200 }.map(&:first)
+        unless bad.empty?
+          puts "  Project(s) not found: #{bad.join(", ")} — please try again."
+          next
+        end
+        project_ids    = resolved.map { |_ident, _code, data| data["id"].to_s }
+        # Prefer the canonical identifier; fall back to whatever the user typed.
+        project_idents = resolved.map { |ident, _code, data| data["identifier"] || ident }
+        project_names  = resolved.map { |_ident, _code, data| data["name"] }
+        _tc, types_data = @api.project_types(idents.first)
+        break
       end
-      _pc, project_data = @api.project(project_id)
-      project_name = project_data&.dig("name")
 
       type_ids, sel_names = select_by_name(
         types_data.dig("_embedded", "elements") || [],
@@ -191,37 +208,46 @@ module Chomper
         label: "Statuses", prompt: "Status(es), comma-separated [new, confirmed]", default: "new, confirmed"
       )
 
+      # Versions are project-scoped, so the candidate list is only well-defined
+      # for a single project. With several selected, skip the version filter.
       version_ids = []; sel_ver_names = []
-      ver_code, versions_data = @api.project_versions(project_id)
-      if ver_code == 200
-        version_ids, sel_ver_names = select_by_name(
-          versions_data.dig("_embedded", "elements") || [],
-          label: "Versions", prompt: "Version(s), comma-separated (leave blank to skip)", default: ""
-        )
+      if project_ids.length == 1
+        ver_code, versions_data = @api.project_versions(project_ids.first)
+        if ver_code == 200
+          version_ids, sel_ver_names = select_by_name(
+            versions_data.dig("_embedded", "elements") || [],
+            label: "Versions", prompt: "Version(s), comma-separated (leave blank to skip)", default: ""
+          )
+        else
+          puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
+        end
       else
-        puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
+        puts "  Versions: skipped (version filtering is only offered for a single project)."
       end
 
-      scan_from_at = nil
-      if ask_scan_from
-        puts "  How far back should the comment scanner look?"
-        puts "  Formats: \"1h\", \"2 days\", \"1 week\""
-        print "  Scan from [now]: "
-        scan_from_at = parse_scan_from_input($stdin.gets.chomp)
-      end
+      scan_from_at = ask_scan_from ? prompt_scan_from : nil
 
       puts ""
       FilterSet.new(
-        project_id:    project_id,
-        project_name:  project_name,
-        type_ids:      type_ids,
-        status_ids:    status_ids,
-        version_ids:   version_ids,
-        type_names:    sel_names.join(", "),
-        status_names:  sel_status_names.join(", "),
-        version_names: sel_ver_names.empty? ? nil : sel_ver_names.join(", "),
-        scan_from_at:  scan_from_at
+        project_ids:    project_ids,
+        project_idents: project_idents,
+        project_names:  project_names,
+        type_ids:       type_ids,
+        status_ids:     status_ids,
+        version_ids:    version_ids,
+        type_names:     sel_names.join(", "),
+        status_names:   sel_status_names.join(", "),
+        version_names:  sel_ver_names.empty? ? nil : sel_ver_names.join(", "),
+        scan_from_at:   scan_from_at
       )
+    end
+
+    # Ask how far back the comment scanner should look, returning the parsed
+    # floor timestamp (nil = from now). Shared by the fresh-filter flow and the
+    # reuse-saved-filters flow, so the window is always chosen interactively.
+    def prompt_scan_from
+      print %(  How far back should the comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [now]: )
+      parse_scan_from_input($stdin.gets.chomp)
     end
 
     private
@@ -248,7 +274,12 @@ module Chomper
       if (saved = read_saved_filters)
         puts "  Saved filters: #{describe_filters(saved)}"
         print "  Reuse saved filters? [Y/n]: "
-        return saved unless $stdin.gets.chomp.downcase == "n"
+        if $stdin.gets.chomp.downcase != "n"
+          # The scan window is a per-session choice, not part of the saved set,
+          # so still ask for it when relevant (op-agent) even on reuse.
+          saved.scan_from_at = prompt_scan_from if ask_scan_from
+          return saved
+        end
       end
       filters = prompt_search_filters(ask_scan_from: ask_scan_from)
       save_agent_filters(filters)
@@ -259,25 +290,65 @@ module Chomper
       return nil unless agent_filters_path.exist?
       data = JSON.parse(agent_filters_path.read)
       return nil unless data["type_names"] && data["status_names"]
+      project_ids, project_idents, project_names = saved_projects(data)
+      return nil if project_ids.empty?
       FilterSet.new(
-        project_id:    data["project_id"],
-        project_name:  data["project_name"],
-        type_ids:      data["type_ids"],
-        status_ids:    data["status_ids"],
-        version_ids:   data["version_ids"],
-        type_names:    data["type_names"],
-        status_names:  data["status_names"],
-        version_names: data["version_names"],
-        scan_from_at:  data["scan_from_at"]
+        project_ids:    project_ids,
+        project_idents: project_idents,
+        project_names:  project_names,
+        type_ids:       data["type_ids"],
+        status_ids:     data["status_ids"],
+        version_ids:    data["version_ids"],
+        type_names:     data["type_names"],
+        status_names:   data["status_names"],
+        version_names:  data["version_names"],
+        scan_from_at:   data["scan_from_at"]
       )
     rescue JSON::ParserError
       nil
     end
 
+    # The saved project selection as [ids, idents, names]. Upgrades the
+    # pre-multi-project format on the fly: an old file stored a single
+    # `project_id` identifier, but the project_id filter now needs a numeric id,
+    # so resolve it via the API. Returns [[], [], []] when nothing usable is
+    # saved (caller then re-prompts).
+    def saved_projects(data)
+      if data["project_ids"]
+        ids = Array(data["project_ids"])
+        # Older multi-project files predate project_idents — resolve each id to
+        # its semantic identifier so the display matches a fresh selection.
+        idents = data["project_idents"] ? Array(data["project_idents"]) : ids.map { |id| resolve_ident(id) }
+        return [ids, idents, Array(data["project_names"])]
+      end
+
+      ident = data["project_id"]
+      return [[], [], []] if ident.to_s.empty?
+      code, project = @api.project(ident)
+      return [[], [], []] unless code == 200 && project
+      [[project["id"].to_s], [project["identifier"] || ident], [project["name"]]]
+    rescue => e
+      puts "  Warning: could not upgrade saved project filter (#{e.message}); please re-select."
+      [[], [], []]
+    end
+
+    # The semantic identifier for a project, looked up by its (numeric) id.
+    # Falls back to the id itself if the lookup fails, so a hiccup only costs the
+    # nicer label, never the saved filter.
+    def resolve_ident(id)
+      code, project = @api.project(id)
+      (code == 200 && project && project["identifier"]) || id
+    rescue
+      id
+    end
+
     def describe_filters(f)
       version_label = f.version_names ? "  versions=[#{f.version_names}]" : ""
-      project_label = f.project_name ? "#{f.project_id} — #{f.project_name}" : f.project_id
-      "project=[#{project_label}]  types=[#{f.type_names}]  statuses=[#{f.status_names}]#{version_label}"
+      # Show the semantic identifier when we have it, else the numeric id.
+      labels = Array(f.project_idents).empty? ? Array(f.project_ids) : Array(f.project_idents)
+      projects = labels.zip(Array(f.project_names))
+        .map { |id, name| name ? "#{id} — #{name}" : id }.join("; ")
+      "projects=[#{projects}]  types=[#{f.type_names}]  statuses=[#{f.status_names}]#{version_label}"
     end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an
@@ -333,11 +404,17 @@ module Chomper
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # Builds the raw filters JSON for a FilterSet (status + type, optional version).
+    # Builds the raw filters JSON for a FilterSet (project + status + type,
+    # optional version). The `project_id` filter scopes the global work-packages
+    # endpoint to the selected projects; its values must be NUMERIC project ids
+    # (OpenProject coerces them with to_i — identifiers would match nothing).
     def filters_json(filters)
+      project_clause = %Q({"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}})
+      status_clause  = %Q({"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}})
+      type_clause    = %Q({"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}})
       version_clause = filters.version_ids.empty? ? "" :
         %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
-      %Q([{"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}},{"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}}#{version_clause}])
+      %Q([#{project_clause},#{status_clause},#{type_clause}#{version_clause}])
     end
 
     # Multi-value Module custom field: a WP can carry several modules; we group
@@ -437,8 +514,9 @@ module Chomper
 
     def save_agent_filters(filters)
       Helpers.write_json_atomic(agent_filters_path, {
-        "project_id"    => filters.project_id,
-        "project_name"  => filters.project_name,
+        "project_ids"    => filters.project_ids,
+        "project_idents" => filters.project_idents,
+        "project_names"  => filters.project_names,
         "type_ids"      => filters.type_ids,
         "status_ids"    => filters.status_ids,
         "version_ids"   => filters.version_ids,

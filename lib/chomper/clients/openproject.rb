@@ -10,11 +10,14 @@ module Chomper
         @token = token
       end
 
-      # Returns [code, response_hash].
-      def work_packages(project_id, filters_json:, page: 1, page_size: 50)
+      # Returns [code, response_hash]. Hits the global work-packages endpoint;
+      # the project scope (one or many) is carried in filters_json as a
+      # `project_id` filter (see Pull#filters_json), so a single sorted sweep
+      # spans every selected project.
+      def work_packages(filters_json:, page: 1, page_size: 50)
         filters = HTTP.encode_filters(filters_json)
         sort    = HTTP.encode_filters(SORT_UPDATED_AT)
-        url = "#{@base}/api/v3/projects/#{project_id}/work_packages" \
+        url = "#{@base}/api/v3/work_packages" \
               "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}"
         HTTP.get_json(url, token: @token)
       end
