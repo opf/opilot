@@ -61,14 +61,22 @@ module Chomper
         You are the WRITER. Produce a plan only.
         #{READ_ONLY}
 
-        FIRST, judge whether this issue gives you enough to plan a concrete fix:
-        a way to locate the affected code, the expected vs. actual behaviour, and
-        an unambiguous request. If it does NOT, do not guess and do not write a
-        plan — output exactly the following, starting on the first line, and stop:
+        FIRST, judge whether this issue gives you enough to plan a concrete fix.
+        For a bug report that means ALL of: concrete reproduction steps, the
+        expected vs. actual behaviour, and the environment it happens in (browser/
+        OS, OpenProject version/edition) — enough that you could reproduce it
+        yourself. A bare title or empty description is NOT enough: do NOT guess at
+        the cause or "form a hypothesis" from an under-specified report, and do not
+        go spelunking the codebase to invent missing repro details. When the issue
+        is thin or you cannot confidently locate AND reproduce the problem, do not
+        write a plan — output exactly the following, starting on the first line,
+        and stop:
 
           NEEDS_INFO
           ### Questions for the reporter
-          - <each specific thing you need before you can proceed>
+          - <each specific thing you need before you can proceed — for a bug, ask
+            for the missing reproduction steps, expected vs. actual, and
+            environment/version>
 
         Otherwise, produce the plan:
 
