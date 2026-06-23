@@ -230,6 +230,14 @@ module Chomper
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])#{related_line(related)}
         Read this file for full context, including prior comments, before answering.
 
+        If this is a bug report that lacks the basics to act on — concrete
+        reproduction steps, the expected vs. actual behaviour, and the environment
+        (browser/OS, OpenProject version/edition) — do NOT go spelunking the
+        codebase to manufacture a speculative cause or hypothesis. Say plainly that
+        the report is too thin to diagnose, and ask the reporter for the specific
+        reproduction details you'd need. Only dig into the code once you can
+        actually locate and reproduce the problem.
+
         CURRENT PLAN: #{plan}
         (likely already in your session context — read the file only if it isn't)
 
