@@ -92,11 +92,30 @@ module Chomper
       end
     end
 
-    # Per-WP working state: just the paths under items/<id>/ plus the branch.
-    # Shared by both runners (agent and backlog) via #state_for below.
-    ItemState = Struct.new(:item_id, :subject, :branch, :item_dir, :plan_file,
-                           :item_file, :related_file, :review_file, :pr_desc_file,
-                           :pr_url_file, :session_file, keyword_init: true)
+    # Per-WP working state: the shared paths under items/<id>/ plus the branch and
+    # the chosen target repos. PR-scoped artifacts (pr.md, pr_url.txt, gh caches)
+    # live under items/<id>/repos/<name>/ since a WP may ship to several repos —
+    # resolve them with the per-repo helpers below. Shared by both runners (agent
+    # and backlog) via #state_for.
+    ItemState = Struct.new(:item_id, :subject, :branch, :repos, :item_dir, :plan_file,
+                           :item_file, :related_file, :review_file, :target_repos_file,
+                           :session_file, keyword_init: true) do
+      # Per-repo artifact directory (items/<id>/repos/<name>/), created on demand.
+      def repo_dir(repo)
+        dir = item_dir / "repos" / repo_name(repo)
+        dir.mkpath
+        dir
+      end
+
+      def pr_desc_file(repo); repo_dir(repo) / "pr.md"; end
+      def pr_url_file(repo);  repo_dir(repo) / "pr_url.txt"; end
+
+      private
+
+      def repo_name(repo)
+        repo.respond_to?(:name) ? repo.name : repo.to_s
+      end
+    end
 
     # A work package id as the user types it: numeric ("59942") or semantic
     # ("PROJ-123", instances in semantic-identifier mode). Mirrors OpenProject's
@@ -209,42 +228,45 @@ module Chomper
       false
     end
 
-    # Git handle on the isolated worktree where fixes are made.
-    def worktree
-      @worktree ||= Git.open(@ctx.worktree_host.to_s)
+    # Git handle on a repo's isolated worktree, memoized per repo so a WP that
+    # spans several repos opens each one once.
+    def worktree(repo)
+      (@worktrees ||= {})[repo.name] ||= Git.open(repo.worktree_host.to_s)
     end
 
-    # Check out the WP's fix branch, creating it from origin/dev on first use.
-    # `checkout -b` from a remote start point makes the new branch track
-    # origin/dev, which is dangerous: a bare `git pull` merges dev into the
-    # fix branch, and with push.default=upstream a bare `git push` targets dev
-    # itself. Re-point tracking at the branch's own name — the PR branch it is
-    # pushed to — on every checkout, which also repairs branches created
-    # before this fix.
-    def checkout_branch(st)
-      if local_branch_exists?(worktree, st.branch)
-        worktree.checkout(st.branch)
+    # Check out the WP's fix branch in `repo`, creating it from origin/<base> on
+    # first use. `checkout -b` from a remote start point makes the new branch
+    # track origin/<base>, which is dangerous: a bare `git pull` merges the base
+    # into the fix branch, and with push.default=upstream a bare `git push`
+    # targets the base itself. Re-point tracking at the branch's own name — the
+    # PR branch it is pushed to — on every checkout, which also repairs branches
+    # created before this fix.
+    def checkout_branch(st, repo)
+      wt = worktree(repo)
+      if local_branch_exists?(wt, st.branch)
+        wt.checkout(st.branch)
       else
-        worktree.checkout(st.branch, new_branch: true, start_point: "origin/dev")
+        wt.checkout(st.branch, new_branch: true, start_point: "origin/#{repo.base}")
       end
-      worktree.config("branch.#{st.branch}.remote", "origin")
-      worktree.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+      wt.config("branch.#{st.branch}.remote", "origin")
+      wt.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
     end
 
-    # Check out an existing PR's branch and sync it to the PR's current head.
-    # Unlike #checkout_branch (which starts new work from origin/dev), gh-agent
-    # acts on a branch that already lives on the remote. The caller must first
-    # fetch that head into FETCH_HEAD over HTTPS (Clients::GitHub#fetch_branch) —
-    # we then hard-reset onto FETCH_HEAD, building on the latest PR head and
-    # never diverging. We reset to FETCH_HEAD rather than a remote-tracking ref
-    # so this works without relying on the worktree's `origin` (which may be SSH
-    # and unreachable in the container).
-    def checkout_pr_branch(branch)
-      if local_branch_exists?(worktree, branch)
-        worktree.checkout(branch)
-        worktree.reset_hard("FETCH_HEAD")
+    # Check out an existing PR's branch in `repo` and sync it to the PR's current
+    # head. Unlike #checkout_branch (which starts new work from origin/<base>),
+    # gh-agent acts on a branch that already lives on the remote. The caller must
+    # first fetch that head into FETCH_HEAD over HTTPS (Clients::GitHub#fetch_branch)
+    # — we then hard-reset onto FETCH_HEAD, building on the latest PR head and
+    # never diverging. We reset to FETCH_HEAD rather than a remote-tracking ref so
+    # this works without relying on the worktree's `origin` (which may be SSH and
+    # unreachable in the container).
+    def checkout_pr_branch(repo, branch)
+      wt = worktree(repo)
+      if local_branch_exists?(wt, branch)
+        wt.checkout(branch)
+        wt.reset_hard("FETCH_HEAD")
       else
-        worktree.checkout(branch, new_branch: true, start_point: "FETCH_HEAD")
+        wt.checkout(branch, new_branch: true, start_point: "FETCH_HEAD")
       end
     end
 
@@ -255,28 +277,56 @@ module Chomper
       end
     end
 
-    # Build the ItemState for a WP, creating its items/<id>/ directory.
+    # Build the ItemState for a WP, creating its items/<id>/ directory. The
+    # target repos are loaded from target_repos.json (set once Claude picks them
+    # in the plan); until then the state defaults to the registry's default repo.
     def state_for(item_id, subject, type = nil)
       dir = Helpers.item_dir(@ctx, item_id)
       dir.mkpath
       ItemState.new(
-        item_id:      item_id.to_s,
-        subject:      subject.to_s,
-        branch:       branch_slug(item_id, type.to_s, subject.to_s),
-        item_dir:     dir,
-        plan_file:    dir / "plan.md",
-        item_file:    dir / "item.json",
-        related_file: dir / "related.json",
-        review_file:  dir / "review.txt",
-        pr_desc_file: dir / "pr.md",
-        pr_url_file:  dir / "pr_url.txt",
-        session_file: dir / "session_id"
+        item_id:           item_id.to_s,
+        subject:           subject.to_s,
+        branch:            branch_slug(item_id, type.to_s, subject.to_s),
+        repos:             target_repos_for(item_id),
+        item_dir:          dir,
+        plan_file:         dir / "plan.md",
+        item_file:         dir / "item.json",
+        related_file:      dir / "related.json",
+        review_file:       dir / "review.txt",
+        target_repos_file: dir / "target_repos.json",
+        session_file:      dir / "session_id"
       )
+    end
+
+    # The Repo objects a WP targets, read from items/<id>/target_repos.json (an
+    # array of registry names); unknown names are dropped and an empty/missing
+    # file falls back to the registry default, so single-repo flows just work.
+    def target_repos_for(item_id)
+      file  = Helpers.item_dir(@ctx, item_id) / "target_repos.json"
+      names = Helpers.safe_json_read(file) if file.exist?
+      repos = Array(names).filter_map { |n| @ctx.repos[n] }
+      repos.empty? ? [@ctx.default_repo] : repos
+    end
+
+    # Persist the repos Claude chose for a WP (validated against the registry) and
+    # update the live state. Names not in the registry are ignored; if none
+    # survive, the default repo is used so a fix still ships somewhere.
+    def set_target_repos(st, names)
+      repos = Array(names).filter_map { |n| @ctx.repos[n.to_s.strip] }.uniq(&:name)
+      repos = [@ctx.default_repo] if repos.empty?
+      st.target_repos_file.write(JSON.generate(repos.map(&:name)))
+      st.repos = repos
     end
 
     # Rewrite a host path under .chomper/ to its path inside the Claude container.
     def container_path(host_path)
       host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
+    end
+
+    # Rewrite a host path inside a repo's worktree to its /repos/<name> path
+    # inside the Claude container.
+    def container_path_for(repo, host_path)
+      host_path.to_s.sub(repo.worktree_host.to_s, repo.worktree_container)
     end
 
     # Fetch a WP's related work packages (relations + parent/children) via the
@@ -295,8 +345,26 @@ module Chomper
       container_path(st.related_file)
     end
 
-    def branch_has_commits?(st)
-      worktree.log.between("origin/dev", st.branch).execute.any?
+    # Shape Repo objects for a prompt's repo listing — name, container path (where
+    # Claude reads/edits the files), and the one-line description.
+    def repos_for_prompt(repos)
+      repos.map { |r| { name: r.name, path: r.worktree_container, description: r.description } }
+    end
+
+    # Read the `REPOS:` line Claude put at the top of a fresh plan, validate the
+    # names against the registry, record the chosen repos, and strip the line from
+    # the saved plan. Falls back to the default repo when the line is absent or
+    # names nothing valid (so single-repo plans need no REPOS line).
+    def record_chosen_repos(st)
+      text  = st.plan_file.read
+      m     = text.match(/^[ \t]*REPOS:[ \t]*(.+?)[ \t]*$/i)
+      names = m ? m[1].split(",").map(&:strip).reject(&:empty?) : []
+      set_target_repos(st, names)
+      st.plan_file.write(text.sub(/^[ \t]*REPOS:.*\R?/i, "")) if m
+    end
+
+    def branch_has_commits?(st, repo)
+      worktree(repo).log.between("origin/#{repo.base}", st.branch).execute.any?
     end
 
     # True when a phase will resume an existing per-WP session (so the plan and
@@ -307,23 +375,29 @@ module Chomper
       Helpers.file_has_content?(st.session_file)
     end
 
-    def commit(st)
+    # Commit the worktree changes for one repo. Returns true when a commit was
+    # made, false when this repo had no changes (so the caller can skip its PR).
+    def commit(st, repo)
       Helpers.adopt_github_author!(@ctx)
-      worktree.add(all: true)
-      diff = worktree.diff("HEAD")
-      return if diff.entries.empty?
+      wt = worktree(repo)
+      wt.add(all: true)
+      diff = wt.diff("HEAD")
+      return false if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit(pr_title(st.item_id, st.subject))
-      c = worktree.log(1).execute.first
-      log_script "Committed: #{c.sha[0, 7]} #{c.message}"
-      record_progress(st.item_id, st.branch, "committed")
+      wt.commit(pr_title(st.item_id, st.subject))
+      c = wt.log(1).execute.first
+      log_script "Committed to #{repo.name}: #{c.sha[0, 7]} #{c.message}"
+      record_progress(st.item_id, st.branch, "committed:#{repo.name}")
+      true
     end
 
-    def generate_pr_description(st, model: Claude::MODEL_WORK)
-      return if Helpers.file_has_content?(st.pr_desc_file)
-      template_file    = @ctx.repo_path / ".github" / "pull_request_template.md"
-      template_section = template_file.exist? ? "Fill in this PR template exactly: #{template_file}" : ""
-      diff_stat = worktree.diff("HEAD~1", "HEAD").stats[:files]
+    def generate_pr_description(st, repo, model: Claude::MODEL_WORK)
+      pr_desc_file = st.pr_desc_file(repo)
+      return if Helpers.file_has_content?(pr_desc_file)
+      wt               = worktree(repo)
+      template_file    = repo.worktree_host / ".github" / "pull_request_template.md"
+      template_section = template_file.exist? ? "Fill in this PR template exactly: #{container_path_for(repo, template_file)}" : ""
+      diff_stat = wt.diff("HEAD~1", "HEAD").stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
       prompt = Prompts.pr_description(
@@ -332,7 +406,7 @@ module Chomper
       )
       pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, model: model, session_file: st.session_file)
       pr_body = pr_text[/^#.*/m] || pr_text
-      st.pr_desc_file.write(strip_ansi(pr_body))
+      pr_desc_file.write(strip_ansi(pr_body))
     end
   end
 end

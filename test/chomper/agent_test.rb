@@ -29,11 +29,14 @@ module Chomper
       end
     end
 
-    # Mirrors the real Publish: open_pr writes pr_url.txt and returns the URL.
+    # Mirrors the real Publish: open_pr writes the repo's pr_url.txt and returns
+    # the URL.
     class FakePublish
       def initialize(state_dir, pr:); @state_dir = state_dir; @pr = pr; end
-      def open_pr(id, _subject, _branch)
-        (@state_dir / "items" / id.to_s / "pr_url.txt").write(@pr)
+      def open_pr(id, _subject, _branch, repo)
+        dir = @state_dir / "items" / id.to_s / "repos" / repo.name
+        dir.mkpath
+        (dir / "pr_url.txt").write(@pr)
         @pr
       end
     end
@@ -91,24 +94,29 @@ module Chomper
 
     def setup
       @tmpdir = Dir.mktmpdir
+      state_dir = Pathname(@tmpdir) / ".chomper"
+      state_dir.mkpath
+      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
-        :script_dir, :state_dir, :op_url, :token, :worktree_container, :state_container,
-        :repo_path, :allowed_emails, :log_file, :progress_file, :plan_review, :auto_plan_approval
+        :script_dir, :state_dir, :op_url, :token, :state_container,
+        :allowed_emails, :log_file, :progress_file, :plan_review, :auto_plan_approval, :repos
       ) do
         def plan_review?; plan_review; end                 # opt-in agent self-review (off by default)
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
+        def default_repo; repos.default; end
       end.new(
-        Pathname(@tmpdir), Pathname(@tmpdir) / ".chomper", "https://op.example.com", "tok",
-        "/repo", "/state", Pathname(@tmpdir), [],
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, false
+        Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
+        "/state", [],
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, false, registry
       )
-      (Pathname(@tmpdir) / ".chomper").mkpath
 
+      @repo    = registry.default
       @claude  = FakeClaude.new
       @publish = FakePublish.new(@ctx.state_dir, pr: "https://github.com/o/r/pull/7")
       @pull    = FakePull.new
       @agent   = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new)
+      @worktree = FakeWorktree.new
+      inject_worktree(@agent, @worktree)
 
       # @chomper notes are posted to the activities endpoint.
       @notes = []
@@ -127,8 +135,18 @@ module Chomper
                  comment_at: "2024-02-01T00:00:00Z", user: user, user_href: user_href)
     end
 
+    # Make worktree(repo) return the same fake for every repo, so tests can drive
+    # and inspect one handle regardless of which repo a fix targets.
+    def inject_worktree(agent, wt)
+      agent.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+    end
+
     def plan_path(id = "42"); @ctx.state_dir / "items" / id / "plan.md"; end
-    def pr_url_path(id = "42"); @ctx.state_dir / "items" / id / "pr_url.txt"; end
+    def pr_url_path(id = "42")
+      dir = @ctx.state_dir / "items" / id / "repos" / "openproject"
+      dir.mkpath
+      dir / "pr_url.txt"
+    end
 
     # ── produce_plan ────────────────────────────────────────────────────────
 
@@ -141,7 +159,7 @@ module Chomper
     def test_produce_plan_needs_info_posts_questions_and_writes_no_plan
       @claude = FakeClaude.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- How do I reproduce it?")
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new)
+      inject_worktree(@agent, FakeWorktree.new)
 
       st = @agent.send(:state_for, "42", "Fix the bug")
       assert_equal :needs_info, @agent.send(:produce_plan, st, nil)
@@ -153,7 +171,7 @@ module Chomper
       @ctx.plan_review = true   # reviewer is opt-in
       @claude = FakeClaude.new(review: "### Issues found\nUnsafe.\n### Verdict\nREJECT")
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new)
+      inject_worktree(@agent, FakeWorktree.new)
 
       st = @agent.send(:state_for, "42", "Fix the bug")
       assert_equal :rejected, @agent.send(:produce_plan, st, nil)
@@ -183,7 +201,7 @@ module Chomper
     def test_ship_skips_implementation_when_branch_already_has_commits
       st = @agent.send(:state_for, "42", "Fix the bug")
       plan_path.write("## Plan\nDo it.\n")
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_commits: true))
+      inject_worktree(@agent, FakeWorktree.new(has_commits: true))
 
       @agent.send(:ship, st)
       refute(@claude.runs.any? { |p| p.include?("APPROVED PLAN") }, "should not re-run implement")
@@ -192,12 +210,40 @@ module Chomper
 
     def test_checkout_branch_tracks_the_pr_branch_not_dev
       st = @agent.send(:state_for, "42", "Fix the bug", "bug")
-      @agent.send(:checkout_branch, st)
+      @agent.send(:checkout_branch, st, @repo)
 
-      configs = @agent.instance_variable_get(:@worktree).configs
+      configs = @worktree.configs
       assert_includes configs, ["branch.#{st.branch}.remote", "origin"]
       assert_includes configs, ["branch.#{st.branch}.merge", "refs/heads/#{st.branch}"],
                       "the fix branch must track its own PR branch, never origin/dev"
+    end
+
+    # ── multi-repo selection ──────────────────────────────────────────────────
+
+    def test_plan_with_a_repos_line_ships_a_pr_to_each_chosen_repo
+      (Pathname(@tmpdir) / "repos.json").write(JSON.generate(
+        "repos" => [
+          { "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev", "shared_repo_path" => @tmpdir },
+          { "name" => "ck", "upstream" => "opf/commonmark-ckeditor-build", "base" => "main" }
+        ]
+      ))
+      @ctx.repos = Registry.build(script_dir: Pathname(@tmpdir), state_dir: @ctx.state_dir, op_repo_path: @tmpdir)
+      @claude = FakeClaude.new(plan: "REPOS: openproject, ck\n## Plan\nDo it across both.\n")
+      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      inject_worktree(@agent, FakeWorktree.new)
+
+      @agent.handle(intent(:fix))
+
+      items = @ctx.state_dir / "items" / "42"
+      assert (items / "repos" / "openproject" / "pr_url.txt").exist?, "openproject PR opened"
+      assert (items / "repos" / "ck" / "pr_url.txt").exist?, "ck PR opened"
+      assert_equal %w[ck openproject], JSON.parse((items / "target_repos.json").read).sort
+      refute_includes plan_path.read, "REPOS:", "the REPOS line is stripped from the saved plan"
+    end
+
+    def test_plan_without_a_repos_line_falls_back_to_the_default_repo
+      @agent.handle(intent(:fix))   # FakeClaude's plan has no REPOS line
+      assert pr_url_path.exist?, "ships to the default repo when no REPOS line is given"
     end
 
     # ── handlers / routing ────────────────────────────────────────────────────
@@ -211,7 +257,7 @@ module Chomper
     def test_handle_fix_skips_ship_when_needs_info
       @claude = FakeClaude.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- repro?")
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new)
+      inject_worktree(@agent, FakeWorktree.new)
 
       @agent.handle(intent(:fix))
       refute pr_url_path.exist?, "must not ship when info is missing"
@@ -291,7 +337,7 @@ module Chomper
       index = JSON.parse(related_path.read)
       assert_equal "/state/items/200/item.json", index.first["item_path"]
 
-      plan_prompt = @claude.captures.find { |p| p.include?("PRODUCT REPO") }
+      plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
       assert_includes plan_prompt, "RELATED:"
       assert_includes plan_prompt, "/state/items/42/related.json"
     end
@@ -307,13 +353,13 @@ module Chomper
     def test_no_related_means_no_index_and_no_related_line
       @agent.handle(intent(:plan))   # FakePull.related defaults to []
       refute related_path.exist?
-      plan_prompt = @claude.captures.find { |p| p.include?("PRODUCT REPO") }
+      plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
       refute_includes plan_prompt, "RELATED:"
     end
 
     def test_handle_and_ack_marks_and_reports_on_error
       agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
-      agent.instance_variable_set(:@worktree, FakeWorktree.new)
+      inject_worktree(agent, FakeWorktree.new)
       plan_path.dirname.mkpath
       plan_path.write("## Plan\nDo it.\n")   # approve will reach the failing push
 

@@ -509,15 +509,17 @@ module Chomper
         if replan_feedback
           log_script "Re-planning #{wp_label(id)} — #{subject}"
           begin
-            # Read-only and branch-agnostic: the branch was already checked out
-            # when the plan was first generated, so no checkout_branch here.
+            # Read-only across all repos; Claude re-declares the target repo(s) in
+            # the revised plan. Branch checkout waits until #ship.
             @claude.capture(
-              Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
+              Prompts.replan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
+                             item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject, resumed: session_resumable?(st),
                              related: related_ref(st)),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
+            record_chosen_repos(st)
           rescue Claude::Error
             # capture didn't write the outfile, so the previous plan survives;
             # the user just saw the error and can retry from the prompt below.
@@ -526,14 +528,15 @@ module Chomper
           just_generated = true
         elsif !Helpers.file_has_content?(st.plan_file)
           log_script "Planning #{wp_label(id)} — #{subject}"
-          checkout_branch(st)
           begin
             # Pass session_file so a prior chat's context carries into the (re-)plan.
             @claude.capture(
-              Prompts.plan(repo: @ctx.worktree_container, item: container_path(st.item_file),
+              Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
+                           item: container_path(st.item_file),
                            item_id: id, title: subject, related: related_ref(st)),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
+            record_chosen_repos(st) if plan_present?(st)
           rescue Claude::Error
             # capture didn't write the outfile; the no-plan check below recovers.
           end
@@ -693,39 +696,41 @@ module Chomper
     end
 
     def ship(st, model = Claude::MODEL_WORK)
-      if Helpers.file_has_content?(st.pr_url_file)
-        puts "  Already shipped: #{st.pr_url_file.read.strip}"
+      if st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
+        st.repos.each { |r| puts "  Already shipped (#{r.name}): #{st.pr_url_file(r).read.strip}" }
         return
       end
 
-      checkout_branch(st)
-      unless branch_has_commits?(st)
-        log_script "Implementing #{wp_label(st.item_id)}"
-        # Resuming the planning session carries its codebase exploration into
-        # implementation; --allowedTools is per-invocation, so the resumed
-        # session simply gains the write tools.
+      st.repos.each { |r| checkout_branch(st, r) }
+
+      # Implement once across every target worktree (the resumed planning session
+      # carries its exploration in; --allowedTools just adds the write tools).
+      unless st.repos.all? { |r| branch_has_commits?(st, r) }
+        log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
         @claude.run(
-          Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file),
+          Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                             resumed: session_resumable?(st)),
           tools: Claude::TOOLS_IMPL, model: model, session_file: st.session_file
         )
-        commit(st)
+        st.repos.each { |r| commit(st, r) }
       end
 
-      unless branch_has_commits?(st)
+      changed = st.repos.select { |r| branch_has_commits?(st, r) }
+      if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced."
         puts "  ⚠ No changes produced — plan may be a no-op or already applied."
         return
       end
 
-      generate_pr_description(st, model: model)
-      url = @publish.open_pr(st.item_id, st.subject, st.branch)
-      if url
-        record_progress(st.item_id, st.branch, "shipped")
-        st.pr_url_file.write(url)
-        puts "  ✓ Draft PR: #{url}"
-      else
-        puts "  ⚠ Implemented on #{st.branch} but couldn't open the PR — is GITHUB_TOKEN set?"
+      changed.each do |repo|
+        generate_pr_description(st, repo, model: model)
+        url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
+        if url
+          record_progress(st.item_id, st.branch, "shipped:#{repo.name}")
+          puts "  ✓ Draft PR (#{repo.name}): #{url}"
+        else
+          puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is GITHUB_TOKEN set?"
+        end
       end
     end
 

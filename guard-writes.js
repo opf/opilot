@@ -1,7 +1,7 @@
-// PreToolUse hook: confine file mutations to the product worktree (/repo).
+// PreToolUse hook: confine file mutations to the product worktrees (/repos).
 // The container also mounts /state (plans, item metadata, the audit log) and
 // the Claude credentials dir writable — the implementation phase must never
-// touch those, so anything outside /repo is denied (exit 2 blocks the call
+// touch those, so anything outside /repos is denied (exit 2 blocks the call
 // and feeds stderr back to Claude). Fails closed on unparseable input.
 const path = require('path');
 
@@ -20,8 +20,8 @@ process.stdin.on('end', () => {
   }
 
   const resolved = path.resolve(filePath);
-  if (resolved === '/repo' || resolved.startsWith('/repo/')) process.exit(0);
+  if (resolved === '/repos' || resolved.startsWith('/repos/')) process.exit(0);
 
-  process.stderr.write(`guard-writes: writes are only allowed inside /repo (got ${filePath})\n`);
+  process.stderr.write(`guard-writes: writes are only allowed inside /repos (got ${filePath})\n`);
   process.exit(2);
 });

@@ -16,9 +16,12 @@ module Chomper
     # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
     # any other grant. Grep and Glob are granted everywhere: without them the
     # model has no way to search the repo and reaches for Bash find/grep
-    # instead, which is denied and kills the run.
-    TOOLS_READ = "Read,Grep,Glob"
-    TOOLS_IMPL = "Read,Grep,Glob,Write,Edit"
+    # instead, which is denied and kills the run. Bash is granted so Claude can
+    # browse git history (log/show/blame/diff) across the repos for context; the
+    # guard-bash.js PreToolUse hook confines it to read-only git — no commit,
+    # push, remote, or non-git command — and the egress proxy blocks exfiltration.
+    TOOLS_READ = "Read,Grep,Glob,Bash"
+    TOOLS_IMPL = "Read,Grep,Glob,Write,Edit,Bash"
 
     # Models, pinned so behaviour doesn't drift when the CLI's default changes.
     # A WP's work model is shared by every session-bound phase (chat, plan,

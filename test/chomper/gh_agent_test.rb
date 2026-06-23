@@ -38,8 +38,8 @@ module Chomper
     class FakePull
       attr_reader :acted, :recorded
       def initialize; @acted = []; @recorded = []; end
-      def mark_acted(id, at); @acted << [id, at]; end
-      def record_chomper_comment(id, cid); @recorded << [id, cid]; end
+      def mark_acted(id, repo_name, at); @acted << [id, repo_name, at]; end
+      def record_chomper_comment(id, repo_name, cid); @recorded << [id, repo_name, cid]; end
     end
 
     class FakeCommit
@@ -76,15 +76,19 @@ module Chomper
 
     def setup
       @tmpdir = Dir.mktmpdir
+      state_dir = Pathname(@tmpdir) / ".chomper"
+      state_dir.mkpath
+      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
+      @repo = registry.default   # by_upstream("o/r") falls back to the default repo
       @ctx = Struct.new(
-        :state_dir, :worktree_container, :state_container, :worktree_host,
-        :github_token, :allowed_gh_users, :log_file, :progress_file
+        :state_dir, :state_container,
+        :github_token, :allowed_gh_users, :log_file, :progress_file, :repos
       ).new(
-        Pathname(@tmpdir) / ".chomper", "/repo", "/state", Pathname(@tmpdir) / ".chomper" / "openproject",
+        state_dir, "/state",
         # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
         # a no-op so the suite never makes a real GitHub call; handle() uses the
         # injected @github, not ctx.github_token.
-        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt"
+        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
       )
       (@ctx.state_dir / "items" / "42").mkpath
 
@@ -92,15 +96,26 @@ module Chomper
       @github  = FakeGitHub.new
       @pull    = FakePull.new
       @agent   = GhAgent.new(@ctx, pull: @pull, claude: @claude, github: @github)
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: true))
+      @worktree = FakeWorktree.new(has_changes: true)
+      inject_worktree(@agent, @worktree)
     end
 
     def teardown
       FileUtils.rm_rf(@tmpdir)
     end
 
+    # Make worktree(repo) return one fake handle for any repo, so tests drive and
+    # inspect a single worktree.
+    def inject_worktree(agent, wt)
+      agent.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+    end
+
+    def gh_session_path
+      @ctx.state_dir / "items" / "42" / "repos" / "openproject" / "gh_session_id"
+    end
+
     def gh_intent(kind: :issue, text: "@chomper please guard nil", login: "thykel", id: 99)
-      GhIntent.new(item_id: "42", subject: "Fix the bug", branch: "bug/42-fix-the-bug",
+      GhIntent.new(item_id: "42", repo_name: "openproject", subject: "Fix the bug", branch: "bug/42-fix-the-bug",
                    repo: "o/r", head_repo: "fork/r", pr_number: 7, pr_url: "https://github.com/o/r/pull/7",
                    kind: kind, comment_id: id, text: text, user_login: login,
                    comment_at: "2024-02-01T00:00:00Z")
@@ -112,38 +127,38 @@ module Chomper
       assert_equal 1, @github.issue_posts.length, "reply should be posted to the PR conversation"
       assert_equal "🤖 Done — guarded the nil case.", @github.issue_posts.first[2]
       assert_equal ["[#42] Guard against a nil invoice total"],
-                   @agent.instance_variable_get(:@worktree).commits,
+                   @worktree.commits,
                    "the commit subject describes the change, not a generic placeholder"
-      assert_equal [["fork/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.pushed,
+      assert_equal [["fork/r", "bug/42-fix-the-bug", @repo.worktree_host]], @github.pushed,
                    "the commit is pushed to the PR's head repo (the fork) via the bot token"
-      assert_equal [["42", 1000]], @pull.recorded, "chomper's own reply id is recorded"
+      assert_equal [["42", "openproject", 1000]], @pull.recorded, "chomper's own reply id is recorded"
     end
 
     def test_commit_subject_is_generated_in_the_gh_session_and_falls_back
       capture_io { @agent.handle(gh_intent) }
       subject_run = @claude.runs.find { |r| r[:prompt].include?("commit subject line") }
       refute_nil subject_run, "a follow-up pass should generate the commit subject"
-      assert_equal (@ctx.state_dir / "items" / "42" / "gh_session_id"), subject_run[:session_file],
+      assert_equal gh_session_path, subject_run[:session_file],
                    "the subject is generated in the same session that made the change"
 
       # When the model returns nothing usable, fall back to the generic subject.
       blank = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(subject: "  "), github: @github)
-      blank.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: true))
+      @blank_wt = FakeWorktree.new(has_changes: true); inject_worktree(blank, @blank_wt)
       capture_io { blank.handle(gh_intent) }
-      assert_equal ["[#42] address PR feedback"], blank.instance_variable_get(:@worktree).commits
+      assert_equal ["[#42] address PR feedback"], @blank_wt.commits
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: false))
+      inject_worktree(@agent, @worktree = FakeWorktree.new(has_changes: false))
       @agent.handle(gh_intent(text: "@chomper does this handle empty input?"))
 
       assert_equal 1, @github.issue_posts.length
-      assert_empty @agent.instance_variable_get(:@worktree).commits
+      assert_empty @worktree.commits
       assert_empty @github.pushed
     end
 
     def test_review_comment_reply_lands_in_thread
-      @agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: false))
+      inject_worktree(@agent, @worktree = FakeWorktree.new(has_changes: false))
       capture_io { @agent.handle(gh_intent(kind: :review, id: 55)) }
 
       assert_empty @github.issue_posts
@@ -153,25 +168,25 @@ module Chomper
 
     def test_fetches_pr_head_over_https_and_resets_to_it
       capture_io { @agent.handle(gh_intent) }
-      assert_equal [["fork/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.fetched,
+      assert_equal [["fork/r", "bug/42-fix-the-bug", @repo.worktree_host]], @github.fetched,
                    "must fetch from the PR's head repo (the fork), not the base repo or the worktree's SSH origin"
-      assert_includes @agent.instance_variable_get(:@worktree).resets, "FETCH_HEAD"
+      assert_includes @worktree.resets, "FETCH_HEAD"
     end
 
     def test_implementation_runs_with_write_tools_and_a_gh_session
       capture_io { @agent.handle(gh_intent) }
       run = @claude.runs.first
       assert_equal Claude::TOOLS_IMPL, run[:tools]
-      assert_equal (@ctx.state_dir / "items" / "42" / "gh_session_id"), run[:session_file]
+      assert_equal gh_session_path, run[:session_file]
     end
 
     def test_handle_and_ack_marks_acted_and_reports_on_error
       agent = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(boom: true), github: @github)
-      agent.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: false))
+      inject_worktree(agent, FakeWorktree.new(has_changes: false))
 
       capture_io { agent.handle_and_ack(gh_intent) }
 
-      assert_equal [["42", "2024-02-01T00:00:00Z"]], @pull.acted, "acked despite the error → no replay"
+      assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted, "acked despite the error → no replay"
       assert(@github.issue_posts.any? { |p| p[2].include?("hit an error") }, "the failure should be reported on the PR")
     end
   end

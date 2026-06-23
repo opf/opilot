@@ -149,18 +149,12 @@ if _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_TOKEN)" ]; then
 fi
 
 # ── Load config ───────────────────────────────────────────────────────────
-_OP_REPO_PATH_RAW="$(_env_get OP_REPO_PATH)"
-if [[ "$_OP_REPO_PATH_RAW" == "false" ]]; then
-  OP_REPO_PATH="$SCRIPT_DIR/.chomper/openproject"
-  _CLONE_REPO=true
-else
-  OP_REPO_PATH="$(cd "$SCRIPT_DIR" && cd "$_OP_REPO_PATH_RAW" && pwd)"
-  _CLONE_REPO=false
-fi
+# Pass OP_REPO_PATH through to the runner as-is (a path, "false", or empty). The
+# repo registry (repos.json) is the source of truth for the set of repos; when
+# set, OP_REPO_PATH overrides only the openproject entry's local checkout — see
+# Chomper::Registry. Worktrees are provisioned per-repo below from `bin/repos`.
+OP_REPO_PATH="$(_env_get OP_REPO_PATH)"
 export OP_REPO_PATH
-# Mount path for compose (kept distinct from OP_REPO_PATH, whose .env value may
-# be relative or "false"); see the volumes comment in compose.yml.
-export OP_REPO="$OP_REPO_PATH"
 mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
 
 # Git identity — passed into the runner container so commits are authored by the
@@ -192,32 +186,57 @@ if [[ "$_needs_claude" == true ]]; then
     _USE_GATEWAY=true
   fi
 
-  WORKTREE="$SCRIPT_DIR/.chomper/openproject"
   # Git-level backstop (defense in depth on top of Clients::GitHub.protected_branch?):
-  # point this throwaway checkout at chomper's pre-push hook so no push from it can
-  # ever reach dev/release*, keyed on the destination ref. $SCRIPT_DIR resolves
-  # identically inside the runner container (same mount invariant as the worktree).
+  # point each throwaway checkout at chomper's pre-push hook so no push from it can
+  # ever reach a base/release branch, keyed on the destination ref. $SCRIPT_DIR
+  # resolves identically inside the runner container (same mount invariant).
   HOOKS_DIR="$SCRIPT_DIR/githooks"
-  if [[ "$_CLONE_REPO" == true ]]; then
-    if [ ! -d "$WORKTREE/.git" ]; then
-      echo "[ Cloning opf/openproject — this may take a few minutes ]"
-      git clone https://github.com/opf/openproject.git "$WORKTREE"
+  mkdir -p "$SCRIPT_DIR/.chomper/repos"
+
+  # (Re)generate the compose override that mounts each linked repo's shared
+  # checkout at its real host path. Remove first so the generating run sees a
+  # clean compose, then write it fresh from repos.json.
+  rm -f "$SCRIPT_DIR/compose.override.yml"
+  dc --progress quiet run --no-deps --rm runner ruby bin/repos override >/dev/null
+
+  # Provision each repo's worktree under .chomper/repos/<name>. `bin/repos list`
+  # emits real host paths, so the host git commands below line up with the mounts.
+  while IFS='|' read -r _name _upstream _base _shared; do
+    [ -z "$_name" ] && continue
+    WT="$SCRIPT_DIR/.chomper/repos/$_name"
+
+    # Migrate the legacy single worktree (.chomper/openproject) on first run.
+    if [[ "$_name" == "openproject" && -e "$SCRIPT_DIR/.chomper/openproject" && ! -e "$WT" ]]; then
+      echo "[ Migrating .chomper/openproject → .chomper/repos/openproject ]"
+      if [ -n "$_shared" ]; then
+        git -C "$_shared" worktree move "$SCRIPT_DIR/.chomper/openproject" "$WT" 2>/dev/null \
+          || mv "$SCRIPT_DIR/.chomper/openproject" "$WT"
+      else
+        mv "$SCRIPT_DIR/.chomper/openproject" "$WT"
+      fi
+    fi
+
+    if [ -n "$_shared" ]; then
+      # Linked worktree of a local checkout (fast, shares the object store).
+      git -C "$_shared" fetch --quiet origin "$_base" || true
+      if ! git -C "$WT" rev-parse --git-dir &>/dev/null; then
+        echo "[ Creating worktree for $_name (your checkout is untouched) ]"
+        git -C "$_shared" worktree add --detach "$WT" "origin/$_base"
+      fi
+      # Scope hooksPath to this worktree so the user's own repo stays untouched.
+      git -C "$WT" config extensions.worktreeConfig true
+      git -C "$WT" config --worktree core.hooksPath "$HOOKS_DIR"
     else
-      git -C "$WORKTREE" fetch --quiet origin dev
+      # Standalone clone — its config is chomper-owned, so a plain setting is isolated.
+      if [ ! -d "$WT/.git" ]; then
+        echo "[ Cloning $_upstream ($_base) — this may take a few minutes ]"
+        git clone --branch "$_base" "https://github.com/$_upstream.git" "$WT"
+      else
+        git -C "$WT" fetch --quiet origin "$_base" || true
+      fi
+      git -C "$WT" config core.hooksPath "$HOOKS_DIR"
     fi
-    # Standalone clone — its config is chomper-owned, so a plain local setting is isolated.
-    git -C "$WORKTREE" config core.hooksPath "$HOOKS_DIR"
-  else
-    git -C "$OP_REPO_PATH" fetch --quiet origin dev
-    if ! git -C "$WORKTREE" rev-parse --git-dir &>/dev/null; then
-      echo "[ Creating isolated worktree (your repo checkout is untouched) ]"
-      git -C "$OP_REPO_PATH" worktree add --detach "$WORKTREE" origin/dev
-    fi
-    # Linked worktree — scope hooksPath to this worktree (config.worktree) so the
-    # user's own repo and its hooks stay untouched.
-    git -C "$WORKTREE" config extensions.worktreeConfig true
-    git -C "$WORKTREE" config --worktree core.hooksPath "$HOOKS_DIR"
-  fi
+  done < <(dc --progress quiet run --no-deps --rm runner ruby bin/repos list)
   if [[ "$_USE_GATEWAY" == true ]]; then
     # proxy starts as claude's dependency; authgw is named explicitly so it only
     # runs in API-key mode (it requires the real key and would exit otherwise).

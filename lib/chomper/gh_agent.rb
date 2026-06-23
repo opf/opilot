@@ -68,26 +68,28 @@ module Chomper
       log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.message}"
       post_reply(intent, "sorry — I hit an error handling that comment:\n\n#{e.message}") rescue nil
     ensure
-      @pull.mark_acted(intent.item_id, intent.comment_at)
+      @pull.mark_acted(intent.item_id, intent.repo_name, intent.comment_at)
     end
 
     def handle(intent)
       log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} (#{intent.kind} comment)"
-      dir          = Helpers.item_dir(@ctx, intent.item_id)
-      item_file    = dir / "item.json"
-      plan_file    = dir / "plan.md"
-      pr_file      = dir / "pr.json"
-      session_file = dir / "gh_session_id"
+      repo         = @ctx.repos.by_upstream(intent.repo)
+      item_dir     = Helpers.item_dir(@ctx, intent.item_id)
+      pr_dir       = item_dir / "repos" / intent.repo_name
+      item_file    = item_dir / "item.json"
+      plan_file    = item_dir / "plan.md"
+      pr_file      = pr_dir / "pr.json"
+      session_file = pr_dir / "gh_session_id"
 
       # Fetch the PR head over HTTPS (never the worktree's possibly-SSH origin),
       # then sync the branch to it before Claude touches anything. The branch
       # lives in the PR's head repo — the user's fork — not the base repo.
-      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: @ctx.worktree_host)
-      checkout_pr_branch(intent.branch)
+      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
+      checkout_pr_branch(repo, intent.branch)
 
       plan_ref = Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
       prompt = Prompts.gh_reply(
-        worktree: @ctx.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
+        worktree: repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
         title: intent.subject, item: container_path(item_file), plan: plan_ref,
         pr_thread: container_path(pr_file), comment: intent.text.to_s,
         author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
@@ -95,7 +97,7 @@ module Chomper
       reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
-      push_followup(intent) if commit_followup(intent, session_file)
+      push_followup(intent, repo) if commit_followup(intent, repo, session_file)
     end
 
     private
@@ -122,21 +124,22 @@ module Chomper
           @github.add_issue_comment(intent.repo, intent.pr_number, text)
         end
       log_script "Replied on #{intent.repo}##{intent.pr_number}"
-      @pull.record_chomper_comment(intent.item_id, comment&.id)
+      @pull.record_chomper_comment(intent.item_id, intent.repo_name, comment&.id)
     rescue => e
       log_script "Reply failed on #{intent.repo}##{intent.pr_number}: #{e.message}"
     end
 
     # Commit whatever Claude changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
-    def commit_followup(intent, session_file)
+    def commit_followup(intent, repo, session_file)
       Helpers.adopt_github_author!(@ctx)
-      worktree.add(all: true)
-      diff = worktree.diff("HEAD")
+      wt = worktree(repo)
+      wt.add(all: true)
+      diff = wt.diff("HEAD")
       return false if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit(feedback_commit_message(intent, session_file))
-      c = worktree.log(1).execute.first
+      wt.commit(feedback_commit_message(intent, session_file))
+      c = wt.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(intent.item_id, intent.branch, "gh-commit")
       true
@@ -170,9 +173,9 @@ module Chomper
     # token, updating the draft PR. No confirmation: it's a draft PR on the bot's
     # fork and a maintainer still gates the merge, so nothing reaches the
     # canonical repo without human review.
-    def push_followup(intent)
+    def push_followup(intent, repo)
       target = head_repo(intent)
-      @github.push_branch(target, branch: intent.branch, worktree_path: @ctx.worktree_host)
+      @github.push_branch(target, branch: intent.branch, worktree_path: repo.worktree_host)
       log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
     end
 

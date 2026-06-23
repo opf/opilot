@@ -1,5 +1,6 @@
 require "pathname"
 require "rainbow"
+require_relative "repo"
 
 module Chomper
   FatalError = Class.new(StandardError)
@@ -7,8 +8,7 @@ module Chomper
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :claude_url, :github_token,
-                :worktree_host, :worktree_container, :state_container,
-                :op_url, :token, :repo_path
+                :state_container, :op_url, :token
     attr_reader   :allowed_emails, :allowed_gh_users
 
     def self.build(script_dir = nil)
@@ -23,12 +23,10 @@ module Chomper
       @log_file           = @state_dir / "chomp.log"
       @github_token       = ENV["GITHUB_TOKEN"]
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
-      @worktree_host      = @state_dir / "openproject"
-      @worktree_container = "/repo"
       @state_container    = "/state"
       @op_url             = ENV["OPENPROJECT_URL"]
       @token              = ENV["OPENPROJECT_TOKEN"]
-      @repo_path          = ENV["OP_REPO_PATH"] ? Pathname(ENV["OP_REPO_PATH"]) : nil
+      @op_repo_path       = ENV["OP_REPO_PATH"]
       # @chomper triggers are gated only when this list is non-empty; otherwise
       # every OpenProject user may trigger the agent.
       @allowed_emails        = ENV.fetch("CHOMPER_ALLOWED_EMAILS", "")
@@ -43,9 +41,39 @@ module Chomper
       @progress_file.open("a") {} # touch
     end
 
+    # The repo registry (repos.json, or a single openproject entry from
+    # OP_REPO_PATH). Lazy so teardown commands (status/reset) don't pay for it and
+    # a malformed repos.json only fails the modes that actually need a repo.
+    def repos
+      @repos ||= Registry.build(script_dir: @script_dir, state_dir: @state_dir,
+                                op_repo_path: @op_repo_path)
+    end
+
+    # The repo used when a flow hasn't chosen one (the registry's first entry).
+    def default_repo
+      repos.default
+    end
+
+    # Back-compat shims for the few call sites still phrased in the single-repo
+    # world; each resolves to the default repo.
+    def worktree_host
+      default_repo.worktree_host
+    end
+
+    def worktree_container
+      default_repo.worktree_container
+    end
+
+    def repo_path
+      default_repo.shared_repo_path
+    end
+
     def load_config!
-      raise FatalError, "Config not found — add OPENPROJECT_URL, OPENPROJECT_TOKEN, OP_REPO_PATH to .env and re-run." \
-        unless @op_url && @token && @repo_path
+      raise FatalError, "Config not found — add OPENPROJECT_URL and OPENPROJECT_TOKEN to .env and re-run." \
+        unless @op_url && @token
+      repos # build + validate the registry now, so a bad repos.json fails fast
+    rescue Registry::Error => e
+      raise FatalError, "Invalid repos.json — #{e.message}"
     end
 
     # Opt-in agent self-review of plans (default off). A human approves every plan

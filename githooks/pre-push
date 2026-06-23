@@ -9,7 +9,9 @@ set -euo pipefail
 
 while read -r _local_ref _local_sha remote_ref _remote_sha; do
   branch="${remote_ref#refs/heads/}"
-  if [[ "$branch" == "dev" || "$branch" == release* ]]; then
+  # Base/deploy branches across every product repo chomper targets (dev for
+  # openproject, main/master for the satellite repos) plus release*.
+  if [[ "$branch" == "dev" || "$branch" == "main" || "$branch" == "master" || "$branch" == release* ]]; then
     echo "pre-push: refusing to push to protected branch '$branch'" >&2
     exit 1
   fi

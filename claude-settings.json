@@ -6,6 +6,12 @@
         "hooks": [
           { "type": "command", "command": "node /app/guard-writes.js" }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "node /app/guard-bash.js" }
+        ]
       }
     ]
   }

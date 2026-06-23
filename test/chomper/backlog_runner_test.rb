@@ -65,22 +65,25 @@ module Chomper
     # The initial-plan path checks out a branch first; stub out git so the
     # plan-failure recovery flow can be exercised without a worktree.
     class NoGitRunner < BacklogRunner
-      private def checkout_branch(_st); end
+      private def checkout_branch(_st, _repo); end
     end
 
     def setup
       @tmpdir = Dir.mktmpdir
+      state_dir = Pathname(@tmpdir) / ".chomper"
+      state_dir.mkpath
+      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
-        :script_dir, :state_dir, :op_url, :token, :worktree_container, :state_container,
-        :repo_path, :log_file, :progress_file, :auto_plan_approval
+        :script_dir, :state_dir, :op_url, :token, :state_container,
+        :log_file, :progress_file, :auto_plan_approval, :repos
       ) do
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
+        def default_repo; repos.default; end
       end.new(
-        Pathname(@tmpdir), Pathname(@tmpdir) / ".chomper", "https://op.example.com", "tok",
-        "/repo", "/state", Pathname(@tmpdir),
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false
+        Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
+        "/state",
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, registry
       )
-      @ctx.state_dir.mkpath
 
       # WP schema for the filtered type carries the Module custom field.
       stub_request(:get, "https://op.example.com/api/v3/work_packages/schemas/STC-1")

@@ -159,23 +159,27 @@ module Chomper
     # or :needs_info / :rejected (having already posted the explanatory note).
     # `review: false` skips the internal reviewer pass (used by the fix express lane).
     def produce_plan(st, feedback, review: true)
-      checkout_branch(st)
-      item_c = container_path(st.item_file)
-      plan_c = container_path(st.plan_file)
+      # Planning is read-only across every repo's worktree (all mounted at
+      # /repos/<name>); the branch checkout waits until #ship, once Claude has
+      # chosen the target repo(s) in the plan.
+      item_c  = container_path(st.item_file)
+      plan_c  = container_path(st.plan_file)
       related = related_ref(st)
+      menu    = repos_for_prompt(@ctx.repos.all)
 
       if feedback && !feedback.empty? && st.plan_file.exist?
         log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
-        prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
+        prompt = Prompts.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
                                 resumed: session_resumable?(st), related: related)
         @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                         session_file: st.session_file)
+        record_chosen_repos(st)
         return :ok
       end
 
       log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
-      prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c,
+      prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
                             related: related)
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
@@ -188,6 +192,8 @@ module Chomper
         post_note(st.item_id, addressed("I need more information before I can plan a fix:\n\n#{questions}"))
         return :needs_info
       end
+
+      record_chosen_repos(st)
 
       return :ok unless review && @ctx.plan_review?   # reviewer is opt-in; human approval is the gate
 
@@ -219,34 +225,50 @@ module Chomper
     # Turn the saved plan into a draft PR. Idempotent/resumable: re-reports an
     # existing PR, and skips implementation when the branch already has commits.
     def ship(st)
-      if Helpers.file_has_content?(st.pr_url_file)
-        post_note(st.item_id, addressed("this is already shipped — #{st.pr_url_file.read.strip}"))
+      # Already shipped to every target repo? Re-report the existing PR links.
+      if st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
+        links = st.repos.map { |r| st.pr_url_file(r).read.strip }.join("\n")
+        post_note(st.item_id, addressed("this is already shipped —\n\n#{links}"))
         return
       end
 
-      checkout_branch(st)
-      unless branch_has_commits?(st)
-        log_script "Implementing fix for #{wp_label(st.item_id)}"
-        # Resuming the planning session carries its codebase exploration into
-        # implementation; --allowedTools is per-invocation, so the resumed
-        # session simply gains the write tools.
-        @claude.run(Prompts.implement(repo: @ctx.worktree_container, plan: container_path(st.plan_file),
+      st.repos.each { |r| checkout_branch(st, r) }
+
+      # Implement once across every target worktree (the resumed planning session
+      # carries its exploration in; --allowedTools just adds the write tools),
+      # unless every target repo already holds commits from an earlier pass.
+      unless st.repos.all? { |r| branch_has_commits?(st, r) }
+        log_script "Implementing fix for #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
+        @claude.run(Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                                       resumed: session_resumable?(st)),
                     tools: Claude::TOOLS_IMPL, session_file: st.session_file)
-        commit(st)
+        st.repos.each { |r| commit(st, r) }
       end
 
-      unless branch_has_commits?(st)
+      changed = st.repos.select { |r| branch_has_commits?(st, r) }
+      if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced, nothing to ship."
         post_note(st.item_id, addressed("I couldn't produce any changes for this — the plan may be a no-op or already applied."))
         return
       end
 
-      generate_pr_description(st)
-      url = @publish.open_pr(st.item_id, st.subject, st.branch)
-      if url
-        record_progress(st.item_id, st.branch, "shipped")
-        post_note(st.item_id, addressed("here's your draft PR: [#{st.subject}](#{url})"))
+      opened = []
+      failed = []
+      changed.each do |repo|
+        generate_pr_description(st, repo)
+        url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
+        if url
+          record_progress(st.item_id, st.branch, "shipped:#{repo.name}")
+          opened << [repo, url]
+        else
+          failed << repo
+        end
+      end
+
+      if opened.any?
+        links = opened.map { |repo, url| "- [#{st.subject} → `#{repo.name}`](#{url})" }.join("\n")
+        suffix = failed.any? ? "\n\n(couldn't open a PR in: #{failed.map(&:name).join(", ")} — is GITHUB_TOKEN set?)" : ""
+        post_note(st.item_id, addressed("here's your draft PR#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
       else
         post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
       end

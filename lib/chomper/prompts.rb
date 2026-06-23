@@ -10,10 +10,31 @@ module Chomper
     # harness also withholds the write tools, but saying so stops Claude from
     # wasting turns trying (and from posting "I need write permission" replies).
     READ_ONLY = <<~TEXT.strip
-      You are in READ-ONLY mode. Do NOT edit, create, or delete any file, run any
-      command, or implement/apply anything — only read and respond in text.
-      Implementation happens later, only when the user approves, in a separate step.
+      You are in READ-ONLY mode. Do NOT edit, create, or delete any file or
+      implement/apply anything — only read and respond in text. You MAY run
+      read-only git (log, show, blame, diff) to inspect history for context, but
+      no other commands. Implementation happens later, only when the user
+      approves, in a separate step.
     TEXT
+
+    # The AVAILABLE REPOS block + repo-selection instruction shared by plan/replan.
+    # `repos` is an array of { name:, path:, description: }; `summary` is the
+    # registry's top-level routing hint. Claude reads across the listed repos and
+    # declares its choice on the first line as `REPOS: <name>[, <name>…]`.
+    def self.repos_section(summary, repos)
+      listing = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})  — #{r[:description]}" }.join("\n")
+      hint = summary.to_s.strip.empty? ? "" : "\n#{summary.strip}"
+      <<~TEXT.strip
+        AVAILABLE REPOS — a fix may belong in one of these, or span several. Each is
+        checked out at the path shown; read across them as needed to decide.#{hint}
+        #{listing}
+
+        On the FIRST line of your output, before anything else, declare the repo(s)
+        this fix will touch:  REPOS: <name>[, <name>…]
+        Use only names from the list above. (If you instead emit NEEDS_INFO below,
+        omit the REPOS line.)
+      TEXT
+    end
 
     # A RELATED line for prompts that carry related-work-package context, or "" when
     # there is none (`related` is the container path to the related.json index, or
@@ -31,10 +52,11 @@ module Chomper
     # from a vague WP, the writer emits a NEEDS_INFO block and stops.
     # Agent#produce_plan detects that sentinel on the first line and posts the
     # questions back to the WP instead of saving a plan.
-    def self.plan(repo:, item:, item_id:, title:, hint: "", related: nil)
+    def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
       <<~PROMPT
-        PRODUCT REPO: #{repo}
+        #{repos_section(repos_summary, repos)}
+
         ISSUE:        #{item}  (JSON — fields: subject, description, comments[], version, files_touched)#{related_line(related)}#{focus}
         You are the WRITER. Produce a plan only.
         #{READ_ONLY}
@@ -61,7 +83,7 @@ module Chomper
     # WRITER: revise an existing plan to incorporate reviewer/user feedback.
     # `resumed:` — true when the call resumes a session that already holds the
     # plan and issue (skip the re-read); false for a fresh session (read first).
-    def self.replan(repo:, item:, plan:, feedback:, item_id:, title:, resumed: true, related: nil)
+    def self.replan(repos_summary:, repos:, item:, plan:, feedback:, item_id:, title:, resumed: true, related: nil)
       context_line =
         if resumed
           "The existing plan and the issue are already in this session's context — do NOT re-read them."
@@ -69,7 +91,8 @@ module Chomper
           "Read the existing plan and the issue from the paths above first."
         end
       <<~PROMPT
-        PRODUCT REPO:  #{repo}
+        #{repos_section(repos_summary, repos)}
+
         ISSUE:         #{item}
         EXISTING PLAN: #{plan}
         FEEDBACK:      #{feedback}#{related_line(related)}
@@ -114,28 +137,31 @@ module Chomper
     # IMPLEMENTER: apply the approved plan to the worktree (tools: Read/Write/Edit/Bash).
     # `resumed:` — true when the call resumes the planning session (the plan is
     # already in context); false for a fresh session (must read the plan first).
-    def self.implement(repo:, plan:, resumed: true)
+    def self.implement(repos:, plan:, resumed: true)
       plan_line =
         if resumed
           "The approved plan is already in this session's context — you produced it earlier.\n        Implement it now; do NOT re-read the plan file."
         else
           "Read the approved plan at the path above, then implement it."
         end
+      repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
       <<~PROMPT
-        PRODUCT REPO: #{repo}
+        TARGET REPO(S) — edit files ONLY within these worktrees, per the plan:
+        #{repo_list}
         APPROVED PLAN: #{plan}
 
         #{plan_line}
 
         This is the IMPLEMENTATION step — the one phase where you should edit files
-        in the worktree. The plan has been approved; apply it now.
+        in the worktree(s) above. The plan has been approved; apply it now.
 
         Check the current state of the worktree (uncommitted changes, existing work in progress).
         Continue from wherever things are — there may already be partial or complete work in place.
         Implement what's missing to fix the issue according to the plan.
         - Write tests as specified in the plan, then implement the fix
-        - You have no shell here: do NOT run tests, linters, builds, git, or any
-          command — only read and edit files. They are run later in review / CI.
+        - You may run READ-ONLY git (log, show, blame, diff) to inspect history
+          for context, but do NOT commit, push, run tests, linters, or builds, or
+          any other command — only read and edit files. Tests run later in review / CI.
         - Do not commit
       PROMPT
     end
@@ -251,8 +277,9 @@ module Chomper
         - Never modify CI/workflow/build/credential files (.github/, Gemfile, build or
           deploy config) unless the request is explicitly and solely about them.
         - Do NOT commit or push — the human reviews your commit and pushes it.
-        - You have no shell: do NOT run (or try to run) git, tests, linters, or builds,
-          and do NOT mention them or ask anyone to run them. CI runs lint and tests.
+        - You may run READ-ONLY git (log, show, blame, diff) to inspect history, but
+          do NOT commit, push, or run tests, linters, or builds (or ask anyone to).
+          CI runs lint and tests.
 
         Keep the reply terse — usually 1–3 sentences. Answer directly, or state what
         you changed and why. Do NOT restate the question, the plan, or the diff, and

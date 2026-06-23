@@ -11,7 +11,7 @@ module Chomper
   # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
   # is where the PR's branch actually lives (the user's fork) — what gh-agent
   # fetches from and pushes to.
-  GhIntent = Struct.new(:item_id, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
+  GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
                         keyword_init: true)
 
@@ -47,12 +47,18 @@ module Chomper
 
     attr_reader :scanned_count
 
-    # The item dirs gh-agent watches: those holding a shipped PR.
-    def shipped_item_dirs
-      dir = Helpers.items_dir(@ctx)
-      return [] unless dir.exist?
-      dir.children.select(&:directory?).sort
-         .select { |d| Helpers.file_has_content?(d / "pr_url.txt") }
+    # The per-repo PR dirs gh-agent watches: items/<id>/repos/<name>/ holding a
+    # shipped PR. A WP that shipped to several repos yields several dirs, each an
+    # independent PR with its own cache, act-state, and session.
+    def shipped_pr_dirs
+      root = Helpers.items_dir(@ctx)
+      return [] unless root.exist?
+      root.children.select(&:directory?).sort.flat_map do |item_dir|
+        repos_dir = item_dir / "repos"
+        next [] unless repos_dir.exist?
+        repos_dir.children.select(&:directory?).sort
+                 .select { |d| Helpers.file_has_content?(d / "pr_url.txt") }
+      end
     end
 
     # Poll every watched PR and return the new @chomper comments as GhIntents,
@@ -60,7 +66,7 @@ module Chomper
     # `scan_from_at` (ISO8601) is the floor cutoff entered at startup.
     def poll_intents(scan_from_at)
       @scan_from_at = scan_from_at
-      dirs = shipped_item_dirs
+      dirs = shipped_pr_dirs
       @scanned_count = dirs.length
       intents = []
       dirs.each do |d|
@@ -70,10 +76,15 @@ module Chomper
       intents
     end
 
+    # The per-repo PR dir items/<id>/repos/<name>/ for an intent's WP + repo.
+    def pr_dir(item_id, repo_name)
+      Helpers.item_dir(@ctx, item_id) / "repos" / repo_name.to_s
+    end
+
     # Advance a PR's replay cutoff past a comment we've acted on (mirrors
-    # Pull#mark_acted). Keyed by item id so GhAgent needn't carry the dir.
-    def mark_acted(item_id, comment_at)
-      dir   = Helpers.item_dir(@ctx, item_id)
+    # Pull#mark_acted). Keyed by item id + repo so each PR tracks its own state.
+    def mark_acted(item_id, repo_name, comment_at)
+      dir   = pr_dir(item_id, repo_name)
       state = gh_state(dir)
       state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
       Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
@@ -82,9 +93,9 @@ module Chomper
     # Remember a reply chomper posted so its own comment is never re-detected as
     # a trigger (mirrors Pull#record_chomper_comment). Capped so the list can't
     # grow without bound on a long-lived PR.
-    def record_chomper_comment(item_id, comment_id)
+    def record_chomper_comment(item_id, repo_name, comment_id)
       return unless comment_id
-      dir   = Helpers.item_dir(@ctx, item_id)
+      dir   = pr_dir(item_id, repo_name)
       state = gh_state(dir)
       ids   = (state["chomper_comment_ids"] || []).map(&:to_s)
       ids << comment_id.to_s unless ids.include?(comment_id.to_s)
@@ -94,7 +105,11 @@ module Chomper
 
     private
 
+    # `dir` is items/<id>/repos/<name>/ — the repo subdir holds the PR url, cache,
+    # and act-state; item.json/plan.md live one level up at the WP root.
     def intents_for_dir(dir)
+      repo_name = dir.basename.to_s
+      item_dir  = dir.parent.parent
       pr_url = (dir / "pr_url.txt").read.strip
       repo   = Clients::GitHub.repo_from_url(pr_url)
       number = Clients::GitHub.pr_number_from_url(pr_url)
@@ -106,8 +121,8 @@ module Chomper
 
       content = fetch_pr_content(dir, repo, number, pr)
 
-      item    = Helpers.safe_json_read(dir / "item.json") || {}
-      item_id = dir.basename.to_s
+      item    = Helpers.safe_json_read(item_dir / "item.json") || {}
+      item_id = item_dir.basename.to_s
       subject = item["subject"].to_s.empty? ? content["title"].to_s : item["subject"].to_s
 
       state  = gh_state(dir)
@@ -124,14 +139,14 @@ module Chomper
         # Off-allowlist comments still advance the cutoff so we don't re-evaluate
         # them every poll (mirrors Pull#intent_from_comments).
         unless allowed?(c["author"], pr_url)
-          mark_acted(item_id, c["created_at"])
+          mark_acted(item_id, repo_name, c["created_at"])
           next nil
         end
         # 👀 the trigger comment so the commenter sees it's being worked on,
         # mirroring the OpenProject agent's react_eyes.
         @github.react(repo, c["id"], kind: c["kind"].to_sym)
         GhIntent.new(
-          item_id: item_id, subject: subject, branch: content["head_ref"], repo: repo,
+          item_id: item_id, repo_name: repo_name, subject: subject, branch: content["head_ref"], repo: repo,
           head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,
           kind: c["kind"].to_sym, comment_id: c["id"], in_reply_to: c["in_reply_to"],
           text: c["body"], user_login: c["author"], comment_at: c["created_at"]

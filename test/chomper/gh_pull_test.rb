@@ -30,8 +30,9 @@ module Chomper
         Pathname(@tmpdir) / ".chomper", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log"
       )
       @dir = @ctx.state_dir / "items" / "42"
-      @dir.mkpath
-      (@dir / "pr_url.txt").write("https://github.com/o/r/pull/7\n")
+      @pr_dir = @dir / "repos" / "openproject"   # per-repo PR subdir
+      @pr_dir.mkpath
+      (@pr_dir / "pr_url.txt").write("https://github.com/o/r/pull/7\n")
       (@dir / "item.json").write(JSON.generate("subject" => "Fix the bug", "type" => "bug"))
     end
 
@@ -130,7 +131,7 @@ module Chomper
     def test_allowlist_rejects_other_users_and_advances_cutoff
       gh = pull(issue: [issue_c(id: 9, body: "@chomper do it", login: "rando", at: "2026-06-18T18:05:00Z")])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
-      state = JSON.parse((@dir / "gh_pr.json").read)
+      state = JSON.parse((@pr_dir / "gh_pr.json").read)
       assert_equal "2026-06-18T18:05:00Z", state["last_acted_comment_at"]
     end
 
@@ -141,7 +142,7 @@ module Chomper
 
     def test_skips_chompers_own_recorded_replies
       gh = pull(issue: [issue_c(id: 1, body: "@chomper hi", login: "thykel", at: "2026-06-18T18:05:00Z")])
-      gh.record_chomper_comment("42", 1)
+      gh.record_chomper_comment("42", "openproject", 1)
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
     end
 
@@ -157,7 +158,7 @@ module Chomper
       )
       gh.poll_intents("2000-01-01T00:00:00Z")
 
-      cache = JSON.parse((@dir / "pr.json").read)
+      cache = JSON.parse((@pr_dir / "pr.json").read)
       assert_equal "bug/42-fix-the-bug", cache["head_ref"]
       assert(cache["comments"].any? { |c| c["author"].include?("copilot") && c["diff_hunk"] },
              "Copilot's inline finding should be cached with its diff hunk")
@@ -175,7 +176,7 @@ module Chomper
       # reused, so the comment streams are NOT re-fetched and nothing new surfaces.
       gh2 = pull(issue: [issue_c(id: 1, body: "@chomper go", login: "thykel", at: "2026-06-18T18:05:00Z"),
                          issue_c(id: 2, body: "@chomper again", login: "thykel", at: "2026-06-18T18:06:00Z")])
-      gh2.record_chomper_comment("42", 1)            # id 1 already handled
+      gh2.record_chomper_comment("42", "openproject", 1)            # id 1 already handled
       intents = gh2.poll_intents("2000-01-01T00:00:00Z")
       assert_equal 0, @github.comment_fetches, "unchanged updated_at must reuse pr.json, not re-fetch"
       assert_empty intents
@@ -187,7 +188,7 @@ module Chomper
 
       gh2 = pull(issue: [issue_c(id: 2, body: "@chomper again", login: "thykel", at: "2026-06-18T18:30:00Z")],
                  pr_obj: pr(updated_at: "2026-06-18T18:30:00Z"))
-      gh2.record_chomper_comment("42", 1)
+      gh2.record_chomper_comment("42", "openproject", 1)
       intents = gh2.poll_intents("2000-01-01T00:00:00Z")
       assert_equal 1, @github.comment_fetches, "a changed updated_at must re-fetch the comment streams"
       assert_equal [2], intents.map(&:comment_id)
@@ -195,18 +196,19 @@ module Chomper
 
     def test_mark_acted_advances_to_the_latest
       gh = pull
-      gh.mark_acted("42", "2026-06-18T18:00:00Z")
-      gh.mark_acted("42", "2024-01-01T00:00:00Z") # older — must not regress
-      state = JSON.parse((@dir / "gh_pr.json").read)
+      gh.mark_acted("42", "openproject", "2026-06-18T18:00:00Z")
+      gh.mark_acted("42", "openproject", "2024-01-01T00:00:00Z") # older — must not regress
+      state = JSON.parse((@pr_dir / "gh_pr.json").read)
       assert_equal "2026-06-18T18:00:00Z", state["last_acted_comment_at"]
     end
 
     def test_only_watches_dirs_with_a_shipped_pr
       planned = @ctx.state_dir / "items" / "99"
       planned.mkpath
-      (planned / "plan.md").write("## Plan") # no pr_url.txt → not watched
+      (planned / "plan.md").write("## Plan") # no per-repo pr_url.txt → not watched
       gh = pull
-      assert_equal ["42"], gh.shipped_item_dirs.map { |d| d.basename.to_s }
+      # Each shipped PR dir is items/<id>/repos/<name>; the WP id is two levels up.
+      assert_equal ["42"], gh.shipped_pr_dirs.map { |d| d.parent.parent.basename.to_s }
     end
   end
 end

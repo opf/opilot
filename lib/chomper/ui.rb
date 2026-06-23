@@ -12,15 +12,17 @@ module Chomper
       dirs = items_dir.exist? ? items_dir.children.select(&:directory?).sort : []
 
       rows = dirs.filter_map do |dir|
+        # Per-repo PR urls live under items/<id>/repos/<name>/pr_url.txt — a WP may
+        # have shipped to several repos.
+        pr_files = (dir / "repos").exist? ? (dir / "repos").children.map { |d| d / "pr_url.txt" }.select(&:exist?) : []
         # Only work packages chomper has acted on — not every polled (cached) WP.
-        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? || (dir / "pr_url.txt").exist?
-        item    = Helpers.safe_json_read(dir / "item.json") || {}
-        pr_file = dir / "pr_url.txt"
+        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? || pr_files.any?
+        item = Helpers.safe_json_read(dir / "item.json") || {}
         {
           id:      dir.basename.to_s,
           subject: item["subject"] || "(unknown)",
           url:     item["url"],
-          pr_url:  pr_file.exist? ? pr_file.read.strip : nil
+          pr_urls: pr_files.map { |f| f.read.strip }
         }
       end
 
@@ -29,16 +31,16 @@ module Chomper
         return
       end
 
-      shipped = rows.count { |r| r[:pr_url] }
+      shipped = rows.count { |r| r[:pr_urls].any? }
       planned = rows.length - shipped
       puts ""
       puts "  📝 #{planned} planned   🚀 #{shipped} shipped"
       puts ""
       rows.each do |r|
-        flag = r[:pr_url] ? "🚀" : "📝"
+        flag = r[:pr_urls].any? ? "🚀" : "📝"
         puts "    #{flag} #{Rainbow(Helpers.wp_label(r[:id]).ljust(7)).bold}  #{Rainbow(r[:subject]).bold}"
-        puts "               #{r[:url]}"        if r[:url]
-        puts "               PR: #{r[:pr_url]}" if r[:pr_url]
+        puts "               #{r[:url]}" if r[:url]
+        r[:pr_urls].each { |u| puts "               PR: #{u}" }
       end
       puts ""
     end
@@ -54,18 +56,19 @@ module Chomper
         return
       end
 
-      if @ctx.repo_path
-        wt = @ctx.worktree_host
-        list = IO.popen(
-          ["git", "-C", @ctx.repo_path.to_s, "worktree", "list"],
-          err: IO::NULL, &:read
-        )
-        if list.include?(wt.to_s)
-          puts "  De-registering worktree #{wt}..."
-          system("git", "-C", @ctx.repo_path.to_s,
-                 "worktree", "remove", "--force", wt.to_s, err: IO::NULL)
-          system("git", "-C", @ctx.repo_path.to_s, "worktree", "prune", err: IO::NULL)
-        end
+      # De-register each linked worktree from the checkout it was added to.
+      # Standalone clones (no shared_repo_path) carry no external registration, so
+      # deleting .chomper/ below is enough for them.
+      registry = (@ctx.repos rescue nil)
+      registry&.all&.each do |repo|
+        src = repo.shared_repo_path
+        next unless src
+        wt = repo.worktree_host
+        list = IO.popen(["git", "-C", src.to_s, "worktree", "list"], err: IO::NULL, &:read)
+        next unless list.include?(wt.to_s)
+        puts "  De-registering worktree #{wt}..."
+        system("git", "-C", src.to_s, "worktree", "remove", "--force", wt.to_s, err: IO::NULL)
+        system("git", "-C", src.to_s, "worktree", "prune", err: IO::NULL)
       end
 
       puts "  Removing #{@ctx.state_dir}..."

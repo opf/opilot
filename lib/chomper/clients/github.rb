@@ -7,11 +7,16 @@ module Chomper
     # construct GitHub URLs directly.
     class GitHub
       # Branches the runner must never push to, regardless of what a work
-      # package's type/title produces. `dev` and `release*` are deploy targets;
-      # a fix branch always looks like `bug/<id>-<slug>`, so a push to one of
-      # these can only be a bug or a crafted WP and is refused outright.
+      # package's type/title produces. These are the base/deploy branches across
+      # every product repo chomper targets (`dev` for openproject, `main`/`master`
+      # for the satellite repos) plus `release*`. A fix branch always looks like
+      # `bug/<id>-<slug>`, so a push to one of these can only be a bug or a crafted
+      # WP and is refused outright — a static superset of the registry's bases, so
+      # the guard needs no registry to stay correct.
+      PROTECTED_BRANCHES = %w[dev main master].freeze
+
       def self.protected_branch?(branch)
-        branch == "dev" || branch.start_with?("release")
+        PROTECTED_BRANCHES.include?(branch) || branch.start_with?("release")
       end
 
       def initialize(token)
