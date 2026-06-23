@@ -349,7 +349,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Trigger agent interaction by assigning a WP to the chomper user
   * Load in related tickets (if scoped to the watched project)
   * Scan also other upstream OP PRs for any new mentions
-  * Re-add OP `<mention>` support for agent interactions
   * Extend OP polling to support multiple projects at once
   * Re-add linking of the plan as a gist & compact description
   * Craft a better feedback commit message than "[#ID] address PR feedback"

@@ -483,10 +483,35 @@ module Chomper
         .max_by { |c| c["created_at"] }
     end
 
-    # A comment triggers chomper when it contains the literal text "@chomper"
-    # (case-insensitive), either as plain text or inside a CKEditor mention element.
+    # A comment triggers chomper when it either contains the literal text
+    # "@chomper" (case-insensitive) or carries an OpenProject CKEditor mention
+    # element whose data-id is chomper's own user id. The literal match covers
+    # plain-text references and mentions that render the handle as text; the
+    # data-id match covers the OP-native @-mention (made via the editor's picker),
+    # which holds even when the bot's display name renders as a bare emoji and so
+    # contains no "chomper" text at all.
     def chomper_mentioned?(text)
-      text.to_s.match?(/\@chomper\b/i)
+      str = text.to_s
+      return true if str.match?(/\@chomper\b/i)
+      id = own_user_id
+      return false if id.empty?
+      str.match?(%r{<mention\b[^>]*\bdata-id="#{Regexp.escape(id)}"})
+    end
+
+    # Chomper's own OpenProject user id, derived from /users/me and memoized for
+    # the lifetime of this Pull (the nil result is cached too, so a failed lookup
+    # is not retried every comment). Used to recognise an OP-native @-mention of
+    # the bot. Returns "" when it can't be resolved, so detection falls back to
+    # the literal "@chomper" match.
+    def own_user_id
+      return @own_user_id if defined?(@own_user_id)
+      @own_user_id = begin
+        _, me = @api.me
+        me&.dig("_links", "self", "href").to_s.split("/").last.to_s
+      rescue => e
+        puts "  Warning: could not resolve chomper's own user id: #{e.message}"
+        ""
+      end
     end
 
     def mark_chomper_acted(wp_id, created_at)

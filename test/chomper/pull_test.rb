@@ -266,6 +266,10 @@ module Chomper
     def setup
       @tmpdir = Dir.mktmpdir
       @pull   = build_pull
+      # /users/me identifies chomper as user 1, so an OP-native @-mention by
+      # data-id is recognised as a trigger.
+      stub_request(:get, "https://example.com/api/v3/users/me")
+        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
     end
 
     def teardown
@@ -314,6 +318,10 @@ module Chomper
     end
 
     MENTION = %q(<mention class="mention" data-id="1" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
+
+    # An OP-native @-mention (made via the editor's picker) whose rendered handle
+    # is a bare emoji — it carries chomper's data-id but no "@chomper" text.
+    ID_MENTION = %q(<mention class="mention" data-id="1" data-type="user" data-text="🤖">🤖</mention>)
 
     def test_emits_intent_for_chomper_comment
       seed_item(1, "2024-01-02T00:00:00Z", [
@@ -405,6 +413,37 @@ module Chomper
       ])
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
       assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_emits_intent_for_op_native_mention_without_literal_handle
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{ID_MENTION} plan watch the edges" }
+      ])
+      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal :plan,              intents[0].command
+      assert_equal "watch the edges",  intents[0].text
+    end
+
+    def test_ignores_op_native_mention_of_a_different_user
+      other = %q(<mention class="mention" data-id="2" data-type="user" data-text="Alice">@Alice</mention>)
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{other} please take a look" }
+      ])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_chomper_mentioned_recognises_op_native_mention_by_id
+      assert @pull.send(:chomper_mentioned?, ID_MENTION)
+      assert @pull.send(:chomper_mentioned?, "@chomper plan")
+      refute @pull.send(:chomper_mentioned?, %q(<mention data-id="2">@Alice</mention> hi))
+      refute @pull.send(:chomper_mentioned?, "just a normal comment")
     end
 
     def test_first_module_title_takes_first_of_multiple
