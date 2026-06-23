@@ -190,13 +190,15 @@ if [[ "$_needs_claude" == true ]]; then
     if [ ! -d "$WT/.git" ]; then
       _url="https://github.com/$_upstream.git"
       echo "[ Cloning $_upstream ($_base)${_shared:+ — seeding from $_shared} ]"
+      # Seed from the local checkout when given (--reference-if-able), then
+      # --dissociate so the clone keeps no runtime dependency on it. A failed
+      # clone (e.g. a wrong base branch) warns and is skipped rather than
+      # aborting the whole launch — fix repos.json and re-run to pick it up.
       if [ -n "$_shared" ]; then
-        # Seed from the local checkout for speed, then --dissociate so the clone
-        # keeps no runtime dependency on it.
         git clone --reference-if-able "$_shared" --dissociate --branch "$_base" "$_url" "$WT"
       else
         git clone --branch "$_base" "$_url" "$WT"
-      fi
+      fi || { echo "  ⚠ Could not clone $_upstream ($_base) — skipping. Check its \"base\" in repos.json."; rm -rf "$WT"; continue; }
     else
       git -C "$WT" fetch --quiet origin "$_base" || true
     fi

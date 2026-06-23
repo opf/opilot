@@ -11,14 +11,14 @@
     {
       "name": "commonmark-ckeditor-build",
       "upstream": "opf/commonmark-ckeditor-build",
-      "base": "main",
+      "base": "master",
       "shared_repo_path": false,
       "description": "CKEditor 5 build powering OpenProject's CommonMark rich-text editor."
     },
     {
       "name": "op-blocknote-extensions",
       "upstream": "opf/op-blocknote-extensions",
-      "base": "main",
+      "base": "dev",
       "shared_repo_path": false,
       "description": "BlockNote editor extensions used by the next-gen rich-text editor."
     },
