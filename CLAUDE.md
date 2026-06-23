@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in isolated git worktrees, and opens draft PRs.
+`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in isolated git clones, and opens draft PRs.
 
-A fix can land in **one or more product repos**. The repos are defined in `repos.json` (a committed registry: a top-level `summary` plus a `repos` array, each with `name`, `upstream` owner/repo, `base` branch, optional `shared_repo_path` local checkout — else it clones — and a `description`). Claude is shown the registry during planning and declares the target repo(s) on the first line of the plan as `REPOS: <name>[, <name>…]`; `Helpers#record_chosen_repos` parses and stores them in `items/<id>/target_repos.json`. Each repo gets its own worktree at `.chomper/repos/<name>`, mounted into the claude container at `/repos/<name>`; the runner ships an independent branch + PR to each repo that actually changed (`Chomper::Registry`/`Chomper::Repo` in `lib/chomper/repo.rb`). When `repos.json` is absent it falls back to a single openproject entry from `OP_REPO_PATH`, so a single-repo setup is unchanged. `OP_REPO_PATH`, when set, overrides only the openproject entry's local checkout.
+A fix can land in **one or more product repos**. The repos are defined in `repos.json` (a committed registry: a top-level `summary` plus a `repos` array, each with `name`, `upstream` owner/repo, `base` branch, optional `shared_repo_path` local checkout to seed the clone from — else it clones fresh — and a `description`). Claude is shown the registry during planning and declares the target repo(s) on the first line of the plan as `REPOS: <name>[, <name>…]`; `Helpers#record_chosen_repos` parses and stores them in `items/<id>/target_repos.json`. Each repo is a self-contained clone at `.chomper/repos/<name>`, mounted into the claude container at `/repos/<name>`; the runner ships an independent branch + PR to each repo that actually changed (`Chomper::Registry`/`Chomper::Repo` in `lib/chomper/repo.rb`). `repos.json` is the single source of truth for the repo set; each repo's `shared_repo_path` is nil there by default (no machine-specific path in the committed config). The one env knob is `OP_REPO_PATH`: when set, it seeds *only* the openproject clone from that local checkout (`--reference-if-able … --dissociate`, a faster clone), applied in `Registry.override_openproject_seed!` and consumed only by `bin/repos`/provisioning. A wrong/absent path harmlessly falls back to a fresh clone.
 
 Modes:
 
@@ -48,7 +48,7 @@ Modes:
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
-./chomper reset     # de-register worktree, delete .chomper/
+./chomper reset     # delete .chomper/ (clones included)
 
 # Run all tests
 docker compose run --no-deps --rm runner bundle exec rake
@@ -70,16 +70,16 @@ Four Docker containers orchestrated by `compose.yml`:
 - **Authgw** (Node 20, `authgw.js`): holds the real `ANTHROPIC_API_KEY`. Validates the fixed gateway token (`CHOMPER_GW_TOKEN`, a non-secret handshake value set in `compose.yml`), injects `x-api-key`, and forwards (streaming) to a hardcoded `api.anthropic.com`. Not an open proxy, so it egresses directly; only inference traffic is redirected here, everything else still goes via the proxy. Keeps the key out of the untrusted claude container.
 - **Proxy** (tinyproxy): egress allowlist for the claude container — only hosts matching `tinyproxy-filter` (Anthropic endpoints, Rails docs) are reachable; everything else is denied.
 
-The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree creation) then invokes the runner container.
+The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each repo) then invokes the runner container.
 
-`compose.yml` mounts are keyed on `SCRIPT_DIR`, which `./chomper` exports as an absolute host path so the repo (and the worktrees under `.chomper/repos/`) mount at their real paths (the agent computes host paths that must resolve identically inside the container). It defaults to the current project when unset, so bare `docker compose run …` commands (e.g. tests) work from the repo root with no env prefix. Repos that use a local checkout (`shared_repo_path`) are *linked* worktrees whose `.git` points back to that checkout; `./chomper` therefore regenerates `compose.override.yml` (gitignored) on every run via `ruby bin/repos override`, mounting each such checkout at its real host path — into the runner (so its git resolves the gitdir link) and read-only into the claude container (so Claude's read-only git history works). `bin/repos list` drives the per-repo worktree provisioning loop in `./chomper`.
+`compose.yml` mounts are keyed on `SCRIPT_DIR`, which `./chomper` exports as an absolute host path so the repo (and the clones under `.chomper/repos/`) mount at their real paths (the agent computes host paths that must resolve identically inside the container). It defaults to the current project when unset, so bare `docker compose run …` commands (e.g. tests) work from the repo root with no env prefix. Each repo is a **standalone clone** under `.chomper/repos/<name>` (so a single static `.chomper/repos:/repos` mount covers them all — no per-repo source mounts). `./chomper` provisions them in a loop driven by `ruby bin/repos list`: it `git clone`s each repo, using `--reference-if-able <shared_repo_path> --dissociate` when a local checkout is configured so the clone is fast yet stays standalone (the openproject clone reuses your local object store without depending on it afterwards).
 
 ### Core Ruby modules (`lib/chomper/`)
 
 | File | Role |
 |------|------|
 | `context.rb` | Singleton config — env vars, paths, allowed emails, the repo registry (`#repos`) |
-| `repo.rb` | `Repo` value object + `Registry` — loads `repos.json` (or the `OP_REPO_PATH` fallback), resolves each repo's worktree host/container paths, `by_upstream`/`protected_bases` lookups |
+| `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream`/`protected_bases` lookups |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
 | `gh_pull.rb` | Polls chomper's open PRs; caches each PR's content (comments + reviews) in `pr.json` keyed by the PR's `updated_at`, skips closed/merged PRs, and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist) |
@@ -96,7 +96,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents.
 2. **Plan** — Claude (Read-only tools) produces `plan.md`. Opt-in reviewer pass (`CHOMPER_PLAN_REVIEW`, off by default) gates on PROCEED/REVISE/REJECT. NEEDS_INFO aborts with a comment.
-3. **Implement** — Claude (Read/Write/Edit + read-only Bash) works across each chosen repo's worktree branch (`bug/<id>-<slug>`) in one resumed session, then the runner commits `[<label>] <subject>` (matching the PR title) per repo where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
+3. **Implement** — Claude (Read/Write/Edit + read-only Bash) works across each chosen repo's clone on a fix branch (`bug/<id>-<slug>`) in one resumed session, then the runner commits `[<label>] <subject>` (matching the PR title) per repo where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
 4. **Publish** — For each chosen repo that actually changed, the branch is pushed to the **bot's fork** (`Clients::GitHub#ensure_fork`), commits authored by the bot (`Helpers.adopt_github_author!`), a draft PR opened against that repo's upstream and `base` branch (e.g. `dev` for openproject, `main` for the satellites) with a cross-repo head (`fork_owner:branch`) and `maintainer_can_modify: true`, and a reply posted to the WP with the PR link(s). `Publish#open_pr` takes the target `Repo` and drives upstream/base/worktree from it. With `CHOMPER_PR_MODE=direct` (`Context#direct_pr?`) it skips the fork and pushes straight to the canonical repo, opening a same-repo PR (head `upstream_owner:branch`) with `maintainer_can_modify: false` (GitHub 422s on a same-repo PR otherwise); this requires the token to have push access there. The `protected_branch?` guard (`dev`/`main`/`master`/`release*`) is the backstop in this mode.
 
 `:fix` intent always skips the reviewer (even when `CHOMPER_PLAN_REVIEW` is on) and combines plan + implement in one pass.
@@ -122,7 +122,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 │       ├── pr.json          # gh-agent cache of PR content (comments + reviews), keyed by PR updated_at
 │       ├── gh_pr.json       # gh-agent act-state: last_acted_comment_at + chomper's own reply ids
 │       └── gh_session_id    # gh-agent's Claude session (separate from session_id)
-├── repos/<repo_name>/       # this repo's isolated git worktree (mounted at /repos/<name>)
+├── repos/<repo_name>/       # this repo's isolated standalone clone (mounted at /repos/<name>)
 └── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
 ```
 
@@ -141,7 +141,7 @@ Runner POSTs to `http://claude:47291` with headers:
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token (needs read access to WPs and write access to post comments) |
-| `OP_REPO_PATH` | Convenience override for the openproject entry's local checkout: a path, or `false` to auto-clone. The full repo set (incl. base branches and the satellite repos) is defined in `repos.json` |
+| `OP_REPO_PATH` | Optional. Local openproject checkout to seed the openproject clone from (faster clone); absent → clones fresh. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_TOKEN` | Token for a **dedicated bot account** (not the operator) that is **not a collaborator on the canonical repo**. chomper forks as the bot, pushes branches there, and opens cross-repo PRs against upstream. Prompted by the setup wizard; use a classic `public_repo` token (the account's lack of canonical-repo access is what enforces isolation). Must be a personal/user account. Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch); set empty to disable the gate |

@@ -5,34 +5,28 @@ require "set"
 module Chomper
   # One product repo chomper can plan and ship fixes in. A work package's fix may
   # land in one repo or several; Claude chooses which (see Prompts.plan). Each
-  # repo gets its own isolated worktree under .chomper/repos/<name>, mounted into
-  # the claude container at /repos/<name>.
+  # repo is a self-contained clone under .chomper/repos/<name>, mounted into the
+  # claude container at /repos/<name>.
   #
-  # - name               slug; also the worktree dir name and container path tail
-  # - upstream           "owner/repo" to fork (fork mode) and open the PR against
+  # - name               slug; also the checkout dir name and container path tail
+  # - upstream           "owner/repo" to clone, fork (fork mode), and open the PR against
   # - base               PR base / branch-from point (e.g. "dev" or "main")
-  # - shared_repo_path   absolute Pathname of a local checkout to make a linked
-  #                      worktree from (fast), or nil to clone a standalone copy
+  # - shared_repo_path   absolute Pathname of a local checkout to seed the clone
+  #                      from (`git clone --reference-if-able … --dissociate`, so
+  #                      the clone is fast yet stays standalone), or nil to clone
+  #                      fresh from upstream
   # - description        one-line hint shown to Claude during repo selection
-  # - worktree_host      host path of this repo's worktree (.chomper/repos/<name>)
+  # - worktree_host      host path of this repo's checkout (.chomper/repos/<name>)
   # - worktree_container its path inside the claude container (/repos/<name>)
   Repo = Struct.new(:name, :upstream, :base, :shared_repo_path, :description,
-                    :worktree_host, :worktree_container, keyword_init: true) do
-    # True when the worktree is a linked worktree of a local checkout (so the
-    # runner must mount that checkout) rather than a standalone clone.
-    def linked?
-      !shared_repo_path.nil?
-    end
+                    :worktree_host, :worktree_container, keyword_init: true)
 
-    # "owner/repo" → "owner"; the head owner for a same-repo (direct) PR.
-    def upstream_owner
-      upstream.split("/").first
-    end
-  end
-
-  # The set of repos chomper works in, loaded from repos.json. When repos.json is
-  # absent, falls back to a single openproject entry built from OP_REPO_PATH, so a
-  # single-repo setup behaves exactly as before (just at the /repos/openproject path).
+  # The set of repos chomper works in, loaded from repos.json (the single source
+  # of truth). `op_repo_path:` (from the OP_REPO_PATH env var) optionally points
+  # the openproject clone at a local checkout to seed from — repos.json keeps
+  # shared_repo_path nil by default, so the committed config carries no
+  # machine-specific path. When no repos.json is present, it also synthesizes the
+  # single openproject fallback entry (used by tests).
   class Registry
     class Error < StandardError; end
 
@@ -51,31 +45,28 @@ module Chomper
         summary = doc["summary"].to_s
         entries = doc["repos"]
       else
-        # Single-repo fallback: one openproject entry from OP_REPO_PATH.
+        # No repos.json: synthesize a single openproject entry (op_repo_path seeds
+        # its clone). Production always ships a repos.json, so this is the test path.
         summary = ""
         entries = [{ "name" => "openproject", "upstream" => "opf/openproject",
                      "base" => "dev", "shared_repo_path" => op_repo_path.to_s }]
       end
 
       repos = entries.map { |e| build_repo(e, script_dir: script_dir, state_dir: Pathname(state_dir)) }
-      apply_op_repo_path_override!(repos, op_repo_path, script_dir) if config_path.exist?
+      # OP_REPO_PATH seeds the openproject clone from a local checkout. (For the
+      # no-repos.json fallback the entry already carries op_repo_path, so only
+      # override when repos.json supplied the entries.)
+      override_openproject_seed!(repos, op_repo_path, script_dir) if config_path.exist?
       new(summary: summary, repos: repos)
     end
 
-    # Bridge for setups that still point at their openproject checkout via the
-    # OP_REPO_PATH env var: when repos.json is present, let it override the
-    # openproject entry's shared_repo_path (a path → linked worktree; "false" →
-    # standalone clone). Other repos are governed solely by repos.json.
-    def self.apply_op_repo_path_override!(repos, op_repo_path, script_dir)
-      return if op_repo_path.to_s.strip.empty?
+    # Point the openproject clone at a local seed checkout, from OP_REPO_PATH.
+    # openproject-only — other repos always clone fresh. Empty/"false" = no seed.
+    def self.override_openproject_seed!(repos, op_repo_path, script_dir)
+      val = op_repo_path.to_s.strip
+      return if val.empty? || val.casecmp?("false")
       op = repos.find { |r| r.name == "openproject" }
-      return unless op
-      op.shared_repo_path =
-        if op_repo_path.to_s.strip.casecmp?("false")
-          nil
-        else
-          (script_dir / op_repo_path.to_s).expand_path
-        end
+      op.shared_repo_path = (Pathname(script_dir) / val).expand_path if op
     end
 
     def self.build_repo(entry, script_dir:, state_dir:)
@@ -85,8 +76,8 @@ module Chomper
         if entry["upstream"].to_s.empty?
 
       raw_path = entry["shared_repo_path"]
-      # `false`/absent/"" → standalone clone (nil); otherwise resolve relative to
-      # the chomper checkout, mirroring how ./chomper resolves OP_REPO_PATH.
+      # `false`/absent/"" → clone fresh from upstream (nil); otherwise resolve the
+      # seed checkout relative to the chomper checkout.
       shared = if raw_path.nil? || raw_path == false || raw_path.to_s.strip.empty?
                  nil
                else

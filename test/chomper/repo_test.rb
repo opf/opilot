@@ -36,12 +36,30 @@ module Chomper
       assert_equal "dev", op.base
       assert_equal @state_dir / "repos" / "openproject", op.worktree_host
       assert_equal "/repos/openproject", op.worktree_container
-      assert_equal (@tmpdir / "../openproject").expand_path, op.shared_repo_path
-      assert op.linked?
+      assert_equal (@tmpdir / "../openproject").expand_path, op.shared_repo_path,
+                   "a local checkout seeds the clone (--reference-if-able)"
 
       ck = reg["ckeditor"]
-      assert_nil ck.shared_repo_path
-      refute ck.linked?, "shared_repo_path:false means a standalone clone"
+      assert_nil ck.shared_repo_path, "shared_repo_path:false means a fresh clone from upstream"
+    end
+
+    def test_op_repo_path_seeds_only_the_openproject_clone
+      write_repos("repos" => [
+        { "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev", "shared_repo_path" => false },
+        { "name" => "ck", "upstream" => "opf/commonmark-ckeditor-build", "shared_repo_path" => false }
+      ])
+      reg = Registry.build(script_dir: @tmpdir, state_dir: @state_dir, op_repo_path: "../openproject")
+      assert_equal (@tmpdir / "../openproject").expand_path, reg["openproject"].shared_repo_path,
+                   "OP_REPO_PATH seeds the openproject clone"
+      assert_nil reg["ck"].shared_repo_path, "other repos are unaffected by OP_REPO_PATH"
+    end
+
+    def test_op_repo_path_false_or_blank_is_no_seed
+      write_repos("repos" => [{ "name" => "openproject", "upstream" => "opf/openproject", "shared_repo_path" => false }])
+      %w[false FALSE].each do |v|
+        assert_nil Registry.build(script_dir: @tmpdir, state_dir: @state_dir, op_repo_path: v)["openproject"].shared_repo_path
+      end
+      assert_nil Registry.build(script_dir: @tmpdir, state_dir: @state_dir, op_repo_path: "")["openproject"].shared_repo_path
     end
 
     def test_default_is_first_entry

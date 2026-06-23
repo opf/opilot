@@ -5,8 +5,8 @@
       "name": "openproject",
       "upstream": "opf/openproject",
       "base": "dev",
-      "shared_repo_path": "../openproject",
-      "description": "OpenProject monorepo (Rails backend + Angular frontend)."
+      "shared_repo_path": false,
+      "description": "OpenProject monorepo (Rails backend + Angular frontend). Set OP_REPO_PATH to a local checkout to seed a faster clone."
     },
     {
       "name": "commonmark-ckeditor-build",

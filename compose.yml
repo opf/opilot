@@ -18,11 +18,8 @@ services:
     # at its real host path so the paths the agent computes resolve identically
     # inside the container. When unset — e.g. a bare `docker compose run runner …`
     # for tests — it falls back to mounting the current project at a fixed path,
-    # so no SCRIPT_DIR=… prefix is needed. The worktrees live under
-    # .chomper/repos/<name> (covered by this mount). For repos that are *linked*
-    # worktrees of a local checkout, that checkout is mounted at its real host
-    # path by the generated compose.override.yml so the runner's git can resolve
-    # the worktree's gitdir link.
+    # so no SCRIPT_DIR=… prefix is needed. Each repo's standalone clone lives under
+    # .chomper/repos/<name>, covered by this single mount.
     volumes:
       - ${SCRIPT_DIR:-.}:${SCRIPT_DIR:-/chomper}
     environment:
@@ -42,6 +39,7 @@ services:
       - CHOMPER_PLAN_REVIEW
       - AUTO_PLAN_APPROVAL
       - CHOMPER_MARKDOWN
+      # Optional: seeds the openproject clone from a local checkout (bin/repos).
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/chomper}
     stdin_open: true
@@ -67,10 +65,8 @@ services:
     working_dir: /repos
     volumes:
       - ${SCRIPT_DIR:-.}/.chomper/claude-auth:/home/node/.claude
-      # Every repo's worktree, at /repos/<name>. Claude reads/edits files here and
-      # browses git history (read-only). Linked-worktree repos also get their
-      # shared checkout mounted read-only via compose.override.yml so `git log`
-      # resolves the gitdir link.
+      # Every repo's standalone clone, at /repos/<name>. Claude reads/edits files
+      # here and browses git history (read-only) — each clone carries its own .git.
       - ${SCRIPT_DIR:-.}/.chomper/repos:/repos
       # Read-only: claude only reads item/plan files from here; the runner is the
       # sole writer of .chomper state. Defense-in-depth beyond the write-guard hook.

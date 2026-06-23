@@ -6,8 +6,8 @@ module Chomper
   # (GhAgent) together in one single-threaded process. Each tick polls GitHub
   # first, then OpenProject, handling intents one at a time.
   #
-  # Single-threaded on purpose: both loops drive the *same* git worktree
-  # (.chomper/openproject), so their work must be serialized anyway — running
+  # Single-threaded on purpose: both loops drive the *same* repo clones
+  # (.chomper/repos/<name>), so their work must be serialized anyway — running
   # them in parallel would just need a lock around every checkout. Interleaving
   # one tick of each per cycle gives "watch both sources from one command"
   # without the concurrency hazards.

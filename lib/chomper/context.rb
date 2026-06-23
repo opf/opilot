@@ -26,7 +26,6 @@ module Chomper
       @state_container    = "/state"
       @op_url             = ENV["OPENPROJECT_URL"]
       @token              = ENV["OPENPROJECT_TOKEN"]
-      @op_repo_path       = ENV["OP_REPO_PATH"]
       # @chomper triggers are gated only when this list is non-empty; otherwise
       # every OpenProject user may trigger the agent.
       @allowed_emails        = ENV.fetch("CHOMPER_ALLOWED_EMAILS", "")
@@ -41,31 +40,16 @@ module Chomper
       @progress_file.open("a") {} # touch
     end
 
-    # The repo registry (repos.json, or a single openproject entry from
-    # OP_REPO_PATH). Lazy so teardown commands (status/reset) don't pay for it and
-    # a malformed repos.json only fails the modes that actually need a repo.
+    # The repo registry, loaded from repos.json. Lazy so teardown commands
+    # (status/reset) don't pay for it and a malformed repos.json only fails the
+    # modes that actually need a repo.
     def repos
-      @repos ||= Registry.build(script_dir: @script_dir, state_dir: @state_dir,
-                                op_repo_path: @op_repo_path)
+      @repos ||= Registry.build(script_dir: @script_dir, state_dir: @state_dir)
     end
 
     # The repo used when a flow hasn't chosen one (the registry's first entry).
     def default_repo
       repos.default
-    end
-
-    # Back-compat shims for the few call sites still phrased in the single-repo
-    # world; each resolves to the default repo.
-    def worktree_host
-      default_repo.worktree_host
-    end
-
-    def worktree_container
-      default_repo.worktree_container
-    end
-
-    def repo_path
-      default_repo.shared_repo_path
     end
 
     def load_config!

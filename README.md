@@ -81,8 +81,8 @@ cd openproject-chomper
 │   │   POST / → `claude -p`                   │──▶│ (:8888)     ├────┼──▶│ Anthropic telemetry,   │
 │   │                                          │   │ egress      │    │   │ Rails docs (allowlist) │
 │   │ volumes:                                 │   │ allowlist   │    │   └────────────────────────┘
-│   │   .chomper/            → /state  (ro)    │   └─────────────┘    │
-│   │   .chomper/openproject → /repo   (rw)    │   ┌── authgw ───┐    │   ┌────────────────────────┐
+│   │   .chomper/        → /state  (ro)        │   └─────────────┘    │
+│   │   .chomper/repos   → /repos  (rw)        │   ┌── authgw ───┐    │   ┌────────────────────────┐
 │   │                                          │   │ injects     │    │   │ api.anthropic.com      │
 │   │ no real API key — inference via authgw,  │──▶│ x-api-key   ├────┼──▶│ (inference)            │
 │   │ everything else via proxy; internal-only │   │ (real key)  │    │   └────────────────────────┘
@@ -110,9 +110,10 @@ comments), so it is boxed in from several directions:
   trades this away — OAuth creds then live in the claude container, though the
   egress allowlist still limits where they could go.)
 * **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
-  file mutation outside `/repo`, and the `.chomper` state dir is additionally
-  mounted **read-only** (`/state`), so plans, cached state, and session files
-  can't be tampered with even if the hook were bypassed.
+  file mutation outside `/repos`, a second hook (`guard-bash.js`) confines Bash to
+  read-only git, and the `.chomper` state dir is additionally mounted **read-only**
+  (`/state`), so plans, cached state, and session files can't be tampered with
+  even if the hook were bypassed.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
   `no-new-privileges`, and no OpenProject/GitHub tokens or Anthropic API key in
   the environment.
@@ -135,7 +136,7 @@ comments), so it is boxed in from several directions:
 | `./chomper backlog skip <id>` | Park a WP until the next triage, without walking the queue — local only, starts no containers |
 | `./chomper fix <id>...` | Plan and ship one or more work packages by id, with the same terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
 | `./chomper status` | List the work packages chomper has planned or shipped |
-| `./chomper reset` | De-register any git worktrees and delete `.chomper/` (fresh start) |
+| `./chomper reset` | Delete `.chomper/` — clones included — for a fresh start |
 | `./chomper --help` | Show usage |
 
 ### `./chomper backlog` flow
@@ -236,16 +237,16 @@ openproject-chomper/
 ├── progress.txt         ← progress log
 ├── chomp.log            ← full prompt + response log
 ├── claude-auth/         ← claude CLI config (holds OAuth login creds when no API key is set)
-├── openproject/         ← git worktree or fresh clone of openproject
+├── repos/<name>/        ← each repo's standalone clone (mounted at /repos/<name>)
 └── items/
     └── <id>/
-        ├── item.json        ← full WP metadata + last_acted_comment_at (poll cache)
-        ├── plan.md          ← implementation plan (present = "has a plan")
-        ├── review.txt       ← Reviewer's critique (deleted after plan review)
-        ├── pr.md            ← generated PR description
-        ├── pr_url.txt       ← PR URL (present = "shipped")
-        ├── backlog_done.txt ← backlog outcome: "dropped" (permanent skip)
-        └── session_id       ← Claude session ID for per-WP chat continuity
+        ├── item.json         ← full WP metadata + last_acted_comment_at (poll cache)
+        ├── plan.md           ← implementation plan (present = "has a plan")
+        ├── review.txt        ← Reviewer's critique (deleted after plan review)
+        ├── target_repos.json ← repo(s) Claude chose for this WP
+        ├── backlog_done.txt  ← backlog outcome: "dropped" (permanent skip)
+        ├── session_id        ← Claude session ID for per-WP chat continuity
+        └── repos/<name>/     ← per target repo: pr.md, pr_url.txt (present = "shipped"), gh-agent caches
 ```
 
 ---

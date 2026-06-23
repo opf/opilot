@@ -19,13 +19,16 @@ module Chomper
       assert_equal Pathname(@tmpdir) / ".chomper", @ctx.state_dir
     end
 
-    def test_worktree_host_under_state_dir
-      assert_equal @ctx.state_dir / "repos" / "openproject", @ctx.worktree_host
+    def test_state_container_is_fixed
+      assert_equal "/state", @ctx.state_container
     end
 
-    def test_container_paths_are_fixed
-      assert_equal "/repos/openproject", @ctx.worktree_container
-      assert_equal "/state",             @ctx.state_container
+    def test_default_repo_comes_from_the_registry
+      # With no repos.json in the tmpdir, the registry falls back to a single
+      # openproject entry; its checkout lives under .chomper/repos/<name>.
+      assert_equal "openproject", @ctx.default_repo.name
+      assert_equal @ctx.state_dir / "repos" / "openproject", @ctx.default_repo.worktree_host
+      assert_equal "/repos/openproject", @ctx.default_repo.worktree_container
     end
 
     def test_load_config_raises_when_env_vars_missing

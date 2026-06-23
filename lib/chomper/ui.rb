@@ -47,28 +47,14 @@ module Chomper
 
     def reset
       puts ""
-      puts "This will de-register the worktree and delete .chomper/ entirely."
+      puts "This will delete .chomper/ entirely (each repo is a standalone clone,"
+      puts "so nothing outside .chomper/ is touched)."
       print "  Confirm? [y/N] "
       yn = $stdin.gets.chomp
       unless yn.downcase.start_with?("y")
         puts "Aborted."
         puts ""
         return
-      end
-
-      # De-register each linked worktree from the checkout it was added to.
-      # Standalone clones (no shared_repo_path) carry no external registration, so
-      # deleting .chomper/ below is enough for them.
-      registry = (@ctx.repos rescue nil)
-      registry&.all&.each do |repo|
-        src = repo.shared_repo_path
-        next unless src
-        wt = repo.worktree_host
-        list = IO.popen(["git", "-C", src.to_s, "worktree", "list"], err: IO::NULL, &:read)
-        next unless list.include?(wt.to_s)
-        puts "  De-registering worktree #{wt}..."
-        system("git", "-C", src.to_s, "worktree", "remove", "--force", wt.to_s, err: IO::NULL)
-        system("git", "-C", src.to_s, "worktree", "prune", err: IO::NULL)
       end
 
       puts "  Removing #{@ctx.state_dir}..."
