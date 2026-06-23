@@ -43,6 +43,17 @@ module Chomper
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}", token: @token)
       end
 
+      # Relations a work package participates in. Uses the global relations
+      # endpoint with an `involved` filter (the per-WP route only 308-redirects,
+      # which our Net::HTTP client won't follow). `involved_id` must be the
+      # NUMERIC id — the involved filter coerces values to integers — and the
+      # endpoint only returns relations whose BOTH sides are visible to the
+      # token, so an unreachable related WP is filtered out server-side.
+      def work_package_relations(involved_id)
+        filters = HTTP.encode_filters(%Q([{"involved":{"operator":"=","values":["#{involved_id}"]}}]))
+        HTTP.get_json("#{@base}/api/v3/relations?filters=#{filters}&pageSize=100", token: @token)
+      end
+
       def work_package_activities(wp_id)
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}/activities", token: @token)
       end

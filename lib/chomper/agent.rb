@@ -117,7 +117,8 @@ module Chomper
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
       prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
-                            plan: plan_ref, message: intent.text.to_s)
+                            plan: plan_ref, message: intent.text.to_s,
+                            related: related_ref(st))
       reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
@@ -161,12 +162,13 @@ module Chomper
       checkout_branch(st)
       item_c = container_path(st.item_file)
       plan_c = container_path(st.plan_file)
+      related = related_ref(st)
 
       if feedback && !feedback.empty? && st.plan_file.exist?
         log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
         prompt = Prompts.replan(repo: @ctx.worktree_container, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
-                                resumed: session_resumable?(st))
+                                resumed: session_resumable?(st), related: related)
         @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                         session_file: st.session_file)
         return :ok
@@ -174,7 +176,8 @@ module Chomper
 
       log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
       prompt = Prompts.plan(repo: @ctx.worktree_container, item: item_c,
-                            item_id: st.item_id, title: st.subject, hint: feedback.to_s)
+                            item_id: st.item_id, title: st.subject, hint: feedback.to_s,
+                            related: related)
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                       session_file: st.session_file)
 

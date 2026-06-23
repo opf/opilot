@@ -120,6 +120,77 @@ module Chomper
       path.exist? ? JSON.parse(path.read) : nil
     end
 
+    # Work packages related to `wp_id` — its explicit relations (relates, blocks,
+    # precedes, duplicates, …) plus its parent and direct children — each
+    # materialised to its own item.json (via fetch_single_item) so a handler can
+    # let Claude read the full detail on demand. Returns an array of
+    # { "id", "relation", "subject", "status" } refs (display ids).
+    #
+    # Best-effort: any failure yields [] (or drops the offending WP) so it can
+    # never break the ping it's enriching. Unreachable WPs are naturally excluded
+    # — the relations endpoint omits relations to invisible WPs, and a parent/
+    # child we can't fetch returns nil from fetch_single_item and is skipped.
+    MAX_RELATED = 15
+
+    def related_work_packages(wp_id)
+      code, wp = @api.work_package(wp_id)
+      return [] unless code == 200 && wp
+      numeric_id = wp["id"].to_s
+
+      pairs = relation_pairs(numeric_id) + hierarchy_pairs(wp)
+      pairs.uniq! { |id, _label| id }
+      if pairs.length > MAX_RELATED
+        puts "  #{Helpers.wp_label(wp_id)}: #{pairs.length} related WPs found — using the first #{MAX_RELATED}."
+        pairs = pairs.first(MAX_RELATED)
+      end
+
+      pairs.filter_map do |id, label|
+        data = fetch_single_item(id)
+        next unless data
+        { "id" => data["id"], "relation" => label, "subject" => data["subject"], "status" => data["status"] }
+      end
+    rescue => e
+      puts "  Warning: could not gather related WPs for #{Helpers.wp_label(wp_id)} (#{e.message})."
+      []
+    end
+
+    # [related_numeric_id, relation_label] for each explicit relation involving
+    # the WP. The label is taken from the WP's own perspective: `type` when it is
+    # the relation's `from`, `reverseType` when it is the `to`.
+    private def relation_pairs(numeric_id)
+      code, resp = @api.work_package_relations(numeric_id)
+      return [] unless code == 200 && resp
+      (resp.dig("_embedded", "elements") || []).filter_map do |rel|
+        from = href_id(rel.dig("_links", "from", "href"))
+        to   = href_id(rel.dig("_links", "to", "href"))
+        if from == numeric_id
+          [to, rel["type"]]
+        else
+          [from, rel["reverseType"]]
+        end
+      end
+    end
+
+    # [related_numeric_id, label] for the WP's parent and direct children, read
+    # straight from the WP resource's _links (no extra request).
+    private def hierarchy_pairs(wp)
+      pairs = []
+      if (parent = href_id(wp.dig("_links", "parent", "href")))
+        pairs << [parent, "parent"]
+      end
+      Array(wp.dig("_links", "children")).each do |child|
+        id = href_id(child["href"])
+        pairs << [id, "child"] if id
+      end
+      pairs
+    end
+
+    # The trailing id of a work-package href ("/api/v3/work_packages/108" → "108").
+    private def href_id(href)
+      id = href.to_s.split("/").last
+      id.to_s.empty? ? nil : id
+    end
+
     # Saved filters without the reuse prompt, or nil when none are saved.
     # `backlog show` presents cached data, so it takes whatever is on disk.
     def saved_backlog_filters

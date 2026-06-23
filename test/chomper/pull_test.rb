@@ -555,4 +555,113 @@ module Chomper
       assert_equal FILTERS.version_ids, data["version_ids"]
     end
   end
+
+  class PullRelatedTest < Minitest::Test
+    def setup
+      @tmpdir = Dir.mktmpdir
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_emails)
+                  .new("https://example.com", Pathname(@tmpdir), "tok", [])
+      @pull = Pull.new(ctx)
+    end
+
+    def teardown
+      FileUtils.rm_rf(@tmpdir)
+    end
+
+    def wp_body(id, status: "New", links: {})
+      {
+        "id" => id, "subject" => "WP #{id}",
+        "createdAt" => "2024-01-01T00:00:00Z", "updatedAt" => "2024-01-02T00:00:00Z",
+        "_embedded" => { "status" => { "name" => status }, "type" => { "name" => "Bug" } },
+        "_links" => links
+      }
+    end
+
+    # Stub the three GETs fetch_single_item makes for one WP.
+    def stub_full_wp(id, status: "New", code: 200)
+      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}")
+        .to_return(status: code, body: code == 200 ? JSON.generate(wp_body(id, status: status)) : "{}")
+      return unless code == 200
+      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+    end
+
+    def rel(from:, to:, type:, reverse:)
+      { "type" => type, "reverseType" => reverse,
+        "_links" => { "from" => { "href" => "/api/v3/work_packages/#{from}" },
+                      "to"   => { "href" => "/api/v3/work_packages/#{to}" } } }
+    end
+
+    def stub_relations(*rels)
+      stub_request(:get, %r{/api/v3/relations})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => rels } }))
+    end
+
+    # Stub the pinged WP (id 100) with the given _links; never fetched as a related item.
+    def stub_pinged(links)
+      stub_request(:get, "https://example.com/api/v3/work_packages/100")
+        .to_return(status: 200, body: JSON.generate(wp_body(100, links: links)))
+    end
+
+    def test_gathers_relations_and_hierarchy_with_correct_labels
+      stub_pinged("parent"   => { "href" => "/api/v3/work_packages/50" },
+                  "children" => [{ "href" => "/api/v3/work_packages/60" }])
+      stub_relations(
+        rel(from: 100, to: 200, type: "relates", reverse: "relates"),  # pinged is `from` → type
+        rel(from: 300, to: 100, type: "blocks",  reverse: "blocked")   # pinged is `to`   → reverseType
+      )
+      [200, 300, 50, 60].each { |id| stub_full_wp(id) }
+
+      refs  = @pull.related_work_packages("100")
+      by_id = refs.to_h { |r| [r["id"], r["relation"]] }
+      assert_equal "relates", by_id["200"]
+      assert_equal "blocked", by_id["300"]
+      assert_equal "parent",  by_id["50"]
+      assert_equal "child",   by_id["60"]
+      assert (Pathname(@tmpdir) / "items" / "200" / "item.json").exist?, "related WPs are cached to disk"
+      assert_equal "New", refs.find { |r| r["id"] == "200" }["status"]
+    end
+
+    def test_unreachable_related_wps_are_skipped_without_leaking
+      stub_pinged("children" => [{ "href" => "/api/v3/work_packages/60" },
+                                 { "href" => "/api/v3/work_packages/70" }])
+      stub_relations(rel(from: 100, to: 200, type: "relates", reverse: "relates"))
+      stub_full_wp(60)                 # reachable
+      stub_full_wp(70, code: 403)      # forbidden
+      stub_full_wp(200, code: 404)     # not found
+
+      refs = @pull.related_work_packages("100")
+      ids  = refs.map { |r| r["id"] }
+      assert_equal ["60"], ids, "only the reachable child survives"
+      refute (Pathname(@tmpdir) / "items" / "70" / "item.json").exist?
+    end
+
+    def test_relations_endpoint_failure_still_yields_hierarchy
+      stub_pinged("parent" => { "href" => "/api/v3/work_packages/50" })
+      stub_request(:get, %r{/api/v3/relations}).to_return(status: 403, body: "{}")
+      stub_full_wp(50)
+
+      refs = @pull.related_work_packages("100")
+      assert_equal [["50", "parent"]], refs.map { |r| [r["id"], r["relation"]] }
+    end
+
+    def test_returns_empty_when_pinged_wp_unfetchable
+      stub_request(:get, "https://example.com/api/v3/work_packages/100").to_return(status: 404, body: "{}")
+      assert_equal [], @pull.related_work_packages("100")
+    end
+
+    def test_caps_related_work_packages_and_logs
+      children = (1..20).map { |n| { "href" => "/api/v3/work_packages/#{n}" } }
+      stub_pinged("children" => children)
+      stub_relations
+      (1..20).each { |id| stub_full_wp(id) }
+
+      refs = nil
+      out, = capture_io { refs = @pull.related_work_packages("100") }
+      assert_equal Pull::MAX_RELATED, refs.length
+      assert_match(/using the first #{Pull::MAX_RELATED}/, out)
+    end
+  end
 end

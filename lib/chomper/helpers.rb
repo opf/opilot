@@ -95,8 +95,8 @@ module Chomper
     # Per-WP working state: just the paths under items/<id>/ plus the branch.
     # Shared by both runners (agent and backlog) via #state_for below.
     ItemState = Struct.new(:item_id, :subject, :branch, :item_dir, :plan_file,
-                           :item_file, :review_file, :pr_desc_file, :pr_url_file,
-                           :session_file, keyword_init: true)
+                           :item_file, :related_file, :review_file, :pr_desc_file,
+                           :pr_url_file, :session_file, keyword_init: true)
 
     # A work package id as the user types it: numeric ("59942") or semantic
     # ("PROJ-123", instances in semantic-identifier mode). Mirrors OpenProject's
@@ -266,6 +266,7 @@ module Chomper
         item_dir:     dir,
         plan_file:    dir / "plan.md",
         item_file:    dir / "item.json",
+        related_file: dir / "related.json",
         review_file:  dir / "review.txt",
         pr_desc_file: dir / "pr.md",
         pr_url_file:  dir / "pr_url.txt",
@@ -276,6 +277,22 @@ module Chomper
     # Rewrite a host path under .chomper/ to its path inside the Claude container.
     def container_path(host_path)
       host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
+    end
+
+    # Fetch a WP's related work packages (relations + parent/children) via the
+    # injected @pull, write the index to related.json, and return its container
+    # path — or nil when there are none, so the prompt omits the RELATED section.
+    # Each related WP is also cached to its own item.json (by @pull) so Claude can
+    # read the full detail on demand via the item_path in the index. Shared by the
+    # op-agent (Agent) and the terminal backlog/fix flow (BacklogRunner).
+    def related_ref(st)
+      related = @pull.related_work_packages(st.item_id)
+      return nil if related.empty?
+      indexed = related.map do |r|
+        r.merge("item_path" => container_path(Helpers.item_dir(@ctx, r["id"]) / "item.json"))
+      end
+      st.related_file.write(JSON.generate(indexed))
+      container_path(st.related_file)
     end
 
     def branch_has_commits?(st)

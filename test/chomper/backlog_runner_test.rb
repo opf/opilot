@@ -8,8 +8,9 @@ module Chomper
                             version_ids: [], scan_from_at: nil)
 
     class FakePull
+      attr_accessor :related
       def initialize(items = nil, saved: FILTERS, single: nil, singles: nil)
-        @items = items; @saved = saved; @single = single; @singles = singles
+        @items = items; @saved = saved; @single = single; @singles = singles; @related = []
       end
 
       def saved_backlog_filters; @saved; end
@@ -22,6 +23,8 @@ module Chomper
         raise "unexpected fetch_all_items call" if @items.nil?
         @items
       end
+
+      def related_work_packages(_id); @related; end
     end
 
     # Answers every triage batch with a fixed complexity per item id.
@@ -353,6 +356,20 @@ module Chomper
       refute (@ctx.state_dir / "items" / "20" / "pr_url.txt").exist?, "plan must not ship"
       refute (@ctx.state_dir / "items" / "20" / "backlog_done.txt").exist?,
              "plan leaves the WP processable later"
+    end
+
+    def test_plan_injects_related_context_when_present
+      write_item(23, "Plannable", "Costs")
+      seed_triage({ "23" => "simple" })
+      claude = FakePlanClaude.new
+      pull = FakePull.new
+      pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
+      r = NoGitRunner.new(@ctx, pull: pull, claude: claude, publish: nil)
+
+      with_stdin("y\n") { capture_io { r.plan } }
+
+      assert_includes claude.prompts.first, "RELATED:", "the plan prompt should carry related-WP context"
+      assert (@ctx.state_dir / "items" / "23" / "related.json").exist?, "the related index should be written"
     end
 
     def test_plan_silently_skips_wps_that_already_have_a_plan

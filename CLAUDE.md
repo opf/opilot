@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in an isolated git worktree, and opens draft PRs. Modes:
 
-- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages
+- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages. When it plans (or chats about) a WP it also pulls in that WP's related work packages (explicit relations plus parent/children), caching each as its own `item.json` and writing a `related.json` index that the plan/chat/fix prompts reference (Claude reads a related WP's full detail only if relevant). The terminal `backlog`/`fix`/`plan` flows share this — related WPs are pulled in at plan/re-plan time
 - **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the worktree and pushed to the bot's fork (with the bot token) to update the draft PR; merging into the canonical repo still needs a maintainer. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `op-agent`)
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
@@ -106,6 +106,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, git worktree
 ├── chomp.log                # full prompt/response log
 ├── items/<wp_id>/
 │   ├── item.json            # WP metadata + poll cache + acted_at timestamps
+│   ├── related.json         # index of related WPs pulled in at plan time (relations + parent/children): id, relation, subject, status, item_path
 │   ├── plan.md              # implementation plan
 │   ├── pr.md                # PR description
 │   ├── pr_url.txt           # published PR URL

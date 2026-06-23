@@ -40,9 +40,11 @@ module Chomper
 
     class FakePull
       attr_reader :acted
-      def initialize; @acted = []; end
+      attr_accessor :related
+      def initialize; @acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
       def record_chomper_comment(*, **); end
+      def related_work_packages(_id); @related; end
     end
 
     # A publisher whose push always fails, to exercise the error path.
@@ -275,6 +277,38 @@ module Chomper
       refute plan_path.exist?
       refute pr_url_path.exist?
       assert_includes @notes, "Here's my take."
+    end
+
+    # ── related work packages ─────────────────────────────────────────────────
+
+    def related_path(id = "42"); @ctx.state_dir / "items" / id / "related.json"; end
+
+    def test_handle_plan_writes_related_index_and_injects_it
+      @pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
+      @agent.handle(intent(:plan))
+
+      assert related_path.exist?, "the related index should be written"
+      index = JSON.parse(related_path.read)
+      assert_equal "/state/items/200/item.json", index.first["item_path"]
+
+      plan_prompt = @claude.captures.find { |p| p.include?("PRODUCT REPO") }
+      assert_includes plan_prompt, "RELATED:"
+      assert_includes plan_prompt, "/state/items/42/related.json"
+    end
+
+    def test_handle_chat_injects_related_context
+      @pull.related = [{ "id" => "50", "relation" => "parent", "subject" => "Epic", "status" => "New" }]
+      @agent.handle(intent(:chat, text: "how does this relate to the epic?"))
+
+      chat_prompt = @claude.runs.find { |p| p.include?("You are chomper") }
+      assert_includes chat_prompt, "RELATED:"
+    end
+
+    def test_no_related_means_no_index_and_no_related_line
+      @agent.handle(intent(:plan))   # FakePull.related defaults to []
+      refute related_path.exist?
+      plan_prompt = @claude.captures.find { |p| p.include?("PRODUCT REPO") }
+      refute_includes plan_prompt, "RELATED:"
     end
 
     def test_handle_and_ack_marks_and_reports_on_error

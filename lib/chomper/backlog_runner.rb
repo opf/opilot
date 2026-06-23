@@ -514,7 +514,8 @@ module Chomper
             @claude.capture(
               Prompts.replan(repo: @ctx.worktree_container, item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
-                             item_id: id, title: subject, resumed: session_resumable?(st)),
+                             item_id: id, title: subject, resumed: session_resumable?(st),
+                             related: related_ref(st)),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
           rescue Claude::Error
@@ -530,7 +531,7 @@ module Chomper
             # Pass session_file so a prior chat's context carries into the (re-)plan.
             @claude.capture(
               Prompts.plan(repo: @ctx.worktree_container, item: container_path(st.item_file),
-                           item_id: id, title: subject),
+                           item_id: id, title: subject, related: related_ref(st)),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
           rescue Claude::Error
