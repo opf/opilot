@@ -6,13 +6,15 @@ module Chomper
 
     class FakeClaude
       attr_reader :runs
-      def initialize(reply: "Done — guarded the nil case.", boom: false)
-        @reply = reply; @boom = boom; @runs = []
+      def initialize(reply: "Done — guarded the nil case.",
+                     subject: "Guard against a nil invoice total", boom: false)
+        @reply = reply; @subject = subject; @boom = boom; @runs = []
       end
       def run(prompt, tools: nil, model: nil, session_file: nil)
         @runs << { prompt: prompt, tools: tools, session_file: session_file }
         raise "claude blew up" if @boom
-        @reply
+        # The follow-up commit-subject pass uses a distinct prompt.
+        prompt.include?("commit subject line") ? @subject : @reply
       end
     end
 
@@ -109,10 +111,26 @@ module Chomper
 
       assert_equal 1, @github.issue_posts.length, "reply should be posted to the PR conversation"
       assert_equal "🤖 Done — guarded the nil case.", @github.issue_posts.first[2]
-      assert_equal ["[#42] address PR feedback"], @agent.instance_variable_get(:@worktree).commits
+      assert_equal ["[#42] Guard against a nil invoice total"],
+                   @agent.instance_variable_get(:@worktree).commits,
+                   "the commit subject describes the change, not a generic placeholder"
       assert_equal [["fork/r", "bug/42-fix-the-bug", @ctx.worktree_host]], @github.pushed,
                    "the commit is pushed to the PR's head repo (the fork) via the bot token"
       assert_equal [["42", 1000]], @pull.recorded, "chomper's own reply id is recorded"
+    end
+
+    def test_commit_subject_is_generated_in_the_gh_session_and_falls_back
+      capture_io { @agent.handle(gh_intent) }
+      subject_run = @claude.runs.find { |r| r[:prompt].include?("commit subject line") }
+      refute_nil subject_run, "a follow-up pass should generate the commit subject"
+      assert_equal (@ctx.state_dir / "items" / "42" / "gh_session_id"), subject_run[:session_file],
+                   "the subject is generated in the same session that made the change"
+
+      # When the model returns nothing usable, fall back to the generic subject.
+      blank = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(subject: "  "), github: @github)
+      blank.instance_variable_set(:@worktree, FakeWorktree.new(has_changes: true))
+      capture_io { blank.handle(gh_intent) }
+      assert_equal ["[#42] address PR feedback"], blank.instance_variable_get(:@worktree).commits
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push

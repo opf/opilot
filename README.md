@@ -351,7 +351,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Scan also other upstream OP PRs for any new mentions
   * Extend OP polling to support multiple projects at once
   * Re-add linking of the plan as a gist & compact description
-  * Craft a better feedback commit message than "[#ID] address PR feedback"
   * Make sure chomper can see GitHub CI run results and act on them
   * Run at least basic linter in the runner & pass results to Claude
   * Correctly set the target branch for release-specific fixes

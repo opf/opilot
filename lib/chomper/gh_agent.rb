@@ -95,7 +95,7 @@ module Chomper
       reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
-      push_followup(intent) if commit_followup(intent)
+      push_followup(intent) if commit_followup(intent, session_file)
     end
 
     private
@@ -129,17 +129,41 @@ module Chomper
 
     # Commit whatever Claude changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
-    def commit_followup(intent)
+    def commit_followup(intent, session_file)
       Helpers.adopt_github_author!(@ctx)
       worktree.add(all: true)
       diff = worktree.diff("HEAD")
       return false if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      worktree.commit("[#{wp_label(intent.item_id)}] address PR feedback")
+      worktree.commit(feedback_commit_message(intent, session_file))
       c = worktree.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(intent.item_id, intent.branch, "gh-commit")
       true
+    end
+
+    # The subject for a follow-up commit: the WP label (matching the PR title's
+    # "[label] …" form) plus a concise description of the change Claude just made.
+    # Falls back to a generic subject when subject generation yields nothing.
+    def feedback_commit_message(intent, session_file)
+      label   = wp_label(intent.item_id)
+      subject = generate_commit_subject(session_file)
+      subject.empty? ? "[#{label}] address PR feedback" : "[#{label}] #{subject}"
+    end
+
+    # Ask Claude — in the same session that just made the change, so the diff is
+    # already in context — for a one-line commit subject, then sanitise it to a
+    # single bare line. Returns "" on any failure so the caller can fall back.
+    def generate_commit_subject(session_file)
+      reply = @claude.run(Prompts.commit_subject, tools: Claude::TOOLS_READ, session_file: session_file)
+      strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
+        .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
+        .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" Claude prepended anyway
+        .gsub(/\s+/, " ")
+        .slice(0, 72).to_s.strip
+    rescue => e
+      log_script "Commit-subject generation failed: #{e.message}"
+      ""
     end
 
     # Push the new commit to the PR's head repo (the bot's fork) with the bot

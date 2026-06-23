@@ -251,6 +251,21 @@ module Chomper
       PROMPT
     end
 
+    # A one-line git commit subject for the follow-up change chomper just made on
+    # a PR branch. Runs inside the gh-reply session, so Claude already holds the
+    # diff and the feedback it addressed — keep the prompt minimal.
+    def self.commit_subject
+      <<~PROMPT
+        Write a single git commit subject line for the code change you just made.
+
+        - Imperative mood, e.g. "Guard against a nil invoice total".
+        - At most ~70 characters; no trailing period; no enclosing quotes.
+        - Describe the change itself, not the reviewer or the request.
+        - Do NOT prefix it with an issue id or "[…]" tag.
+        - Output ONLY the subject line — nothing before or after it.
+      PROMPT
+    end
+
     # Conversational reply during a terminal backlog session (read-only tools).
     # Like chat but terminal-adapted: no OP reply instruction, no command list.
     def self.backlog_chat(item_id:, subject:, item:, plan:, message:)
