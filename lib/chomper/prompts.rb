@@ -344,11 +344,14 @@ module Chomper
     end
 
     # A one-line git commit subject for the follow-up change chomper just made on
-    # a PR branch. Runs inside the gh-reply session, so Claude already holds the
-    # diff and the feedback it addressed — keep the prompt minimal.
-    def self.commit_subject
+    # a PR branch. Stateless — the diff is embedded — so it runs on a cheap model
+    # (MODEL_FAST) without dragging the gh-reply session's context, since the
+    # subject describes the change itself, not the feedback that prompted it.
+    def self.commit_subject(diff:)
       <<~PROMPT
-        Write a single git commit subject line for the code change you just made.
+        Write a single git commit subject line for this change:
+
+        #{diff}
 
         - Imperative mood, e.g. "Guard against a nil invoice total".
         - At most ~70 characters; no trailing period; no enclosing quotes.

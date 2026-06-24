@@ -138,7 +138,7 @@ module Chomper
       reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
-      push_followup(intent, repo) if commit_followup(intent, repo, session_file)
+      push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
     private
@@ -190,14 +190,14 @@ module Chomper
 
     # Commit whatever Claude changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
-    def commit_followup(intent, repo, session_file)
+    def commit_followup(intent, repo)
       Helpers.adopt_github_author!(@ctx)
       wt = worktree(repo)
       wt.add(all: true)
       diff = wt.diff("HEAD")
       return false if diff.entries.empty?
       diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      wt.commit(feedback_commit_message(intent, session_file))
+      wt.commit(feedback_commit_message(intent, diff))
       c = wt.log(1).execute.first
       log_script "Committed: #{c.sha[0, 7]} #{c.message}"
       record_progress(intent.item_id, intent.branch, "gh-commit")
@@ -207,17 +207,18 @@ module Chomper
     # The subject for a follow-up commit: the WP label (matching the PR title's
     # "[label] …" form) plus a concise description of the change Claude just made.
     # Falls back to a generic subject when subject generation yields nothing.
-    def feedback_commit_message(intent, session_file)
+    def feedback_commit_message(intent, diff)
       label   = wp_label(intent.item_id)
-      subject = generate_commit_subject(session_file)
+      subject = generate_commit_subject(diff)
       subject.empty? ? "[#{label}] address PR feedback" : "[#{label}] #{subject}"
     end
 
-    # Ask Claude — in the same session that just made the change, so the diff is
-    # already in context — for a one-line commit subject, then sanitise it to a
-    # single bare line. Returns "" on any failure so the caller can fall back.
-    def generate_commit_subject(session_file)
-      reply = @claude.run(Prompts.commit_subject, tools: Claude::TOOLS_READ, session_file: session_file)
+    # Ask a cheap model for a one-line commit subject from the diff (stateless —
+    # no session to resume), then sanitise it to a single bare line. Returns "" on
+    # any failure so the caller can fall back.
+    def generate_commit_subject(diff)
+      prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
+      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
         .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" Claude prepended anyway

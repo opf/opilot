@@ -11,7 +11,7 @@ module Chomper
         @reply = reply; @subject = subject; @boom = boom; @runs = []
       end
       def run(prompt, tools: nil, model: nil, session_file: nil)
-        @runs << { prompt: prompt, tools: tools, session_file: session_file }
+        @runs << { prompt: prompt, tools: tools, model: model, session_file: session_file }
         raise "claude blew up" if @boom
         # The follow-up commit-subject pass uses a distinct prompt.
         prompt.include?("commit subject line") ? @subject : @reply
@@ -55,6 +55,7 @@ module Chomper
       def initialize(has) @has = has end
       def entries; @has ? [:change] : []; end
       def stats; { files: { "app/x.rb" => { insertions: 2, deletions: 1 } } }; end
+      def patch; "diff --git a/app/x.rb b/app/x.rb\n+  return if total.nil?\n"; end
     end
 
     class FakeWorktree
@@ -158,12 +159,13 @@ module Chomper
       assert_equal [["42", "openproject", 1000]], @pull.recorded, "chomper's own reply id is recorded"
     end
 
-    def test_commit_subject_is_generated_in_the_gh_session_and_falls_back
+    def test_commit_subject_runs_stateless_on_a_cheap_model_and_falls_back
       capture_io { @agent.handle(gh_intent) }
       subject_run = @claude.runs.find { |r| r[:prompt].include?("commit subject line") }
       refute_nil subject_run, "a follow-up pass should generate the commit subject"
-      assert_equal gh_session_path, subject_run[:session_file],
-                   "the subject is generated in the same session that made the change"
+      assert_nil subject_run[:session_file], "the subject is generated statelessly, not in the gh session"
+      assert_equal Claude::MODEL_FAST, subject_run[:model], "the cheap model crafts the commit subject"
+      assert_includes subject_run[:prompt], "return if total.nil?", "the diff is embedded in the prompt"
 
       # When the model returns nothing usable, fall back to the generic subject.
       blank = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(subject: "  "), github: @github)
