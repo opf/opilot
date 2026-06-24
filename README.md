@@ -346,7 +346,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   
 ### Feature ideas
 * **First Communicator PoC** (late June 2026):
-  * Scan also other upstream OP PRs for any new mentions
   * Re-add linking of the plan as a gist & compact description
   * Make sure chomper can see GitHub CI run results and act on them
   * Run at least basic linter in the runner & pass results to Claude
