@@ -121,6 +121,29 @@ module Chomper
                    comment_at: "2024-02-01T00:00:00Z")
     end
 
+    # A reply-only intent for an upstream PR chomper did not open.
+    def review_intent(kind: :issue, id: 99, text: "@chomper what do you think?")
+      GhIntent.new(item_id: nil, repo_name: "openproject", subject: "Fix a thing",
+                   branch: "contrib-branch", repo: "opf/openproject", head_repo: "contributor/openproject",
+                   pr_number: 7, pr_url: "https://github.com/opf/openproject/pull/7",
+                   kind: kind, comment_id: id, text: text, user_login: "thykel",
+                   comment_at: "2026-06-20T09:00:00Z", reply_only: true)
+    end
+
+    def test_upstream_reply_only_reviews_without_committing_or_pushing
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, @worktree = FakeWorktree.new(has_changes: true))
+
+      capture_io { agent.handle(review_intent) }
+
+      assert_equal 1, @github.issue_posts.length, "the review reply is posted to the PR conversation"
+      assert_empty @worktree.commits, "reply-only must never commit"
+      assert_empty @github.pushed,    "reply-only must never push"
+      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      assert_equal Claude::TOOLS_READ, review_run[:tools], "review runs read-only"
+    end
+
     def test_code_request_replies_commits_and_pushes_to_fork
       capture_io { @agent.handle(gh_intent) }
 

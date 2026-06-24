@@ -1,6 +1,7 @@
 require "json"
 require "time"
 require_relative "clients"
+require_relative "gh_pr_cache"
 
 module Chomper
   # A comment on a chomper PR that mentions @chomper, normalised so GhAgent can
@@ -10,9 +11,10 @@ module Chomper
   # answering a Copilot finding) so Claude can be pointed at the right feedback.
   # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
   # is where the PR's branch actually lives (the user's fork) — what gh-agent
-  # fetches from and pushes to.
+  # fetches from and pushes to. `reply_only` is true for an upstream PR chomper did
+  # NOT open (it can review/answer but cannot push code there).
   GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
-                        :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
+                        :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at, :reply_only,
                         keyword_init: true)
 
   # The GitHub counterpart of Pull: scans the PRs chomper has already opened (one
@@ -28,17 +30,7 @@ module Chomper
   #                be handed to Claude without leaking bookkeeping.
   class GhPull
     include Helpers
-
-    # A comment triggers chomper when it contains the literal `@chomper` or an
-    # @-mention of the bot's own GitHub login (e.g. `@chomper-bot`).
-    def mention_re
-      @mention_re ||= begin
-        handles = ["chomper"]
-        login = (@github.login rescue nil)
-        handles << login if login && !login.empty?
-        /(?:#{handles.uniq.map { |h| "@#{Regexp.escape(h)}" }.join("|")})\b/i
-      end
-    end
+    include GhPrCache
 
     def initialize(ctx, github: Clients::GitHub.new(ctx.github_token))
       @ctx    = ctx
@@ -129,13 +121,7 @@ module Chomper
       cutoff = [state["last_acted_comment_at"], @scan_from_at].compact.max
       acted  = (state["chomper_comment_ids"] || []).map(&:to_s)
 
-      fresh = content["comments"]
-        .reject { |c| acted.include?(c["id"].to_s) }
-        .select { |c| c["body"] =~ mention_re }
-        .select { |c| cutoff.nil? || c["created_at"] > cutoff }
-        .sort_by { |c| c["created_at"] }
-
-      fresh.filter_map do |c|
+      fresh_mentions(content["comments"], cutoff, acted).filter_map do |c|
         # Off-allowlist comments still advance the cutoff so we don't re-evaluate
         # them every poll (mirrors Pull#intent_from_comments).
         unless allowed?(c["author"], pr_url)
@@ -158,73 +144,11 @@ module Chomper
       []
     end
 
-    # Cache the PR's content the way Pull#fetch_work_package_item caches a WP:
-    # reuse the saved pr.json while the PR's updated_at is unchanged, otherwise
-    # re-fetch every comment + review stream and rewrite it. The cache is what
-    # GhAgent hands Claude for full PR context (Copilot's review included).
-    def fetch_pr_content(dir, repo, number, pr)
-      cache_path = dir / "pr.json"
-      updated_at = to_iso(pr.updated_at)
-      cached = Helpers.safe_json_read(cache_path)
-      return cached if cached && cached["updated_at"] == updated_at
-
-      comments = @github.issue_comments(repo, number).map { |c| issue_comment(c) } +
-                 @github.review_comments(repo, number).map { |c| review_comment(c) }
-      reviews  = @github.reviews(repo, number).map { |r| review_summary(r) }
-
-      data = {
-        "number"     => number,        "repo"       => repo,
-        "url"        => pr.html_url,    "title"      => pr.title,
-        "state"      => pr.state,       "updated_at" => updated_at,
-        "head_ref"   => pr.head.ref,    "head_sha"   => pr.head.sha,
-        # Where the branch lives — the fork for a cross-repo PR (nil only if the
-        # head fork was deleted, which would have closed the PR anyway).
-        "head_repo"  => pr.head.repo&.full_name,
-        "comments"   => comments,       "reviews"    => reviews
-      }
-      Helpers.write_json_atomic(cache_path, data, "pr")
-      data
-    end
-
-    def issue_comment(c)
-      {
-        "id" => c.id, "kind" => "issue", "author" => c.user&.login.to_s,
-        "created_at" => to_iso(c.created_at), "body" => c.body.to_s, "in_reply_to" => nil
-      }
-    end
-
-    def review_comment(c)
-      {
-        "id" => c.id, "kind" => "review", "author" => c.user&.login.to_s,
-        "created_at" => to_iso(c.created_at), "body" => c.body.to_s,
-        "in_reply_to" => c.in_reply_to_id, "path" => c.path,
-        "line" => (c.respond_to?(:line) ? c.line : nil), "diff_hunk" => c.diff_hunk
-      }
-    end
-
-    def review_summary(r)
-      {
-        "id" => r.id, "author" => r.user&.login.to_s, "state" => r.state,
-        "submitted_at" => to_iso(r.submitted_at), "body" => r.body.to_s
-      }
-    end
-
-    # Octokit hands back a Time; normalise to the same ISO8601 string form the
-    # cutoff and cache key are stored in, so comparisons are plain string compares.
-    def to_iso(time)
-      return nil if time.nil?
-      time.respond_to?(:utc) ? time.utc.iso8601 : Time.parse(time.to_s).utc.iso8601
-    end
-
     def allowed?(login, pr_url)
       return true if @ctx.allowed_gh_users.empty?
       ok = @ctx.allowed_gh_users.include?(login.to_s.downcase)
       puts "  [gh-agent] Ignoring @chomper from #{login.inspect} on #{pr_url} — not in allowlist" unless ok
       ok
-    end
-
-    def gh_state(dir)
-      Helpers.safe_json_read(dir / "gh_pr.json") || {}
     end
   end
 end

@@ -11,7 +11,11 @@ A fix can land in **one or more product repos**. The repos are defined in `repos
 Modes:
 
 - **op-agent** — continuous polling loop driven by `@chomper` comments on work packages. When it plans (or chats about) a WP it also pulls in that WP's related work packages (explicit relations plus parent/children), caching each as its own `item.json` and writing a `related.json` index that the plan/chat/fix prompts reference (Claude reads a related WP's full detail only if relevant). The terminal `backlog`/`fix`/`plan` flows share this — related WPs are pulled in at plan/re-plan time
-- **gh-agent** — continuous polling loop over the GitHub PRs chomper has already opened (those with an `items/<id>/pr_url.txt`), driven by `@chomper` comments on the PR. "Always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the worktree and pushed to the bot's fork (with the bot token) to update the draft PR; merging into the canonical repo still needs a maintainer. Watches both the PR conversation thread and inline review comments; gated by a GitHub-login allowlist (`CHOMPER_ALLOWED_GH_USERS`, default `thykel`). At startup it asks how far back to scan (same prompt as `op-agent`)
+- **gh-agent** — continuous polling loop over GitHub PRs, driven by `@chomper` comments, from **two sources** each tick:
+  - **chomper's own PRs** (`GhPull`, those with an `items/<id>/repos/<name>/pr_url.txt`) — "always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the clone and pushed to the bot's fork (with the bot token) to update the draft PR.
+  - **upstream PRs that @-mention chomper** (`UpstreamGhPull`, any open PR on a registry repo's `upstream`) — discovered via the GitHub search API (`repo:<upstream> is:pr is:open mentions:<bot-login> updated:>=<cutoff>`, where `<bot-login>` is resolved programmatically from `@github.login`, e.g. `op-chomper`) so a Claude call is spent only on PRs that actually mention the bot. chomper has no write access to these branches, so these intents are `reply_only`: it fetches the PR head read-only, **reviews/answers in text, and never commits or pushes** (`Prompts.pr_review`, read-only tools). Per-PR state lives under `.chomper/upstream_prs/<owner>-<repo>/<number>/`. **Disabled unless `CHOMPER_ALLOWED_GH_USERS` is set** — an open `@chomper` trigger across huge public repos would be a spend/abuse risk.
+
+  Both sources watch the conversation thread and inline review comments, are gated by the GitHub-login allowlist, and merging always stays gated on a maintainer. At startup it asks how far back to scan (same prompt as `op-agent`). The shared PR-content caching/mention-matching lives in `GhPrCache`.
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
@@ -82,8 +86,10 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream`/`protected_bases` lookups |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
-| `gh_pull.rb` | Polls chomper's open PRs; caches each PR's content (comments + reviews) in `pr.json` keyed by the PR's `updated_at`, skips closed/merged PRs, and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist) |
-| `gh_agent.rb` | `gh-agent` event loop — replies to each PR comment, writes code when asked, commits, and pushes to the bot's fork to update the draft PR |
+| `gh_pull.rb` | Polls chomper's own open PRs; skips closed/merged PRs and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist) |
+| `upstream_gh_pull.rb` | Polls every registry repo's `upstream` for open PRs that @-mention chomper (GitHub search pre-filter); yields `reply_only` `GhIntent`s; requires an allowlist |
+| `gh_pr_cache.rb` | `GhPrCache` — PR-content caching (`pr.json` keyed by `updated_at`), `@chomper` mention matching, and fresh-comment filtering shared by both pollers |
+| `gh_agent.rb` | `gh-agent` event loop — polls both sources; for own PRs replies + writes code + pushes to the fork; for upstream PRs reviews read-only and replies (never pushes) |
 | `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
@@ -122,6 +128,10 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 │       ├── pr.json          # gh-agent cache of PR content (comments + reviews), keyed by PR updated_at
 │       ├── gh_pr.json       # gh-agent act-state: last_acted_comment_at + chomper's own reply ids
 │       └── gh_session_id    # gh-agent's Claude session (separate from session_id)
+├── upstream_prs/<owner>-<repo>/<number>/   # gh-agent review state for an upstream PR chomper didn't open
+│   ├── pr.json              # cached PR content (comments + reviews)
+│   ├── gh_pr.json           # act-state: last_acted_comment_at + chomper's own reply ids
+│   └── gh_session_id        # the review session
 ├── repos/<repo_name>/       # this repo's isolated standalone clone (mounted at /repos/<name>)
 └── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
 ```
@@ -144,7 +154,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `OP_REPO_PATH` | Optional. Local openproject checkout to seed the openproject clone from (faster clone); absent → clones fresh. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_TOKEN` | Token for a **dedicated bot account** (not the operator) that is **not a collaborator on the canonical repo**. chomper forks as the bot, pushes branches there, and opens cross-repo PRs against upstream. Prompted by the setup wizard; use a classic `public_repo` token (the account's lack of canonical-repo access is what enforces isolation). Must be a personal/user account. Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_EMAILS` | Comma-separated emails allowed to trigger agent. Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
-| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent` on a chomper PR. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch); set empty to disable the gate |
+| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch). Also the on/off switch for **upstream PR review**: when empty, gh-agent still serves chomper's own PRs but does NOT scan upstream PRs at all |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
 | `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by moderate/complex items and all agent-mode phases |
 | `CHOMPER_SIMPLE_MODEL` | Optional; overrides the model (default `claude-sonnet-4-6`) used for backlog items triaged `trivial` or `simple` |

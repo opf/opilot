@@ -1,0 +1,102 @@
+require_relative "../test_helper"
+
+module Chomper
+  class UpstreamGhPullTest < Minitest::Test
+    User      = Struct.new(:login)
+    RepoRef   = Struct.new(:full_name)
+    Head      = Struct.new(:ref, :sha, :repo)
+    PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, keyword_init: true)
+    IssueC    = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
+    SearchHit = Struct.new(:number)
+
+    class FakeGitHub
+      attr_reader :searches, :reacted
+      def initialize(hits: [], issue: [])
+        @hits = hits; @issue = issue; @searches = []; @reacted = []
+      end
+      def search_prs(query, per_page: 50); @searches << query; @hits; end
+      def pull_request(_repo, _num)
+        PR.new(state: "open", updated_at: Time.parse("2026-06-20T10:00:00Z"),
+               html_url: "https://github.com/opf/openproject/pull/7", title: "Fix a thing",
+               head: Head.new("contrib-branch", "sha9", RepoRef.new("contributor/openproject")))
+      end
+      def issue_comments(_repo, _num); @issue; end
+      def review_comments(_repo, _num); []; end
+      def reviews(_repo, _num); []; end
+      def react(repo, id, kind:, content: "eyes"); @reacted << [repo, id, kind]; end
+      def login; "chomper-bot"; end
+    end
+
+    def setup
+      @tmpdir = Pathname(Dir.mktmpdir)
+      state   = @tmpdir / ".chomper"
+      state.mkpath
+      @registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: @tmpdir)
+      @ctx = Struct.new(:state_dir, :allowed_gh_users, :github_token, :log_file, :repos).new(
+        state, ["thykel"], "ghtok", @tmpdir / "chomp.log", @registry
+      )
+    end
+
+    def teardown
+      FileUtils.rm_rf(@tmpdir)
+    end
+
+    def issue_c(id:, body:, login:, at:)
+      IssueC.new(id: id, body: body, user: User.new(login), created_at: Time.parse(at))
+    end
+
+    def pull(hits: [SearchHit.new(7)], issue: [])
+      @github = FakeGitHub.new(hits: hits, issue: issue)
+      UpstreamGhPull.new(@ctx, github: @github)
+    end
+
+    def upstream_dir
+      @ctx.state_dir / "upstream_prs" / "opf-openproject" / "7"
+    end
+
+    def test_yields_reply_only_intent_for_an_allowlisted_mention
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper can you review this?", login: "thykel", at: "2026-06-20T09:00:00Z")])
+      intents = gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_equal 1, intents.length
+      i = intents.first
+      assert i.reply_only, "upstream PR intents must be reply-only"
+      assert_equal "opf/openproject", i.repo
+      assert_equal "openproject", i.repo_name
+      assert_equal 7, i.pr_number
+      assert_equal "contributor/openproject", i.head_repo
+      assert_equal "contrib-branch", i.branch
+      assert_nil i.item_id
+    end
+
+    def test_search_query_scopes_to_repo_cutoff_and_the_bot_login
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper-bot hi", login: "thykel", at: "2026-06-20T09:00:00Z")])
+      gh.poll_intents("2026-06-01T00:00:00Z")
+      q = @github.searches.first
+      assert_includes q, "repo:opf/openproject"
+      assert_includes q, "is:pr is:open"
+      assert_includes q, "updated:>=2026-06-01"
+      assert_includes q, "mentions:chomper-bot", "search uses the bot's GitHub login, resolved programmatically"
+    end
+
+    def test_disabled_without_an_allowlist
+      @ctx.allowed_gh_users = []
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper hi", login: "anyone", at: "2026-06-20T09:00:00Z")])
+      assert_empty gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_equal 0, gh.scanned_count
+      assert_empty @github.searches, "must not even search when no allowlist is set"
+    end
+
+    def test_off_allowlist_comment_is_skipped_and_cutoff_advances
+      gh = pull(issue: [issue_c(id: 9, body: "@chomper do it", login: "rando", at: "2026-06-20T09:00:00Z")])
+      capture_io { assert_empty gh.poll_intents("2026-06-01T00:00:00Z") }
+      state = JSON.parse((upstream_dir / "gh_pr.json").read)
+      assert_equal "2026-06-20T09:00:00Z", state["last_acted_comment_at"]
+    end
+
+    def test_state_lives_under_upstream_prs
+      gh = pull
+      gh.mark_acted("opf/openproject", 7, "2026-06-20T09:00:00Z")
+      assert (upstream_dir / "gh_pr.json").exist?, "act-state lives at upstream_prs/<owner>-<repo>/<number>/"
+    end
+  end
+end

@@ -116,6 +116,16 @@ module Chomper
         @octokit.pull_request(repo, number)
       end
 
+      # Search PRs across GitHub (PRs are issues in the search API). `query` is a
+      # GitHub search string, e.g. `repo:opf/openproject is:pr is:open "@chomper"
+      # updated:>=2026-06-01`. Returns the matching items (capped to the first
+      # page); empty on any search error so one bad query never breaks a poll.
+      def search_prs(query, per_page: 50)
+        @octokit.search_issues(query, per_page: per_page).items
+      rescue Octokit::Error
+        []
+      end
+
       # Comments in the PR's main conversation thread (the "issue" timeline).
       def issue_comments(repo, number)
         @octokit.issue_comments(repo, number)
