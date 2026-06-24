@@ -19,6 +19,7 @@ Modes:
 - **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
 - **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
+- **chat** — `./chomper chat [message]` is a free, read-only terminal conversation over chomper's **local mirrors** — not scoped to any one WP and never fetching, planning, or shipping. The whole `.chomper/` cache is already mounted read-only into the claude container at `/state`, so `Prompts.free_chat` just orients Claude at that layout (`items/<id>/` item.json/plan.md/related.json, `items/<id>/repos/<name>/pr.json` for shipped PR threads, `upstream_prs/…/pr.json` for upstream ones) plus the repo clones at `/repos/<name>`, and Claude Greps/Reads whatever the question needs (read-only Bash for git history). `ChatRunner` (`lib/chomper/chat_runner.rb`) is a small REPL mirroring backlog's `[c]hat`: a fresh per-run session (`.chomper/chat_session_id`, cleared at start), empty line exits, and an inline `chat <message>` seeds the first turn. Needs no allowlist or GitHub/OpenProject token (it only reads local files)
 
 ## Commands
 
@@ -49,6 +50,9 @@ Modes:
 
 # Plan one or more work packages by id, stopping before shipping
 ./chomper plan <id>...
+
+# Free read-only chat about the local mirrors (no fetch, plan, or ship)
+./chomper chat [message]
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
@@ -115,6 +119,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 ├── backlog_triage.json      # cached triage results (keyed by filter fingerprint)
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
+├── chat_session_id          # Claude session for the current `chat` REPL (reset each run)
 ├── items/<wp_id>/
 │   ├── item.json            # WP metadata + poll cache + acted_at timestamps
 │   ├── related.json         # index of related WPs pulled in at plan time (relations + parent/children): id, relation, subject, status, item_path

@@ -81,6 +81,7 @@ module Chomper
           backlog skip <id> Park a WP until the next triage (no queue walk)
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping
+          chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 
@@ -111,6 +112,7 @@ module Chomper
           items/<id>/         Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
           openproject/        Isolated git worktree for fixes
           progress.txt        Progress log
+          chat_session_id     Claude session for the current `chat` REPL (reset each run)
           claude-auth/        claude CLI config; holds OAuth login creds when no API key is set
           chomp.log           Full prompt + response log
 
