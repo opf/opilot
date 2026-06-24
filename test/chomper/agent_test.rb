@@ -93,6 +93,7 @@ module Chomper
     # ── harness ────────────────────────────────────────────────────────────────
 
     def setup
+      Chomper.reset_stop!   # the stop flag is process-global; isolate each test
       @tmpdir = Dir.mktmpdir
       state_dir = Pathname(@tmpdir) / ".chomper"
       state_dir.mkpath

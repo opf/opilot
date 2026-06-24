@@ -14,6 +14,8 @@ module Chomper
   @stop = false
   def self.request_stop; @stop = true; end
   def self.stopping?;    @stop; end
+  # Clear the stop flag (tests, or restarting the loop in-process).
+  def self.reset_stop!;  @stop = false; end
 
   # The whole program: poll OpenProject for @chomper comments, turn each into an
   # Intent, and dispatch it through #handle. Per-WP "state" is just the files in
@@ -72,10 +74,17 @@ module Chomper
     # poll to retry.
     def handle_and_ack(intent)
       handle(intent)   # sets @requester as its first step
+      @pull.mark_acted(intent.item_id, intent.comment_at)
     rescue => e
+      # Ctrl-C kills any child process in the foreground group, surfacing here as
+      # an error. On a requested stop, abort quietly — don't post an error note or
+      # ack the comment, so the next run handles it cleanly.
+      if Chomper.stopping?
+        log_script "Interrupted on #{wp_label(intent.item_id)} — will retry next run"
+        return
+      end
       log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.message}"
       post_note(intent.item_id, addressed("sorry — I hit an error handling `@chomper #{intent.command}`:\n\n#{e.message}")) rescue nil
-    ensure
       @pull.mark_acted(intent.item_id, intent.comment_at)
     end
 

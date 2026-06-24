@@ -71,10 +71,18 @@ module Chomper
     # uncaught crash leaves the comment for the next poll.
     def handle_and_ack(intent)
       handle(intent)
+      mark_acted(intent)
     rescue => e
+      # Ctrl-C kills any child process (e.g. git) in the foreground group,
+      # surfacing here as an error. On a requested stop, abort quietly — don't
+      # post an error on the PR or ack the comment, so the next run handles it
+      # cleanly (otherwise an interrupt leaks a raw error onto a public PR).
+      if Chomper.stopping?
+        log_script "Interrupted on #{intent.repo}##{intent.pr_number} — will retry next run"
+        return
+      end
       log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.message}"
       post_reply(intent, "sorry — I hit an error handling that comment:\n\n#{e.message}") rescue nil
-    ensure
       mark_acted(intent)
     end
 

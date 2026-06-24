@@ -22,13 +22,13 @@ module Chomper
     end
 
     def setup
-      Chomper.instance_variable_set(:@stop, false)
+      Chomper.reset_stop!
       @calls = []
       @ctx   = Struct.new(:github_token).new("ghp_token")
     end
 
     def teardown
-      Chomper.instance_variable_set(:@stop, false)
+      Chomper.reset_stop!
     end
 
     def test_polls_github_before_openproject_each_cycle
