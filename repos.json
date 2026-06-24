@@ -1,5 +1,5 @@
 {
-  "summary": "Most OpenProject fixes live in the openproject monorepo. Rich-text and editor issues may belong in commonmark-ckeditor-build or op-blocknote-extensions. Icon issues may belong in openproject-octicons.",
+  "summary": "Most OpenProject fixes live in the openproject monorepo. Rich-text and editor issues may belong in commonmark-ckeditor-build or op-blocknote-extensions. Icon and design-system issues may belong in openproject-octicons or primer_view_components.",
   "repos": [
     {
       "name": "openproject",
@@ -28,6 +28,13 @@
       "base": "main",
       "shared_repo_path": false,
       "description": "OpenProject's Octicons icon set (SVG sources + generated assets)."
+    },
+    {
+      "name": "primer_view_components",
+      "upstream": "opf/primer_view_components",
+      "base": "main",
+      "shared_repo_path": false,
+      "description": "Primer ViewComponents (design system) used in the Rails-rendered UI."
     }
   ]
 }
