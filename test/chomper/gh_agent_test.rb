@@ -36,10 +36,11 @@ module Chomper
     end
 
     class FakePull
-      attr_reader :acted, :recorded
-      def initialize; @acted = []; @recorded = []; end
+      attr_reader :acted, :recorded, :ci_acted
+      def initialize; @acted = []; @recorded = []; @ci_acted = []; end
       def mark_acted(id, repo_name, at); @acted << [id, repo_name, at]; end
       def record_chomper_comment(id, repo_name, cid); @recorded << [id, repo_name, cid]; end
+      def mark_ci_acted(id, repo_name, sha); @ci_acted << [id, repo_name, sha]; end
     end
 
     class FakeCommit
@@ -130,6 +131,37 @@ module Chomper
                    pr_number: 7, pr_url: "https://github.com/opf/openproject/pull/7",
                    kind: kind, comment_id: id, text: text, user_login: "thykel",
                    comment_at: "2026-06-20T09:00:00Z", reply_only: true)
+    end
+
+    # A CI-failure intent for one of chomper's own PRs (the auto-fix path).
+    def ci_intent
+      GhIntent.new(item_id: "42", repo_name: "openproject", subject: "Fix the bug", branch: "bug/42-fix-the-bug",
+                   repo: "o/r", head_repo: "fork/r", pr_number: 7, pr_url: "https://github.com/o/r/pull/7",
+                   kind: :ci, head_sha: "deadbeefcafe", comment_at: "2024-02-01T00:00:00Z")
+    end
+
+    def test_ci_intent_fixes_commits_pushes_and_marks_acted_by_sha
+      capture_io { @agent.handle_and_ack(ci_intent) }
+
+      run = @claude.runs.first
+      assert_equal Claude::TOOLS_IMPL, run[:tools], "the CI fix runs with write tools"
+      assert_includes run[:prompt], "CI failed", "the fix-ci prompt is used"
+      assert_equal 1, @github.issue_posts.length, "chomper replies on the PR conversation"
+      assert_equal [["fork/r", "bug/42-fix-the-bug", @repo.worktree_host]], @github.pushed,
+                   "the fix is pushed to the PR's head repo (the fork)"
+      assert_equal [["42", "openproject", "deadbeefcafe"]], @pull.ci_acted,
+                   "CI act-state is advanced by head SHA, not comment timestamp"
+      assert_empty @pull.acted, "the comment-cutoff ack is not used for a CI intent"
+    end
+
+    def test_ci_flaky_reply_pushes_nothing_but_still_marks_the_sha_acted
+      inject_worktree(@agent, @worktree = FakeWorktree.new(has_changes: false))
+      capture_io { @agent.handle_and_ack(ci_intent) }
+
+      assert_equal 1, @github.issue_posts.length, "chomper still replies (e.g. 'looks flaky')"
+      assert_empty @github.pushed, "no code change → nothing pushed"
+      assert_equal [["42", "openproject", "deadbeefcafe"]], @pull.ci_acted,
+                   "the SHA is still marked acted so it isn't re-evaluated next poll"
     end
 
     def test_upstream_reply_only_reviews_without_committing_or_pushing

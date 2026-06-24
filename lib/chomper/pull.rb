@@ -448,7 +448,8 @@ module Chomper
         text:       text,
         comment_at: trigger["created_at"],
         user:       trigger["user"],
-        user_href:  trigger["user_href"]
+        user_href:  trigger["user_href"],
+        internal:   trigger["internal"] == true
       )
     end
 
@@ -554,6 +555,7 @@ module Chomper
             "user_href"  => a.dig("_links", "user", "href"),
             "created_at" => a["createdAt"],
             "text"       => a.dig("comment", "raw"),
+            "internal"   => a["internal"] == true,
             "reactions"  => rxn_index[a["id"].to_s] || {}
           }
         end

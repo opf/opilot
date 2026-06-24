@@ -107,11 +107,15 @@ if _need GITHUB_TOKEN; then
     # upstream. The isolation comes from the bot account having NO access to the
     # canonical repo — so even a classic 'public_repo' token can't write there.
     # Classic public_repo is required (fine-grained tokens can't open fork→upstream PRs).
+    # 'workflow' scope is also required: the bot's fork lags upstream, so a fix
+    # branch based on the current base re-introduces upstream's .github/workflows/*
+    # files relative to the stale fork, and GitHub rejects a classic PAT that
+    # creates/updates any workflow file without it.
     echo "  GitHub token — chomper runs as a dedicated BOT account, not you."
     echo "  Create a SEPARATE GitHub account that is NOT a collaborator on the product"
     echo "  repo (a personal/user account — org accounts can't grant maintainer edits),"
-    echo "  then make a classic token for IT with ONLY the 'public_repo' scope:"
-    echo "    https://github.com/settings/tokens (classic → public_repo)"
+    echo "  then make a classic token for IT with the 'public_repo' and 'workflow' scopes:"
+    echo "    https://github.com/settings/tokens (classic → public_repo + workflow)"
     echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
     echo "  access to the canonical repo, it physically cannot push there."
     echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."

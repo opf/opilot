@@ -86,5 +86,29 @@ module Chomper
     def direct_pr?
       ENV["CHOMPER_PR_MODE"].to_s.strip.downcase == "direct"
     end
+
+    # Let gh-agent auto-fix failed CI on chomper's own draft PRs (default off).
+    # When on, a completed-and-failed CI run on a chomper PR triggers a fix that
+    # is committed and pushed to update the PR — autonomous spend + push, so it's
+    # explicitly opt-in. Bounded by #ci_max_attempts.
+    def ci_fix?
+      %w[1 true yes].include?(ENV["CHOMPER_CI_FIX"].to_s.strip.downcase)
+    end
+
+    # How many times gh-agent will chase a single PR's CI before giving up and
+    # asking for a human (`CHOMPER_CI_MAX_ATTEMPTS`, default 5, floored at 1).
+    def ci_max_attempts
+      [ENV.fetch("CHOMPER_CI_MAX_ATTEMPTS", "5").to_i, 1].max
+    end
+
+    # Check-run names gh-agent should ignore when reading a PR's CI status
+    # (`CHOMPER_CI_IGNORE_CHECKS`, comma-separated, case-insensitive). For checks
+    # chomper can't fix — e.g. "SaaS tests", which needs secrets a fork PR can't
+    # access, so it always fails — chasing them just burns attempts. Defaults to
+    # "SaaS tests"; set to empty to ignore none.
+    def ci_ignored_checks
+      ENV.fetch("CHOMPER_CI_IGNORE_CHECKS", "SaaS tests")
+         .split(",").map { |s| s.strip.downcase }.reject(&:empty?)
+    end
   end
 end

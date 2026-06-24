@@ -56,10 +56,13 @@ module Chomper
 
     # One poll-and-handle pass over both PR sources (no sleep).
     def tick(scan_from_at)
+      log_script "Polling chomper fork PRs + upstream PRs#{@ctx.ci_fix? ? " (incl. CI status)" : ""}…"
       intents = @pull.poll_intents(scan_from_at) + @upstream_pull.poll_intents(scan_from_at)
-      n = intents.length
-      log_script "Polled #{@pull.scanned_count} chomper PR(s) + #{@upstream_pull.scanned_count} upstream PR(s) — " \
-                 "#{n} @chomper trigger#{n == 1 ? "" : "s"}"
+      ci      = intents.count { |i| i.kind == :ci }
+      trig    = intents.length - ci
+      summary = "#{trig} @chomper trigger#{trig == 1 ? "" : "s"}"
+      summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}" if @ctx.ci_fix?
+      log_script "Polled #{@pull.scanned_count} chomper PR(s) + #{@upstream_pull.scanned_count} upstream PR(s) — #{summary}"
       intents.each do |intent|
         break if Chomper.stopping?
         handle_and_ack(intent)
@@ -87,6 +90,10 @@ module Chomper
     end
 
     def handle(intent)
+      if intent.kind == :ci
+        log_script "#{intent.repo}##{intent.pr_number} — CI failed on #{intent.head_sha.to_s[0, 7]}"
+        return handle_ci(intent)
+      end
       kind = intent.reply_only ? "#{intent.kind} comment, review-only" : "#{intent.kind} comment"
       log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} (#{kind})"
       intent.reply_only ? handle_review(intent) : handle_own(intent)
@@ -141,6 +148,38 @@ module Chomper
       push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
+    # CI failed on one of chomper's own PRs (opt-in, CHOMPER_CI_FIX). Same shape
+    # as handle_own — sync the PR head, let Claude read the cached failure detail
+    # (ci.json: failed checks, annotations, failed-job log tails) and fix it in
+    # the worktree, then commit + push to update the draft PR. Claude may make no
+    # change (e.g. a flaky/infra failure it shouldn't "fix"), in which case it
+    # just replies and nothing is pushed.
+    def handle_ci(intent)
+      repo         = @ctx.repos.by_upstream(intent.repo)
+      item_dir     = Helpers.item_dir(@ctx, intent.item_id)
+      pr_dir       = item_dir / "repos" / intent.repo_name
+      item_file    = item_dir / "item.json"
+      plan_file    = item_dir / "plan.md"
+      pr_file      = pr_dir / "pr.json"
+      ci_file      = pr_dir / "ci.json"
+      session_file = pr_dir / "gh_session_id"
+
+      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
+      checkout_pr_branch(repo, intent.branch)
+
+      plan_ref = Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
+      item_ref = Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)"
+      prompt = Prompts.fix_ci(
+        worktree: repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
+        title: intent.subject, item: item_ref, plan: plan_ref,
+        pr_thread: container_path(pr_file), ci: container_path(ci_file)
+      )
+      reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
+
+      post_reply(intent, reply)
+      push_followup(intent, repo) if commit_followup(intent, repo)
+    end
+
     private
 
     def prompt_scan_from
@@ -173,7 +212,10 @@ module Chomper
     # Route act-state to the source the intent came from: chomper's own PRs are
     # keyed by WP item + repo name; upstream PRs by repo + number.
     def mark_acted(intent)
-      if intent.reply_only
+      if intent.kind == :ci
+        # CI dedup is per-SHA, not by comment timestamp.
+        @pull.mark_ci_acted(intent.item_id, intent.repo_name, intent.head_sha)
+      elsif intent.reply_only
         @upstream_pull.mark_acted(intent.repo, intent.pr_number, intent.comment_at)
       else
         @pull.mark_acted(intent.item_id, intent.repo_name, intent.comment_at)

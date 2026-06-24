@@ -121,8 +121,11 @@ module Chomper
 
       # @chomper notes are posted to the activities endpoint.
       @notes = []
+      @note_visibility = []
       stub_request(:post, %r{/work_packages/\d+/activities}).to_return do |req|
-        @notes << JSON.parse(req.body).dig("comment", "raw")
+        body = JSON.parse(req.body)
+        @notes << body.dig("comment", "raw")
+        @note_visibility << body["internal"]
         { status: 201, body: "{}" }
       end
     end
@@ -131,9 +134,9 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
-    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil, user_href: nil)
+    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil, user_href: nil, internal: nil)
       Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
-                 comment_at: "2024-02-01T00:00:00Z", user: user, user_href: user_href)
+                 comment_at: "2024-02-01T00:00:00Z", user: user, user_href: user_href, internal: internal)
     end
 
     # Make worktree(repo) return the same fake for every repo, so tests can drive
@@ -253,6 +256,21 @@ module Chomper
       @agent.handle(intent(:approve))
       refute pr_url_path.exist?
       assert(@notes.any? { |n| n.include?("no plan yet") })
+    end
+
+    def test_reply_is_internal_when_trigger_is_internal
+      @agent.handle(intent(:approve, internal: true))
+      assert_equal [true], @note_visibility
+    end
+
+    def test_reply_is_public_when_trigger_is_public
+      @agent.handle(intent(:approve, internal: false))
+      assert_equal [false], @note_visibility
+    end
+
+    def test_reply_defaults_to_internal_when_visibility_unknown
+      @agent.handle(intent(:approve, internal: nil))
+      assert_equal [true], @note_visibility
     end
 
     def test_handle_fix_skips_ship_when_needs_info

@@ -1,4 +1,5 @@
 require "octokit"
+require "open-uri"
 
 module Chomper
   module Clients
@@ -22,6 +23,18 @@ module Chomper
       def initialize(token)
         @token   = token
         @octokit = Octokit::Client.new(access_token: token)
+      end
+
+      # Run a block with Octokit auto-pagination on, restoring it afterwards.
+      # Octokit defaults auto_paginate to false, so list endpoints return only the
+      # first page; CI calls must see every page to read a commit's full status.
+      # Scoped per-call so other callers keep the cheaper single-page behaviour.
+      def paginated
+        prev = @octokit.auto_paginate
+        @octokit.auto_paginate = true
+        yield
+      ensure
+        @octokit.auto_paginate = prev
       end
 
       # Ensure the authenticated account's fork of `upstream` ("owner/repo")
@@ -167,6 +180,60 @@ module Chomper
           @octokit.create_issue_comment_reaction(repo, comment_id, content)
         end
       rescue Octokit::Error
+        nil
+      end
+
+      # ── CI: check runs, annotations, and workflow-job logs ──────────────────
+      # All used only by gh-agent's CI-fix path (chomper's own PRs). Each returns
+      # an empty/nil result on an Octokit error so one flaky CI lookup never
+      # breaks a poll.
+
+      # Every check run reported for a commit (head SHA), with status/conclusion,
+      # name, id, and output summary. The unified Checks API covers GitHub Actions
+      # and most third-party CI. Fully paginated: Octokit's auto_paginate is off by
+      # default, so without this a commit with >30 checks (OpenProject easily has
+      # that) would be silently truncated to the first page — dropping failures or
+      # mis-reading the commit as green.
+      def check_runs(repo, ref)
+        paginated { @octokit.check_runs_for_ref(repo, ref, per_page: 100).check_runs }
+      rescue Octokit::Error
+        []
+      end
+
+      # A check run's annotations (file/line/message) — what lint and most test
+      # problem-matchers surface as. Skipped when a check has none.
+      def check_run_annotations(repo, check_run_id)
+        @octokit.check_run_annotations(repo, check_run_id)
+      rescue Octokit::Error
+        []
+      end
+
+      # The Actions workflow runs for a commit (head SHA) — the entry point for
+      # reaching the failed jobs' logs.
+      def workflow_runs(repo, head_sha)
+        paginated { @octokit.repository_workflow_runs(repo, head_sha: head_sha, per_page: 100).workflow_runs }
+      rescue Octokit::Error
+        []
+      end
+
+      # The jobs of a workflow run (each with name/status/conclusion/id).
+      def workflow_run_jobs(repo, run_id)
+        paginated { @octokit.workflow_run_jobs(repo, run_id, per_page: 100).jobs }
+      rescue Octokit::Error
+        []
+      end
+
+      # The plain-text log of a single failed job, trimmed to its tail (the
+      # failing section is at the end). `workflow_run_job_logs` returns a
+      # short-lived redirect URL to blob storage; we fetch it and keep the last
+      # `tail` lines, byte-capped so a runaway log can't blow up the prompt.
+      def job_log(repo, job_id, tail: 400, max_bytes: 50_000)
+        url = @octokit.workflow_run_job_logs(repo, job_id)
+        return nil unless url
+        text = URI.open(url, &:read).to_s
+        text = (text.byteslice(-max_bytes..) || text) if text.bytesize > max_bytes
+        text.scrub.lines.last(tail).join
+      rescue StandardError
         nil
       end
 

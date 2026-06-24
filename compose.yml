@@ -38,6 +38,9 @@ services:
       - CHOMPER_TRIAGE_MODEL
       - CHOMPER_PLAN_REVIEW
       - AUTO_PLAN_APPROVAL
+      - CHOMPER_CI_FIX
+      - CHOMPER_CI_MAX_ATTEMPTS
+      - CHOMPER_CI_IGNORE_CHECKS
       - CHOMPER_MARKDOWN
       # Optional: seeds the openproject clone from a local checkout (bin/repos).
       - OP_REPO_PATH

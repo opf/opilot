@@ -38,5 +38,34 @@ module Chomper
     ensure
       saved.each { |k, v| ENV[k] = v if v }
     end
+
+    def test_ci_fix_is_off_by_default_and_opt_in
+      with_env("CHOMPER_CI_FIX" => nil) { refute Context.build(@tmpdir).ci_fix? }
+      with_env("CHOMPER_CI_FIX" => "1") { assert Context.build(@tmpdir).ci_fix? }
+      with_env("CHOMPER_CI_FIX" => "true") { assert Context.build(@tmpdir).ci_fix? }
+      with_env("CHOMPER_CI_FIX" => "0") { refute Context.build(@tmpdir).ci_fix? }
+    end
+
+    def test_ci_max_attempts_defaults_to_five_and_is_floored_at_one
+      with_env("CHOMPER_CI_MAX_ATTEMPTS" => nil) { assert_equal 5, Context.build(@tmpdir).ci_max_attempts }
+      with_env("CHOMPER_CI_MAX_ATTEMPTS" => "3") { assert_equal 3, Context.build(@tmpdir).ci_max_attempts }
+      with_env("CHOMPER_CI_MAX_ATTEMPTS" => "0") { assert_equal 1, Context.build(@tmpdir).ci_max_attempts }
+    end
+
+    def test_ci_ignored_checks_defaults_to_saas_tests_and_is_overridable
+      with_env("CHOMPER_CI_IGNORE_CHECKS" => nil) { assert_equal ["saas tests"], Context.build(@tmpdir).ci_ignored_checks }
+      with_env("CHOMPER_CI_IGNORE_CHECKS" => "Foo, Bar") { assert_equal ["foo", "bar"], Context.build(@tmpdir).ci_ignored_checks }
+      with_env("CHOMPER_CI_IGNORE_CHECKS" => "") { assert_equal [], Context.build(@tmpdir).ci_ignored_checks }
+    end
+
+    private
+
+    def with_env(vars)
+      saved = vars.map { |k, _| [k, ENV[k]] }
+      vars.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+      yield
+    ensure
+      saved.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+    end
   end
 end

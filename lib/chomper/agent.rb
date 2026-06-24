@@ -5,8 +5,10 @@ require_relative "clients"
 module Chomper
   # An inbound instruction parsed from an @chomper comment (see Pull#poll_intents).
   # `user` / `user_href` identify the commenter, so replies can address them.
+  # `internal` is the trigger comment's visibility, so the reply can mirror it
+  # (an internal @chomper prompt gets an internal answer, a public one a public).
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
-                      :user, :user_href, keyword_init: true)
+                      :user, :user_href, :internal, keyword_init: true)
 
   # Cooperative shutdown flag, shared with the SIGINT handler in bin/chomper.
   # The agent loop checks it between items so Ctrl-C finishes the current intent
@@ -91,6 +93,7 @@ module Chomper
     def handle(intent)
       log_script "#{wp_label(intent.item_id)} — #{intent.command} — #{intent.subject}"
       @requester = requester_mention(intent)   # who to address in replies
+      @reply_internal = intent.internal        # mirror the trigger's visibility
       case intent.command
       when :chat    then handle_chat(intent)
       when :plan    then handle_plan(intent)
@@ -285,8 +288,13 @@ module Chomper
 
     # ── notifications ─────────────────────────────────────────────────────────
 
+    # Replies mirror the trigger comment's visibility: an internal @chomper prompt
+    # gets an internal answer, a public one a public answer. Defaults to internal
+    # (the safer side) when visibility is unknown — e.g. an error before #handle
+    # set @reply_internal.
     def post_note(item_id, raw)
-      code, body = @api.post_activity(item_id, comment: raw)
+      internal = @reply_internal.nil? ? true : @reply_internal
+      code, body = @api.post_activity(item_id, comment: raw, internal: internal)
       if code == 201
         log_script "Note posted to WP #{wp_label(item_id)}"
         comment_id = body&.dig("id")&.to_s

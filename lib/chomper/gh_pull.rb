@@ -13,8 +13,14 @@ module Chomper
   # is where the PR's branch actually lives (the user's fork) — what gh-agent
   # fetches from and pushes to. `reply_only` is true for an upstream PR chomper did
   # NOT open (it can review/answer but cannot push code there).
+  #
+  # `kind` is also :ci for a CI-failure trigger (gh-agent's auto-fix path on
+  # chomper's own PRs): there is no comment, so `text`/`comment_id` are nil and
+  # `head_sha` carries the commit whose checks failed — the key the act-state is
+  # deduped on, since CI isn't comment-timestamp driven.
   GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at, :reply_only,
+                        :head_sha,
                         keyword_init: true)
 
   # The GitHub counterpart of Pull: scans the PRs chomper has already opened (one
@@ -95,6 +101,18 @@ module Chomper
       Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
     end
 
+    # Record that chomper has addressed a head SHA's CI failure. Unlike comment
+    # acks (timestamp cutoff), CI dedup is per-SHA: `ci_acted_sha` blocks acting
+    # twice on the same commit, and `ci_attempts` caps how many times chomper
+    # will chase a PR's CI before giving up.
+    def mark_ci_acted(item_id, repo_name, head_sha)
+      dir   = pr_dir(item_id, repo_name)
+      state = gh_state(dir)
+      state["ci_acted_sha"] = head_sha
+      state["ci_attempts"]  = (state["ci_attempts"] || 0) + 1
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+    end
+
     private
 
     # `dir` is items/<id>/repos/<name>/ — the repo subdir holds the PR url, cache,
@@ -121,7 +139,7 @@ module Chomper
       cutoff = [state["last_acted_comment_at"], @scan_from_at].compact.max
       acted  = (state["chomper_comment_ids"] || []).map(&:to_s)
 
-      fresh_mentions(content["comments"], cutoff, acted).filter_map do |c|
+      intents = fresh_mentions(content["comments"], cutoff, acted).filter_map do |c|
         # Off-allowlist comments still advance the cutoff so we don't re-evaluate
         # them every poll (mirrors Pull#intent_from_comments).
         unless allowed?(c["author"], pr_url)
@@ -138,10 +156,102 @@ module Chomper
           text: c["body"], user_login: c["author"], comment_at: c["created_at"]
         )
       end
+
+      # When enabled, also react to a failed CI run — but not in the same tick as
+      # a comment trigger for this PR: let the requested change land first, since
+      # CI re-runs on the new commit anyway.
+      if @ctx.ci_fix? && intents.empty?
+        ci = ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject)
+        intents << ci if ci
+      end
+      intents
     rescue => e
       # One unreachable/renamed PR shouldn't stop the others being polled.
       log_script "gh-agent: skipping #{dir.basename} — #{e.message}"
       []
+    end
+
+    # A CI-failure intent for this PR, or nil when there's nothing to do: the
+    # current head SHA was already addressed or already found green, the attempt
+    # cap is spent (a one-time "needs a human" notice is posted then), or CI
+    # hasn't finished. Only a completed run with ≥1 failed check produces an
+    # intent — and ci.json is populated (annotations + failed-job logs) first.
+    def ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject)
+      head_sha = content["head_sha"].to_s
+      return nil if head_sha.empty?
+
+      # CI results are immutable per commit, so a SHA we've already chased or
+      # already found green never needs another check-runs call — this is what
+      # keeps a long-lived green PR from costing a request on every poll.
+      state = gh_state(dir)
+      return nil if [state["ci_acted_sha"], state["ci_quiet_sha"]].include?(head_sha)
+      if (state["ci_attempts"] || 0) >= @ctx.ci_max_attempts
+        announce_ci_give_up(dir, repo, number, state)
+        return nil
+      end
+
+      # Drop checks chomper can't fix (e.g. "SaaS tests" — needs fork-inaccessible
+      # secrets, so it always fails) before reading status, so they never trigger
+      # a fix or burn an attempt.
+      ignore     = @ctx.ci_ignored_checks
+      check_runs = @github.check_runs(repo, head_sha)
+                          .reject { |c| ignore.include?(c.name.to_s.strip.downcase) }
+      case ci_status(check_runs)
+      when :failed
+        fetch_ci_content(dir, repo, head_sha, check_runs, ignore: ignore)
+        GhIntent.new(
+          item_id: item_id, repo_name: repo_name, subject: subject, branch: content["head_ref"],
+          repo: repo, head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,
+          kind: :ci, head_sha: head_sha, comment_at: Time.now.utc.iso8601
+        )
+      when :green
+        # Only cache the green verdict once the PR has settled — checks register
+        # over time, so a poll landing right after a push can see only the fast
+        # green checks before the slow/failing ones register. Caching then would
+        # mark a commit green forever and hide failures that surface seconds later.
+        mark_ci_quiet(dir, head_sha) if ci_settled?(content)
+        nil
+      # :pending / :none — checks aren't done (or haven't registered yet); leave
+      # the SHA un-cached so the next poll keeps watching until they complete.
+      end
+    end
+
+    # How long a PR must be idle (no new push/comment/check event bumping its
+    # updated_at) before an all-green reading is trusted enough to cache — long
+    # enough that every workflow for the head commit has registered its checks.
+    CI_SETTLE_SECONDS = 180
+
+    def ci_settled?(content)
+      updated = content["updated_at"].to_s
+      return false if updated.empty?
+      Time.now - Time.parse(updated) > CI_SETTLE_SECONDS
+    rescue ArgumentError
+      false
+    end
+
+    # Remember that a commit's CI came back green so we don't re-poll check runs
+    # for it. Separate from ci_acted_sha (a failure we chased) since it must NOT
+    # touch the attempt counter.
+    def mark_ci_quiet(dir, head_sha)
+      state = gh_state(dir)
+      state["ci_quiet_sha"] = head_sha
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+    end
+
+    # Post a single "I'm giving up on CI" note once the attempt cap is hit, so a
+    # maintainer knows chomper has stopped retrying. Guarded by ci_gave_up so it
+    # posts exactly once per PR.
+    def announce_ci_give_up(dir, repo, number, state)
+      return if state["ci_gave_up"]
+      @github.add_issue_comment(
+        repo, number,
+        "🤖 CI is still failing after #{@ctx.ci_max_attempts} automatic fix attempt(s) — " \
+        "this one needs a human. I'll stop retrying CI for this PR."
+      )
+      state["ci_gave_up"] = true
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+    rescue => e
+      log_script "gh-agent: CI give-up notice failed on #{repo}##{number} — #{e.message}"
     end
 
     def allowed?(login, pr_url)
