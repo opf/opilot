@@ -83,6 +83,15 @@ module Chomper
       assert_equal "opf/commonmark-ckeditor-build", @github.pr_calls.first[:repo]
     end
 
+    def test_uses_the_per_wp_base_override_when_present
+      (@dir / "target_base.json").write(JSON.generate("openproject" => "release/17.6"))
+
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      assert_equal "release/17.6", @github.pr_calls.first[:base],
+                   "the PR targets the per-WP base override, not the repo default"
+    end
+
     def test_direct_mode_pushes_to_upstream_and_opens_same_repo_pr
       @ctx.pr_mode = "direct"
       url = nil

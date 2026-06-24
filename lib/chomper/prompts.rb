@@ -30,9 +30,12 @@ module Chomper
         #{listing}
 
         On the FIRST line of your output, before anything else, declare the repo(s)
-        this fix will touch:  REPOS: <name>[, <name>…]
-        Use only names from the list above. (If you instead emit NEEDS_INFO below,
-        omit the REPOS line.)
+        this fix will touch:  REPOS: <name>[@<base>][, <name>…]
+        Use only names from the list above. Append @<base> to a name ONLY when the
+        issue or the user explicitly asks to base that repo's PR on a specific
+        branch (e.g. "base it on release/17.6" → openproject@release/17.6);
+        otherwise give the bare name and chomper uses the repo's default base.
+        (If you instead emit NEEDS_INFO below, omit the REPOS line.)
       TEXT
     end
 

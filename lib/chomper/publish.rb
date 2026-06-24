@@ -23,6 +23,7 @@ module Chomper
       pr_desc_file = st.pr_desc_file(repo)
       pr_url_file  = st.pr_url_file(repo)
       upstream     = repo.upstream
+      base         = st.base_for(repo)
 
       unless local_branch_exists?(worktree(repo), branch)
         puts "  Error: branch #{branch} not found in #{repo.name} — has this item been committed?"
@@ -48,7 +49,7 @@ module Chomper
         return existing
       end
 
-      log_script "Publishing #{wp_label(item_id)} → #{repo.name} — #{subject}"
+      log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}) — #{subject}"
 
       banner  = "🤖 AI-generated PR! Please review it for accuracy and then remove this line."
       pr_body = "#{banner}\n\n#{pr_desc_file.read}"
@@ -56,7 +57,7 @@ module Chomper
       @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
       title = pr_title(item_id, subject)
-      url = @github.create_draft_pr(upstream, base: repo.base, head: head, title: title, body: pr_body,
+      url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
                                     maintainer_can_modify: !@ctx.direct_pr?)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")

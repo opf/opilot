@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "git"
 
 module Chomper
   class HelpersTest < Minitest::Test
@@ -130,6 +131,132 @@ module Chomper
     def test_parse_scan_from_unparseable_defaults_to_now
       out, = capture_io { assert_scan_from(0, "next tuesday-ish") }
       assert_match(/Could not parse/, out)
+    end
+
+    # ── per-WP base branch overrides (REPOS: <name>@<base>) ───────────────────
+
+    # A registry-backed host so record_chosen_repos / state_for / base_for can
+    # resolve real Repo objects against a two-repo registry.
+    class RepoHost
+      include Helpers
+      attr_reader :ctx
+      def initialize(ctx); @ctx = ctx; end
+      public :state_for, :record_chosen_repos, :checkout_branch   # private in Helpers
+    end
+
+    class FakeWorktree
+      attr_reader :checkouts, :fetched, :configs
+      def initialize; @checkouts = []; @fetched = []; @configs = []; end
+      def revparse(_ref); raise Git::FailedError.allocate; end   # branch doesn't exist yet
+      def checkout(branch, **opts); @checkouts << [branch, opts]; end
+      def fetch(remote, **opts); @fetched << [remote, opts]; end
+      def config(k, v); @configs << [k, v]; end
+    end
+
+    def repo_host
+      @repo_tmpdir = Dir.mktmpdir
+      script_dir = Pathname(@repo_tmpdir)
+      state_dir  = script_dir / ".chomper"
+      state_dir.mkpath
+      (script_dir / "repos.json").write(JSON.generate(
+        "summary" => "",
+        "repos" => [
+          { "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev" },
+          { "name" => "foo",         "upstream" => "acme/foo",        "base" => "main" }
+        ]
+      ))
+      registry = Registry.build(script_dir: script_dir, state_dir: state_dir)
+      ctx = Struct.new(:state_dir, :script_dir, :log_file, :repos, :default_repo).new(
+        state_dir, script_dir, Pathname("/dev/null"), registry, registry.default
+      )
+      RepoHost.new(ctx)
+    end
+
+    def teardown_repo_host
+      FileUtils.rm_rf(@repo_tmpdir) if @repo_tmpdir
+    end
+
+    def test_record_chosen_repos_parses_name_at_base_overrides
+      host = repo_host
+      st = host.state_for("42", "Fix the bug", "Bug")
+      st.plan_file.write("REPOS: openproject@release/17.6, foo\n\n## Plan\nbody\n")
+
+      host.record_chosen_repos(st)
+
+      assert_equal ["openproject", "foo"], JSON.parse(st.target_repos_file.read)
+      assert_equal({ "openproject" => "release/17.6" }, JSON.parse(st.target_base_file.read))
+      refute_match(/REPOS:/, st.plan_file.read, "the REPOS line is stripped from the saved plan")
+
+      op  = host.ctx.repos["openproject"]
+      foo = host.ctx.repos["foo"]
+      assert_equal "release/17.6", st.base_for(op), "override base wins for the chosen repo"
+      assert_equal "main", st.base_for(foo), "a repo without an override uses its registry default"
+    ensure
+      teardown_repo_host
+    end
+
+    def test_no_target_base_file_when_no_base_requested
+      host = repo_host
+      st = host.state_for("43", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject\n## Plan\n")
+
+      host.record_chosen_repos(st)
+
+      refute st.target_base_file.exist?, "no override → no target_base.json"
+      assert_equal "dev", st.base_for(host.ctx.repos["openproject"]), "falls back to the default base"
+    ensure
+      teardown_repo_host
+    end
+
+    def test_state_for_reloads_persisted_base_overrides
+      host = repo_host
+      st = host.state_for("44", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject@release/17.6\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      reloaded = host.state_for("44", "Fix", "Bug")
+      assert_equal({ "openproject" => "release/17.6" }, reloaded.bases)
+      assert_equal "release/17.6", reloaded.base_for(host.ctx.repos["openproject"])
+    ensure
+      teardown_repo_host
+    end
+
+    def test_checkout_branch_fetches_and_branches_from_a_custom_base
+      host = repo_host
+      st = host.state_for("45", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject@release/17.6\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      op = host.ctx.repos["openproject"]
+      wt = FakeWorktree.new
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      host.checkout_branch(st, op)
+
+      assert_equal [["origin", { ref: "release/17.6" }]], wt.fetched, "the custom base is fetched first"
+      branch, opts = wt.checkouts.first
+      assert_equal st.branch, branch
+      assert_equal "origin/release/17.6", opts[:start_point], "the fix branch starts from the custom base"
+    ensure
+      teardown_repo_host
+    end
+
+    def test_checkout_branch_skips_fetch_for_the_default_base
+      host = repo_host
+      st = host.state_for("46", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      op = host.ctx.repos["openproject"]
+      wt = FakeWorktree.new
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      host.checkout_branch(st, op)
+
+      assert_empty wt.fetched, "the default base is already provisioned — no extra fetch"
+      assert_equal "origin/dev", wt.checkouts.first[1][:start_point]
+    ensure
+      teardown_repo_host
     end
   end
 end

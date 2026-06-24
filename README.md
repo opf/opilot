@@ -347,11 +347,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ### Feature ideas
 * **First Communicator PoC** (late June 2026):
   * Re-add linking of the plan as a gist & compact description
-  * Make sure chomper can see GitHub CI run results and act on them
-  * Run at least basic linter in the runner & pass results to Claude
-  * Correctly set the target branch for release-specific fixes
-    * rough idea: If the WP Version field is set to {ver} AND `origin/release/{ver}[\.0-9]*` exists AND we're past the release freeze day, base the PR on the release branch
-    * Maybe explore the idea of prompting for this interactively
 * Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.

@@ -97,9 +97,9 @@ module Chomper
     # live under items/<id>/repos/<name>/ since a WP may ship to several repos —
     # resolve them with the per-repo helpers below. Shared by both runners (agent
     # and backlog) via #state_for.
-    ItemState = Struct.new(:item_id, :subject, :branch, :repos, :item_dir, :plan_file,
+    ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
                            :item_file, :related_file, :review_file, :target_repos_file,
-                           :session_file, keyword_init: true) do
+                           :target_base_file, :session_file, keyword_init: true) do
       # Per-repo artifact directory (items/<id>/repos/<name>/), created on demand.
       def repo_dir(repo)
         dir = item_dir / "repos" / repo_name(repo)
@@ -109,6 +109,13 @@ module Chomper
 
       def pr_desc_file(repo); repo_dir(repo) / "pr.md"; end
       def pr_url_file(repo);  repo_dir(repo) / "pr_url.txt"; end
+
+      # The base branch this WP's PR targets in `repo`: the per-WP override the
+      # user requested (target_base.json), else the repo's registry default. The
+      # fix branch is both created from and the PR opened against this branch.
+      def base_for(repo)
+        (bases || {})[repo_name(repo)] || repo.base
+      end
 
       private
 
@@ -242,14 +249,29 @@ module Chomper
     # PR branch it is pushed to — on every checkout, which also repairs branches
     # created before this fix.
     def checkout_branch(st, repo)
-      wt = worktree(repo)
+      wt   = worktree(repo)
+      base = st.base_for(repo)
+      # A non-default base may be missing or stale in the clone (clones aren't
+      # --single-branch, so default-base siblings exist, but a newer/less-common
+      # base needs fetching). The default base is already provisioned, so skip it.
+      fetch_base(wt, repo, base) if base != repo.base
       if local_branch_exists?(wt, st.branch)
         wt.checkout(st.branch)
       else
-        wt.checkout(st.branch, new_branch: true, start_point: "origin/#{repo.base}")
+        wt.checkout(st.branch, new_branch: true, start_point: "origin/#{base}")
       end
       wt.config("branch.#{st.branch}.remote", "origin")
       wt.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+    end
+
+    # Fetch a base branch into its remote-tracking ref (origin/<base>) so the fix
+    # branch can be created from it. Read-only over the clone's public https
+    # origin, so no auth — mirrors how ./chomper provisions the default base. A
+    # missing branch surfaces as a clear error the runner reports on the WP.
+    def fetch_base(wt, repo, base)
+      wt.fetch("origin", ref: base)
+    rescue StandardError => e
+      raise "base branch #{base.inspect} not found on #{repo.upstream} (#{e.message})"
     end
 
     # Check out an existing PR's branch in `repo` and sync it to the PR's current
@@ -288,12 +310,14 @@ module Chomper
         subject:           subject.to_s,
         branch:            branch_slug(item_id, type.to_s, subject.to_s),
         repos:             target_repos_for(item_id),
+        bases:             target_bases_for(item_id),
         item_dir:          dir,
         plan_file:         dir / "plan.md",
         item_file:         dir / "item.json",
         related_file:      dir / "related.json",
         review_file:       dir / "review.txt",
         target_repos_file: dir / "target_repos.json",
+        target_base_file:  dir / "target_base.json",
         session_file:      dir / "session_id"
       )
     end
@@ -308,14 +332,37 @@ module Chomper
       repos.empty? ? [@ctx.default_repo] : repos
     end
 
+    # The per-repo base overrides a WP requested, read from
+    # items/<id>/target_base.json ({ "<repo>" => "<base>" }); empty/missing means
+    # every repo uses its registry default base.
+    def target_bases_for(item_id)
+      file = Helpers.item_dir(@ctx, item_id) / "target_base.json"
+      (file.exist? ? Helpers.safe_json_read(file) : nil) || {}
+    end
+
     # Persist the repos Claude chose for a WP (validated against the registry) and
     # update the live state. Names not in the registry are ignored; if none
-    # survive, the default repo is used so a fix still ships somewhere.
-    def set_target_repos(st, names)
+    # survive, the default repo is used so a fix still ships somewhere. `bases` is
+    # a { name => base } map of the per-repo base overrides Claude declared (via
+    # the REPOS `name@base` syntax); it is kept only for valid, chosen repos.
+    def set_target_repos(st, names, bases = {})
       repos = Array(names).filter_map { |n| @ctx.repos[n.to_s.strip] }.uniq(&:name)
       repos = [@ctx.default_repo] if repos.empty?
       st.target_repos_file.write(JSON.generate(repos.map(&:name)))
       st.repos = repos
+
+      chosen = repos.map(&:name)
+      overrides = (bases || {}).filter_map do |name, base|
+        n = name.to_s.strip
+        b = base.to_s.strip
+        [n, b] if chosen.include?(n) && !b.empty?
+      end.to_h
+      if overrides.empty?
+        safe_rm(st.target_base_file)
+      else
+        st.target_base_file.write(JSON.generate(overrides))
+      end
+      st.bases = overrides
     end
 
     # Rewrite a host path under .chomper/ to its path inside the Claude container.
@@ -356,15 +403,25 @@ module Chomper
     # the saved plan. Falls back to the default repo when the line is absent or
     # names nothing valid (so single-repo plans need no REPOS line).
     def record_chosen_repos(st)
-      text  = st.plan_file.read
-      m     = text.match(/^[ \t]*REPOS:[ \t]*(.+?)[ \t]*$/i)
-      names = m ? m[1].split(",").map(&:strip).reject(&:empty?) : []
-      set_target_repos(st, names)
+      text    = st.plan_file.read
+      m       = text.match(/^[ \t]*REPOS:[ \t]*(.+?)[ \t]*$/i)
+      entries = m ? m[1].split(",").map(&:strip).reject(&:empty?) : []
+      # Each entry is "<name>" or "<name>@<base>"; split on the first @ so a base
+      # like "release/17.6" survives intact.
+      names = []
+      bases = {}
+      entries.each do |entry|
+        name, base = entry.split("@", 2).map(&:strip)
+        next if name.to_s.empty?
+        names << name
+        bases[name] = base if base && !base.empty?
+      end
+      set_target_repos(st, names, bases)
       st.plan_file.write(text.sub(/^[ \t]*REPOS:.*\R?/i, "")) if m
     end
 
     def branch_has_commits?(st, repo)
-      worktree(repo).log.between("origin/#{repo.base}", st.branch).execute.any?
+      worktree(repo).log.between("origin/#{st.base_for(repo)}", st.branch).execute.any?
     end
 
     # True when a phase will resume an existing per-WP session (so the plan and
