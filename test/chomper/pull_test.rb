@@ -257,9 +257,9 @@ module Chomper
       (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
     end
 
-    def build_pull(allowed_emails = [])
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_emails)
-                  .new("https://example.com", Pathname(@tmpdir), "tok", allowed_emails)
+    def build_pull(allowed_op_user_ids = [])
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids)
+                  .new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids)
       Pull.new(ctx)
     end
 
@@ -342,19 +342,33 @@ module Chomper
     end
 
     def test_drops_trigger_from_non_allowlisted_user
-      @pull = build_pull(["allowed@example.com"])
+      # Comment author is user id 2 (from user_href); allowlist only permits 1.
+      @pull = build_pull(["1"])
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Mallory", "user_href" => "/api/v3/users/2",
           "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} fix it" }
       ])
-      stub_request(:get, "https://example.com/api/v3/users/2")
-        .to_return(status: 200, body: JSON.generate({ "email" => "mallory@example.com" }))
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
       assert_equal [], @pull.poll_intents(FILTERS)
       # marked acted so it is not re-evaluated next poll
       on_disk = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
       assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
+    end
+
+    def test_emits_trigger_from_allowlisted_user_id
+      # Comment author is user id 2 (from user_href), which the allowlist permits.
+      @pull = build_pull(["2"])
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} fix it" }
+      ])
+      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal "1", intents[0].item_id
     end
 
     def test_ignores_comment_recorded_as_chomper_reply
@@ -559,7 +573,7 @@ module Chomper
   class PullRelatedTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_emails)
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids)
                   .new("https://example.com", Pathname(@tmpdir), "tok", [])
       @pull = Pull.new(ctx)
     end

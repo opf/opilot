@@ -423,16 +423,16 @@ module Chomper
     end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an
-    # Intent. Acknowledges receipt with 👀 and enforces the email allowlist
+    # Intent. Acknowledges receipt with 👀 and enforces the user-id allowlist
     # (a non-allowlisted trigger is marked acted and dropped, never emitted).
     def intent_from_comments(wp, comments)
       trigger = chomper_trigger_comment(wp_display_id(wp), comments)
       return nil unless trigger
 
-      if @ctx.allowed_emails.any?
-        email = resolve_user_email(trigger)
-        unless @ctx.allowed_emails.include?(email.to_s)
-          puts "  [@chomper] Ignoring trigger from #{trigger["user"]} (#{email || "unknown"}) — not in allowlist"
+      if @ctx.allowed_op_user_ids.any?
+        user_id = trigger_user_id(trigger)
+        unless user_id && @ctx.allowed_op_user_ids.include?(user_id)
+          puts "  [@chomper] Ignoring trigger from user #{user_id || "unknown"} — not in allowlist"
           mark_chomper_acted(wp_display_id(wp), trigger["created_at"])
           return nil
         end
@@ -602,15 +602,13 @@ module Chomper
       Helpers.parse_scan_from(input)
     end
 
-    def resolve_user_email(comment)
+    # The comment author's OpenProject user id, taken straight from the activity's
+    # `_links.user.href` (e.g. "/api/v3/users/534" → "534"). No API call: an
+    # activity never carries the author's email or name, only this id, and a
+    # non-admin token can't read another user's email anyway.
+    def trigger_user_id(comment)
       href = comment["user_href"].to_s
-      return nil if href.empty?
-      user_id = href.split("/").last
-      _, user = @api.user(user_id)
-      user&.dig("email")&.downcase
-    rescue => e
-      puts "  Warning: could not resolve email for #{comment["user"]}: #{e.message}"
-      nil
+      href.empty? ? nil : href.split("/").last
     end
 
     def react_eyes(activity_id)

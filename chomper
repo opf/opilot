@@ -38,12 +38,14 @@ if _need OPENPROJECT_URL; then
 fi
 
 
-if _need CHOMPER_ALLOWED_EMAILS; then
+if _need CHOMPER_ALLOWED_OP_USER_IDS; then
   echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
+  echo "  Use OpenProject user ids (the number in a profile URL, /users/<id>) —"
+  echo "  a non-admin API token can't read other users' emails."
   while :; do
-    printf "  Emails allowed to trigger @chomper (comma-separated): "
-    read -r CHOMPER_ALLOWED_EMAILS
-    [ -n "$CHOMPER_ALLOWED_EMAILS" ] && break
+    printf "  User ids allowed to trigger @chomper (comma-separated): "
+    read -r CHOMPER_ALLOWED_OP_USER_IDS
+    [ -n "$CHOMPER_ALLOWED_OP_USER_IDS" ] && break
     # On the public community instance an open trigger lets anyone on the
     # internet spend your tokens — refuse to proceed without a list.
     if [[ "$(_env_get OPENPROJECT_URL)" == *community.openproject.org* ]]; then
@@ -53,7 +55,7 @@ if _need CHOMPER_ALLOWED_EMAILS; then
       read -r _CONFIRM; [[ "${_CONFIRM:-N}" =~ ^[Yy] ]] && break
     fi
   done
-  _save CHOMPER_ALLOWED_EMAILS "$CHOMPER_ALLOWED_EMAILS"
+  _save CHOMPER_ALLOWED_OP_USER_IDS "$CHOMPER_ALLOWED_OP_USER_IDS"
   echo ""
 fi
 

@@ -62,10 +62,6 @@ module Chomper
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}/activities_emoji_reactions", token: @token)
       end
 
-      def user(user_id)
-        HTTP.get_json("#{@base}/api/v3/users/#{user_id}", token: @token)
-      end
-
       def me
         HTTP.get_json("#{@base}/api/v3/users/me", token: @token)
       end

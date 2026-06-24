@@ -102,7 +102,7 @@ module Chomper
           OPENPROJECT_TOKEN       OpenProject API token
           ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
           GITHUB_TOKEN            Required for pushing branches and opening PRs
-          CHOMPER_ALLOWED_EMAILS  Comma-separated allowlist of @chomper triggerers
+          CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper
           CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent (default thykel)
           AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
 

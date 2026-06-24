@@ -100,7 +100,7 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :state_container,
-        :allowed_emails, :log_file, :progress_file, :plan_review, :auto_plan_approval, :repos
+        :allowed_op_user_ids, :log_file, :progress_file, :plan_review, :auto_plan_approval, :repos
       ) do
         def plan_review?; plan_review; end                 # opt-in agent self-review (off by default)
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)

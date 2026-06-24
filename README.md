@@ -168,7 +168,7 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 | `@chomper approve` | Implement and ship a plan that was drafted with `@chomper plan` |
 | `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
 
-Triggers are gated by the `CHOMPER_ALLOWED_EMAILS` allowlist (when set). A work
+Triggers are gated by the `CHOMPER_ALLOWED_OP_USER_IDS` allowlist (when set). A work
 package's status is just the files in `.chomper/items/<id>/`: `plan.md` present
 means it has a plan, `pr_url.txt` present means it shipped.
 
@@ -259,7 +259,7 @@ openproject-chomper/
 | `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
 | `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
 | `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
-| `CHOMPER_ALLOWED_EMAILS` | — | Comma-separated emails allowed to trigger the agent via `@chomper` comments. The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
+| `CHOMPER_ALLOWED_OP_USER_IDS` | — | Comma-separated OpenProject user ids allowed to trigger the agent via `@chomper` comments (the number in a profile URL, `/users/<id>` — not emails, since a non-admin API token can't read other users' emails). The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
 ---
 

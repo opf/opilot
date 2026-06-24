@@ -46,10 +46,10 @@ module Chomper
     # are passed to #tick. Split out from #run so CombinedAgent can drive the loop.
     def setup
       filters = @pull.load_or_prompt_agent_filters
-      if @ctx.allowed_emails.any?
-        puts "  Allowlist active — only triggers from: #{@ctx.allowed_emails.join(", ")}"
+      if @ctx.allowed_op_user_ids.any?
+        puts "  Allowlist active — only triggers from user ids: #{@ctx.allowed_op_user_ids.join(", ")}"
       else
-        puts "  No allowlist set (CHOMPER_ALLOWED_EMAILS) — any user can trigger @chomper."
+        puts "  No allowlist set (CHOMPER_ALLOWED_OP_USER_IDS) — any user can trigger @chomper."
       end
       filters
     end
