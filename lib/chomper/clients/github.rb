@@ -111,6 +111,20 @@ module Chomper
         nil
       end
 
+      # Create a gist and return its html_url, or nil on failure (e.g. the token
+      # lacks the `gist` scope). Secret by default: unlisted and unindexed, but
+      # readable by anyone with the link — used to attach a WP's full plan to its
+      # PR while keeping the PR body itself compact.
+      def create_gist(description:, filename:, content:, public: false)
+        @octokit.create_gist(
+          description: description, public: public,
+          files: { filename => { content: content } }
+        ).html_url
+      rescue Octokit::Error => e
+        warn "  Warning: could not create plan gist: #{e.message}"
+        nil
+      end
+
       # Creates a draft PR and returns its URL. `maintainer_can_modify` lets
       # anyone with push access to the base repo push to the PR's branch in the
       # fork ("Allow edits by maintainers") — so opf maintainers can take the PR

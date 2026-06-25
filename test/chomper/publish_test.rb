@@ -5,15 +5,20 @@ module Chomper
     # Records what Publish asks the GitHub client to do, so we can assert the
     # branch goes to the fork and the PR is opened against the repo's upstream.
     class FakeGitHub
-      attr_reader :forked, :pushed, :pr_calls
+      attr_reader :forked, :pushed, :pr_calls, :gist_calls
       def initialize(existing: nil)
-        @existing = existing; @forked = []; @pushed = []; @pr_calls = []
+        @existing = existing; @forked = []; @pushed = []; @pr_calls = []; @gist_calls = []
       end
+      def login; "op-chomper"; end
       def ensure_fork(upstream); @forked << upstream; "me/#{upstream.split('/').last}"; end
       def find_open_pr(_base_repo, head:); @existing; end
       def push_branch(repo, branch:, worktree_path:); @pushed << [repo, branch]; end
+      def create_gist(description:, filename:, content:, public: false)
+        @gist_calls << { description: description, filename: filename, content: content, public: public }
+        "https://gist.github.com/me/abc"
+      end
       def create_draft_pr(repo, base:, head:, title:, body:, maintainer_can_modify: true)
-        @pr_calls << { repo: repo, base: base, head: head, title: title, mcm: maintainer_can_modify }
+        @pr_calls << { repo: repo, base: base, head: head, title: title, body: body, mcm: maintainer_can_modify }
         "https://github.com/#{repo}/pull/7"
       end
     end
@@ -115,6 +120,43 @@ module Chomper
       assert_empty github.pushed, "an already-open PR must not be re-pushed"
       assert_empty github.pr_calls
       assert_equal "https://github.com/opf/openproject/pull/3", pr_url_file.read
+    end
+
+    def test_plan_is_uploaded_as_a_secret_gist_and_linked_from_the_pr
+      (@dir / "plan.md").write("## Plan\nDo the thing.")
+
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      gist = @github.gist_calls.first
+      refute_nil gist, "the plan should be uploaded as a gist"
+      assert_equal false, gist[:public], "the plan gist must be secret"
+      assert_equal "wp-42-plan.md", gist[:filename]
+      assert_includes gist[:content], "Do the thing."
+
+      body = @github.pr_calls.first[:body]
+      assert_includes body, "📋 **Implementation plan:** https://gist.github.com/me/abc"
+      assert_includes body, "PR body here", "the per-repo PR description is still present"
+
+      assert_equal "https://gist.github.com/me/abc",
+                   (@dir / "gist_url.txt").read.strip, "the gist URL is cached for reuse"
+    end
+
+    def test_no_plan_means_no_gist_and_no_plan_link
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      assert_empty @github.gist_calls, "with no plan.md there is nothing to gist"
+      refute_includes @github.pr_calls.first[:body], "Implementation plan:"
+    end
+
+    def test_cached_gist_url_is_reused_without_a_second_upload
+      (@dir / "plan.md").write("## Plan")
+      (@dir / "gist_url.txt").write("https://gist.github.com/me/cached\n")
+
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      assert_empty @github.gist_calls, "a cached gist URL must not trigger a new upload"
+      assert_includes @github.pr_calls.first[:body],
+                      "📋 **Implementation plan:** https://gist.github.com/me/cached"
     end
 
     private

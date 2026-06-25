@@ -195,7 +195,9 @@ module Chomper
         Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
         even if empty (write "N/A" or "No visual changes").
         Keep it tight: a sentence or two per section. Don't restate the issue, narrate
-        the diff file-by-file, or pad — fill the template and stop.
+        the diff file-by-file, or pad — fill the template and stop. The full
+        implementation plan is linked separately from the PR, so summarize the
+        approach at a high level rather than reproducing the plan's detail.
         Output only the PR description — no preamble.
       PROMPT
     end

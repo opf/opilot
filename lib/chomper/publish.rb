@@ -51,8 +51,12 @@ module Chomper
 
       log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}) — #{subject}"
 
-      banner  = "🤖 AI-generated PR! Please review it for accuracy and then remove this line."
-      pr_body = "#{banner}\n\n#{pr_desc_file.read}"
+      # Keep the PR body compact; attach the full plan as a (secret) gist and
+      # link it under the banner for anyone who wants to read deeper.
+      banner    = "🤖 AI-generated PR. Chat with @#{@github.login} for any further adjustments."
+      gist_url  = plan_gist_url(st)
+      plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
+      pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
 
       @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
@@ -64,5 +68,23 @@ module Chomper
       url
     end
 
+    private
+
+    # The secret gist URL for this WP's plan, created once and cached in
+    # gist_url.txt so every repo's PR links the same gist. nil when there is no
+    # plan to upload or the gist call fails (the PR then opens with no plan link).
+    def plan_gist_url(st)
+      cache = st.gist_url_file
+      return cache.read.strip if Helpers.file_has_content?(cache)
+      return nil unless Helpers.file_has_content?(st.plan_file)
+
+      url = @github.create_gist(
+        description: "chomper plan: #{wp_label(st.item_id)} — #{st.subject}",
+        filename:    "wp-#{st.item_id}-plan.md",
+        content:     st.plan_file.read
+      )
+      cache.write(url) if url
+      url
+    end
   end
 end

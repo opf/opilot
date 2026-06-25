@@ -110,6 +110,10 @@ module Chomper
       def pr_desc_file(repo); repo_dir(repo) / "pr.md"; end
       def pr_url_file(repo);  repo_dir(repo) / "pr_url.txt"; end
 
+      # The plan gist URL, cached per-WP (not per-repo): plan.md is shared across
+      # every repo a WP ships to, so all their PRs link the same gist.
+      def gist_url_file; item_dir / "gist_url.txt"; end
+
       # The base branch this WP's PR targets in `repo`: the per-WP override the
       # user requested (target_base.json), else the repo's registry default. The
       # fix branch is both created from and the PR opened against this branch.
