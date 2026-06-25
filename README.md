@@ -1,4 +1,4 @@
-## [Internal Experimental PoC! Please do not share with anyone.]
+## [[ Proof of Concept -- use at your own risk! ]]
 
 # openproject-chomper
 
