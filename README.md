@@ -140,7 +140,7 @@ comments), so it is boxed in from several directions:
 
 ### `./chomper backlog` flow
 
-On first run, prompts you to save a filter (project / types / statuses / version — shared with agent mode). Then:
+On first run, prompts you to save a filter (project / types / statuses / version). The project scope is shared with agent mode, which polls only by project (it acts on explicit `@chomper` mentions, so it doesn't narrow by type/status/version). Then:
 
 1. Resolves the **Module** custom field from the per-type WP schemas (`/work_packages/schemas/<project>-<type>`) and fetches all matching work packages.
 2. Runs a Claude triage pass to estimate complexity for each item. The result is cached in `backlog_triage.json` and reused while the filters stay the same.

@@ -568,6 +568,40 @@ module Chomper
       assert_equal FILTERS.status_ids,  data["status_ids"]
       assert_equal FILTERS.version_ids, data["version_ids"]
     end
+
+    # Agent mode polls the chosen projects with no type/status/version filter, so
+    # filters_json must emit a project clause only.
+    def test_filters_json_emits_only_project_clause_for_agent_filters
+      filters = FilterSet.new(project_ids: ["10"])
+      clauses = JSON.parse(@pull.send(:filters_json, filters))
+      assert_equal 1, clauses.length
+      assert clauses.first.key?("project_id")
+    end
+
+    # The agent-mode read tolerates a file with no type/status (one a previous
+    # agent run wrote) and returns a project-only FilterSet.
+    def test_read_agent_filters_ignores_type_and_status
+      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+        "project_ids" => ["1182"], "project_idents" => ["chomper-testing"],
+        "project_names" => ["Chomper testing area"], "scan_from_at" => "2024-01-01T00:00:00Z"
+      ))
+      filters = @pull.send(:read_agent_filters)
+      assert_equal ["1182"], filters.project_ids
+      assert_nil filters.type_ids
+      assert_nil filters.status_ids
+      assert_equal "2024-01-01T00:00:00Z", filters.scan_from_at
+    end
+
+    # The filters file is shared with backlog mode; saving agent-mode filters
+    # (which carry no type/status/version) must preserve a backlog selection.
+    def test_save_agent_filters_preserves_existing_type_and_status
+      @pull.send(:save_agent_filters, FILTERS)   # writes type/status from a backlog-style set
+      @pull.send(:save_agent_filters, FilterSet.new(project_ids: ["999"]))
+      data = JSON.parse((Pathname(@tmpdir) / "op_agent_filters.json").read)
+      assert_equal ["999"], data["project_ids"]
+      assert_equal FILTERS.type_ids,   data["type_ids"]
+      assert_equal FILTERS.status_ids, data["status_ids"]
+    end
   end
 
   class PullRelatedTest < Minitest::Test

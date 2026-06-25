@@ -101,8 +101,25 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
+    # Agent mode acts only on explicit @chomper triggers, so — unlike backlog
+    # triage — it does not narrow by type/status/version (a user may @chomper a
+    # WP of any kind). It needs only the project scope plus the scan window.
     def load_or_prompt_agent_filters
-      load_or_prompt_filters(ask_scan_from: true)
+      if (saved = read_agent_filters)
+        puts "  Saved filters: #{describe_filters(saved)}"
+        print "  Reuse saved filters? [Y/n]: "
+        if $stdin.gets.chomp.downcase != "n"
+          # The scan window is a per-session choice, but persist whatever was
+          # picked so the next run can offer it as the default and resume from
+          # where this session started rather than skipping ahead to now.
+          saved.scan_from_at = prompt_scan_from(saved.scan_from_at)
+          save_agent_filters(saved)
+          return saved
+        end
+      end
+      filters = prompt_agent_filters
+      save_agent_filters(filters)
+      filters
     end
 
     def load_or_prompt_backlog_filters
@@ -237,17 +254,28 @@ module Chomper
       items
     end
 
-    def prompt_search_filters(ask_scan_from: true)
+    # Prompt for the project scope only (plus the scan window) — the agent-mode
+    # filter. Produces a FilterSet with no type/status/version, so #filters_json
+    # scopes the poll to the chosen projects and nothing else.
+    def prompt_agent_filters
       puts ""
       puts "=== Search filters ==="
       puts ""
+      project_ids, project_idents, project_names = prompt_projects
+      scan_from_at = prompt_scan_from(saved_scan_from_at)
+      puts ""
+      FilterSet.new(
+        project_ids:    project_ids,
+        project_idents: project_idents,
+        project_names:  project_names,
+        scan_from_at:   scan_from_at
+      )
+    end
 
-      # One or more projects. Each is validated (and resolved to its numeric id,
-      # which the project_id filter requires) while also keeping its semantic
-      # identifier for display. The type list is drawn from the first project —
-      # types are defined per project but typically shared across an instance,
-      # and a single source keeps the prompt simple.
-      project_ids = nil; project_idents = nil; project_names = nil; types_data = nil
+    # Prompt for one or more projects, validating each and resolving it to the
+    # numeric id the project_id filter requires while keeping the semantic
+    # identifier (and name) for display. Returns [ids, idents, names].
+    def prompt_projects
       loop do
         print "  Project(s), comma-separated [TTP2]: "
         reply = $stdin.gets.chomp
@@ -260,13 +288,24 @@ module Chomper
           puts "  Project(s) not found: #{bad.join(", ")} — please try again."
           next
         end
-        project_ids    = resolved.map { |_ident, _code, data| data["id"].to_s }
+        ids    = resolved.map { |_ident, _code, data| data["id"].to_s }
         # Prefer the canonical identifier; fall back to whatever the user typed.
-        project_idents = resolved.map { |ident, _code, data| data["identifier"] || ident }
-        project_names  = resolved.map { |_ident, _code, data| data["name"] }
-        _tc, types_data = @api.project_types(idents.first)
-        break
+        idents = resolved.map { |ident, _code, data| data["identifier"] || ident }
+        names  = resolved.map { |_ident, _code, data| data["name"] }
+        return [ids, idents, names]
       end
+    end
+
+    def prompt_search_filters(ask_scan_from: true)
+      puts ""
+      puts "=== Search filters ==="
+      puts ""
+
+      # One or more projects. The type list is drawn from the first project —
+      # types are defined per project but typically shared across an instance,
+      # and a single source keeps the prompt simple.
+      project_ids, project_idents, project_names = prompt_projects
+      _tc, types_data = @api.project_types(project_idents.first)
 
       type_ids, sel_names = select_by_name(
         types_data.dig("_embedded", "elements") || [],
@@ -399,6 +438,25 @@ module Chomper
       nil
     end
 
+    # Saved filters for agent mode: only the project scope (and scan window)
+    # matter, so this tolerates a file that has no type/status (e.g. one written
+    # by a previous agent run) and ignores any type/status/version a backlog run
+    # may have saved into the shared file.
+    def read_agent_filters
+      return nil unless agent_filters_path.exist?
+      data = JSON.parse(agent_filters_path.read)
+      project_ids, project_idents, project_names = saved_projects(data)
+      return nil if project_ids.empty?
+      FilterSet.new(
+        project_ids:    project_ids,
+        project_idents: project_idents,
+        project_names:  project_names,
+        scan_from_at:   data["scan_from_at"]
+      )
+    rescue JSON::ParserError
+      nil
+    end
+
     # The saved project selection as [ids, idents, names]. Upgrades the
     # pre-multi-project format on the fly: an old file stored a single
     # `project_id` identifier, but the project_id filter now needs a numeric id,
@@ -434,12 +492,21 @@ module Chomper
     end
 
     def describe_filters(f)
-      version_label = f.version_names ? "  versions=[#{f.version_names}]" : ""
       # Show the semantic identifier when we have it, else the numeric id.
       labels = Array(f.project_idents).empty? ? Array(f.project_ids) : Array(f.project_idents)
       projects = labels.zip(Array(f.project_names))
         .map { |id, name| name ? "#{id} — #{name}" : id }.join("; ")
-      "projects=[#{projects}]  types=[#{f.type_names}]  statuses=[#{f.status_names}]#{version_label}"
+      # Agent-mode filters carry no type/status/version, so show only the parts
+      # that are actually set (backlog filters still show all of them).
+      parts = ["projects=[#{projects}]"]
+      parts << "types=[#{f.type_names}]"       if present?(f.type_names)
+      parts << "statuses=[#{f.status_names}]"  if present?(f.status_names)
+      parts << "versions=[#{f.version_names}]" if present?(f.version_names)
+      parts.join("  ")
+    end
+
+    def present?(str)
+      !str.nil? && !str.empty?
     end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an
@@ -496,17 +563,18 @@ module Chomper
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # Builds the raw filters JSON for a FilterSet (project + status + type,
-    # optional version). The `project_id` filter scopes the global work-packages
-    # endpoint to the selected projects; its values must be NUMERIC project ids
-    # (OpenProject coerces them with to_i — identifiers would match nothing).
+    # Builds the raw filters JSON for a FilterSet. The `project_id` filter scopes
+    # the global work-packages endpoint to the selected projects; its values must
+    # be NUMERIC project ids (OpenProject coerces them with to_i — identifiers
+    # would match nothing). The status/type/version clauses are each emitted only
+    # when the FilterSet carries values for them — backlog triage sets all three,
+    # while agent mode sets none and so polls the projects unfiltered.
     def filters_json(filters)
-      project_clause = %Q({"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}})
-      status_clause  = %Q({"status":{"operator":"=","values":#{JSON.generate(filters.status_ids)}}})
-      type_clause    = %Q({"type":{"operator":"=","values":#{JSON.generate(filters.type_ids)}}})
-      version_clause = filters.version_ids.empty? ? "" :
-        %Q(,{"version":{"operator":"=","values":#{JSON.generate(filters.version_ids)}}})
-      %Q([#{project_clause},#{status_clause},#{type_clause}#{version_clause}])
+      clauses = [%Q({"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}})]
+      clauses << %Q({"status":{"operator":"=","values":#{JSON.generate(Array(filters.status_ids))}}})   unless Array(filters.status_ids).empty?
+      clauses << %Q({"type":{"operator":"=","values":#{JSON.generate(Array(filters.type_ids))}}})        unless Array(filters.type_ids).empty?
+      clauses << %Q({"version":{"operator":"=","values":#{JSON.generate(Array(filters.version_ids))}}})  unless Array(filters.version_ids).empty?
+      "[#{clauses.join(",")}]"
     end
 
     # Multi-value Module custom field: a WP can carry several modules; we group
@@ -605,19 +673,27 @@ module Chomper
       @ctx.state_dir / "op_agent_filters.json"
     end
 
+    # Persist filters to the file shared by agent and backlog modes. Agent-mode
+    # filters carry no type/status/version (those fields are nil), so those keys
+    # are only written when the FilterSet actually sets them — preserving any
+    # selection a previous backlog run saved, instead of clobbering it with nil.
     def save_agent_filters(filters)
-      Helpers.write_json_atomic(agent_filters_path, {
+      existing = (agent_filters_path.exist? && Helpers.safe_json_read(agent_filters_path)) || {}
+      data = existing.merge(
         "project_ids"    => filters.project_ids,
         "project_idents" => filters.project_idents,
         "project_names"  => filters.project_names,
+        "scan_from_at"   => filters.scan_from_at
+      )
+      {
         "type_ids"      => filters.type_ids,
         "status_ids"    => filters.status_ids,
         "version_ids"   => filters.version_ids,
         "type_names"    => filters.type_names,
         "status_names"  => filters.status_names,
-        "version_names" => filters.version_names,
-        "scan_from_at"  => filters.scan_from_at
-      }, "agent_filters")
+        "version_names" => filters.version_names
+      }.each { |k, v| data[k] = v unless v.nil? }
+      Helpers.write_json_atomic(agent_filters_path, data, "agent_filters")
     end
 
     def parse_scan_from_input(input)
