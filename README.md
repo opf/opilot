@@ -22,7 +22,6 @@ An OpenProject AI development orchestrator that helps you implement work package
 - [Repo layout](#repo-layout)
 - [Environment variables](#environment-variables)
 - [Development](#development)
-- [Reference](#reference)
 - [TODO](#todo)
 
 ---
@@ -188,66 +187,14 @@ PR link so you can see what's been planned and shipped at a glance.
 
 ## Repo layout
 
-**What you clone:**
+`chomper` is the bash entry point (Docker setup); `bin/chomper` is the Ruby CLI
+that runs inside the runner container; `server.js` wraps `claude -p` in the
+claude container. The agent itself lives in `lib/chomper/` — one module per
+concern (`pull.rb`, `agent.rb`, `gh_agent.rb`, `backlog_runner.rb`, `publish.rb`,
+`prompts.rb`, `clients/`, …), with matching tests under `test/chomper/`.
 
-```
-openproject-chomper/
-├── chomper                  ← bash entry point (sets up Docker, runs runner)
-├── bin/chomper              ← Ruby CLI (runs inside the runner container)
-├── lib/chomper/
-│   ├── cli.rb              ← command dispatch (agent / backlog / fix / status / reset)
-│   ├── context.rb          ← shared config and paths
-│   ├── clients.rb          ← requires clients/
-│   ├── clients/
-│   │   ├── http.rb         ← transport layer (retry, auth, JSON parsing)
-│   │   ├── openproject.rb  ← OpenProject REST API client (all endpoint calls)
-│   │   └── github.rb       ← GitHub client (branch push, PR lookup and creation)
-│   ├── helpers.rb          ← shared utilities (branch_slug, strip_ansi, …)
-│   ├── pull.rb             ← poll OpenProject, turn @chomper comments into intents
-│   ├── agent.rb            ← the loop: handle chat / plan / approve / fix
-│   ├── backlog_runner.rb   ← batch backlog mode (triage, cluster by module, terminal approval) + single-WP fix
-│   ├── prompts.rb          ← all Claude prompts
-│   ├── publish.rb          ← push branch, open draft PR
-│   ├── claude.rb           ← HTTP client for the Claude container
-│   └── ui.rb               ← status display, usage, reset
-├── test/
-│   ├── test_helper.rb
-│   └── chomper/
-│       ├── agent_test.rb
-│       ├── backlog_runner_test.rb
-│       ├── context_test.rb
-│       ├── helpers_test.rb
-│       ├── http_test.rb
-│       └── pull_test.rb
-├── server.js                ← Node.js HTTP wrapper around `claude -p`
-├── Dockerfile.runner        ← Ruby 4.0 image
-├── Dockerfile.claude        ← Node.js + Claude Code image
-├── compose.yml
-├── Gemfile / Gemfile.lock
-├── Rakefile
-└── README.md
-```
-
-**Runtime state (gitignored, created on first run):**
-
-```
-.chomper/
-├── op_agent_filters.json   ← saved search filters (shared by op-agent and backlog modes)
-├── backlog_triage.json  ← cached triage results (keyed by filter fingerprint)
-├── progress.txt         ← progress log
-├── chomp.log            ← full prompt + response log
-├── claude-auth/         ← claude CLI config (holds OAuth login creds when no API key is set)
-├── repos/<name>/        ← each repo's standalone clone (mounted at /repos/<name>)
-└── items/
-    └── <id>/
-        ├── item.json         ← full WP metadata + last_acted_comment_at (poll cache)
-        ├── plan.md           ← implementation plan (present = "has a plan")
-        ├── review.txt        ← Reviewer's critique (deleted after plan review)
-        ├── target_repos.json ← repo(s) Claude chose for this WP
-        ├── backlog_done.txt  ← backlog outcome: "dropped" (permanent skip)
-        ├── session_id        ← Claude session ID for per-WP chat continuity
-        └── repos/<name>/     ← per target repo: pr.md, pr_url.txt (present = "shipped"), gh-agent caches
-```
+See **CLAUDE.md** for the authoritative module-by-module breakdown and the full
+`.chomper/` runtime-state layout (both kept in sync with the code there).
 
 ---
 
@@ -290,34 +237,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 
 ---
 
-## Reference
-**`items/<id>/item.json` schema** (full WP metadata, written at poll time)
-
-```json
-{
-  "id":          "42",
-  "subject":     "Null check in UserService",
-  "type":        "Bug",
-  "url":         "https://community.openproject.org/work_packages/42",
-  "status":      "New",
-  "priority":    "Normal",
-  "assignee":    "unassigned",
-  "responsible": "unassigned",
-  "author":      "Jane Smith",
-  "version":     "14.0",
-  "category":    "auth",
-  "module":      "Comments and activity",
-  "created_at":  "2024-01-15T10:00:00Z",
-  "updated_at":  "2024-01-20T14:30:00Z",
-  "description": "Raw description text...",
-  "comments": [
-    {"user": "John Doe", "created_at": "2024-01-16T09:00:00Z", "text": "I can reproduce this..."}
-  ]
-}
-```
-
----
-
 ## TODO
 
 ### Security & Hosting
@@ -345,8 +264,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
-* **First Communicator PoC** (late June 2026):
-  * Re-add linking of the plan as a gist & compact description
 * Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
