@@ -13,12 +13,14 @@ module Chomper
       # Returns [code, response_hash]. Hits the global work-packages endpoint;
       # the project scope (one or many) is carried in filters_json as a
       # `project_id` filter (see Pull#filters_json), so a single sorted sweep
-      # spans every selected project.
+      # spans every selected project. includeSubprojects=true expands each
+      # selected project with its visible descendants, so scanning a parent
+      # project also covers its child projects' work packages.
       def work_packages(filters_json:, page: 1, page_size: 50)
         filters = HTTP.encode_filters(filters_json)
         sort    = HTTP.encode_filters(SORT_UPDATED_AT)
         url = "#{@base}/api/v3/work_packages" \
-              "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}"
+              "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}&includeSubprojects=true"
         HTTP.get_json(url, token: @token)
       end
 

@@ -299,6 +299,12 @@ module Chomper
       @pull.poll_intents(FILTERS)
     end
 
+    # Scanning a parent project should also cover its child projects' WPs.
+    def test_url_includes_subprojects_param
+      stub_request(:get, /includeSubprojects=true/).to_return(status: 200, body: page_response([], total: 0))
+      @pull.poll_intents(FILTERS)
+    end
+
     def test_stops_paging_at_first_wp_below_scan_floor
       # Sorted updatedAt desc: WP 1 is above the floor, WP 2 below it. WP 2's
       # activities are deliberately left unstubbed — if the poll tried to fetch
