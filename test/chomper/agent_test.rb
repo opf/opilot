@@ -376,7 +376,7 @@ module Chomper
       refute_includes plan_prompt, "RELATED:"
     end
 
-    def test_handle_and_ack_marks_and_reports_on_error
+    def test_handle_and_ack_marks_but_posts_no_note_on_error
       agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
       inject_worktree(agent, FakeWorktree.new)
       plan_path.dirname.mkpath
@@ -386,7 +386,8 @@ module Chomper
 
       # Acked despite the failure → no infinite re-try on the next poll.
       assert_equal [["42", "2024-02-01T00:00:00Z"]], @pull.acted
-      assert(@notes.any? { |n| n.include?("hit an error") }, "should report the failure on the WP")
+      # A handled error is logged, not posted — no error note left on the WP.
+      refute(@notes.any? { |n| n.include?("hit an error") }, "must not post an error note on the WP")
       refute pr_url_path.exist?
     end
 

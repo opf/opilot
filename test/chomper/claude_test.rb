@@ -96,6 +96,93 @@ module Chomper
       assert_equal Claude::MODEL_WORK, Claude.model_for("?")
     end
 
+    def test_run_enriches_execution_error_with_stderr_tail
+      stub_claude(ndjson(
+        { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
+        { type: "exit", code: 1, signal: nil, timed_out: false,
+          stderr: "API Error: 529 Overloaded" }
+      ))
+
+      capture_io do
+        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        assert_match(/error_during_execution/, err.message)
+        assert_match(/exit 1/, err.message)
+        assert_match(/API Error: 529 Overloaded/, err.message)
+      end
+    end
+
+    def test_run_treats_nonzero_exit_with_no_result_as_error
+      stub_claude(ndjson(
+        { type: "exit", code: 1, signal: nil, timed_out: false, stderr: "boom" }
+      ))
+
+      capture_io do
+        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        assert_match(/exited 1 with no result/, err.message)
+        assert_match(/boom/, err.message)
+      end
+    end
+
+    def test_run_reports_timeout_kill
+      stub_claude(ndjson(
+        { type: "exit", code: nil, signal: "SIGTERM", timed_out: true, stderr: "" }
+      ))
+
+      capture_io do
+        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        assert_match(/timed out/, err.message)
+      end
+    end
+
+    def test_run_ignores_exit_event_on_success
+      stub_claude(ndjson(
+        assistant_text("the plan"),
+        { type: "result", subtype: "success", is_error: false, result: "the plan" },
+        { type: "exit", code: 0, signal: nil, timed_out: false, stderr: "some noise" }
+      ))
+
+      text = nil
+      capture_io { text = @claude.run("prompt") }
+      assert_equal "the plan", text
+    end
+
+    def test_run_retries_fresh_when_resumed_session_is_gone
+      @session_file.write("dead-session-id")
+      # First call (with --resume) fails: the CLI can't find the session. Second
+      # call (fresh, no session) succeeds. WebMock replays responses in order.
+      stub_request(:post, "http://claude.test:47291").to_return(
+        { status: 200, body: ndjson(
+          { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
+          { type: "exit", code: 1, signal: nil, timed_out: false,
+            stderr: "No conversation found with session ID: dead-session-id" }) },
+        { status: 200, body: ndjson(
+          assistant_text("fresh answer"),
+          { type: "result", subtype: "success", is_error: false, result: "fresh answer" },
+          { type: "session_id", session_id: "new-session" }) }
+      )
+
+      text = nil
+      out, = capture_io { text = @claude.run("prompt", session_file: @session_file) }
+
+      assert_equal "fresh answer", text
+      assert_equal "new-session", @session_file.read, "the recovered session id is saved"
+      assert_match(/starting fresh/, out)
+    end
+
+    def test_run_does_not_retry_fresh_on_unrelated_error
+      @session_file.write("live-session")
+      stub_claude(ndjson(
+        { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
+        { type: "exit", code: 1, signal: nil, timed_out: false, stderr: "API Error: 529 Overloaded" }
+      ))
+
+      capture_io do
+        err = assert_raises(Claude::Error) { @claude.run("prompt", session_file: @session_file) }
+        assert_match(/Overloaded/, err.message)
+      end
+      # Stubbed exactly one response; a spurious retry would raise a WebMock error.
+    end
+
     def test_capture_does_not_write_outfile_on_error
       stub_claude(ndjson(
         assistant_text("partial preamble"),

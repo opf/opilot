@@ -70,23 +70,23 @@ module Chomper
     end
 
     # Handle one intent, then mark its trigger acted. A *handled* error (raised
-    # and caught here) is reported to the WP and still acked, so a permanent
-    # failure — e.g. a denied push — is not replayed every poll. Only a hard
-    # crash (uncaught, so `ensure` never runs) leaves the trigger for the next
-    # poll to retry.
+    # and caught here) is logged and still acked, so a permanent failure — e.g. a
+    # denied push — is not replayed every poll. We do NOT post an error note to
+    # the WP: a transient failure (e.g. a Claude error_during_execution) would
+    # leave noise on the work package for no benefit. Only a hard crash (uncaught,
+    # so `ensure` never runs) leaves the trigger for the next poll to retry.
     def handle_and_ack(intent)
       handle(intent)   # sets @requester as its first step
       @pull.mark_acted(intent.item_id, intent.comment_at)
     rescue => e
       # Ctrl-C kills any child process in the foreground group, surfacing here as
-      # an error. On a requested stop, abort quietly — don't post an error note or
-      # ack the comment, so the next run handles it cleanly.
+      # an error. On a requested stop, abort quietly — don't ack the comment, so
+      # the next run handles it cleanly.
       if Chomper.stopping?
         log_script "Interrupted on #{wp_label(intent.item_id)} — will retry next run"
         return
       end
-      log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.message}"
-      post_note(intent.item_id, addressed("sorry — I hit an error handling `@chomper #{intent.command}`:\n\n#{e.message}")) rescue nil
+      log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.class}: #{e.message}"
       @pull.mark_acted(intent.item_id, intent.comment_at)
     end
 

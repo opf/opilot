@@ -84,7 +84,7 @@ module Chomper
         log_script "Interrupted on #{intent.repo}##{intent.pr_number} — will retry next run"
         return
       end
-      log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.message}"
+      log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.class}: #{e.message}"
       post_reply(intent, "sorry — I hit an error handling that comment:\n\n#{e.message}") rescue nil
       mark_acted(intent)
     end

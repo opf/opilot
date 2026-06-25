@@ -64,6 +64,19 @@ module Chomper
       log_append(resp_header)
 
       text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: session_id)
+
+      # A resumed session the CLI no longer has (e.g. the claude container was
+      # recreated/killed before the transcript was durably written) makes
+      # --resume fail immediately, and the dead id would poison this WP forever —
+      # every later call reads the same id and fails identically. Recover once by
+      # retrying as a fresh session: we lose the prior conversation context, but
+      # the prompts reference the item/plan files on disk, so it can re-orient.
+      if error && session_id && lost_session?(error)
+        log_append("session #{session_id} is gone — retrying fresh")
+        $stdout.puts Rainbow("  ⚠ session #{session_id} not found — starting fresh").yellow
+        text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: nil)
+      end
+
       # Save the session even on error, so a retry can resume with context.
       if session_file && new_session_id
         log_append("session: captured #{new_session_id} → #{session_file}")
@@ -98,6 +111,8 @@ module Chomper
         captured_session_id = nil
         final_result        = nil
         error               = nil
+        error_subtype       = nil
+        exit_info           = nil
 
         req = Net::HTTP::Post.new(@uri)
         req["X-Claude-Tools"]   = tools      if tools
@@ -121,13 +136,17 @@ module Chomper
                 case parsed["type"]
                 when "session_id"
                   captured_session_id = parsed["session_id"]
+                when "exit"
+                  # server.js's final diagnostic: exit code/signal + stderr tail.
+                  exit_info = parsed
                 when "result"
                   # The CLI's final verdict on the run. An error here (denied
                   # tool, max turns, …) means the run died mid-way; surface it
                   # instead of passing the partial text off as the answer.
                   if parsed["is_error"] || parsed["subtype"].to_s.start_with?("error")
+                    error_subtype = parsed["subtype"].to_s
                     error = parsed["result"].to_s.strip
-                    error = parsed["subtype"].to_s if error.empty?
+                    error = error_subtype if error.empty?
                     $stdout.puts "" unless at_line_start
                     $stdout.puts Rainbow("  ✗ #{error}").red
                     at_line_start = true
@@ -178,7 +197,52 @@ module Chomper
       # Fall back to the streamed parts only if the run somehow ended without a
       # final result (e.g. a transport cut-off before the result event).
       text = final_result.to_s.strip.empty? ? text_parts.join : final_result
+
+      # The CLI may end with a non-zero exit and no result event at all (a hard
+      # crash) — treat that as an error too, so the caller doesn't pass empty
+      # text off as a finished answer.
+      if !error && exit_info && exit_info["timed_out"]
+        error = "claude run timed out and was killed"
+      elsif !error && exit_info && exit_info["code"].to_i != 0 && text.to_s.strip.empty?
+        error = "claude exited #{exit_signal_desc(exit_info)} with no result"
+      end
+
+      # Enrich an error with the real cause from the CLI's stderr tail. For the
+      # `error_during_execution` subtype the result text is empty (we fell back to
+      # the bare subtype), so stderr is the only place the actual reason — an API
+      # overload, internal crash, hook failure — is written.
+      error = decorate_error(error, error_subtype, exit_info) if error
+
       [text, captured_session_id, error]
+    end
+
+    # Combine the CLI's error message with the diagnostic detail server.js
+    # forwards: the result subtype (so a bare "error_during_execution" is at least
+    # labelled), the exit code/signal, and a tail of the CLI's stderr (the only
+    # place the underlying cause is written for an execution error). Kept compact
+    # so it still reads as a single comment/log line.
+    def decorate_error(error, subtype, exit_info)
+      parts = [error]
+      # Add the error subtype when it carries info the message doesn't already.
+      parts << "(#{subtype})" if subtype.to_s.start_with?("error") && error != subtype
+      if exit_info
+        parts << "[exit #{exit_signal_desc(exit_info)}]" if exit_info["code"].to_i != 0 || exit_info["signal"]
+        stderr = exit_info["stderr"].to_s.strip
+        parts << "\n\nclaude stderr:\n#{stderr}" unless stderr.empty?
+      end
+      parts.join(" ").gsub(/ +\n/, "\n")
+    end
+
+    # The CLI's message when --resume points at a session it can't find. Detected
+    # via the stderr tail server.js now forwards (the bare result subtype is just
+    # "error_during_execution", which alone can't distinguish a lost session).
+    def lost_session?(error)
+      error.to_s.match?(/No conversation found with session ID/i)
+    end
+
+    # "1" for a normal non-zero exit, "via SIGTERM" when killed by a signal.
+    def exit_signal_desc(exit_info)
+      exit_info["signal"] ? "via #{exit_info["signal"]}" : exit_info["code"].to_s
     end
 
     def log_append(text)

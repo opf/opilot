@@ -50,7 +50,9 @@ function runClaude(body, tools, model, sessionId, res, done) {
 
   const proc = spawn('claude', args, { env: process.env });
 
+  let timedOut = false;
   const timer = setTimeout(() => {
+    timedOut = true;
     process.stderr.write('claude process timed out — killing\n');
     proc.kill('SIGTERM');
   }, PROC_TIMEOUT_MS);
@@ -76,9 +78,18 @@ function runClaude(body, tools, model, sessionId, res, done) {
     }
   });
 
-  proc.stderr.on('data', chunk => process.stderr.write(chunk));
+  // Mirror stderr to the container log AND keep a bounded tail to forward to the
+  // runner. On an `error_during_execution` result the CLI leaves the result text
+  // empty and writes the real cause (API error, internal crash, …) only to
+  // stderr — without forwarding it the runner sees just the bare subtype.
+  const STDERR_TAIL_MAX = 8000;
+  let stderrTail = '';
+  proc.stderr.on('data', chunk => {
+    process.stderr.write(chunk);
+    stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_MAX);
+  });
 
-  proc.on('close', () => {
+  proc.on('close', (code, signal) => {
     clearTimeout(timer);
     if (!capturedSessionId && lineBuffer.trim()) {
       try {
@@ -89,6 +100,15 @@ function runClaude(body, tools, model, sessionId, res, done) {
     if (capturedSessionId) {
       res.write(JSON.stringify({ type: 'session_id', session_id: capturedSessionId }) + '\n');
     }
+    // Final diagnostic event: exit code/signal + stderr tail, so claude.rb can
+    // fold the real cause into the error it raises.
+    res.write(JSON.stringify({
+      type: 'exit',
+      code,
+      signal,
+      timed_out: timedOut,
+      stderr: stderrTail.trim(),
+    }) + '\n');
     res.end();
     done();
   });
