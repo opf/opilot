@@ -296,7 +296,7 @@ module Chomper
         puts "  Versions: skipped (version filtering is only offered for a single project)."
       end
 
-      scan_from_at = ask_scan_from ? prompt_scan_from : nil
+      scan_from_at = ask_scan_from ? prompt_scan_from(saved_scan_from_at) : nil
 
       puts ""
       FilterSet.new(
@@ -316,9 +316,14 @@ module Chomper
     # Ask how far back the comment scanner should look, returning the parsed
     # floor timestamp (nil = from now). Shared by the fresh-filter flow and the
     # reuse-saved-filters flow, so the window is always chosen interactively.
-    def prompt_scan_from
-      print %(  How far back should the comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [now]: )
-      parse_scan_from_input($stdin.gets.chomp)
+    # `previous` (the last session's chosen floor, if any) becomes the offered
+    # default, so pressing Enter resumes from where the previous run left off
+    # instead of jumping forward to now.
+    def prompt_scan_from(previous = nil)
+      print %(  How far back should the comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [#{previous || "now"}]: )
+      reply = $stdin.gets.chomp
+      return previous if previous && reply.strip.empty?
+      parse_scan_from_input(reply)
     end
 
     private
@@ -346,15 +351,30 @@ module Chomper
         puts "  Saved filters: #{describe_filters(saved)}"
         print "  Reuse saved filters? [Y/n]: "
         if $stdin.gets.chomp.downcase != "n"
-          # The scan window is a per-session choice, not part of the saved set,
-          # so still ask for it when relevant (op-agent) even on reuse.
-          saved.scan_from_at = prompt_scan_from if ask_scan_from
+          # The scan window is a per-session choice, but persist whatever was
+          # picked so the next run can offer it as the default and resume from
+          # where this session started rather than skipping ahead to now.
+          if ask_scan_from
+            saved.scan_from_at = prompt_scan_from(saved.scan_from_at)
+            save_agent_filters(saved)
+          end
           return saved
         end
       end
       filters = prompt_search_filters(ask_scan_from: ask_scan_from)
       save_agent_filters(filters)
       filters
+    end
+
+    # The scan floor chosen on the last run, read straight from the saved
+    # filters file. Offered as the default when re-prompting (even when the user
+    # declines to reuse the rest of the saved filters), so a fresh session resumes
+    # from where the previous one stopped rather than skipping ahead to now.
+    def saved_scan_from_at
+      return nil unless agent_filters_path.exist?
+      JSON.parse(agent_filters_path.read)["scan_from_at"]
+    rescue JSON::ParserError
+      nil
     end
 
     def read_saved_filters

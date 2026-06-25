@@ -183,10 +183,30 @@ module Chomper
     private
 
     def prompt_scan_from
+      previous = saved_scan_from_at
       puts "  How far back should the PR comment scanner look?"
       puts "  Formats: \"2h\", \"3 days\", \"1 week\", \"1 month\""
-      print "  Scan from [now]: "
-      Helpers.parse_scan_from($stdin.gets.to_s.chomp)
+      print "  Scan from [#{previous || "now"}]: "
+      reply = $stdin.gets.to_s.chomp
+      scan_from_at = (previous && reply.strip.empty?) ? previous : Helpers.parse_scan_from(reply)
+      save_scan_from_at(scan_from_at)
+      scan_from_at
+    end
+
+    # Persist the chosen scan floor so the next run can offer it as the default,
+    # letting gh-agent resume from where it left off instead of skipping to now.
+    def scan_from_path
+      @ctx.state_dir / "gh_agent_scan_from.json"
+    end
+
+    def saved_scan_from_at
+      (Helpers.safe_json_read(scan_from_path) || {})["scan_from_at"]
+    end
+
+    def save_scan_from_at(scan_from_at)
+      Helpers.write_json_atomic(scan_from_path, { "scan_from_at" => scan_from_at }, "gh_scan_from")
+    rescue StandardError => e
+      log_script "Warning: could not save scan-from window: #{e.message}"
     end
 
     # Post Claude's reply: in-thread for an inline review comment, otherwise on
