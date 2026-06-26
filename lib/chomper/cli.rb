@@ -32,27 +32,9 @@ module Chomper
         @ctx.log_file.open("a") { |f| f.puts "\n=== Chat #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         ChatRunner.new(@ctx).run(argv[1..].to_a.join(" "))
       when "fix"
-        with_ids(argv, "Fix", "fix") { |ids| BacklogRunner.new(@ctx).fix(*ids) }
+        with_ids(argv, "Fix", "fix") { |ids| FixRunner.new(@ctx).fix(*ids) }
       when "plan"
-        with_ids(argv, "Plan", "plan") { |ids| BacklogRunner.new(@ctx).plan_ids(*ids) }
-      when "backlog"
-        sub = argv[1]
-        unless sub.nil? || %w[show triage process plan skip].include?(sub)
-          $stderr.puts "Unknown argument: backlog #{sub}"
-          ui.usage
-          raise Chomper::FatalError
-        end
-        @ctx.load_config!
-        @ctx.log_file.open("a") { |f| f.puts "\n=== Backlog #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
-        runner = BacklogRunner.new(@ctx)
-        case sub
-        when "show"    then runner.show
-        when "triage"  then runner.triage
-        when "process" then runner.process
-        when "plan"    then runner.plan
-        when "skip"    then runner.skip(wp_id_arg(argv[2]))
-        else                runner.run
-        end
+        with_ids(argv, "Plan", "plan") { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
       else
         $stderr.puts "Unknown argument: #{cmd}"
         ui.usage

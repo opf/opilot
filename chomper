@@ -170,12 +170,11 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 
 # ── Run ───────────────────────────────────────────────────────────────────
-# `backlog show`/`skip` work from local caches — no worktree, claude, or proxy
-# needed. Unknown subcommands are passed through to Ruby.
+# status/reset work from local state — no worktree, claude, or proxy needed.
+# Unknown subcommands are passed through to Ruby.
 _needs_claude=false
 case "$CMD" in
   agent|op-agent|gh-agent|fix|plan|chat) _needs_claude=true ;;
-  backlog) [[ -z "$SUBCMD" || "$SUBCMD" =~ ^(triage|process|plan)$ ]] && _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == true ]]; then
   # Auth: an API key (preferred) is held only by the authgw gateway and never

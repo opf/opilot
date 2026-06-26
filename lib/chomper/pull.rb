@@ -52,7 +52,7 @@ module Chomper
           # Results are sorted updatedAt desc, and posting a @chomper comment bumps
           # the WP's updatedAt — so a WP last touched before the scan floor can't
           # carry a trigger newer than the floor, and neither can any WP after it.
-          # Stop here instead of re-listing the whole backlog every cycle.
+          # Stop here instead of re-listing every work package every cycle.
           if @scan_from_at && wp["updatedAt"] && wp["updatedAt"] < @scan_from_at
             reached_floor = true
             break
@@ -101,9 +101,9 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
-    # Agent mode acts only on explicit @chomper triggers, so — unlike backlog
-    # triage — it does not narrow by type/status/version (a user may @chomper a
-    # WP of any kind). It needs only the project scope plus the scan window.
+    # Agent mode acts only on explicit @chomper triggers, so it does not narrow
+    # by type/status/version (a user may @chomper a WP of any kind). It needs
+    # only the project scope plus the scan window.
     def load_or_prompt_agent_filters
       if (saved = read_agent_filters)
         puts "  Saved filters: #{describe_filters(saved)}"
@@ -120,10 +120,6 @@ module Chomper
       filters = prompt_agent_filters
       save_agent_filters(filters)
       filters
-    end
-
-    def load_or_prompt_backlog_filters
-      load_or_prompt_filters(ask_scan_from: false)
     end
 
     # Fetch one work package by id (ignoring filters), refresh its item.json,
@@ -208,52 +204,6 @@ module Chomper
       id.to_s.empty? ? nil : id
     end
 
-    # Saved filters without the reuse prompt, or nil when none are saved.
-    # `backlog show` presents cached data, so it takes whatever is on disk.
-    def saved_backlog_filters
-      saved = read_saved_filters
-      puts "  Filters: #{describe_filters(saved)}" if saved
-      saved
-    end
-
-    # Fetch all work packages matching filters (without requiring @chomper triggers).
-    # Saves each WP to item.json (same cache as poll_intents). When module_field_key
-    # is given, enriches item.json with a "module" key holding the first module
-    # title from that _links entry.
-    def fetch_all_items(filters, module_field_key: nil)
-      fj = filters_json(filters)
-      items = []
-      page = 1; page_size = 50; total_written = 0
-      processed = 0; from_cache = 0
-      loop do
-        code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
-        raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
-        raise Chomper::FatalError, "API returned unparseable response" if resp.nil?
-        count = resp["count"].to_i; total = resp["total"].to_i
-        break if count == 0
-        (resp.dig("_embedded", "elements") || []).each do |wp|
-          cached, = fetch_work_package_item(wp)
-          processed += 1
-          from_cache += 1 if cached
-          print "\r  #{processed}/#{total} work packages (#{from_cache} cached)…"
-          $stdout.flush
-          path = Helpers.item_dir(@ctx, wp_display_id(wp)) / "item.json"
-          next unless path.exist?
-          data = JSON.parse(path.read)
-          if module_field_key
-            data["module"] = first_module_title(wp, module_field_key)
-            path.write(JSON.generate(data))
-          end
-          items << data
-        end
-        total_written += count
-        break if total_written >= total
-        page += 1
-      end
-      puts "" if processed > 0
-      items
-    end
-
     # Prompt for the project scope only (plus the scan window) — the agent-mode
     # filter. Produces a FilterSet with no type/status/version, so #filters_json
     # scopes the poll to the chosen projects and nothing else.
@@ -296,62 +246,6 @@ module Chomper
       end
     end
 
-    def prompt_search_filters(ask_scan_from: true)
-      puts ""
-      puts "=== Search filters ==="
-      puts ""
-
-      # One or more projects. The type list is drawn from the first project —
-      # types are defined per project but typically shared across an instance,
-      # and a single source keeps the prompt simple.
-      project_ids, project_idents, project_names = prompt_projects
-      _tc, types_data = @api.project_types(project_idents.first)
-
-      type_ids, sel_names = select_by_name(
-        types_data.dig("_embedded", "elements") || [],
-        label: "Types", prompt: "Type(s), comma-separated [bug]", default: "bug"
-      )
-
-      _code, statuses_data = @api.statuses
-      status_ids, sel_status_names = select_by_name(
-        statuses_data.dig("_embedded", "elements") || [],
-        label: "Statuses", prompt: "Status(es), comma-separated [new, confirmed]", default: "new, confirmed"
-      )
-
-      # Versions are project-scoped, so the candidate list is only well-defined
-      # for a single project. With several selected, skip the version filter.
-      version_ids = []; sel_ver_names = []
-      if project_ids.length == 1
-        ver_code, versions_data = @api.project_versions(project_ids.first)
-        if ver_code == 200
-          version_ids, sel_ver_names = select_by_name(
-            versions_data.dig("_embedded", "elements") || [],
-            label: "Versions", prompt: "Version(s), comma-separated (leave blank to skip)", default: ""
-          )
-        else
-          puts "  Warning: could not fetch versions (HTTP #{ver_code}) — skipping version filter"
-        end
-      else
-        puts "  Versions: skipped (version filtering is only offered for a single project)."
-      end
-
-      scan_from_at = ask_scan_from ? prompt_scan_from(saved_scan_from_at) : nil
-
-      puts ""
-      FilterSet.new(
-        project_ids:    project_ids,
-        project_idents: project_idents,
-        project_names:  project_names,
-        type_ids:       type_ids,
-        status_ids:     status_ids,
-        version_ids:    version_ids,
-        type_names:     sel_names.join(", "),
-        status_names:   sel_status_names.join(", "),
-        version_names:  sel_ver_names.empty? ? nil : sel_ver_names.join(", "),
-        scan_from_at:   scan_from_at
-      )
-    end
-
     # Ask how far back the comment scanner should look, returning the parsed
     # floor timestamp (nil = from now). Shared by the fresh-filter flow and the
     # reuse-saved-filters flow, so the window is always chosen interactively.
@@ -367,44 +261,6 @@ module Chomper
 
     private
 
-    # Prompt for a comma-separated subset of named API `elements` (types,
-    # statuses, versions). Prints the available names, reads a reply (falling
-    # back to `default`), and returns [selected_ids, selected_names_downcased].
-    # An empty effective reply returns [[], []] (only reachable when `default`
-    # is blank, i.e. the optional version filter); otherwise no match is fatal.
-    def select_by_name(elements, label:, prompt:, default:)
-      puts "  #{label} available: #{elements.map { |e| e["name"] }.join(", ")}"
-      print "  #{prompt}: "
-      reply = $stdin.gets.chomp
-      reply = default if reply.empty?
-      return [[], []] if reply.empty?
-
-      selected = reply.split(",").map(&:strip).map(&:downcase)
-      ids = elements.select { |e| selected.include?(e["name"].downcase) }.map { |e| e["id"].to_s }
-      raise Chomper::FatalError, "None of the specified #{label.downcase} found: #{selected.join(", ")}" if ids.empty?
-      [ids, selected]
-    end
-
-    def load_or_prompt_filters(ask_scan_from:)
-      if (saved = read_saved_filters)
-        puts "  Saved filters: #{describe_filters(saved)}"
-        print "  Reuse saved filters? [Y/n]: "
-        if $stdin.gets.chomp.downcase != "n"
-          # The scan window is a per-session choice, but persist whatever was
-          # picked so the next run can offer it as the default and resume from
-          # where this session started rather than skipping ahead to now.
-          if ask_scan_from
-            saved.scan_from_at = prompt_scan_from(saved.scan_from_at)
-            save_agent_filters(saved)
-          end
-          return saved
-        end
-      end
-      filters = prompt_search_filters(ask_scan_from: ask_scan_from)
-      save_agent_filters(filters)
-      filters
-    end
-
     # The scan floor chosen on the last run, read straight from the saved
     # filters file. Offered as the default when re-prompting (even when the user
     # declines to reuse the rest of the saved filters), so a fresh session resumes
@@ -416,32 +272,8 @@ module Chomper
       nil
     end
 
-    def read_saved_filters
-      return nil unless agent_filters_path.exist?
-      data = JSON.parse(agent_filters_path.read)
-      return nil unless data["type_names"] && data["status_names"]
-      project_ids, project_idents, project_names = saved_projects(data)
-      return nil if project_ids.empty?
-      FilterSet.new(
-        project_ids:    project_ids,
-        project_idents: project_idents,
-        project_names:  project_names,
-        type_ids:       data["type_ids"],
-        status_ids:     data["status_ids"],
-        version_ids:    data["version_ids"],
-        type_names:     data["type_names"],
-        status_names:   data["status_names"],
-        version_names:  data["version_names"],
-        scan_from_at:   data["scan_from_at"]
-      )
-    rescue JSON::ParserError
-      nil
-    end
-
     # Saved filters for agent mode: only the project scope (and scan window)
-    # matter, so this tolerates a file that has no type/status (e.g. one written
-    # by a previous agent run) and ignores any type/status/version a backlog run
-    # may have saved into the shared file.
+    # matter, so this tolerates a file that has no type/status.
     def read_agent_filters
       return nil unless agent_filters_path.exist?
       data = JSON.parse(agent_filters_path.read)
@@ -497,7 +329,7 @@ module Chomper
       projects = labels.zip(Array(f.project_names))
         .map { |id, name| name ? "#{id} — #{name}" : id }.join("; ")
       # Agent-mode filters carry no type/status/version, so show only the parts
-      # that are actually set (backlog filters still show all of them).
+      # that are actually set.
       parts = ["projects=[#{projects}]"]
       parts << "types=[#{f.type_names}]"       if present?(f.type_names)
       parts << "statuses=[#{f.status_names}]"  if present?(f.status_names)
@@ -567,22 +399,14 @@ module Chomper
     # the global work-packages endpoint to the selected projects; its values must
     # be NUMERIC project ids (OpenProject coerces them with to_i — identifiers
     # would match nothing). The status/type/version clauses are each emitted only
-    # when the FilterSet carries values for them — backlog triage sets all three,
-    # while agent mode sets none and so polls the projects unfiltered.
+    # when the FilterSet carries values for them; agent mode sets none and so
+    # polls the projects unfiltered.
     def filters_json(filters)
       clauses = [%Q({"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}})]
       clauses << %Q({"status":{"operator":"=","values":#{JSON.generate(Array(filters.status_ids))}}})   unless Array(filters.status_ids).empty?
       clauses << %Q({"type":{"operator":"=","values":#{JSON.generate(Array(filters.type_ids))}}})        unless Array(filters.type_ids).empty?
       clauses << %Q({"version":{"operator":"=","values":#{JSON.generate(Array(filters.version_ids))}}})  unless Array(filters.version_ids).empty?
       "[#{clauses.join(",")}]"
-    end
-
-    # Multi-value Module custom field: a WP can carry several modules; we group
-    # by the first one only.
-    def first_module_title(wp, module_field_key)
-      links = wp.dig("_links", module_field_key)
-      links = [links] unless links.is_a?(Array)
-      links.filter_map { |l| l["title"] if l.is_a?(Hash) }.first.to_s
     end
 
     # The user-facing work package id: semantic ("PROJ-123") when the instance
@@ -673,10 +497,9 @@ module Chomper
       @ctx.state_dir / "op_agent_filters.json"
     end
 
-    # Persist filters to the file shared by agent and backlog modes. Agent-mode
-    # filters carry no type/status/version (those fields are nil), so those keys
-    # are only written when the FilterSet actually sets them — preserving any
-    # selection a previous backlog run saved, instead of clobbering it with nil.
+    # Persist agent-mode filters. They carry no type/status/version (those fields
+    # are nil), so those keys are only written when the FilterSet actually sets
+    # them — any keys already in the file are merged through, not clobbered.
     def save_agent_filters(filters)
       existing = (agent_filters_path.exist? && Helpers.safe_json_read(agent_filters_path)) || {}
       data = existing.merge(

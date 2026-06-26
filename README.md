@@ -6,7 +6,7 @@ An OpenProject AI development orchestrator that helps you implement work package
 
 **Agent mode**: Assists you inside both WP Activity tabs and GitHub PRs. Just tag `@chomper` to ask questions, plan together, and even generate PRs.
 
-**Script mode**: Plans & implements WPs entirely via your terminal. Point it to a specific package by ID, or even to an entire project backlog.
+**Script mode**: Plans & implements WPs entirely via your terminal. Point it to one or more specific packages by ID.
 
 <img width="817" height="597" alt="Screenshot 2026-06-16 at 15 15 26" src="https://github.com/user-attachments/assets/706ddeb1-df10-485d-af48-8821135eafda" />
 
@@ -43,10 +43,10 @@ cd openproject-chomper
 
 # Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
 ./chomper agent
-# OR let it process your whole backlog
-./chomper backlog <triage|show|process>
 # OR run a one-time E2E fix of one or more specific WPs
 ./chomper fix <id>...
+# OR just draft (and approve) a plan without shipping
+./chomper plan <id>...
 ```
 
 ## Bird's-eye view
@@ -128,33 +128,26 @@ comments), so it is boxed in from several directions:
 | `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
 | `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
 | `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
-| `./chomper backlog` | Run `triage` + `show` + `process` |
-| `./chomper backlog triage` | Fetch WPs and (re)build the complexity triage cache, then stop |
-| `./chomper backlog show` | Preview the backlog queue |
-| `./chomper backlog process` | Work the cached queue without re-fetching (fails if `triage` hasn't run) |
-| `./chomper backlog skip <id>` | Park a WP until the next triage, without walking the queue — local only, starts no containers |
-| `./chomper fix <id>...` | Plan and ship one or more work packages by id, with the same terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
+| `./chomper fix <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
+| `./chomper plan <id>...` | Plan-only counterpart of `fix`: same loop, but stops once each plan is approved instead of shipping |
 | `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | Delete `.chomper/` — clones included — for a fresh start |
 | `./chomper --help` | Show usage |
 
-### `./chomper backlog` flow
+### `./chomper fix` / `./chomper plan` flow
 
-On first run, prompts you to save a filter (project / types / statuses / version). The project scope is shared with agent mode, which polls only by project (it acts on explicit `@chomper` mentions, so it doesn't narrow by type/status/version). Then:
+`fix <id>...` fetches one or more work packages by id (ignoring any saved filters) and, for each in turn, streams an implementation plan and prompts:
 
-1. Resolves the **Module** custom field from the per-type WP schemas (`/work_packages/schemas/<project>-<type>`) and fetches all matching work packages.
-2. Runs a Claude triage pass to estimate complexity for each item. The result is cached in `backlog_triage.json` and reused while the filters stay the same.
-3. Orders the queue by complexity (trivial first), grouping by Module within each tier (a multi-module WP counts under its first module) — the easiest items come up first regardless of module.
-4. Steps through items one by one, streaming an implementation plan for each.
-5. Prompts: `[y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan`
-   - **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
-   - **s** — skip; parked until the next `backlog triage` rebuilds the queue (the plan is kept for later)
-   - **d** — drop; item is permanently excluded from future backlog runs
-   - **c** — open a chat session to ask questions before deciding; chat alone never changes the saved plan
-   - **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
-6. Items already shipped (`pr_url.txt` present), dropped, or skipped (`backlog_done.txt`) are passed over automatically. A fresh triage clears skips; drops are permanent.
+`[y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan`
+- **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
+- **s** — skip this WP and move on
+- **d** — drop this WP, discarding the drafted plan
+- **c** — open a chat session to ask questions before deciding; chat alone never changes the saved plan
+- **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
 
-The phases also run separately: `backlog triage` fetches and classifies, `backlog show` previews the cached queue (instant — reads only local caches and starts no containers), and `backlog process` works the cached queue without re-fetching. `backlog skip <id>` parks an item from outside the queue walk. `fix <id>...` runs the same plan/approve loop for one or more WPs by id, ignoring filters (and overriding a previous drop or skip); with several ids each runs in turn and one failure doesn't abort the rest.
+With several ids each runs in turn and one failure (a bad id, a Claude error) doesn't abort the rest. A WP already shipped (`pr_url.txt` present) is reported and passed over.
+
+`plan <id>...` is the plan-only counterpart: the same loop, but `[y]` accepts the plan and stops without shipping. Ship it later with `fix <id>`.
 
 ### `@chomper` comment commands
 
@@ -190,7 +183,7 @@ PR link so you can see what's been planned and shipped at a glance.
 `chomper` is the bash entry point (Docker setup); `bin/chomper` is the Ruby CLI
 that runs inside the runner container; `server.js` wraps `claude -p` in the
 claude container. The agent itself lives in `lib/chomper/` — one module per
-concern (`pull.rb`, `agent.rb`, `gh_agent.rb`, `backlog_runner.rb`, `publish.rb`,
+concern (`pull.rb`, `agent.rb`, `gh_agent.rb`, `fix_runner.rb`, `publish.rb`,
 `prompts.rb`, `clients/`, …), with matching tests under `test/chomper/`.
 
 See **CLAUDE.md** for the authoritative module-by-module breakdown and the full

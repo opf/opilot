@@ -73,12 +73,6 @@ module Chomper
           op-agent  Poll OpenProject every 10s and act on @chomper mentions
           gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
                     (if asked) write code, committing it and pushing to the bot's fork
-          backlog   Fetch all matching WPs, group by complexity then module, process with approval
-          backlog triage    Fetch WPs and (re)build the complexity triage, then stop
-          backlog show      Preview the queue (clusters + order) without processing
-          backlog process   Work the cached queue (no re-fetch; requires a prior triage)
-          backlog plan      Draft+approve a plan per WP without shipping; skips already-planned WPs
-          backlog skip <id> Park a WP until the next triage (no queue walk)
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping
           chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship

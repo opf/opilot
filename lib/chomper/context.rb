@@ -70,7 +70,7 @@ module Chomper
     end
 
     # Auto-approve every plan instead of waiting for a human (default off). In
-    # backlog/fix the terminal approval prompt resolves to "yes"; in agent mode a
+    # fix/plan the terminal approval prompt resolves to "yes"; in agent mode a
     # planned WP is implemented immediately rather than waiting for `@chomper
     # approve`. Unattended — use with care.
     def auto_plan_approval?

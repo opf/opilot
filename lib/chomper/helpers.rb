@@ -96,7 +96,7 @@ module Chomper
     # the chosen target repos. PR-scoped artifacts (pr.md, pr_url.txt, gh caches)
     # live under items/<id>/repos/<name>/ since a WP may ship to several repos —
     # resolve them with the per-repo helpers below. Shared by both runners (agent
-    # and backlog) via #state_for.
+    # and the terminal fix/plan flow) via #state_for.
     ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
                            :item_file, :related_file, :review_file, :target_repos_file,
                            :target_base_file, :session_file, keyword_init: true) do
@@ -385,7 +385,7 @@ module Chomper
     # path — or nil when there are none, so the prompt omits the RELATED section.
     # Each related WP is also cached to its own item.json (by @pull) so Claude can
     # read the full detail on demand via the item_path in the index. Shared by the
-    # op-agent (Agent) and the terminal backlog/fix flow (BacklogRunner).
+    # op-agent (Agent) and the terminal fix/plan flow (FixRunner).
     def related_ref(st)
       related = @pull.related_work_packages(st.item_id)
       return nil if related.empty?

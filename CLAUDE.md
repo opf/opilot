@@ -10,16 +10,15 @@ A fix can land in **one or more product repos**. The repos are defined in `repos
 
 Modes:
 
-- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages. When it plans (or chats about) a WP it also pulls in that WP's related work packages (explicit relations plus parent/children), caching each as its own `item.json` and writing a `related.json` index that the plan/chat/fix prompts reference (Claude reads a related WP's full detail only if relevant). The terminal `backlog`/`fix`/`plan` flows share this — related WPs are pulled in at plan/re-plan time
+- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages. When it plans (or chats about) a WP it also pulls in that WP's related work packages (explicit relations plus parent/children), caching each as its own `item.json` and writing a `related.json` index that the plan/chat/fix prompts reference (Claude reads a related WP's full detail only if relevant). The terminal `fix`/`plan` flows share this — related WPs are pulled in at plan/re-plan time
 - **gh-agent** — continuous polling loop over GitHub PRs, driven by `@chomper` comments, from **two sources** each tick:
   - **chomper's own PRs** (`GhPull`, those with an `items/<id>/repos/<name>/pr_url.txt`) — "always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the clone and pushed to the bot's fork (with the bot token) to update the draft PR. **Optionally also auto-fixes failed CI** (`CHOMPER_CI_FIX`, off by default): when a PR's checks have *completed* with ≥1 failure, chomper fetches the failure detail (check-run annotations + output summaries + the failed Actions jobs' log tails, cached to `ci.json`), fixes the defect in the worktree with `Prompts.fix_ci`, and commits+pushes — same publish path as a comment fix. The trigger is the PR's **head SHA** (not a comment): `gh_pr.json` tracks `ci_acted_sha` (act once per commit) and `ci_attempts` (capped by `CHOMPER_CI_MAX_ATTEMPTS`, default 5; after the cap it posts a one-time "needs a human" note and sets `ci_gave_up`). It acts as soon as the **first** check fails (a fast yamllint failure isn't held up waiting on slow jobs — a pushed fix re-runs everything anyway), waits only while nothing has failed yet but checks are still running, never acts in the same tick as a comment trigger for that PR, ignores unfixable checks (`CHOMPER_CI_IGNORE_CHECKS`, default `SaaS tests`), and needs no user allowlist (the trigger is CI on chomper's own branch, gated solely by `CHOMPER_CI_FIX`). A green verdict is only cached (`ci_quiet_sha`) once the commit has **settled** (`CI_SETTLE_SECONDS`) — checks register over time, so a commit polled seconds after a push can look green before its slow/failing checks register, and caching then would hide them. Check-run reads are fully paginated (Octokit's `auto_paginate` is off by default, which would otherwise truncate a big CI matrix to the first page).
   - **upstream PRs that @-mention chomper** (`UpstreamGhPull`, any open PR on a registry repo's `upstream`) — discovered via the GitHub search API (`repo:<upstream> is:pr is:open mentions:<bot-login> updated:>=<cutoff>`, where `<bot-login>` is resolved programmatically from `@github.login`, e.g. `op-chomper`) so a Claude call is spent only on PRs that actually mention the bot. chomper has no write access to these branches, so these intents are `reply_only`: it fetches the PR head read-only, **reviews/answers in text, and never commits or pushes** (`Prompts.pr_review`, read-only tools). Per-PR state lives under `.chomper/upstream_prs/<owner>-<repo>/<number>/`. **Disabled unless `CHOMPER_ALLOWED_GH_USERS` is set** — an open `@chomper` trigger across huge public repos would be a spend/abuse risk.
 
   Both sources watch the conversation thread and inline review comments, are gated by the GitHub-login allowlist, and merging always stays gated on a maintainer. At startup it asks how far back to scan (same prompt as `op-agent`). The shared PR-content caching/mention-matching lives in `GhPrCache`.
-- **backlog** — terminal-driven batch mode: fetches a full WP query, triages by complexity, clusters by complexity tier then Module, and steps through items with terminal approval (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`). Decomposes into `triage` (fetch + classify), `show` (preview the cached queue; needs no containers), `process` (work the cached queue without re-fetching), and `plan` (like `process` but stops at each approved plan without shipping)
-- **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs the same plan/approve loop for each in turn (one failure doesn't abort the rest)
+- **fix** — terminal-driven work packages by id: `./chomper fix <id>...` fetches one or more WPs by id (ignoring filters) and runs a plan/approve loop (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`) for each in turn (one failure doesn't abort the rest), shipping each approved plan as a draft PR
 - **plan** — `./chomper plan <id>...` is the plan-only counterpart of `fix`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing and shipping
-- **chat** — `./chomper chat [message]` is a free, read-only terminal conversation over chomper's **local mirrors** — not scoped to any one WP and never fetching, planning, or shipping. The whole `.chomper/` cache is already mounted read-only into the claude container at `/state`, so `Prompts.free_chat` just orients Claude at that layout (`items/<id>/` item.json/plan.md/related.json, `items/<id>/repos/<name>/pr.json` for shipped PR threads, `upstream_prs/…/pr.json` for upstream ones) plus the repo clones at `/repos/<name>`, and Claude Greps/Reads whatever the question needs (read-only Bash for git history). `ChatRunner` (`lib/chomper/chat_runner.rb`) is a small REPL mirroring backlog's `[c]hat`: a fresh per-run session (`.chomper/chat_session_id`, cleared at start), empty line exits, and an inline `chat <message>` seeds the first turn. Needs no allowlist or GitHub/OpenProject token (it only reads local files)
+- **chat** — `./chomper chat [message]` is a free, read-only terminal conversation over chomper's **local mirrors** — not scoped to any one WP and never fetching, planning, or shipping. The whole `.chomper/` cache is already mounted read-only into the claude container at `/state`, so `Prompts.free_chat` just orients Claude at that layout (`items/<id>/` item.json/plan.md/related.json, `items/<id>/repos/<name>/pr.json` for shipped PR threads, `upstream_prs/…/pr.json` for upstream ones) plus the repo clones at `/repos/<name>`, and Claude Greps/Reads whatever the question needs (read-only Bash for git history). `ChatRunner` (`lib/chomper/chat_runner.rb`) is a small REPL mirroring the fix/plan `[c]hat`: a fresh per-run session (`.chomper/chat_session_id`, cleared at start), empty line exits, and an inline `chat <message>` seeds the first turn. Needs no allowlist or GitHub/OpenProject token (it only reads local files)
 
 ## Commands
 
@@ -30,20 +29,6 @@ Modes:
 # Run the GitHub PR agent (polls chomper's PRs for @chomper comments; replies and,
 # if asked, writes code and pushes it to the bot's fork to update the draft PR)
 ./chomper gh-agent
-
-# Run batch backlog mode (terminal approval per item)
-./chomper backlog
-
-# Or phase by phase: triage (fetch + classify) → show (preview) → process (work the cached queue)
-./chomper backlog triage
-./chomper backlog show
-./chomper backlog process
-
-# Walk the cached queue but stop at each approved plan (no shipping)
-./chomper backlog plan
-
-# Park a WP until the next triage (local only, no containers)
-./chomper backlog skip <id>
 
 # Plan and ship one or more work packages by id (terminal approval)
 ./chomper fix <id>...
@@ -94,7 +79,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `upstream_gh_pull.rb` | Polls every registry repo's `upstream` for open PRs that @-mention chomper (GitHub search pre-filter); yields `reply_only` `GhIntent`s; requires an allowlist |
 | `gh_pr_cache.rb` | `GhPrCache` — PR-content caching (`pr.json` keyed by `updated_at`), `@chomper` mention matching, fresh-comment filtering, and CI-failure caching (`ci.json` keyed by head SHA + `ci_status` classifier) shared by the pollers |
 | `gh_agent.rb` | `gh-agent` event loop — polls both sources; for own PRs replies + writes code + pushes to the fork (incl. `:ci` auto-fix when enabled); for upstream PRs reviews read-only and replies (never pushes) |
-| `backlog_runner.rb` | Batch backlog mode — triage, cluster by complexity then Module, terminal approval loop; also id-based `fix`/`plan` and plan-only `backlog plan` |
+| `fix_runner.rb` | Terminal `fix`/`plan` — fetch WPs by id, run the plan/approve loop, ship approved plans (`fix`) or stop at the approved plan (`plan`) |
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch to the user's fork via git credential helper; opens cross-repo draft PRs against upstream via Octokit |
@@ -115,8 +100,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 
 ```
 .chomper/
-├── op_agent_filters.json    # saved search filters (shared by op-agent and backlog modes)
-├── backlog_triage.json      # cached triage results (keyed by filter fingerprint)
+├── op_agent_filters.json    # saved op-agent search filters
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── chat_session_id          # Claude session for the current `chat` REPL (reset each run)
@@ -127,7 +111,6 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 │   ├── target_repos.json    # the repo names Claude chose for this WP (from the plan's REPOS line)
 │   ├── target_base.json     # optional per-repo base-branch overrides ({repo: base}) from REPOS <name>@<base>; absent → default base
 │   ├── gist_url.txt         # secret gist of plan.md (one per WP), linked from every repo's PR; created once, then cached
-│   ├── backlog_done.txt     # backlog outcome: "dropped" (permanent) or "skipped" (until next triage)
 │   ├── session_id           # Claude session for continuity across turns (plan + implement)
 │   └── repos/<repo_name>/   # one subdir per repo this WP ships to
 │       ├── pr.md            # PR description (per-repo diff)
@@ -148,7 +131,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 
 Runner POSTs to `http://claude:47291` with headers:
 - `X-Claude-Tools`: `"Read,Grep,Glob,Bash"` (planning/chat) or `"Read,Grep,Glob,Write,Edit,Bash"` (implementation). Bash is read-only git, gated by `guard-bash.js`. `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
-- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb`. One model per WP, chosen once and shared by every session-bound phase (`MODEL_WORK` by default; backlog mode downgrades `trivial`/`simple` items to `MODEL_SIMPLE` via `Claude.model_for`), plus `MODEL_FAST` for the stateless triage pass. Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
+- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb`. One model per WP, shared by every session-bound phase (`MODEL_WORK`), plus `MODEL_FAST` for stateless one-shot passes (e.g. crafting a gh-agent commit subject). Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
 - `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
 `server.js` spawns `claude -p` with `--output-format stream-json --verbose --model <model>`, streams NDJSON back, and persists the session ID. The spawn sets no `cwd`, so it inherits the container's `/repos` working directory (set via `working_dir` in `compose.yml`), with each repo at `/repos/<name>` — Claude Code loads `/repos/openproject/CLAUDE.md` as project memory when it reads files there.
@@ -164,11 +147,10 @@ Runner POSTs to `http://claude:47291` with headers:
 | `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent (the number in a profile URL, `/users/<id>` — not emails, since a non-admin API token can't read other users' emails; the id is taken from each comment's `_links.user.href`). Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
 | `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Defaults to `thykel` (not "everyone" — an open trigger on a public PR would let anyone push code to the branch). Also the on/off switch for **upstream PR review**: when empty, gh-agent still serves chomper's own PRs but does NOT scan upstream PRs at all |
 | `ANTHROPIC_API_KEY` | Recommended. When set, held only by the authgw gateway (injected into requests), never in the claude container. If unset, falls back to interactive `claude auth login` (OAuth creds stored in the claude container — less isolated) |
-| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used by moderate/complex items and all agent-mode phases |
-| `CHOMPER_SIMPLE_MODEL` | Optional; overrides the model (default `claude-sonnet-4-6`) used for backlog items triaged `trivial` or `simple` |
-| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the triage model (default `claude-haiku-4-5`) |
+| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used for all planning and implementation |
+| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) used for stateless one-shot passes (e.g. the gh-agent commit subject) |
 | `CHOMPER_PLAN_REVIEW` | Optional; set `1`/`true` to re-enable the agent-mode self-review pass (off by default — a human approves every plan via `@chomper approve`) |
-| `AUTO_PLAN_APPROVAL` | Optional; set `1`/`true` to auto-approve every plan (off by default). Backlog/fix skip the terminal approval prompt; agent mode implements a planned WP immediately instead of waiting for `@chomper approve`. Unattended — use with care |
+| `AUTO_PLAN_APPROVAL` | Optional; set `1`/`true` to auto-approve every plan (off by default). fix/plan skip the terminal approval prompt; agent mode implements a planned WP immediately instead of waiting for `@chomper approve`. Unattended — use with care |
 | `CHOMPER_PR_MODE` | Optional; `fork` (default) or `direct`. `fork` pushes the fix branch to the bot's fork and opens a cross-repo PR, so the token never needs write access to the canonical repo. `direct` pushes the branch straight to the canonical repo and opens a same-repo PR — requires the token to have push access there, and gives up the fork's isolation (the protected-branch guard + human-gated merge become the only safety). The PR is always a draft; merging still needs a maintainer |
 | `CHOMPER_CI_FIX` | Optional; set `1`/`true` to let `gh-agent` auto-fix failed CI on chomper's own draft PRs (off by default). When a PR's checks complete with a failure, chomper fixes it in the worktree and pushes to update the PR. Autonomous spend + push — opt-in; needs no user allowlist (the trigger is CI on chomper's own branch) |
 | `CHOMPER_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` will chase one PR's CI before giving up and posting a "needs a human" note (default `5`, floored at 1). Only relevant when `CHOMPER_CI_FIX` is on |

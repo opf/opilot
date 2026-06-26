@@ -202,28 +202,6 @@ module Chomper
       PROMPT
     end
 
-    # TRIAGE: classify a batch of work packages by complexity (backlog mode).
-    # Outputs a summary line per item then a JSON block for machine parsing.
-    def self.triage(paths:)
-      <<~PROMPT
-        Read each of these work package JSON files:
-        #{paths}
-
-        For each item print one summary line:  #<id> <subject> → <complexity>
-
-        Then output the complete results between these exact delimiters — nothing after the closing one:
-        ---BEGIN JSON---
-        [{ "id": "<id>", "complexity": "<trivial|simple|moderate|complex>" }]
-        ---END JSON---
-
-        Complexity guide:
-          trivial  — single obvious fix, ≤2 files
-          simple   — clear fix, ≤5 files
-          moderate — spans multiple subsystems
-          complex  — architectural impact or high risk
-      PROMPT
-    end
-
     # Conversational reply to an @chomper comment on a work package (read-only tools).
     def self.chat(item_id:, subject:, item:, plan:, message:, related: nil)
       <<~PROMPT
@@ -404,9 +382,9 @@ module Chomper
       PROMPT
     end
 
-    # Conversational reply during a terminal backlog session (read-only tools).
+    # Conversational reply during a terminal `fix`/`plan` session (read-only tools).
     # Like chat but terminal-adapted: no OP reply instruction, no command list.
-    def self.backlog_chat(item_id:, subject:, item:, plan:, message:)
+    def self.plan_chat(item_id:, subject:, item:, plan:, message:)
       <<~PROMPT
         You are chomper, reviewing OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
@@ -428,7 +406,7 @@ module Chomper
     end
 
     # Free terminal chat over the local mirrors (read-only tools). Unlike `chat`
-    # and `backlog_chat`, it is not scoped to one work package: chomper's whole
+    # and `plan_chat`, it is not scoped to one work package: chomper's whole
     # on-disk cache is mounted at `state` and the model finds the relevant files
     # itself from the user's question. `repos` is an array of { name:, path:, … }
     # for the product clones mounted at /repos/<name>.

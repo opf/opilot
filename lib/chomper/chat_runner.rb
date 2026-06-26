@@ -1,10 +1,10 @@
 module Chomper
   # The `chat` command: a free, read-only terminal conversation over chomper's
   # local mirrors. Unlike the op-agent chat (posted to OpenProject) or the
-  # backlog `[c]hat` (scoped to one WP's plan), it isn't tied to any work
+  # fix/plan `[c]hat` (scoped to one WP's plan), it isn't tied to any work
   # package — the whole .chomper cache is mounted read-only at /state and Claude
   # finds the relevant files itself from the question. No fetch, no plan, no
-  # ship: just talk. Mirrors BacklogRunner#run_chat's REPL shape.
+  # ship: just talk. Mirrors FixRunner#run_chat's REPL shape.
   class ChatRunner
     include Helpers
 
