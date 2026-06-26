@@ -20,9 +20,15 @@ services:
     # for tests — it falls back to mounting the current project at a fixed path,
     # so no SCRIPT_DIR=… prefix is needed. Each repo's standalone clone lives under
     # .chomper/repos/<name>, covered by this single mount.
+    # Run as the host user (exported by ./chomper) so files written into the
+    # bind-mounted .chomper/ are owned by you, not root. Defaults to root when
+    # unset, e.g. a bare `docker compose run runner …` for tests.
+    user: "${CHOMPER_UID:-0}:${CHOMPER_GID:-0}"
     volumes:
       - ${SCRIPT_DIR:-.}:${SCRIPT_DIR:-/chomper}
     environment:
+      # Non-root needs a writable HOME for bundler/git config scratch.
+      - HOME=/tmp
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
@@ -62,6 +68,12 @@ services:
       dockerfile: Dockerfile.claude
     depends_on:
       - proxy
+    # Run as the host user (exported by ./chomper) so OAuth creds written into the
+    # bind-mounted .chomper/claude-auth are owned by — and persist for — you. The
+    # image's baked node user is uid 1000; on a host whose user isn't 1000 that
+    # node uid can't write the host-owned auth dir, so auth wouldn't persist.
+    # Defaults to 1000 (the node user) when unset, e.g. a bare `docker compose run`.
+    user: "${CHOMPER_UID:-1000}:${CHOMPER_GID:-1000}"
     # Run the CLI in /repos (the parent of every repo's worktree) so Claude sees
     # them all at /repos/<name>; it still auto-loads /repos/openproject/CLAUDE.md
     # (OpenProject's AGENTS.md) as project memory when it reads files there.
@@ -76,6 +88,11 @@ services:
       - ${SCRIPT_DIR:-.}/.chomper:/state:ro
     environment:
       - CLAUDE_CONFIG_DIR=/home/node/.claude
+      # When running as the host uid, /home/node (owned by the baked node user) and
+      # an absent passwd entry would otherwise break os.homedir(); point HOME at the
+      # tmpfs so stray ~/.cache writes land there. Creds still persist via
+      # CLAUDE_CONFIG_DIR, which is the host-owned, writable bind mount.
+      - HOME=/tmp
       - FORCE_COLOR=1
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
       # API-key mode: chomper sets these to route through the authgw gateway

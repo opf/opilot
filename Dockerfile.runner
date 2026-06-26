@@ -5,7 +5,9 @@ RUN apt-get update && apt-get install -y \
       git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git config --global --add safe.directory '*'
+# --system (not --global): the runner runs as the host uid at runtime, not root,
+# so the setting must live in system config rather than root's ~/.gitconfig.
+RUN git config --system --add safe.directory '*'
 
 WORKDIR /app
 COPY Gemfile Gemfile.lock ./

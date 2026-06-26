@@ -153,6 +153,15 @@ OP_REPO_PATH="$(_env_get OP_REPO_PATH)"
 export OP_REPO_PATH
 mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
 
+# Run the containers as the host user so everything they write into the bind-mounted
+# .chomper/ (runner: logs + item state; claude: its auth creds) is owned by you, not
+# root/node. On macOS Docker Desktop remaps ownership to the host user regardless;
+# on Linux the container uid is used verbatim, so without this the runner (root)
+# leaves root-owned files and the claude container (node, uid 1000) can't write its
+# auth into a host-owned dir — breaking auth persistence.
+CHOMPER_UID="$(id -u)"; CHOMPER_GID="$(id -g)"
+export CHOMPER_UID CHOMPER_GID
+
 # Git identity — passed into the runner container so commits are authored by the
 # host user rather than the container's default identity.
 GIT_AUTHOR_NAME="$(git config user.name 2>/dev/null || true)"
