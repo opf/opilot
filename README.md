@@ -252,6 +252,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Use separate agents for development and review to clearly split domain ownership
 * Try to compact token usage
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
+* Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
   
 ### Feature ideas
 * Trigger agent interaction by assigning a WP to the chomper user
