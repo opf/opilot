@@ -130,6 +130,8 @@ comments), so it is boxed in from several directions:
 | `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
 | `./chomper fix <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
 | `./chomper plan <id>...` | Plan-only counterpart of `fix`: same loop, but stops once each plan is approved instead of shipping |
+| `./chomper pull [<id>...]` | Mirror work packages into the local cache for later `chat`, without planning or shipping. Ids fetch exactly those; no ids runs the filter wizard for a bulk grab |
+| `./chomper chat [message]` | Free read-only chat about your local mirrors (items + PRs); no fetch, plan, or ship |
 | `./chomper status` | List the work packages chomper has planned or shipped |
 | `./chomper reset` | Delete `.chomper/` — clones included — for a fresh start |
 | `./chomper --help` | Show usage |

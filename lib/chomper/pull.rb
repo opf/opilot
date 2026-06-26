@@ -30,10 +30,32 @@ module Chomper
     # (at-least-once delivery). Every matching WP is scanned each poll so a
     # re-fire after a crash is not missed.
     def poll_intents(filters)
+      intents = []
+      each_filtered_wp(filters, label: "Polling") do |wp, _cached, comments|
+        intent = intent_from_comments(wp, comments)
+        intents << intent if intent
+      end
+      intents
+    end
+
+    # Mirror every work package matching `filters` into the local cache (its own
+    # item.json), without parsing comments into intents — the bulk form of the
+    # `pull` command, so WPs can be discussed via `chat` without planning or
+    # shipping. Returns [scanned, changed].
+    def mirror(filters)
+      each_filtered_wp(filters, label: "Fetching") { }   # caching is the side effect
+      [@scanned_count, @changed_count]
+    end
+
+    # Paginate the filtered work-package list, refresh each WP's item.json, and
+    # yield [wp, cached, comments]. Stops at the scan-window floor (results are
+    # updatedAt desc) and records scan/change stats in @scanned_count /
+    # @changed_count. Shared by #poll_intents and #mirror; `label` names the
+    # tty heartbeat ("Polling" / "Fetching").
+    def each_filtered_wp(filters, label:)
       @scan_from_at = filters.scan_from_at
       fj = filters_json(filters)
 
-      intents = []
       changed = 0
       processed = 0; progressed = false; reached_floor = false
       page = 1; page_size = 50; total_written = 0; total = 0
@@ -65,12 +87,11 @@ module Chomper
           # moment we actually hit the network, and only on a tty) so it's clearly
           # working rather than hung.
           if !cached && $stdout.tty?
-            print "\r  Polling OpenProject — #{processed} work package(s)…"
+            print "\r  #{label} OpenProject — #{processed} work package(s)…"
             $stdout.flush
             progressed = true
           end
-          intent = intent_from_comments(wp, comments)
-          intents << intent if intent
+          yield wp, cached, comments
         end
 
         break if reached_floor || Chomper.stopping?
@@ -78,11 +99,10 @@ module Chomper
         break if total_written >= total
         page += 1
       end
-      print "\r\033[K" if progressed   # clear the heartbeat before the poll summary
+      print "\r\033[K" if progressed   # clear the heartbeat before the summary
 
       @scanned_count = processed
       @changed_count = changed
-      intents
     end
 
     # Record that a trigger comment has been fully handled, so it is not

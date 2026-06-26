@@ -466,6 +466,35 @@ module Chomper
       refute @pull.send(:chomper_mentioned?, "just a normal comment")
     end
 
+    # mirror caches every matched WP (no intent parsing) and reports counts.
+    def test_mirror_caches_all_matched_work_packages
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp(1, "2024-01-02T00:00:00Z"), wp(2, "2024-01-02T00:00:00Z")], total: 2))
+      [1, 2].each do |id|
+        stub_request(:get, %r{/work_packages/#{id}/activities\z})
+          .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+        stub_request(:get, %r{/work_packages/#{id}/activities_emoji_reactions\z})
+          .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      end
+
+      scanned, changed = @pull.mirror(FILTERS)
+      assert_equal 2, scanned
+      assert_equal 2, changed
+      assert (Pathname(@tmpdir) / "items" / "1" / "item.json").exist?
+      assert (Pathname(@tmpdir) / "items" / "2" / "item.json").exist?
+    end
+
+    # A WP already current in the cache is scanned but not re-fetched (changed 0).
+    def test_mirror_skips_already_current_work_packages
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      scanned, changed = @pull.mirror(FILTERS)
+      assert_equal 1, scanned
+      assert_equal 0, changed
+    end
+
     def test_filters_json_scopes_to_all_selected_projects
       filters = FilterSet.new(project_ids: ["10", "20"], type_ids: ["1"],
                               status_ids: ["2"], version_ids: [])

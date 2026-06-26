@@ -35,6 +35,8 @@ module Chomper
         with_ids(argv, "Fix", "fix") { |ids| FixRunner.new(@ctx).fix(*ids) }
       when "plan"
         with_ids(argv, "Plan", "plan") { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
+      when "pull"
+        pull(argv)
       else
         $stderr.puts "Unknown argument: #{cmd}"
         ui.usage
@@ -43,6 +45,21 @@ module Chomper
     end
 
     private
+
+    # `pull` mirrors work packages into the local cache for later `chat`, without
+    # planning or shipping. With ids it fetches exactly those (validated like
+    # fix/plan); with no ids it runs the filter wizard and mirrors every match.
+    def pull(argv)
+      ids = argv[1..].to_a.map { |a| wp_id_arg(a) }
+      if ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
+        $stderr.puts "Usage: ./chomper pull [<work-package-id>...]   (ids, or none to use saved/prompted filters)"
+        raise Chomper::FatalError
+      end
+      @ctx.load_config!
+      header = ids.empty? ? "by filter" : ids.map { |id| Helpers.wp_label(id) }.join(", ")
+      @ctx.log_file.open("a") { |f| f.puts "\n=== Pull #{header} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+      PullRunner.new(@ctx).run(*ids)
+    end
 
     # Shared setup for the id-based commands (`fix`, `plan`): validate the ids,
     # load config, write a log header, then yield the ids to the runner call.

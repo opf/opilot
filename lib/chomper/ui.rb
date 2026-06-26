@@ -75,6 +75,8 @@ module Chomper
                     (if asked) write code, committing it and pushing to the bot's fork
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping
+          pull [<id>...]    Mirror work packages into the local cache for later chat (no plan or ship);
+                            ids fetch exactly those, no ids runs the filter wizard for a bulk grab
           chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
