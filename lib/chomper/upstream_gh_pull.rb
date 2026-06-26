@@ -16,7 +16,7 @@ module Chomper
   # An empty CHOMPER_ALLOWED_GH_USERS disables this scan entirely — an open
   # @chomper trigger across huge public repos would be a spend/abuse risk.
   #
-  # Per-PR state lives under .chomper/upstream_prs/<owner>-<repo>/<number>/,
+  # Per-PR state lives under .chomper/pr_reviews/<owner>-<repo>/<number>/,
   # mirroring how GhPull keeps a PR's cache (pr.json) and act-state (gh_pr.json)
   # separate.
   class UpstreamGhPull
@@ -52,9 +52,9 @@ module Chomper
       intents
     end
 
-    # The per-PR state dir .chomper/upstream_prs/<owner>-<repo>/<number>/.
+    # The per-PR state dir .chomper/pr_reviews/<owner>-<repo>/<number>/.
     def pr_dir(repo_str, number)
-      dir = @ctx.state_dir / "upstream_prs" / repo_str.to_s.tr("/", "-") / number.to_s
+      dir = @ctx.state_dir / "pr_reviews" / repo_str.to_s.tr("/", "-") / number.to_s
       dir.mkpath
       dir
     end

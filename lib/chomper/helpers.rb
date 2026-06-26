@@ -9,10 +9,12 @@ module Chomper
     # File/JSON idioms shared across classes that don't all `include Helpers`
     # (Pull, UI), so they're module functions like .wp_label below.
 
-    # Per-WP state lives under .chomper/items/<id>/ — one source of truth for
-    # that path, used everywhere instead of re-joining the literal.
+    # Per-WP state lives under .chomper/work_packages/<op_host>/<id>/ —
+    # namespaced by the OpenProject instance (see Context#op_host) so different
+    # instances don't collide. One source of truth for that path, used
+    # everywhere instead of re-joining the literal.
     def self.items_dir(ctx)
-      ctx.state_dir / "items"
+      ctx.state_dir / "work_packages" / ctx.op_host
     end
 
     def self.item_dir(ctx, id)
@@ -92,15 +94,15 @@ module Chomper
       end
     end
 
-    # Per-WP working state: the shared paths under items/<id>/ plus the branch and
-    # the chosen target repos. PR-scoped artifacts (pr.md, pr_url.txt, gh caches)
-    # live under items/<id>/repos/<name>/ since a WP may ship to several repos —
-    # resolve them with the per-repo helpers below. Shared by both runners (agent
-    # and the terminal fix/plan flow) via #state_for.
+    # Per-WP working state: the shared paths under work_packages/<host>/<id>/ plus
+    # the branch and the chosen target repos. PR-scoped artifacts (pr.md,
+    # pr_url.txt, gh caches) live under <id>/repos/<name>/ since a WP may ship to
+    # several repos — resolve them with the per-repo helpers below. Shared by both
+    # runners (agent and the terminal fix/plan flow) via #state_for.
     ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
                            :item_file, :related_file, :review_file, :target_repos_file,
                            :target_base_file, :session_file, keyword_init: true) do
-      # Per-repo artifact directory (items/<id>/repos/<name>/), created on demand.
+      # Per-repo artifact directory (<id>/repos/<name>/), created on demand.
       def repo_dir(repo)
         dir = item_dir / "repos" / repo_name(repo)
         dir.mkpath
@@ -303,7 +305,7 @@ module Chomper
       end
     end
 
-    # Build the ItemState for a WP, creating its items/<id>/ directory. The
+    # Build the ItemState for a WP, creating its work_packages/<host>/<id>/ directory. The
     # target repos are loaded from target_repos.json (set once Claude picks them
     # in the plan); until then the state defaults to the registry's default repo.
     def state_for(item_id, subject, type = nil)
@@ -326,7 +328,7 @@ module Chomper
       )
     end
 
-    # The Repo objects a WP targets, read from items/<id>/target_repos.json (an
+    # The Repo objects a WP targets, read from <id>/target_repos.json (an
     # array of registry names); unknown names are dropped and an empty/missing
     # file falls back to the registry default, so single-repo flows just work.
     def target_repos_for(item_id)
@@ -337,7 +339,7 @@ module Chomper
     end
 
     # The per-repo base overrides a WP requested, read from
-    # items/<id>/target_base.json ({ "<repo>" => "<base>" }); empty/missing means
+    # <id>/target_base.json ({ "<repo>" => "<base>" }); empty/missing means
     # every repo uses its registry default base.
     def target_bases_for(item_id)
       file = Helpers.item_dir(@ctx, item_id) / "target_base.json"

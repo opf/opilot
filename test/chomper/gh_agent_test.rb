@@ -86,14 +86,16 @@ module Chomper
       @ctx = Struct.new(
         :state_dir, :state_container,
         :github_token, :allowed_gh_users, :log_file, :progress_file, :repos
-      ).new(
+      ) do
+        def op_host; "test.host"; end   # WP mirror namespace
+      end.new(
         state_dir, "/state",
         # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
         # a no-op so the suite never makes a real GitHub call; handle() uses the
         # injected @github, not ctx.github_token.
         nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
       )
-      (@ctx.state_dir / "items" / "42").mkpath
+      (@ctx.state_dir / "work_packages" / "test.host" / "42").mkpath
 
       @claude  = FakeClaude.new
       @github  = FakeGitHub.new
@@ -114,7 +116,7 @@ module Chomper
     end
 
     def gh_session_path
-      @ctx.state_dir / "items" / "42" / "repos" / "openproject" / "gh_session_id"
+      @ctx.state_dir / "work_packages" / "test.host" / "42" / "repos" / "openproject" / "gh_session_id"
     end
 
     def gh_intent(kind: :issue, text: "@chomper please guard nil", login: "thykel", id: 99)

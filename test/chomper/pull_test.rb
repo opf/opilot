@@ -174,7 +174,8 @@ module Chomper
 
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:op_url, :state_dir, :token).new("https://example.com", Pathname(@tmpdir), "tok")
+      ctx = Struct.new(:op_url, :state_dir, :token) { def op_host; "example.com"; end }
+                  .new("https://example.com", Pathname(@tmpdir), "tok")
       @pull = Pull.new(ctx)
     end
 
@@ -183,7 +184,7 @@ module Chomper
     end
 
     def test_skips_api_calls_when_item_json_is_current
-      item_dir = Pathname(@tmpdir) / "items" / "42"
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
 
@@ -195,7 +196,7 @@ module Chomper
 
     def test_cached_item_returns_stored_comments
       stored_comments = [{ "user" => "Alice", "text" => "Reproduced on 14.3", "reactions" => { "thumbsup" => 2 } }]
-      item_dir = Pathname(@tmpdir) / "items" / "42"
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z", "comments" => stored_comments }))
 
@@ -204,7 +205,7 @@ module Chomper
     end
 
     def test_re_fetches_when_updated_at_differs
-      item_dir = Pathname(@tmpdir) / "items" / "42"
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-01T00:00:00Z" }))
 
@@ -227,7 +228,7 @@ module Chomper
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
 
       cached, comments = @pull.send(:fetch_work_package_item, WP)
-      assert (Pathname(@tmpdir) / "items" / "42" / "item.json").exist?
+      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "42" / "item.json").exist?
       refute cached
       assert_equal [], comments
     end
@@ -252,13 +253,13 @@ module Chomper
     # Seed a cached item.json so fetch_work_package_item returns its comments
     # without any activities HTTP call.
     def seed_item(id, updated_at, comments)
-      dir = Pathname(@tmpdir) / "items" / id.to_s
+      dir = Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s
       dir.mkpath
       (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
     end
 
     def build_pull(allowed_op_user_ids = [])
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids)
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
                   .new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids)
       Pull.new(ctx)
     end
@@ -266,6 +267,9 @@ module Chomper
     def setup
       @tmpdir = Dir.mktmpdir
       @pull   = build_pull
+      # The per-instance WP dir holds op_agent_filters.json; tests that seed that
+      # file write it directly, so make sure its parent exists.
+      (Pathname(@tmpdir) / "work_packages" / "example.com").mkpath
       # /users/me identifies chomper as user 1, so an OP-native @-mention by
       # data-id is recognised as a trigger.
       stub_request(:get, "https://example.com/api/v3/users/me")
@@ -358,7 +362,7 @@ module Chomper
 
       assert_equal [], @pull.poll_intents(FILTERS)
       # marked acted so it is not re-evaluated next poll
-      on_disk = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      on_disk = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
       assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
     end
 
@@ -383,7 +387,7 @@ module Chomper
           "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan" }
       ])
       # Mark comment 9 as a chomper-generated reply.
-      item_path = Pathname(@tmpdir) / "items" / "1" / "item.json"
+      item_path = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json"
       data = JSON.parse(item_path.read)
       data["last_chomper_comment_id"] = "9"
       item_path.write(JSON.generate(data))
@@ -395,7 +399,7 @@ module Chomper
     def test_record_chomper_comment_persists_id
       seed_item(1, "2024-01-02T00:00:00Z", [])
       @pull.record_chomper_comment("1", "42")
-      data = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
       assert_equal "42", data["last_chomper_comment_id"]
     end
 
@@ -409,7 +413,7 @@ module Chomper
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
       stale_wp = wp(1, "2024-01-02T00:00:00Z").merge("updatedAt" => "2024-03-01T00:00:00Z")
       @pull.send(:fetch_work_package_item, stale_wp)
-      data = JSON.parse((Pathname(@tmpdir) / "items" / "1" / "item.json").read)
+      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
       assert_equal "42", data["last_chomper_comment_id"]
     end
 
@@ -480,8 +484,8 @@ module Chomper
       scanned, changed = @pull.mirror(FILTERS)
       assert_equal 2, scanned
       assert_equal 2, changed
-      assert (Pathname(@tmpdir) / "items" / "1" / "item.json").exist?
-      assert (Pathname(@tmpdir) / "items" / "2" / "item.json").exist?
+      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").exist?
+      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "2" / "item.json").exist?
     end
 
     # A WP already current in the cache is scanned but not re-fetched (changed 0).
@@ -509,7 +513,7 @@ module Chomper
       # Pre-multi-project file: one identifier under "project_id". It must be
       # resolved to a numeric id (the project_id filter coerces values with to_i)
       # while keeping the semantic identifier for display.
-      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
         "project_id" => "TTP2", "project_name" => "Trial", "scan_from_at" => nil
       ))
       stub_request(:get, "https://example.com/api/v3/projects/TTP2")
@@ -525,7 +529,7 @@ module Chomper
       # A file written after multi-project support but before project_idents:
       # has project_ids but no project_idents. Each id is resolved to its
       # identifier on read so the display shows the semantic id.
-      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
         "project_ids" => ["1182"], "project_names" => ["Chomper testing area"]
       ))
       stub_request(:get, "https://example.com/api/v3/projects/1182")
@@ -546,7 +550,7 @@ module Chomper
 
     def test_save_and_reload_agent_filters
       @pull.send(:save_agent_filters, FILTERS)
-      path = Pathname(@tmpdir) / "op_agent_filters.json"
+      path = Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json"
       assert path.exist?
       data = JSON.parse(path.read)
       assert_equal FILTERS.project_ids, data["project_ids"]
@@ -567,7 +571,7 @@ module Chomper
     # The agent-mode read tolerates a file with no type/status (one a previous
     # agent run wrote) and returns a project-only FilterSet.
     def test_read_agent_filters_ignores_type_and_status
-      (Pathname(@tmpdir) / "op_agent_filters.json").write(JSON.generate(
+      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
         "project_ids" => ["1182"], "project_idents" => ["chomper-testing"],
         "project_names" => ["Chomper testing area"], "scan_from_at" => "2024-01-01T00:00:00Z"
       ))
@@ -583,7 +587,7 @@ module Chomper
     def test_save_agent_filters_preserves_existing_type_and_status
       @pull.send(:save_agent_filters, FILTERS)   # writes type/status from a fully-populated set
       @pull.send(:save_agent_filters, FilterSet.new(project_ids: ["999"]))
-      data = JSON.parse((Pathname(@tmpdir) / "op_agent_filters.json").read)
+      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").read)
       assert_equal ["999"], data["project_ids"]
       assert_equal FILTERS.type_ids,   data["type_ids"]
       assert_equal FILTERS.status_ids, data["status_ids"]
@@ -593,7 +597,7 @@ module Chomper
   class PullRelatedTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids)
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
                   .new("https://example.com", Pathname(@tmpdir), "tok", [])
       @pull = Pull.new(ctx)
     end
@@ -654,7 +658,7 @@ module Chomper
       assert_equal "blocked", by_id["300"]
       assert_equal "parent",  by_id["50"]
       assert_equal "child",   by_id["60"]
-      assert (Pathname(@tmpdir) / "items" / "200" / "item.json").exist?, "related WPs are cached to disk"
+      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "200" / "item.json").exist?, "related WPs are cached to disk"
       assert_equal "New", refs.find { |r| r["id"] == "200" }["status"]
     end
 
@@ -669,7 +673,7 @@ module Chomper
       refs = @pull.related_work_packages("100")
       ids  = refs.map { |r| r["id"] }
       assert_equal ["60"], ids, "only the reachable child survives"
-      refute (Pathname(@tmpdir) / "items" / "70" / "item.json").exist?
+      refute (Pathname(@tmpdir) / "work_packages" / "example.com" / "70" / "item.json").exist?
     end
 
     def test_relations_endpoint_failure_still_yields_hierarchy

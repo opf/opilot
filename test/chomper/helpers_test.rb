@@ -166,7 +166,9 @@ module Chomper
         ]
       ))
       registry = Registry.build(script_dir: script_dir, state_dir: state_dir)
-      ctx = Struct.new(:state_dir, :script_dir, :log_file, :repos, :default_repo).new(
+      ctx = Struct.new(:state_dir, :script_dir, :log_file, :repos, :default_repo) do
+        def op_host; "test.host"; end   # WP mirror namespace
+      end.new(
         state_dir, script_dir, Pathname("/dev/null"), registry, registry.default
       )
       RepoHost.new(ctx)

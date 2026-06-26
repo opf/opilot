@@ -20,6 +20,7 @@ module Chomper
     CtxClass = Struct.new(:state_dir, :allowed_gh_users, :github_token, :log_file,
                           :ci_fix, :ci_max_attempts, :ci_ignored_checks) do
       def ci_fix? = ci_fix
+      def op_host = "test.host"   # WP mirror namespace
     end
 
     class FakeGitHub
@@ -50,7 +51,7 @@ module Chomper
       @ctx = CtxClass.new(
         Pathname(@tmpdir) / ".chomper", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", false, 2, []
       )
-      @dir = @ctx.state_dir / "items" / "42"
+      @dir = @ctx.state_dir / "work_packages" / "test.host" / "42"
       @pr_dir = @dir / "repos" / "openproject"   # per-repo PR subdir
       @pr_dir.mkpath
       (@pr_dir / "pr_url.txt").write("https://github.com/o/r/pull/7\n")
@@ -387,11 +388,11 @@ module Chomper
     end
 
     def test_only_watches_dirs_with_a_shipped_pr
-      planned = @ctx.state_dir / "items" / "99"
+      planned = @ctx.state_dir / "work_packages" / "test.host" / "99"
       planned.mkpath
       (planned / "plan.md").write("## Plan") # no per-repo pr_url.txt → not watched
       gh = pull
-      # Each shipped PR dir is items/<id>/repos/<name>; the WP id is two levels up.
+      # Each shipped PR dir is <id>/repos/<name>; the WP id is two levels up.
       assert_equal ["42"], gh.shipped_pr_dirs.map { |d| d.parent.parent.basename.to_s }
     end
   end

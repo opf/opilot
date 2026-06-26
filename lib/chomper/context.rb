@@ -1,5 +1,6 @@
 require "pathname"
 require "rainbow"
+require "uri"
 require_relative "repo"
 
 module Chomper
@@ -53,6 +54,22 @@ module Chomper
     # The repo used when a flow hasn't chosen one (the registry's first entry).
     def default_repo
       repos.default
+    end
+
+    # A filesystem-safe segment naming the OpenProject instance, derived from
+    # OPENPROJECT_URL. Per-instance state (work packages, saved filters) is
+    # namespaced under it so that pointing chomper at a different instance can't
+    # collide — WP #42 on instance A is a different WP than #42 on instance B.
+    # Keeps dots for readability ("community.openproject.org") and folds in a
+    # non-default port so two local instances (":8080" vs ":9090") don't clash.
+    def op_host
+      @op_host ||= begin
+        uri  = URI(@op_url.to_s)
+        host = uri.host || @op_url.to_s
+        seg  = uri.port && ![80, 443].include?(uri.port) ? "#{host}_#{uri.port}" : host
+        s = seg.downcase.gsub(/[^a-z0-9._-]+/, "-").gsub(/\A-+|-+\z/, "")
+        s.empty? ? "unknown-host" : s
+      end
     end
 
     def load_config!

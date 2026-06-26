@@ -51,7 +51,7 @@ module Chomper
     end
 
     def upstream_dir
-      @ctx.state_dir / "upstream_prs" / "opf-openproject" / "7"
+      @ctx.state_dir / "pr_reviews" / "opf-openproject" / "7"
     end
 
     def test_yields_reply_only_intent_for_an_allowlisted_mention
@@ -93,10 +93,10 @@ module Chomper
       assert_equal "2026-06-20T09:00:00Z", state["last_acted_comment_at"]
     end
 
-    def test_state_lives_under_upstream_prs
+    def test_state_lives_under_pr_reviews
       gh = pull
       gh.mark_acted("opf/openproject", 7, "2026-06-20T09:00:00Z")
-      assert (upstream_dir / "gh_pr.json").exist?, "act-state lives at upstream_prs/<owner>-<repo>/<number>/"
+      assert (upstream_dir / "gh_pr.json").exist?, "act-state lives at pr_reviews/<owner>-<repo>/<number>/"
     end
   end
 end

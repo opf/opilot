@@ -26,7 +26,9 @@ module Chomper
       state_dir = Pathname(@tmpdir) / ".chomper"
       state_dir.mkpath
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @ctx = Struct.new(:script_dir, :state_dir, :state_container, :log_file, :repos).new(
+      @ctx = Struct.new(:script_dir, :state_dir, :state_container, :log_file, :repos) do
+        def op_host; "test.host"; end   # WP mirror namespace
+      end.new(
         Pathname(@tmpdir), state_dir, "/state", Pathname(@tmpdir) / "chomp.log", registry
       )
       Chomper.reset_stop!

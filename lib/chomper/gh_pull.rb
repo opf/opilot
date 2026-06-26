@@ -24,7 +24,7 @@ module Chomper
                         keyword_init: true)
 
   # The GitHub counterpart of Pull: scans the PRs chomper has already opened (one
-  # per items/<id>/pr_url.txt) for new @chomper comments.
+  # per work_packages/<host>/<id>/repos/<name>/pr_url.txt) for new @chomper comments.
   #
   # Two files per PR, mirroring how Pull splits a WP's cache from its act-state:
   # - pr.json    — the cached PR content (metadata + every comment and review,
@@ -45,7 +45,7 @@ module Chomper
 
     attr_reader :scanned_count
 
-    # The per-repo PR dirs gh-agent watches: items/<id>/repos/<name>/ holding a
+    # The per-repo PR dirs gh-agent watches: <id>/repos/<name>/ holding a
     # shipped PR. A WP that shipped to several repos yields several dirs, each an
     # independent PR with its own cache, act-state, and session.
     def shipped_pr_dirs
@@ -74,7 +74,7 @@ module Chomper
       intents
     end
 
-    # The per-repo PR dir items/<id>/repos/<name>/ for an intent's WP + repo.
+    # The per-repo PR dir <id>/repos/<name>/ for an intent's WP + repo.
     def pr_dir(item_id, repo_name)
       Helpers.item_dir(@ctx, item_id) / "repos" / repo_name.to_s
     end
@@ -115,7 +115,7 @@ module Chomper
 
     private
 
-    # `dir` is items/<id>/repos/<name>/ — the repo subdir holds the PR url, cache,
+    # `dir` is <id>/repos/<name>/ — the repo subdir holds the PR url, cache,
     # and act-state; item.json/plan.md live one level up at the WP root.
     def intents_for_dir(dir)
       repo_name = dir.basename.to_s

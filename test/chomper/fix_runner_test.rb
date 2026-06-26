@@ -59,6 +59,7 @@ module Chomper
       ) do
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
         def default_repo; repos.default; end
+        def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
       end.new(
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state",
@@ -78,7 +79,7 @@ module Chomper
 
     def write_item(id, subject)
       data = item(id, subject)
-      dir = @ctx.state_dir / "items" / id.to_s
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / id.to_s
       dir.mkpath
       (dir / "item.json").write(JSON.generate(data))
       data
@@ -120,7 +121,7 @@ module Chomper
 
     def test_fix_reports_already_shipped
       data = write_item(4, "Shipped one")
-      (@ctx.state_dir / "items" / "4" / "pr_url.txt").write("https://github.com/o/r/pull/9")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "4" / "pr_url.txt").write("https://github.com/o/r/pull/9")
       r = runner(single: data)
 
       out, = capture_io { r.fix("4") }
@@ -133,7 +134,7 @@ module Chomper
     # missing, one already shipped) so the run completes without an agent.
     def test_fix_with_multiple_ids_continues_past_a_fetch_failure
       shipped = write_item(7, "Shipped one")
-      (@ctx.state_dir / "items" / "7" / "pr_url.txt").write("https://github.com/o/r/pull/9")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "7" / "pr_url.txt").write("https://github.com/o/r/pull/9")
       r = runner(singles: { "999" => nil, "7" => shipped })
 
       out, = capture_io { r.fix("999", "7") }
@@ -150,8 +151,8 @@ module Chomper
 
       assert_includes out, "[y]es accept plan", "approval prompt reflects plan-only mode"
       assert_includes out, "plan approved"
-      assert_equal "## Revised plan", (@ctx.state_dir / "items" / "5" / "plan.md").read
-      refute (@ctx.state_dir / "items" / "5" / "pr_url.txt").exist?, "plan must not ship"
+      assert_equal "## Revised plan", (@ctx.state_dir / "work_packages" / "op.example.com" / "5" / "plan.md").read
+      refute (@ctx.state_dir / "work_packages" / "op.example.com" / "5" / "pr_url.txt").exist?, "plan must not ship"
     end
 
     def test_plan_ids_injects_related_context_when_present
@@ -163,7 +164,7 @@ module Chomper
       with_stdin("y\n") { capture_io { r.plan_ids("23") } }
 
       assert_includes claude.prompts.first, "RELATED:", "the plan prompt should carry related-WP context"
-      assert (@ctx.state_dir / "items" / "23" / "related.json").exist?, "the related index should be written"
+      assert (@ctx.state_dir / "work_packages" / "op.example.com" / "23" / "related.json").exist?, "the related index should be written"
     end
 
     def test_plan_ids_recovers_when_generation_returns_no_plan
@@ -177,7 +178,7 @@ module Chomper
       assert_includes out, "Plan generation failed"
       assert_includes out, "[r]etry"
       assert_equal "## Plan: #15 — Flaky plan",
-                   (@ctx.state_dir / "items" / "15" / "plan.md").read
+                   (@ctx.state_dir / "work_packages" / "op.example.com" / "15" / "plan.md").read
       assert_includes out, "skipped"
     end
 
@@ -189,12 +190,12 @@ module Chomper
 
       assert_includes out, "Plan generation failed"
       assert_includes out, "dropped"
-      refute (@ctx.state_dir / "items" / "16" / "plan.md").exist?
+      refute (@ctx.state_dir / "work_packages" / "op.example.com" / "16" / "plan.md").exist?
     end
 
     def test_replan_rewrites_plan_with_typed_feedback
       write_item(6, "Replannable")
-      (@ctx.state_dir / "items" / "6" / "plan.md").write("## Original plan")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "6" / "plan.md").write("## Original plan")
       claude = FakePlanClaude.new
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "6" => item(6, "Replannable") }), claude: claude, publish: nil)
 
@@ -204,13 +205,13 @@ module Chomper
       assert_equal 1, claude.prompts.size
       assert_includes claude.prompts.first, "use a rake task instead"
       assert_includes claude.prompts.first, "EXISTING PLAN"
-      assert_equal "## Revised plan", (@ctx.state_dir / "items" / "6" / "plan.md").read
+      assert_equal "## Revised plan", (@ctx.state_dir / "work_packages" / "op.example.com" / "6" / "plan.md").read
       assert_includes out, "skipped"
     end
 
     def test_replan_empty_feedback_uses_chat_context
       write_item(7, "Replannable")
-      (@ctx.state_dir / "items" / "7" / "plan.md").write("## Original plan")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "7" / "plan.md").write("## Original plan")
       claude = FakePlanClaude.new
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "7" => item(7, "Replannable") }), claude: claude, publish: nil)
 
@@ -221,7 +222,7 @@ module Chomper
 
     def test_replan_failure_keeps_previous_plan
       write_item(17, "Replan dies")
-      (@ctx.state_dir / "items" / "17" / "plan.md").write("## Plan: original")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "17" / "plan.md").write("## Plan: original")
       claude = ScriptedPlanClaude.new(:error)
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "17" => item(17, "Replan dies") }), claude: claude, publish: nil)
 
@@ -230,7 +231,7 @@ module Chomper
       out, = with_stdin("r\nmake it simpler\ns\n") { capture_io { r.plan_ids("17") } }
 
       refute_includes out, "Plan generation failed"
-      assert_equal "## Plan: original", (@ctx.state_dir / "items" / "17" / "plan.md").read
+      assert_equal "## Plan: original", (@ctx.state_dir / "work_packages" / "op.example.com" / "17" / "plan.md").read
       assert_includes out, "skipped"
     end
   end

@@ -30,6 +30,7 @@ module Chomper
     CtxStruct = Struct.new(:github_token, :state_dir, :log_file, :progress_file, :pr_mode, :repos) do
       def direct_pr?; pr_mode == "direct"; end
       def default_repo; repos.default; end
+      def op_host; "test.host"; end   # WP mirror namespace
     end
 
     def setup
@@ -40,7 +41,7 @@ module Chomper
       @repo = registry.default
       @ctx = CtxStruct.new("ghtok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", "fork", registry)
 
-      @dir = state / "items" / "42"
+      @dir = state / "work_packages" / "test.host" / "42"
       (@dir / "repos" / @repo.name).mkpath
       (@dir / "repos" / @repo.name / "pr.md").write("PR body here")
 

@@ -163,8 +163,8 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 | `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
 
 Triggers are gated by the `CHOMPER_ALLOWED_OP_USER_IDS` allowlist (when set). A work
-package's status is just the files in `.chomper/items/<id>/`: `plan.md` present
-means it has a plan, `pr_url.txt` present means it shipped.
+package's status is just the files in `.chomper/work_packages/<host>/<id>/`:
+`plan.md` present means it has a plan, `pr_url.txt` present means it shipped.
 
 ---
 

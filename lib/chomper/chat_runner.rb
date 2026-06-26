@@ -34,7 +34,8 @@ module Chomper
         end
         break if pending.empty?
 
-        prompt = Prompts.free_chat(state: @ctx.state_container, repos: repos, message: pending)
+        wp_root = container_path(Helpers.items_dir(@ctx))   # /state/work_packages/<host>
+        prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending)
         @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: session_file)
         ping_terminal("chomper: chat reply ready")
         puts ""

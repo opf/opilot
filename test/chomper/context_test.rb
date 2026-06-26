@@ -39,6 +39,21 @@ module Chomper
       saved.each { |k, v| ENV[k] = v if v }
     end
 
+    def test_op_host_is_a_filesystem_safe_segment_from_the_url
+      with_env("OPENPROJECT_URL" => "https://Community.OpenProject.org") do
+        assert_equal "community.openproject.org", Context.build(@tmpdir).op_host
+      end
+      # A non-default port is folded in so two local instances don't collide.
+      with_env("OPENPROJECT_URL" => "http://localhost:8080") do
+        assert_equal "localhost_8080", Context.build(@tmpdir).op_host
+      end
+      # Standard ports are dropped; a blank URL falls back to a safe sentinel.
+      with_env("OPENPROJECT_URL" => "https://op.example.com:443") do
+        assert_equal "op.example.com", Context.build(@tmpdir).op_host
+      end
+      with_env("OPENPROJECT_URL" => nil) { assert_equal "unknown-host", Context.build(@tmpdir).op_host }
+    end
+
     def test_ci_fix_is_off_by_default_and_opt_in
       with_env("CHOMPER_CI_FIX" => nil) { refute Context.build(@tmpdir).ci_fix? }
       with_env("CHOMPER_CI_FIX" => "1") { assert Context.build(@tmpdir).ci_fix? }

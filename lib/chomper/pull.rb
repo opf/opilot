@@ -513,8 +513,11 @@ module Chomper
       }
     end
 
+    # Saved search filters live alongside the WP mirror, under the per-instance
+    # work_packages/<op_host>/ dir: a filter's project ids are only valid on the
+    # instance they were chosen on, so they must not bleed across instances.
     def agent_filters_path
-      @ctx.state_dir / "op_agent_filters.json"
+      Helpers.items_dir(@ctx) / "op_agent_filters.json"
     end
 
     # Persist agent-mode filters. They carry no type/status/version (those fields
@@ -536,6 +539,7 @@ module Chomper
         "status_names"  => filters.status_names,
         "version_names" => filters.version_names
       }.each { |k, v| data[k] = v unless v.nil? }
+      agent_filters_path.dirname.mkpath   # work_packages/<op_host>/ may not exist yet
       Helpers.write_json_atomic(agent_filters_path, data, "agent_filters")
     end
 

@@ -12,7 +12,7 @@ module Chomper
       dirs = items_dir.exist? ? items_dir.children.select(&:directory?).sort : []
 
       rows = dirs.filter_map do |dir|
-        # Per-repo PR urls live under items/<id>/repos/<name>/pr_url.txt — a WP may
+        # Per-repo PR urls live under <id>/repos/<name>/pr_url.txt — a WP may
         # have shipped to several repos.
         pr_files = (dir / "repos").exist? ? (dir / "repos").children.map { |d| d / "pr_url.txt" }.select(&:exist?) : []
         # Only work packages chomper has acted on — not every polled (cached) WP.
@@ -104,8 +104,10 @@ module Chomper
           AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
 
         State (all in .chomper/, gitignored):
-          op_agent_filters.json  Saved search filters (created on first op-agent run)
-          items/<id>/         Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
+          work_packages/<host>/                    Per-instance WP state (namespaced by OpenProject host)
+          work_packages/<host>/op_agent_filters.json  Saved search filters (created on first op-agent run)
+          work_packages/<host>/<id>/               Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
+          pr_reviews/<owner>-<repo>/<number>/   Upstream-PR review state (gh-agent)
           openproject/        Isolated git worktree for fixes
           progress.txt        Progress log
           chat_session_id     Claude session for the current `chat` REPL (reset each run)

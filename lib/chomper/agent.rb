@@ -21,7 +21,7 @@ module Chomper
 
   # The whole program: poll OpenProject for @chomper comments, turn each into an
   # Intent, and dispatch it through #handle. Per-WP "state" is just the files in
-  # items/<id>/ — plan.md present = has a plan, pr_url.txt present = shipped.
+  # work_packages/<host>/<id>/ — plan.md present = has a plan, pr_url.txt present = shipped.
   class Agent
     include Helpers
 

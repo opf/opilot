@@ -34,7 +34,7 @@ module Chomper
     class FakePublish
       def initialize(state_dir, pr:); @state_dir = state_dir; @pr = pr; end
       def open_pr(id, _subject, _branch, repo)
-        dir = @state_dir / "items" / id.to_s / "repos" / repo.name
+        dir = @state_dir / "work_packages" / "op.example.com" / id.to_s / "repos" / repo.name
         dir.mkpath
         (dir / "pr_url.txt").write(@pr)
         @pr
@@ -105,6 +105,7 @@ module Chomper
         def plan_review?; plan_review; end                 # opt-in agent self-review (off by default)
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
         def default_repo; repos.default; end
+        def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
       end.new(
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state", [],
@@ -145,9 +146,9 @@ module Chomper
       agent.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
     end
 
-    def plan_path(id = "42"); @ctx.state_dir / "items" / id / "plan.md"; end
+    def plan_path(id = "42"); @ctx.state_dir / "work_packages" / "op.example.com" / id / "plan.md"; end
     def pr_url_path(id = "42")
-      dir = @ctx.state_dir / "items" / id / "repos" / "openproject"
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / id / "repos" / "openproject"
       dir.mkpath
       dir / "pr_url.txt"
     end
@@ -238,7 +239,7 @@ module Chomper
 
       @agent.handle(intent(:fix))
 
-      items = @ctx.state_dir / "items" / "42"
+      items = @ctx.state_dir / "work_packages" / "op.example.com" / "42"
       assert (items / "repos" / "openproject" / "pr_url.txt").exist?, "openproject PR opened"
       assert (items / "repos" / "ck" / "pr_url.txt").exist?, "ck PR opened"
       assert_equal %w[ck openproject], JSON.parse((items / "target_repos.json").read).sort
@@ -308,7 +309,7 @@ module Chomper
 
     def test_handle_fix_threads_one_session_through_plan_implement_and_pr
       @agent.handle(intent(:fix))
-      session = @ctx.state_dir / "items" / "42" / "session_id"
+      session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session], @claude.capture_sessions.uniq, "plan must use the per-WP session"
       assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
     end
@@ -316,7 +317,7 @@ module Chomper
     def test_handle_plan_keeps_the_reviewer_session_free
       @ctx.plan_review = true
       @agent.handle(intent(:plan))
-      session = @ctx.state_dir / "items" / "42" / "session_id"
+      session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session, nil], @claude.capture_sessions, "the reviewer must not inherit the writer's session"
     end
 
@@ -346,7 +347,7 @@ module Chomper
 
     # ── related work packages ─────────────────────────────────────────────────
 
-    def related_path(id = "42"); @ctx.state_dir / "items" / id / "related.json"; end
+    def related_path(id = "42"); @ctx.state_dir / "work_packages" / "op.example.com" / id / "related.json"; end
 
     def test_handle_plan_writes_related_index_and_injects_it
       @pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
@@ -354,11 +355,11 @@ module Chomper
 
       assert related_path.exist?, "the related index should be written"
       index = JSON.parse(related_path.read)
-      assert_equal "/state/items/200/item.json", index.first["item_path"]
+      assert_equal "/state/work_packages/op.example.com/200/item.json", index.first["item_path"]
 
       plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
       assert_includes plan_prompt, "RELATED:"
-      assert_includes plan_prompt, "/state/items/42/related.json"
+      assert_includes plan_prompt, "/state/work_packages/op.example.com/42/related.json"
     end
 
     def test_handle_chat_injects_related_context
