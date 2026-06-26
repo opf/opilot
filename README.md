@@ -235,11 +235,15 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ## TODO
 
 ### Security & Hosting
-
+* Separate Claude API credit account
+* (?) Permission to read OP user emails
 
 ### AI Architecture
+* Add intent classification interface:
+  * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command
+* Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
 * Set up token limits & cleanly handle threshold breaches
-* Migrate from `claude -p` to a Claude SDK 
+* Migrate from `claude -p` to a Claude SDK
 * Replace Claude Code with a generic AI "file edit engine" layer
   * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
@@ -252,9 +256,9 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Use separate agents for development and review to clearly split domain ownership
 * Try to compact token usage
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
-* Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
   
 ### Feature ideas
+* Restructure the WP/PR state layout so that different instances do not mix data together
 * Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
