@@ -10,6 +10,9 @@ module Chomper
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
                       :user, :user_href, :internal, keyword_init: true)
 
+  # How long the agent loops sleep between polling passes.
+  POLL_INTERVAL = 20
+
   # Cooperative shutdown flag, shared with the SIGINT handler in bin/chomper.
   # The agent loop checks it between items so Ctrl-C finishes the current intent
   # rather than tearing partial state; a second Ctrl-C force-exits.
@@ -35,11 +38,11 @@ module Chomper
 
     def run
       filters = setup
-      puts "  Agent started — polling every 10s. Ctrl-C to stop."
+      puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
         tick(filters)
-        sleep 10 unless Chomper.stopping?
+        sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."
     end

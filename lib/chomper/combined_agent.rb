@@ -33,13 +33,13 @@ module Chomper
       # are both resolved before the loop starts.
       scan_from_at = @gh_agent.setup if gh_enabled
       filters      = @agent.setup
-      puts "  Agent started — polling chomper PRs + OpenProject every 10s. Ctrl-C to stop."
+      puts "  Agent started — polling chomper PRs + OpenProject every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
         @gh_agent.tick(scan_from_at) if gh_enabled
         break if Chomper.stopping?
         @agent.tick(filters)
-        sleep 10 unless Chomper.stopping?
+        sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."
     end

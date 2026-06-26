@@ -70,8 +70,8 @@ module Chomper
 
         Commands:
           agent     Run op-agent and gh-agent together (one loop: PRs first, then WPs)
-          op-agent  Poll OpenProject every 10s and act on @chomper mentions
-          gh-agent  Poll chomper's PRs every 10s; reply to @chomper comments and
+          op-agent  Poll OpenProject every 20s and act on @chomper mentions
+          gh-agent  Poll chomper's PRs every 20s; reply to @chomper comments and
                     (if asked) write code, committing it and pushing to the bot's fork
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping

@@ -24,7 +24,7 @@ Modes:
 ## Commands
 
 ```bash
-# Run the agent (polls every 10s for @chomper mentions)
+# Run the agent (polls every 20s for @chomper mentions)
 ./chomper op-agent
 
 # Run the GitHub PR agent (polls chomper's PRs for @chomper comments; replies and,

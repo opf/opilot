@@ -31,11 +31,11 @@ module Chomper
         return
       end
       scan_from_at = setup
-      puts "  gh-agent started — polling chomper + upstream PRs every 10s. Ctrl-C to stop."
+      puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
         tick(scan_from_at)
-        sleep 10 unless Chomper.stopping?
+        sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."
     end
