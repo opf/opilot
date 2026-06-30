@@ -82,6 +82,39 @@ module Chomper
           .to_return(status: 403, body: "{}")
         assert_nil GitHub.new("token").react("o/r", 11, kind: :issue)
       end
+
+      def test_search_prs_retries_a_dropped_connection_then_succeeds
+        # A dropped connection mid-poll surfaces as Faraday::ConnectionFailed —
+        # not an Octokit::Error — and used to crash the whole agent loop. The
+        # client must retry it and recover.
+        stub = stub_request(:get, %r{https://api\.github\.com/search/issues})
+               .to_raise(Faraday::ConnectionFailed.new("end of file reached"))
+               .then.to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                               body: JSON.generate("items" => [{ "number" => 5 }]))
+
+        items = GitHub.new("token").search_prs("repo:o/r is:pr is:open")
+        assert_equal [5], items.map(&:number)
+        assert_requested(stub, times: 2)
+      end
+
+      def test_search_prs_degrades_to_empty_when_retries_exhausted
+        # Persistent connection failure: after exhausting retries it must return
+        # [] rather than raise, so one bad poll never breaks the loop.
+        stub_request(:get, %r{https://api\.github\.com/search/issues})
+          .to_raise(Faraday::ConnectionFailed.new("end of file reached"))
+        assert_equal [], GitHub.new("token").search_prs("repo:o/r is:pr is:open")
+      end
+
+      def test_pull_request_retries_a_transient_server_error
+        stub = stub_request(:get, "https://api.github.com/repos/o/r/pulls/7")
+               .to_return(status: 502, body: "{}")
+               .then.to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                               body: JSON.generate("number" => 7, "title" => "T"))
+
+        pr = GitHub.new("token").pull_request("o/r", 7)
+        assert_equal 7, pr.number
+        assert_requested(stub, times: 2)
+      end
     end
   end
 end

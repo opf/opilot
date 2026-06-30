@@ -19,6 +19,30 @@ module Chomper
       assert_equal "red text", h.strip_ansi("\e[31mred text\e[0m")
     end
 
+    def test_guarded_tick_swallows_errors_so_the_loop_survives
+      Chomper.reset_stop!
+      ran = false
+      # An uncaught error in a poll must not propagate out of the loop.
+      h.guarded_tick("test") { raise "boom" }
+      h.guarded_tick("test") { ran = true }   # loop keeps going on the next tick
+      assert ran
+    end
+
+    def test_guarded_tick_returns_block_value_on_success
+      Chomper.reset_stop!
+      assert_equal 42, h.guarded_tick("test") { 42 }
+    end
+
+    def test_guarded_tick_stays_quiet_on_a_requested_stop
+      Chomper.request_stop
+      # On Ctrl-C a killed child surfaces as an error here; it must be swallowed
+      # silently (no log line) so the loop exits cleanly rather than crashing.
+      h.define_singleton_method(:log_script) { |*| flunk("must not log on a requested stop") }
+      h.guarded_tick("test") { raise "interrupted" }
+    ensure
+      Chomper.reset_stop!
+    end
+
     def test_wp_label_prefixes_numeric_ids_only
       assert_equal "#59942",   h.wp_label("59942")
       assert_equal "STC-162",  h.wp_label("STC-162")

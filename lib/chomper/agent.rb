@@ -41,7 +41,7 @@ module Chomper
       puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
-        tick(filters)
+        guarded_tick("OpenProject poll") { tick(filters) }
         sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."

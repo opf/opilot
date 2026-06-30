@@ -26,7 +26,11 @@ module Chomper
         on: [
           TransientError,
           SocketError, Net::OpenTimeout, Net::ReadTimeout,
-          Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EPIPE
+          # EOFError is the "end of file reached" raised when the peer drops the
+          # connection mid-response — a transient blip, not a permanent failure.
+          EOFError,
+          Errno::ECONNRESET, Errno::ECONNREFUSED, Errno::EPIPE,
+          Errno::EHOSTUNREACH, Errno::ENETUNREACH
         ],
         tries: max_tries,
         base_interval: base_interval,

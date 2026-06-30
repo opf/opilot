@@ -25,5 +25,6 @@ require "chomper/cli"
 
 WebMock.disable_net_connect!
 
-# Disable real retry backoff so the suite doesn't sleep through HTTP retries.
+# Disable real retry backoff so the suite doesn't sleep through retries.
 Chomper::Clients::HTTP.base_interval = 0
+Chomper::Clients::GitHub.base_interval = 0

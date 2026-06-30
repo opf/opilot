@@ -179,6 +179,20 @@ module Chomper
       Rainbow.uncolor(str)
     end
 
+    # Run one polling pass, surviving any uncaught failure. A long-running agent
+    # must not die because a single poll hit a dropped connection or a flaky API
+    # response — log it and let the loop retry on the next tick. The client-level
+    # retries (Clients::HTTP / Clients::GitHub) handle the common transient
+    # cases; this is the backstop for anything that still escapes. A requested
+    # stop (Ctrl-C, which surfaces as an error from a killed child) exits
+    # quietly so the loop's `until Chomper.stopping?` can end cleanly.
+    def guarded_tick(label = "Poll")
+      yield
+    rescue => e
+      return if Chomper.stopping?
+      log_script "#{label} failed (#{e.class}: #{e.message}) — retrying next tick"
+    end
+
     # Inline label for a work package id, mirroring OpenProject's
     # WorkPackage::SemanticIdentifier.format_display_id: semantic ids are
     # self-describing ("PROJ-42"); classic numeric ids keep the "#42" prefix.

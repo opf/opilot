@@ -1,4 +1,6 @@
 require "octokit"
+require "faraday"
+require "retriable"
 require "open-uri"
 
 module Chomper
@@ -7,6 +9,26 @@ module Chomper
     # Octokit and branch pushes via git; callers never touch Octokit or
     # construct GitHub URLs directly.
     class GitHub
+      # Transient failures worth a retry on idempotent (GET) calls: a dropped,
+      # refused, or timed-out connection — Octokit/Faraday wrap the underlying
+      # EOFError/Errno as these — plus GitHub's own 5xx and rate-limit
+      # responses. A 4xx (Octokit::ClientError) is a real answer, not a blip, so
+      # it is deliberately excluded. Mirrors Clients::HTTP's policy for the
+      # Net::HTTP path; note faraday-retry's own defaults do NOT include
+      # Faraday::ConnectionFailed, which is exactly the "end of file reached"
+      # case that otherwise crashes a long-running poll.
+      RETRYABLE = [
+        Faraday::ConnectionFailed, Faraday::TimeoutError, Faraday::SSLError,
+        Octokit::ServerError, Octokit::TooManyRequests
+      ].freeze
+
+      # Retry tuning, overridable so the test suite can disable real sleeps
+      # (see test/test_helper.rb), exactly as Clients::HTTP does.
+      @max_tries     = 3
+      @base_interval = 2
+      class << self
+        attr_accessor :max_tries, :base_interval
+      end
       # Branches the runner must never push to, regardless of what a work
       # package's type/title produces. These are the base/deploy branches across
       # every product repo chomper targets (`dev` for openproject, `main`/`master`
@@ -23,6 +45,22 @@ module Chomper
       def initialize(token)
         @token   = token
         @octokit = Octokit::Client.new(access_token: token)
+      end
+
+      # Run an idempotent Octokit call, retrying transient network/5xx/rate-limit
+      # failures a few times before giving up. Only safe to wrap GETs: a retried
+      # POST could double-create a comment or PR if the first attempt actually
+      # landed before the connection dropped, so writes are left to fail and be
+      # handled by the caller's loop guard.
+      def with_retry
+        Retriable.retriable(
+          on: RETRYABLE, tries: self.class.max_tries,
+          base_interval: self.class.base_interval, multiplier: 2.0,
+          on_retry: proc { |e, try, _, next_interval|
+            wait = next_interval ? " — retrying in #{next_interval.round}s…" : ""
+            warn "  ⚠ GitHub #{e.class} (attempt #{try})#{wait}"
+          }
+        ) { yield }
       end
 
       # Run a block with Octokit auto-pagination on, restoring it afterwards.
@@ -59,14 +97,14 @@ module Chomper
       # commits attribute to the bot account and the operator's address is never
       # exposed on a public PR.
       def author_identity
-        u = @octokit.user
+        u = with_retry { @octokit.user }
         ["#{u.name || u.login}", "#{u.id}+#{u.login}@users.noreply.github.com"]
       end
 
       # The authenticated account's login (the bot's username), memoized — used
       # to recognise an @-mention of the bot itself as a trigger.
       def login
-        @login ||= @octokit.user.login
+        @login ||= with_retry { @octokit.user }.login
       end
 
       # Pushes a local branch to GitHub. Authenticates via a credential helper
@@ -105,9 +143,9 @@ module Chomper
       # Returns the URL of an open PR on `base_repo` whose head is `head`
       # ("fork_owner:branch" for a cross-repo fork PR), or nil.
       def find_open_pr(base_repo, head:)
-        prs = @octokit.pull_requests(base_repo, head: head, state: "open")
+        prs = with_retry { @octokit.pull_requests(base_repo, head: head, state: "open") }
         prs.first&.html_url
-      rescue Octokit::Error
+      rescue Octokit::Error, Faraday::Error
         nil
       end
 
@@ -120,7 +158,7 @@ module Chomper
           description: description, public: public,
           files: { filename => { content: content } }
         ).html_url
-      rescue Octokit::Error => e
+      rescue Octokit::Error, Faraday::Error => e
         warn "  Warning: could not create plan gist: #{e.message}"
         nil
       end
@@ -140,7 +178,7 @@ module Chomper
 
       # Fetch a pull request's metadata (used for the head branch and title).
       def pull_request(repo, number)
-        @octokit.pull_request(repo, number)
+        with_retry { @octokit.pull_request(repo, number) }
       end
 
       # Search PRs across GitHub (PRs are issues in the search API). `query` is a
@@ -148,28 +186,28 @@ module Chomper
       # updated:>=2026-06-01`. Returns the matching items (capped to the first
       # page); empty on any search error so one bad query never breaks a poll.
       def search_prs(query, per_page: 50)
-        @octokit.search_issues(query, per_page: per_page).items
-      rescue Octokit::Error
+        with_retry { @octokit.search_issues(query, per_page: per_page) }.items
+      rescue Octokit::Error, Faraday::Error
         []
       end
 
       # Comments in the PR's main conversation thread (the "issue" timeline).
       def issue_comments(repo, number)
-        @octokit.issue_comments(repo, number)
+        with_retry { @octokit.issue_comments(repo, number) }
       end
 
       # Inline review comments anchored to diff lines (a separate stream from the
       # conversation thread above). Includes findings from automated reviewers
       # such as GitHub Copilot.
       def review_comments(repo, number)
-        @octokit.pull_request_comments(repo, number)
+        with_retry { @octokit.pull_request_comments(repo, number) }
       end
 
       # Submitted reviews (the top-level review bodies + verdicts — e.g. Copilot's
       # review summary, a human's "changes requested"). Separate from the inline
       # review_comments above.
       def reviews(repo, number)
-        @octokit.pull_request_reviews(repo, number)
+        with_retry { @octokit.pull_request_reviews(repo, number) }
       end
 
       # Post a comment to the PR's conversation thread; returns the new comment.
@@ -193,7 +231,7 @@ module Chomper
         else
           @octokit.create_issue_comment_reaction(repo, comment_id, content)
         end
-      rescue Octokit::Error
+      rescue Octokit::Error, Faraday::Error
         nil
       end
 
@@ -209,31 +247,31 @@ module Chomper
       # that) would be silently truncated to the first page — dropping failures or
       # mis-reading the commit as green.
       def check_runs(repo, ref)
-        paginated { @octokit.check_runs_for_ref(repo, ref, per_page: 100).check_runs }
-      rescue Octokit::Error
+        with_retry { paginated { @octokit.check_runs_for_ref(repo, ref, per_page: 100).check_runs } }
+      rescue Octokit::Error, Faraday::Error
         []
       end
 
       # A check run's annotations (file/line/message) — what lint and most test
       # problem-matchers surface as. Skipped when a check has none.
       def check_run_annotations(repo, check_run_id)
-        @octokit.check_run_annotations(repo, check_run_id)
-      rescue Octokit::Error
+        with_retry { @octokit.check_run_annotations(repo, check_run_id) }
+      rescue Octokit::Error, Faraday::Error
         []
       end
 
       # The Actions workflow runs for a commit (head SHA) — the entry point for
       # reaching the failed jobs' logs.
       def workflow_runs(repo, head_sha)
-        paginated { @octokit.repository_workflow_runs(repo, head_sha: head_sha, per_page: 100).workflow_runs }
-      rescue Octokit::Error
+        with_retry { paginated { @octokit.repository_workflow_runs(repo, head_sha: head_sha, per_page: 100).workflow_runs } }
+      rescue Octokit::Error, Faraday::Error
         []
       end
 
       # The jobs of a workflow run (each with name/status/conclusion/id).
       def workflow_run_jobs(repo, run_id)
-        paginated { @octokit.workflow_run_jobs(repo, run_id, per_page: 100).jobs }
-      rescue Octokit::Error
+        with_retry { paginated { @octokit.workflow_run_jobs(repo, run_id, per_page: 100).jobs } }
+      rescue Octokit::Error, Faraday::Error
         []
       end
 
@@ -242,7 +280,7 @@ module Chomper
       # short-lived redirect URL to blob storage; we fetch it and keep the last
       # `tail` lines, byte-capped so a runaway log can't blow up the prompt.
       def job_log(repo, job_id, tail: 400, max_bytes: 50_000)
-        url = @octokit.workflow_run_job_logs(repo, job_id)
+        url = with_retry { @octokit.workflow_run_job_logs(repo, job_id) }
         return nil unless url
         text = URI.open(url, &:read).to_s
         text = (text.byteslice(-max_bytes..) || text) if text.bytesize > max_bytes

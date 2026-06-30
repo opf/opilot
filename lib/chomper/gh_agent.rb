@@ -34,7 +34,7 @@ module Chomper
       puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
-        tick(scan_from_at)
+        guarded_tick("PR poll") { tick(scan_from_at) }
         sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."

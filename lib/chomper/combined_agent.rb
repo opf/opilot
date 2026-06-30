@@ -36,9 +36,9 @@ module Chomper
       puts "  Agent started — polling chomper PRs + OpenProject every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       until Chomper.stopping?
-        @gh_agent.tick(scan_from_at) if gh_enabled
+        guarded_tick("PR poll") { @gh_agent.tick(scan_from_at) } if gh_enabled
         break if Chomper.stopping?
-        @agent.tick(filters)
+        guarded_tick("OpenProject poll") { @agent.tick(filters) }
         sleep POLL_INTERVAL unless Chomper.stopping?
       end
       puts "  Stopped."
