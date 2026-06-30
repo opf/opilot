@@ -258,6 +258,8 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
+* AppSignal integration
+  * [by implication] Ticket creation workflow
 * Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
