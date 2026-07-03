@@ -1,4 +1,4 @@
-## [[ Proof of Concept -- use at your own risk! ]]
+## Proof of Concept -- use at your own risk!
 
 # openproject-chomper
 
@@ -258,6 +258,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
+* Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
 * Use temporal PRs that are meant to be over-taken by an actual dev
 * AppSignal integration
   * [by implication] Ticket creation workflow
