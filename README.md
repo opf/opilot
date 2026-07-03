@@ -239,6 +239,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * (?) Permission to read OP user emails
 
 ### AI Architecture
+* Plug in our OpenRouter key
 * Add intent classification interface:
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command
 * Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
