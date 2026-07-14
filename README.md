@@ -259,10 +259,15 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
   
 ### Feature ideas
-* Lean more into the dev console toolkit interface
-  * Command to take over a PR, fixing CI issues
+* Lean more into the dev console "toolbox" interface
+  * rename `fix` to `build`
+  * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
+    * chatting should have explicit options for those who want them: grill, simplify etc.
+    * also add option to include the sub-WPs
+  * for stale PRs: `pr [ID]` re-freshes from `dev`, fixes CI issues & addresses comments
 * Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
-* Use temporal PRs that are meant to be over-taken by an actual dev
+* When in forked repo mode, generate only "temporal" draft PRs that are meant to be over-taken by an actual dev
+  * Add a convenience `gh`/`git` command to "take over" the contribution under your own name
 * AppSignal integration
   * [by implication] Ticket creation workflow
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
@@ -272,4 +277,5 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
+  * Or just run chomper in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container
 * Idea: Use sub-WPs for any Chomper interactions in agent mode
