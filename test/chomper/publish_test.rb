@@ -88,8 +88,8 @@ module Chomper
       assert_equal "opf/openproject", update[:repo]
       assert_equal 7, update[:number]
       assert_includes update[:body],
-                      "[`gh overtake 7`](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr)",
-                      "the command names this PR's concrete number and hyperlinks the setup doc"
+                      "[Run](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr) `gh overtake 7`",
+                      "the note links the setup doc and names this PR's concrete number"
       assert update[:body].lines[1].include?("gh overtake"),
              "the note sits at the top, right under the banner"
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"

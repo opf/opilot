@@ -219,7 +219,9 @@ url="$(gh pr create --draft --head "$branch" \
   --base  "$(gh pr view "$pr" --json baseRefName -q .baseRefName)" \
   --title "$(gh pr view "$pr" --json title -q .title)" \
   --body  "$(gh pr view "$pr" --json body -q .body)")"
-gh pr close "$pr" --comment "Taken over in $url."'
+gh pr close "$pr" --comment "Taken over in $url."
+echo "Old PR (closed): $(gh pr view "$pr" --json url -q .url)"
+echo "New PR (yours):  $url"'
 ```
 
 Then, from inside your OpenProject repo, run this:

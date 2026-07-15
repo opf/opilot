@@ -85,8 +85,8 @@ module Chomper
     def add_overtake_note(upstream, url, pr_body, banner)
       number = Clients::GitHub.pr_number_from_url(url)
       return unless number
-      note = "🔁 Maintainers: run [`gh overtake #{number}`](#{OVERTAKE_DOC_URL}) " \
-             "to re-publish this PR under your own account — fork PRs can't run secret-gated CI."
+      note = "🔁 Maintainers: [Run](#{OVERTAKE_DOC_URL}) `gh overtake #{number}` " \
+             "to re-publish this PR under your own account."
       @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
       log_script "Could not add the overtake note to #{url}: #{e.message}"
