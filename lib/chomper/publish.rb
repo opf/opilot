@@ -67,12 +67,30 @@ module Chomper
       title = pr_title(item_id, subject)
       url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
                                     maintainer_can_modify: !@ctx.direct_pr?)
+      add_overtake_note(upstream, url, pr_body, banner) unless @ctx.direct_pr?
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
       url
     end
 
     private
+
+    # Where the `gh overtake` alias (one-time setup) is documented.
+    OVERTAKE_DOC_URL = "https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr"
+
+    # Fork PRs can't run secret-gated CI, so tell maintainers up front how to
+    # re-publish this PR under their own account. The note names the concrete
+    # PR number, which only exists after creation — hence the follow-up body
+    # edit. Best-effort: a failed update just leaves the note off.
+    def add_overtake_note(upstream, url, pr_body, banner)
+      number = Clients::GitHub.pr_number_from_url(url)
+      return unless number
+      note = "🔁 Maintainers: run [`gh overtake #{number}`](#{OVERTAKE_DOC_URL}) " \
+             "to re-publish this PR under your own account — fork PRs can't run secret-gated CI."
+      @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
+    rescue => e
+      log_script "Could not add the overtake note to #{url}: #{e.message}"
+    end
 
     # The secret gist URL for this WP's plan, created once and cached in
     # gist_url.txt so every repo's PR links the same gist. nil when there is no

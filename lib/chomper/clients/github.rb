@@ -181,6 +181,12 @@ module Chomper
         with_retry { @octokit.pull_request(repo, number) }
       end
 
+      # Replace a PR's description (used to slot in content that needs the PR
+      # number, which only exists after creation — e.g. the overtake note).
+      def update_pr_body(repo, number, body)
+        with_retry { @octokit.update_pull_request(repo, number, body: body) }
+      end
+
       # Search PRs across GitHub (PRs are issues in the search API). `query` is a
       # GitHub search string, e.g. `repo:opf/openproject is:pr is:open "@chomper"
       # updated:>=2026-06-01`. Returns the matching items (capped to the first

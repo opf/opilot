@@ -6,9 +6,10 @@ module Chomper
     # Records what Publish asks the GitHub client to do, so we can assert the
     # branch goes to the fork and the PR is opened against the repo's upstream.
     class FakeGitHub
-      attr_reader :forked, :pushed, :pr_calls, :gist_calls
+      attr_reader :forked, :pushed, :pr_calls, :gist_calls, :body_updates
       def initialize(existing: nil)
         @existing = existing; @forked = []; @pushed = []; @pr_calls = []; @gist_calls = []
+        @body_updates = []
       end
       def login; "op-chomper"; end
       def ensure_fork(upstream); @forked << upstream; "me/#{upstream.split('/').last}"; end
@@ -22,6 +23,7 @@ module Chomper
         @pr_calls << { repo: repo, base: base, head: head, title: title, body: body, mcm: maintainer_can_modify }
         "https://github.com/#{repo}/pull/7"
       end
+      def update_pr_body(repo, number, body); @body_updates << { repo: repo, number: number, body: body }; end
     end
 
     class FakeWorktree
@@ -74,6 +76,30 @@ module Chomper
       assert_equal true, call[:mcm], "fork PRs allow maintainer edits"
       assert_equal "https://github.com/opf/openproject/pull/7", url
       assert_equal url, pr_url_file.read
+    end
+
+    def test_fork_pr_gets_the_overtake_note_with_its_real_number
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      refute_includes @github.pr_calls.first[:body], "gh overtake",
+                      "the note needs the PR number, which doesn't exist at create time"
+      update = @github.body_updates.first
+      refute_nil update, "the body is patched right after creation"
+      assert_equal "opf/openproject", update[:repo]
+      assert_equal 7, update[:number]
+      assert_includes update[:body],
+                      "[`gh overtake 7`](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr)",
+                      "the command names this PR's concrete number and hyperlinks the setup doc"
+      assert update[:body].lines[1].include?("gh overtake"),
+             "the note sits at the top, right under the banner"
+      assert_includes update[:body], "PR body here", "the rest of the description is untouched"
+    end
+
+    def test_direct_mode_pr_gets_no_overtake_note
+      @ctx.pr_mode = "direct"
+      with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
+
+      assert_empty @github.body_updates, "a same-repo PR has no fork-CI limitation to note"
     end
 
     def test_base_branch_comes_from_the_repo

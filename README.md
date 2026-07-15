@@ -206,6 +206,42 @@ a new one, and re-sending `approve` after a shipped fix just re-reports it.
 `./chomper status` lists each watched work package with its OpenProject link and
 PR link so you can see what's been planned and shipped at a glance.
 
+### Taking over a chomper PR
+
+Some CI checks (e.g. ones needing repository secrets) never run on a PR whose
+branch lives in a fork — GitHub withholds secrets from fork PRs no matter who
+opens them. To lift a chomper PR past that, a developer with push access
+re-opens it under themselves from a same-repo branch. GitHub exposes every PR's
+head as `pull/<n>/head` on the base repo, so the bot's fork is never needed —
+the takeover is a one-time `gh` alias:
+
+```bash
+gh alias set overtake '!pr="${1##*/}"; branch="$(gh pr view "$pr" --json headRefName -q .headRefName)"
+git fetch origin "pull/$pr/head" && git push origin "FETCH_HEAD:refs/heads/$branch" || exit 1
+url="$(gh pr create --draft --head "$branch" \
+  --base  "$(gh pr view "$pr" --json baseRefName -q .baseRefName)" \
+  --title "$(gh pr view "$pr" --json title -q .title)" \
+  --body  "$(gh pr view "$pr" --json body -q .body)")"
+gh pr close "$pr" --comment "Taken over in $url."'
+```
+
+Then, from inside a clone whose `origin` is the canonical repo:
+
+```bash
+gh overtake 23811        # or paste the PR URL
+```
+
+This pushes the PR's exact head commits to a same-named branch on the canonical
+repo, opens a draft PR under **your** account with the original title, body,
+and base branch (the plan-gist link and `Ticket:` line carry over, so
+`./chomper pr` keeps working on the successor), and closes chomper's PR with a
+back-reference. Commits stay authored by the bot — an honest trail; the PR
+itself is yours. Feel free to drop the 🤖/🔁 banner lines from the copied body:
+gh-agent stops serving the thread once chomper's own PR is closed.
+
+Every PR chomper opens in fork mode links here from a `gh overtake <number>`
+note at the top of its description.
+
 ---
 
 ## Repo layout
