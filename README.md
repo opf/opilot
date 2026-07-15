@@ -318,8 +318,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
     * chatting should have explicit options for those who want them: grill, simplify etc.
     * also add option to include the sub-WPs
 * Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
-* When in forked repo mode, generate only "temporal" draft PRs that are meant to be over-taken by an actual dev
-  * Add a convenience `gh`/`git` command to "take over" the contribution under your own name
 * AppSignal integration
   * [by implication] Ticket creation workflow
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
