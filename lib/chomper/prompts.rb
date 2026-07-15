@@ -402,12 +402,12 @@ module Chomper
           reply.
         TEXT
       end
-      sync_note = conflicts.any? ? "with a merge of origin/#{base} in progress" : "up to date with origin/#{base}"
+      sync_note = conflicts.any? ? ", with a merge of origin/#{base} in progress" : ""
       <<~PROMPT
         You are chomper, an AI code assistant. The operator asked you to refresh
         GitHub pull request ##{pr_number} ("#{title}") in #{repo} — a stale PR you
         opened. Its branch is checked out in the product worktree at #{worktree},
-        already synced to the PR head and #{sync_note}.
+        already synced to the PR head#{sync_note}.
 
         ORIGINAL ISSUE: #{item}  (JSON — fields: subject, description, comments[])
         PR PLAN:        #{plan}

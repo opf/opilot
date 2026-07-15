@@ -276,12 +276,17 @@ module Chomper
       subject.empty? ? "[#{label}] address PR feedback" : "[#{label}] #{subject}"
     end
 
-    # Push the new commit to the PR's head repo (the bot's fork) with the bot
-    # token, updating the draft PR. No confirmation: it's a draft PR on the bot's
-    # fork and a maintainer still gates the merge, so nothing reaches the
-    # canonical repo without human review.
+    # Push the new commit to the PR's head repo with the bot token, updating the
+    # draft PR. In fork mode there is no confirmation: the branch lives on the
+    # bot's fork and a maintainer still gates the merge, so nothing reaches the
+    # canonical repo without human review. In direct mode the head repo IS the
+    # canonical repo, so every push is gated on an interactive yes.
     def push_followup(intent, repo)
       target = head_repo(intent)
+      unless confirm_direct_push?(target, intent.branch)
+        log_script "Push to #{target} declined — PR ##{intent.pr_number} not updated (the commit stays in the clone)."
+        return
+      end
       @github.push_branch(target, branch: intent.branch, worktree_path: repo.worktree_host)
       log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
     end

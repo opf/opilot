@@ -223,6 +223,27 @@ module Chomper
       $stdout.flush
     end
 
+    # Gate for pushes when chomper is NOT in fork mode: a direct-mode push goes
+    # to the canonical repo, so every single one needs an explicit interactive
+    # yes — neither AUTO_PLAN_APPROVAL nor the agent loops bypass it. Fork-mode
+    # pushes only ever touch the bot's fork and pass straight through. A
+    # non-interactive stdin (unattended run) declines rather than pushing
+    # unconfirmed.
+    def confirm_direct_push?(target_repo, branch)
+      return true unless @ctx.direct_pr?
+      ping_terminal("chomper: confirm DIRECT push of #{branch}")
+      loop do
+        print "  DIRECT mode: push #{branch} to #{target_repo}? [y]es push / [s]kip: "
+        response = $stdin.gets
+        return false if response.nil?   # no interactive stdin — never push unconfirmed
+        case response.chomp.downcase
+        when "y", "yes"             then return true
+        when "s", "skip", "n", "no" then return false
+        else puts "  Please enter y or s."
+        end
+      end
+    end
+
     def safe_rm(*paths)
       paths.each do |path|
         path = Pathname(path)

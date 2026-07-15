@@ -214,7 +214,7 @@ module Chomper
       wt            = worktree(repo)
       original_head = wt.revparse("HEAD")
 
-      conflicts  = merge_base(wt, repo, branch, base_ref)
+      conflicts  = stale_pr?(content) ? merge_base(wt, repo, branch, base_ref) : []
       ci_ref     = ci_failure_ref(dir, base_repo, content["head_sha"].to_s)
       ci_expired = ci_ref == :ci_detail_expired
       ci_ref     = nil if ci_expired
@@ -241,6 +241,23 @@ module Chomper
       commit_refresh(wp_id, wt, repo, branch, base_ref, conflicts)
       deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head,
               reply: reply, feedback: feedback)
+    end
+
+    # Only PRs with no activity for a day get the base branch merged in — an
+    # actively moving PR (a push, review, or comment within the last day) does
+    # not need merge commits churned into it, and its CI/feedback are usually
+    # about the change itself, not base drift. CI fixes and comment handling
+    # still run regardless of age.
+    PR_REFRESH_MIN_AGE = 24 * 60 * 60
+
+    def stale_pr?(content)
+      updated = content["updated_at"].to_s
+      return true if updated.empty?   # unknown age — keep the old always-merge behaviour
+      stale = Time.now - Time.parse(updated) > PR_REFRESH_MIN_AGE
+      log_script "PR was active in the last day — skipping the base merge." unless stale
+      stale
+    rescue ArgumentError
+      true
     end
 
     # Merge origin/<base> into the PR branch when it is behind. Returns the list
@@ -405,7 +422,9 @@ module Chomper
     end
 
     def confirm_push?(wp_id, branch)
-      return true if @ctx.auto_plan_approval?
+      # AUTO_PLAN_APPROVAL never bypasses the gate in direct mode — there the
+      # push lands on the canonical repo, and every such push stays interactive.
+      return true if @ctx.auto_plan_approval? && !@ctx.direct_pr?
       ping_terminal("chomper: refreshed #{wp_label(wp_id)} — ready to push")
       loop do
         print "  [y]es push #{branch} / [d]iscard: "

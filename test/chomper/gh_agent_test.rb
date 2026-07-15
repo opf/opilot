@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "stringio"
 
 module Chomper
   class GhAgentTest < Minitest::Test
@@ -85,15 +86,16 @@ module Chomper
       @repo = registry.default   # by_upstream("o/r") falls back to the default repo
       @ctx = Struct.new(
         :state_dir, :state_container,
-        :github_token, :allowed_gh_users, :log_file, :progress_file, :repos
+        :github_token, :allowed_gh_users, :log_file, :progress_file, :repos, :pr_mode
       ) do
         def op_host; "test.host"; end   # WP mirror namespace
+        def direct_pr?; pr_mode == "direct"; end
       end.new(
         state_dir, "/state",
         # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
         # a no-op so the suite never makes a real GitHub call; handle() uses the
         # injected @github, not ctx.github_token.
-        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
+        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry, "fork"
       )
       (@ctx.state_dir / "work_packages" / "test.host" / "42").mkpath
 
@@ -206,6 +208,27 @@ module Chomper
       @blank_wt = FakeWorktree.new(has_changes: true); inject_worktree(blank, @blank_wt)
       capture_io { blank.handle(gh_intent) }
       assert_equal ["[#42] address PR feedback"], @blank_wt.commits
+    end
+
+    def test_direct_mode_push_is_gated_on_an_interactive_yes
+      @ctx.pr_mode = "direct"
+      out, = with_stdin("s\n") { capture_io { @agent.handle(gh_intent) } }
+
+      assert_includes out, "DIRECT mode: push bug/42-fix-the-bug"
+      assert_equal 1, @worktree.commits.length, "the commit itself still lands in the clone"
+      assert_empty @github.pushed, "a declined direct push must not reach the remote"
+      assert_includes out, "declined"
+
+      with_stdin("y\n") { capture_io { @agent.handle(gh_intent) } }
+      assert_equal 1, @github.pushed.length, "an approved direct push goes through"
+    end
+
+    def with_stdin(text)
+      old = $stdin
+      $stdin = StringIO.new(text)
+      yield
+    ensure
+      $stdin = old
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push

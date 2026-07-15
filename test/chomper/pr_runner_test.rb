@@ -112,14 +112,15 @@ module Chomper
       @repo = registry.default
       @ctx = Struct.new(
         :state_dir, :state_container, :github_token, :op_url, :log_file, :progress_file, :repos,
-        :auto_approve, :ignored_checks
+        :auto_approve, :ignored_checks, :pr_mode
       ) do
         def op_host; "test.host"; end
         def auto_plan_approval?; auto_approve; end
         def ci_ignored_checks; ignored_checks; end
+        def direct_pr?; pr_mode == "direct"; end
       end.new(
         state_dir, "/state", "gh-token", "https://test.host", Pathname(@tmpdir) / "chomp.log",
-        Pathname(@tmpdir) / "progress.txt", registry, true, ["saas tests"]
+        Pathname(@tmpdir) / "progress.txt", registry, true, ["saas tests"], "fork"
       )
       # Keep adopt_github_author! a no-op so the suite never calls the real API.
       Helpers.instance_variable_set(:@github_author_adopted, true)
@@ -147,9 +148,9 @@ module Chomper
       runner.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
     end
 
-    def open_pr(state: "open", number: 7, body: "")
+    def open_pr(state: "open", number: 7, body: "", updated_at: UPDATED_AT)
       FakePr.new(
-        state: state, updated_at: UPDATED_AT, title: "Fix the bug", body: body,
+        state: state, updated_at: updated_at, title: "Fix the bug", body: body,
         html_url: "https://github.com/opf/openproject/pull/#{number}",
         head: FakeHead.new(ref: "bug/42-fix", sha: "headsha", repo: nil),
         base: FakeBase.new(ref: "dev")
@@ -158,14 +159,21 @@ module Chomper
 
     # Pre-seed pr.json so fetch_pr_content reuses the cache (updated_at matches)
     # instead of re-fetching comment streams the fake doesn't serve.
-    def seed_pr_cache(comments: [])
+    def seed_pr_cache(comments: [], updated_at: UPDATED_AT)
       Helpers.write_json_atomic(@pr_dir / "pr.json", {
         "number" => 7, "repo" => "opf/openproject", "title" => "Fix the bug",
-        "state" => "open", "updated_at" => UPDATED_AT.utc.iso8601,
+        "state" => "open", "updated_at" => updated_at.utc.iso8601,
         "head_ref" => "bug/42-fix", "head_sha" => "headsha",
         "head_repo" => "op-chomper/openproject",
         "comments" => comments, "reviews" => []
       }, "pr")
+    end
+
+    # Make the PR look recently active (updated within the last day).
+    def make_pr_fresh(comments: [])
+      now = Time.now.utc
+      @github.pr = open_pr(updated_at: now)
+      seed_pr_cache(comments: comments, updated_at: now)
     end
 
     # A failed check that completed recently (detail still within retention).
@@ -206,6 +214,29 @@ module Chomper
       assert_empty @claude.runs, "nothing to do → no Claude spend"
       assert_empty @github.pushed
       assert_empty @github.issue_posts
+    end
+
+    def test_a_pr_active_within_a_day_is_not_merged_from_base
+      make_pr_fresh
+      @worktree.behind = true
+      out, = capture_io { @runner.run("42") }
+
+      assert_empty @worktree.merges, "an actively moving PR must not get a base merge churned in"
+      assert_includes out, "skipping the base merge"
+      assert_empty @github.pushed
+    end
+
+    def test_a_fresh_prs_ci_failure_is_still_fixed_without_a_base_merge
+      make_pr_fresh
+      @github.checks = [failing_check]
+      @worktree.behind = true
+      @worktree.has_changes = true
+      capture_io { @runner.run("42") }
+
+      assert_empty @worktree.merges
+      assert_includes @claude.runs.first[:prompt], "CI FAILURES",
+                      "CI fixing is age-independent — only the base merge is gated on staleness"
+      assert_equal 1, @github.pushed.length
     end
 
     def test_clean_merge_pushes_without_a_claude_pass
@@ -389,6 +420,15 @@ module Chomper
       assert_includes out, "not in repos.json"
       assert_empty @github.fetched
       assert_empty @op_pull.fetched
+    end
+
+    def test_direct_mode_prompts_even_with_auto_approval
+      @ctx.pr_mode = "direct"   # auto_approve stays true
+      @worktree.behind = true
+      out, = with_stdin("y\n") { capture_io { @runner.run("42") } }
+
+      assert_includes out, "[y]es push", "direct mode must not silently auto-push"
+      assert_equal 1, @github.pushed.length
     end
 
     def test_discard_resets_the_branch_and_acks_nothing

@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "stringio"
 
 module Chomper
   class PublishTest < Minitest::Test
@@ -101,8 +102,10 @@ module Chomper
     def test_direct_mode_pushes_to_upstream_and_opens_same_repo_pr
       @ctx.pr_mode = "direct"
       url = nil
-      capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+      out, = with_stdin("y\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
+      assert_includes out, "DIRECT mode: push bug/42-fix-the-bug to opf/openproject?",
+                      "a direct push must be gated on an interactive yes"
       assert_empty @github.forked, "direct mode must not fork"
       assert_equal [["opf/openproject", "bug/42-fix-the-bug"]], @github.pushed,
                    "direct mode pushes the branch straight to upstream"
@@ -110,6 +113,35 @@ module Chomper
       assert_equal "opf/openproject", call[:repo]
       assert_equal "opf:bug/42-fix-the-bug", call[:head], "same-repo head is upstream_owner:branch"
       assert_equal false, call[:mcm], "same-repo PRs must disable maintainer edits (GitHub 422s otherwise)"
+    end
+
+    def test_direct_mode_declined_push_opens_no_pr
+      @ctx.pr_mode = "direct"
+      url = :unset
+      out, = with_stdin("s\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
+
+      assert_nil url
+      assert_empty @github.pushed, "a declined direct push must not reach the remote"
+      assert_empty @github.pr_calls, "no push → no PR"
+      refute pr_url_file.exist?
+      assert_includes out, "Push declined"
+    end
+
+    def test_direct_mode_with_non_interactive_stdin_declines_the_push
+      @ctx.pr_mode = "direct"
+      url = :unset
+      with_stdin("") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
+
+      assert_nil url, "an unattended direct run must never push unconfirmed"
+      assert_empty @github.pushed
+    end
+
+    def with_stdin(text)
+      old = $stdin
+      $stdin = StringIO.new(text)
+      yield
+    ensure
+      $stdin = old
     end
 
     def test_existing_pr_is_reported_without_pushing

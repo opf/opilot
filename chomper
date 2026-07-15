@@ -81,7 +81,7 @@ if _need CHOMPER_PR_MODE; then
   echo "                         cross-repo draft PR. Most isolated."
   echo "    [d]irect           — pushes the fix branch straight to the canonical repo and"
   echo "                         opens a same-repo draft PR. Needs a token with push"
-  echo "                         access; the protected-branch guard is the only backstop."
+  echo "                         access; every push asks for an interactive confirmation."
   printf "  Mode [F/d]: "
   read -r _MODE
   if [[ "${_MODE:-f}" =~ ^[Dd] ]]; then CHOMPER_PR_MODE=direct; else CHOMPER_PR_MODE=fork; fi
@@ -93,7 +93,8 @@ if _need GITHUB_TOKEN; then
   if [[ "${CHOMPER_PR_MODE:-$(_env_get CHOMPER_PR_MODE)}" == "direct" ]]; then
     # Direct mode: the token pushes branches to the canonical repo and opens
     # same-repo PRs, so it MUST have push access there. No fork, no isolation —
-    # the protected-branch guard + draft-PR-with-human-merge are the only safety.
+    # every push is gated on an interactive confirmation, with the protected-
+    # branch guard + draft-PR-with-human-merge as the backstop.
     echo "  GitHub token — DIRECT mode: chomper pushes branches to the canonical repo."
     echo "  Use a token for an account WITH push access to the product repo, with the"
     echo "  classic 'repo' scope ('public_repo' is enough for a public repo), plus 'gist'"

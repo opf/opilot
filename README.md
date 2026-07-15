@@ -135,7 +135,7 @@ comments), so it is boxed in from several directions:
 | `./chomper ship <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest). `fix` is kept as an alias |
 | `./chomper build <id>...` | Like `ship`, but stops after committing the fix to the local clone — nothing is pushed and no PR is opened. `ship <id>` later publishes the built branch |
 | `./chomper plan <id>...` | Plan-only counterpart of `ship`: same loop, but stops once each plan is approved instead of building |
-| `./chomper pr <id\|url>...` | Refresh a work package's shipped PR(s): merge in the latest base branch (Claude resolves conflicts), fix failing CI, and address review comments since chomper last acted — then push after a terminal confirmation. Also takes a pasted GitHub PR URL, resolved to its WP via the OpenProject ticket link at the top of the PR description (the WP is mirrored first, as `pull` does) |
+| `./chomper pr <id\|url>...` | Refresh a work package's shipped PR(s): merge in the latest base branch (only when the PR has been quiet for over a day; Claude resolves conflicts), fix failing CI, and address review comments since chomper last acted — then push after a terminal confirmation. Also takes a pasted GitHub PR URL, resolved to its WP via the OpenProject ticket link at the top of the PR description (the WP is mirrored first, as `pull` does) |
 | `./chomper pull [<id>...]` | Mirror work packages into the local cache for later `chat`, without planning or shipping. Ids fetch exactly those; no ids runs the filter wizard for a bulk grab |
 | `./chomper chat [message]` | Free read-only chat about your local mirrors (items + PRs); no fetch, plan, or ship |
 | `./chomper status` | List the work packages chomper has planned or shipped |
@@ -268,7 +268,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   
 ### Feature ideas
 * Lean more into the dev console "toolbox" interface
-  * ✅ rename `fix` to `build` (split into `build` = local fix only and `ship` = fix + draft PR; `fix` stays as an alias of `ship`)
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * chatting should have explicit options for those who want them: grill, simplify etc.
     * also add option to include the sub-WPs

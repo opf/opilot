@@ -58,6 +58,10 @@ module Chomper
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
       pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
 
+      unless confirm_direct_push?(target_repo, branch)
+        puts "  Push declined — #{branch} was not pushed and no PR was opened."
+        return nil
+      end
       @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
       title = pr_title(item_id, subject)
