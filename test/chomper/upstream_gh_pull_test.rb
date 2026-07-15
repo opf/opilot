@@ -5,20 +5,21 @@ module Chomper
     User      = Struct.new(:login)
     RepoRef   = Struct.new(:full_name)
     Head      = Struct.new(:ref, :sha, :repo)
-    PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, keyword_init: true)
+    PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, :user, keyword_init: true)
     IssueC    = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
     SearchHit = Struct.new(:number)
 
     class FakeGitHub
       attr_reader :searches, :reacted
-      def initialize(hits: [], issue: [])
-        @hits = hits; @issue = issue; @searches = []; @reacted = []
+      def initialize(hits: [], issue: [], pr_author: "contributor")
+        @hits = hits; @issue = issue; @pr_author = pr_author; @searches = []; @reacted = []
       end
       def search_prs(query, per_page: 50); @searches << query; @hits; end
       def pull_request(_repo, _num)
         PR.new(state: "open", updated_at: Time.parse("2026-06-20T10:00:00Z"),
                html_url: "https://github.com/opf/openproject/pull/7", title: "Fix a thing",
-               head: Head.new("contrib-branch", "sha9", RepoRef.new("contributor/openproject")))
+               head: Head.new("contrib-branch", "sha9", RepoRef.new("contributor/openproject")),
+               user: User.new(@pr_author))
       end
       def issue_comments(_repo, _num); @issue; end
       def review_comments(_repo, _num); []; end
@@ -45,8 +46,8 @@ module Chomper
       IssueC.new(id: id, body: body, user: User.new(login), created_at: Time.parse(at))
     end
 
-    def pull(hits: [SearchHit.new(7)], issue: [])
-      @github = FakeGitHub.new(hits: hits, issue: issue)
+    def pull(hits: [SearchHit.new(7)], issue: [], pr_author: "contributor")
+      @github = FakeGitHub.new(hits: hits, issue: issue, pr_author: pr_author)
       UpstreamGhPull.new(@ctx, github: @github)
     end
 
@@ -76,6 +77,20 @@ module Chomper
       assert_includes q, "is:pr is:open"
       assert_includes q, "updated:>=2026-06-01"
       assert_includes q, "mentions:chomper-bot", "search uses the bot's GitHub login, resolved programmatically"
+    end
+
+    def test_search_excludes_the_bots_own_prs
+      gh = pull
+      gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_includes @github.searches.first, "-author:chomper-bot",
+                      "chomper's own PRs are GhPull's territory — the upstream scanner must not re-handle them"
+    end
+
+    def test_the_bots_own_pr_is_skipped_even_when_the_search_returns_it
+      gh = pull(pr_author: "chomper-bot",
+                issue: [issue_c(id: 1, body: "@chomper refresh", login: "thykel", at: "2026-06-20T09:00:00Z")])
+      assert_empty gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_empty @github.reacted, "an own PR must not be touched by the reply-only path at all"
     end
 
     def test_disabled_without_an_allowlist

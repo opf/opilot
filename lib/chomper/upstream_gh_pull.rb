@@ -4,8 +4,10 @@ require_relative "gh_pr_cache"
 
 module Chomper
   # The second GitHub source for gh-agent: scans the *upstream* PRs of every
-  # registry repo (e.g. opf/openproject) for @chomper mentions, not just the PRs
-  # chomper opened. chomper has no write access to these PRs' branches, so the
+  # registry repo (e.g. opf/openproject) for @chomper mentions — other people's
+  # PRs only, never the bot's own (those are GhPull's territory, with push
+  # rights and command parsing; serving them here too would double-handle every
+  # comment). chomper has no write access to these PRs' branches, so the
   # intents it yields are flagged `reply_only` — gh-agent reviews/answers but
   # never pushes code.
   #
@@ -81,10 +83,13 @@ module Chomper
     # PRs on `upstream` that mention the chomper bot and changed since the cutoff.
     # Uses GitHub's `mentions:<login>` qualifier against the bot's actual GitHub
     # login (e.g. op-chomper), resolved programmatically — the same handle
-    # mention_re matches — rather than a hardcoded "@chomper".
+    # mention_re matches — rather than a hardcoded "@chomper". The bot's own PRs
+    # are excluded (`-author:`): they are GhPull's territory — it can push there
+    # and parses commands like refresh — and this scanner's separate act-state
+    # would otherwise re-handle their comments a second time, reply-only.
     def discover(upstream)
       date = @scan_from_at.to_s[0, 10]   # YYYY-MM-DD for the search qualifier
-      ping = bot_login.empty? ? %("@chomper") : "mentions:#{bot_login}"
+      ping = bot_login.empty? ? %("@chomper") : "mentions:#{bot_login} -author:#{bot_login}"
       @github.search_prs(%(repo:#{upstream} is:pr is:open #{ping} updated:>=#{date}))
     end
 
@@ -99,6 +104,9 @@ module Chomper
       dir = pr_dir(repo_str, number)
       pr  = @github.pull_request(repo_str, number)
       return [] unless pr.state.to_s == "open"
+      # Backstop for the search-side -author: filter (which the literal-text
+      # fallback query can't express): never serve the bot's own PRs here.
+      return [] if own_pr?(pr)
 
       content = fetch_pr_content(dir, repo_str, number, pr)
       subject = content["title"].to_s
@@ -124,6 +132,12 @@ module Chomper
       # One unreachable/renamed PR shouldn't stop the others being polled.
       log_script "gh-agent(upstream): skipping #{repo_str}##{number} — #{e.message}"
       []
+    end
+
+    # A PR opened by the bot account itself (fork mode's cross-repo PRs and
+    # direct mode's same-repo PRs are both authored by the token's login).
+    def own_pr?(pr)
+      !bot_login.empty? && pr.user&.login.to_s.casecmp?(bot_login)
     end
 
     # Unlike GhPull (open when the allowlist is empty), upstream scanning only
