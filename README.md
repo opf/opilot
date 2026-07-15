@@ -4,11 +4,15 @@
 
 An OpenProject AI development orchestrator that helps you implement work packages, end to end.
 
-**Agent mode**: Assists you inside both WP Activity tabs and GitHub PRs. Just tag `@chomper` to ask questions, plan together, and even generate PRs.
+**Agent mode**
+* Assists you inside both WP Activity tabs and GitHub PRs.
+* Just tag `@chomper` to ask questions, plan together, and even generate PRs.
+* **Operates a dedicated [OpenProject](https://community.openproject.org/users/100163) & [GitHub user](https://github.com/op-chomper).**
 
-**Script mode**: Plans & implements WPs entirely via your terminal. Point it to one or more specific packages by ID.
-
-<img width="817" height="597" alt="Screenshot 2026-06-16 at 15 15 26" src="https://github.com/user-attachments/assets/706ddeb1-df10-485d-af48-8821135eafda" />
+**Script mode** 
+* Works entirely within your terminal.
+* Run `./chomper <command>`
+* **Can be scoped to your own OpenProject & GitHub user.**
 
 ---
 
@@ -29,28 +33,37 @@ An OpenProject AI development orchestrator that helps you implement work package
 ## Requirements
 
 - **Docker**
-- A GitHub token with repo write access (for opening PRs)
-- An OpenProject API token (read-only for script mode, comment-writable for agent mode)
+- GitHub auth token
+  - Core `opf` org PRs: OpenProject member token
+  - Outside contributor PRs: Any GitHub user (we currently use [op-chomper](https://github.com/op-chomper))
+- OpenProject API token (read-only for script mode, comment-writable for agent mode)
 
 ---
 
 ## Quick start
 
+### Setup
 ```bash
 git clone https://github.com/opf/openproject-chomper
 cd openproject-chomper
 # Create .env based on .env.example OR just leave it to the first startup wizard
+```
 
+### Agent mode
+```
 # Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
 ./chomper agent
-# OR run a one-time E2E fix of one or more specific WPs
+```
+
+### Script mode
+```
+# Run one-time E2E fix of one or more specific WPs
 ./chomper ship <id>...
-# OR implement the fix locally without pushing or opening a PR
-./chomper build <id>...
 # OR just draft (and approve) a plan without building
 ./chomper plan <id>...
 # OR refresh a stale shipped PR (merge base, fix CI, address comments)
 ./chomper pr <id-or-pr-url>...
+# and more
 ```
 
 ## Bird's-eye view
