@@ -174,7 +174,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # Unknown subcommands are passed through to Ruby.
 _needs_claude=false
 case "$CMD" in
-  agent|op-agent|gh-agent|fix|plan|chat) _needs_claude=true ;;
+  agent|op-agent|gh-agent|fix|plan|pr|chat) _needs_claude=true ;;
 esac
 if [[ "$_needs_claude" == true ]]; then
   # Auth: an API key (preferred) is held only by the authgw gateway and never

@@ -20,6 +20,7 @@ require "chomper/gh_pull"
 require "chomper/gh_agent"
 require "chomper/combined_agent"
 require "chomper/fix_runner"
+require "chomper/pr_runner"
 require "chomper/chat_runner"
 require "chomper/cli"
 

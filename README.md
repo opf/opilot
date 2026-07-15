@@ -47,6 +47,8 @@ cd openproject-chomper
 ./chomper fix <id>...
 # OR just draft (and approve) a plan without shipping
 ./chomper plan <id>...
+# OR refresh a stale shipped PR (merge base, fix CI, address comments)
+./chomper pr <id-or-pr-url>...
 ```
 
 ## Bird's-eye view
@@ -130,6 +132,7 @@ comments), so it is boxed in from several directions:
 | `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
 | `./chomper fix <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
 | `./chomper plan <id>...` | Plan-only counterpart of `fix`: same loop, but stops once each plan is approved instead of shipping |
+| `./chomper pr <id\|url>...` | Refresh a work package's shipped PR(s): merge in the latest base branch (Claude resolves conflicts), fix failing CI, and address review comments since chomper last acted — then push after a terminal confirmation. Also takes a pasted GitHub PR URL, resolved to its WP via the OpenProject ticket link at the top of the PR description (the WP is mirrored first, as `pull` does) |
 | `./chomper pull [<id>...]` | Mirror work packages into the local cache for later `chat`, without planning or shipping. Ids fetch exactly those; no ids runs the filter wizard for a bulk grab |
 | `./chomper chat [message]` | Free read-only chat about your local mirrors (items + PRs); no fetch, plan, or ship |
 | `./chomper status` | List the work packages chomper has planned or shipped |
@@ -264,7 +267,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * chatting should have explicit options for those who want them: grill, simplify etc.
     * also add option to include the sub-WPs
-  * for stale PRs: `pr [ID]` re-freshes from `dev`, fixes CI issues & addresses comments
 * Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
 * When in forked repo mode, generate only "temporal" draft PRs that are meant to be over-taken by an actual dev
   * Add a convenience `gh`/`git` command to "take over" the contribution under your own name

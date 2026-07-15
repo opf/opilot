@@ -75,6 +75,10 @@ module Chomper
                     (if asked) write code, committing it and pushing to the bot's fork
           fix <id>...       Plan and ship one or more work packages with terminal approval
           plan <id>...      Plan one or more work packages with approval, but stop before shipping
+          pr <id|url>...    Refresh a work package's shipped PR(s): merge in the latest base branch,
+                            fix failing CI, and address new review comments, then push (with confirmation).
+                            A pasted GitHub PR URL is resolved to its WP (and the WP mirrored) via the
+                            OpenProject ticket link at the top of the PR description
           pull [<id>...]    Mirror work packages into the local cache for later chat (no plan or ship);
                             ids fetch exactly those, no ids runs the filter wizard for a bulk grab
           chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship

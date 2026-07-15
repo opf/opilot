@@ -35,6 +35,8 @@ module Chomper
         with_ids(argv, "Fix", "fix") { |ids| FixRunner.new(@ctx).fix(*ids) }
       when "plan"
         with_ids(argv, "Plan", "plan") { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
+      when "pr"
+        pr(argv)
       when "pull"
         pull(argv)
       else
@@ -45,6 +47,26 @@ module Chomper
     end
 
     private
+
+    # `pr` refreshes shipped PRs; it accepts work-package ids and/or pasted
+    # GitHub PR URLs (a URL is resolved to its WP via chomper's own state, else
+    # via the OpenProject ticket link at the top of the PR description).
+    def pr(argv)
+      args = argv[1..].to_a.map(&:strip).map { |a| a.match?(%r{\Ahttps?://}) ? a : wp_id_arg(a) }
+      valid = args.all? do |a|
+        a.match?(Helpers::WP_ID_PATTERN) ||
+          (Clients::GitHub.repo_from_url(a) && Clients::GitHub.pr_number_from_url(a))
+      end
+      if args.empty? || !valid
+        $stderr.puts "Usage: ./chomper pr <work-package-id | pr-url>...   " \
+                     "(e.g. 59942, PROJ-123, or https://github.com/opf/openproject/pull/123)"
+        raise Chomper::FatalError
+      end
+      @ctx.load_config!
+      labels = args.map { |a| a.match?(Helpers::WP_ID_PATTERN) ? Helpers.wp_label(a) : a }.join(", ")
+      @ctx.log_file.open("a") { |f| f.puts "\n=== PR refresh #{labels} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
+      PrRunner.new(@ctx).run(*args)
+    end
 
     # `pull` mirrors work packages into the local cache for later `chat`, without
     # planning or shipping. With ids it fetches exactly those (validated like

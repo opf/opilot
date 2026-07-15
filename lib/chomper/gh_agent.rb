@@ -267,28 +267,13 @@ module Chomper
     end
 
     # The subject for a follow-up commit: the WP label (matching the PR title's
-    # "[label] …" form) plus a concise description of the change Claude just made.
-    # Falls back to a generic subject when subject generation yields nothing.
+    # "[label] …" form) plus a concise description of the change Claude just made
+    # (Helpers#generate_commit_subject). Falls back to a generic subject when
+    # subject generation yields nothing.
     def feedback_commit_message(intent, diff)
       label   = wp_label(intent.item_id)
       subject = generate_commit_subject(diff)
       subject.empty? ? "[#{label}] address PR feedback" : "[#{label}] #{subject}"
-    end
-
-    # Ask a cheap model for a one-line commit subject from the diff (stateless —
-    # no session to resume), then sanitise it to a single bare line. Returns "" on
-    # any failure so the caller can fall back.
-    def generate_commit_subject(diff)
-      prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
-      strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
-        .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
-        .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" Claude prepended anyway
-        .gsub(/\s+/, " ")
-        .slice(0, 72).to_s.strip
-    rescue => e
-      log_script "Commit-subject generation failed: #{e.message}"
-      ""
     end
 
     # Push the new commit to the PR's head repo (the bot's fork) with the bot

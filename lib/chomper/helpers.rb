@@ -468,6 +468,23 @@ module Chomper
       true
     end
 
+    # Ask a cheap model for a one-line commit subject from the diff (stateless —
+    # no session to resume), then sanitise it to a single bare line. Returns ""
+    # on any failure so the caller can fall back to a generic subject. Shared by
+    # gh-agent's follow-up commits and the terminal `pr` refresh.
+    def generate_commit_subject(diff)
+      prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
+      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
+      strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
+        .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
+        .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" Claude prepended anyway
+        .gsub(/\s+/, " ")
+        .slice(0, 72).to_s.strip
+    rescue => e
+      log_script "Commit-subject generation failed: #{e.message}"
+      ""
+    end
+
     def generate_pr_description(st, repo, model: Claude::MODEL_WORK)
       pr_desc_file = st.pr_desc_file(repo)
       return if Helpers.file_has_content?(pr_desc_file)
