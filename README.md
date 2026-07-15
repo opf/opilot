@@ -201,7 +201,7 @@ PR's branch.
 Chomper may operate in one of two PR publishing modes:
 * **Fork publishing**
   * Default for the Agent mode
-  * A dedicated unprivileged user (such as [op-chomper](https://github.com/op-chomper) publishes **contributor** PRs
+  * A dedicated unprivileged user (such as [op-chomper](https://github.com/op-chomper)) publishes **contributor** PRs
   * The contributor PR offers an easy way to _overtake the PR_ via closing the bot PR & re-opening a new one under your own account.
 * **Direct publishing**:
   * Default for the Script mode
