@@ -156,6 +156,23 @@ module Chomper
       assert_equal 1, gh.poll_intents("2000-01-01T00:00:00Z").length
     end
 
+    def test_refresh_comment_carries_the_refresh_command
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper refresh", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal :refresh, gh.poll_intents("2000-01-01T00:00:00Z").first.command
+    end
+
+    def test_refresh_command_works_with_the_bots_login_too
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper-bot refresh please", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal :refresh, gh.poll_intents("2000-01-01T00:00:00Z").first.command
+    end
+
+    def test_ordinary_comments_carry_no_command
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper refreshing take — please guard nil",
+                                login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_nil gh.poll_intents("2000-01-01T00:00:00Z").first.command,
+                 "\"refreshing\" must not word-boundary-match the refresh command"
+    end
+
     def test_allowlist_rejects_other_users_and_advances_cutoff
       gh = pull(issue: [issue_c(id: 9, body: "@chomper do it", login: "rando", at: "2026-06-18T18:05:00Z")])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")

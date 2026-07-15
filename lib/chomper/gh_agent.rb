@@ -2,6 +2,7 @@ require "json"
 require_relative "clients"
 require_relative "gh_pull"
 require_relative "upstream_gh_pull"
+require_relative "pr_runner"
 
 module Chomper
   # The GitHub counterpart of Agent. Two sources, polled together every tick:
@@ -17,12 +18,14 @@ module Chomper
     include Helpers
 
     def initialize(ctx, pull: GhPull.new(ctx), upstream_pull: UpstreamGhPull.new(ctx),
-                   claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.github_token))
+                   claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.github_token),
+                   pr_runner: nil)
       @ctx           = ctx
       @pull          = pull
       @upstream_pull = upstream_pull
       @claude        = claude
       @github        = github
+      @pr_runner     = pr_runner
     end
 
     def run
@@ -93,6 +96,10 @@ module Chomper
       if intent.kind == :ci
         log_script "#{intent.repo}##{intent.pr_number} — CI failed on #{intent.head_sha.to_s[0, 7]}"
         return handle_ci(intent)
+      end
+      if intent.command == :refresh && !intent.reply_only
+        log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} asked for a refresh"
+        return handle_refresh(intent)
       end
       kind = intent.reply_only ? "#{intent.kind} comment, review-only" : "#{intent.kind} comment"
       log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} (#{kind})"
@@ -180,7 +187,25 @@ module Chomper
       push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
+    # "@chomper refresh" on one of chomper's own PRs: hand it to PrRunner for
+    # the full `pr`-command treatment — a forced base-branch merge (the trigger
+    # comment just bumped updated_at, so the quiet-day heuristic would always
+    # skip it), a CI fix regardless of CHOMPER_CI_FIX/act-state/attempt cap, and
+    # a sweep of fresh feedback (the trigger comment included, so the commenter
+    # gets a reply). PrRunner posts its own summary and advances the comment
+    # cutoff; handle_and_ack then acks the trigger comment as usual.
+    def handle_refresh(intent)
+      pr_runner.refresh_one(intent.item_id, intent.repo_name)
+    end
+
     private
+
+    # Built lazily: PrRunner's default OpenProject client (for the WP mirror)
+    # is only needed once a refresh is actually triggered.
+    def pr_runner
+      @pr_runner ||= PrRunner.new(@ctx, claude: @claude, github: @github,
+                                  gh_pull: @pull, interactive: false)
+    end
 
     def prompt_scan_from
       previous = saved_scan_from_at

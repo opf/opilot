@@ -44,6 +44,12 @@ module Chomper
       def mark_ci_acted(id, repo_name, sha); @ci_acted << [id, repo_name, sha]; end
     end
 
+    class FakePrRunner
+      attr_reader :refreshed
+      def initialize; @refreshed = []; end
+      def refresh_one(wp_id, repo_name); @refreshed << [wp_id, repo_name]; end
+    end
+
     class FakeCommit
       def sha; "abcdef1234567"; end
       def message; "[#42] address PR feedback"; end
@@ -208,6 +214,20 @@ module Chomper
       @blank_wt = FakeWorktree.new(has_changes: true); inject_worktree(blank, @blank_wt)
       capture_io { blank.handle(gh_intent) }
       assert_equal ["[#42] address PR feedback"], @blank_wt.commits
+    end
+
+    def test_refresh_command_hands_the_pr_to_pr_runner_and_acks_the_trigger
+      pr_runner = FakePrRunner.new
+      agent = GhAgent.new(@ctx, pull: @pull, claude: @claude, github: @github, pr_runner: pr_runner)
+
+      capture_io { agent.handle_and_ack(gh_intent(text: "@chomper refresh").tap { |i| i.command = :refresh }) }
+
+      assert_equal [["42", "openproject"]], pr_runner.refreshed,
+                   "the refresh is delegated to PrRunner's single-PR entry point"
+      assert_empty @claude.runs, "gh-agent must not also run its own conversational pass"
+      assert_empty @github.issue_posts, "PrRunner posts the summary itself"
+      assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted,
+                   "the trigger comment is acked so it doesn't replay"
     end
 
     def test_direct_mode_push_is_gated_on_an_interactive_yes

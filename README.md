@@ -144,7 +144,7 @@ comments), so it is boxed in from several directions:
 |---|---|
 | `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
 | `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
+| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork. `@chomper refresh` on a PR gives it the full `pr`-command treatment: base merge (forced), CI fix, feedback sweep |
 | `./chomper ship <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest). `fix` is kept as an alias |
 | `./chomper build <id>...` | Like `ship`, but stops after committing the fix to the local clone — nothing is pushed and no PR is opened. `ship <id>` later publishes the built branch |
 | `./chomper plan <id>...` | Plan-only counterpart of `ship`: same loop, but stops once each plan is approved instead of building |
@@ -186,6 +186,13 @@ While the agent runs, drive it by mentioning `@chomper` in a comment on any watc
 Triggers are gated by the `CHOMPER_ALLOWED_OP_USER_IDS` allowlist (when set). A work
 package's status is just the files in `.chomper/work_packages/<host>/<id>/`:
 `plan.md` present means it has a plan, `pr_url.txt` present means it shipped.
+
+On chomper's own GitHub PRs (while `gh-agent` or `agent` runs, gated by
+`CHOMPER_ALLOWED_GH_USERS`), `@chomper <anything>` replies — and writes code when
+asked — while `@chomper refresh` runs the full `./chomper pr` refresh on that PR:
+the base branch is merged in (forced, even on a recently active PR), failing CI
+is fixed, and fresh review feedback is addressed, with the result pushed to the
+PR's branch.
 
 ---
 

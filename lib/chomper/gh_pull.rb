@@ -18,9 +18,14 @@ module Chomper
   # chomper's own PRs): there is no comment, so `text`/`comment_id` are nil and
   # `head_sha` carries the commit whose checks failed — the key the act-state is
   # deduped on, since CI isn't comment-timestamp driven.
+  #
+  # `command` is :refresh when the comment is "@chomper refresh" on one of
+  # chomper's own PRs — the full `pr`-command treatment (base merge + CI fix +
+  # feedback sweep) instead of a conversational reply. Nil for everything else;
+  # never set on a reply_only intent (chomper can't push to an upstream branch).
   GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
-                        :kind, :comment_id, :in_reply_to, :text, :user_login, :comment_at, :reply_only,
-                        :head_sha,
+                        :kind, :command, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
+                        :reply_only, :head_sha,
                         keyword_init: true)
 
   # The GitHub counterpart of Pull: scans the PRs chomper has already opened (one
@@ -152,7 +157,8 @@ module Chomper
         GhIntent.new(
           item_id: item_id, repo_name: repo_name, subject: subject, branch: content["head_ref"], repo: repo,
           head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,
-          kind: c["kind"].to_sym, comment_id: c["id"], in_reply_to: c["in_reply_to"],
+          kind: c["kind"].to_sym, command: parse_command(c["body"]),
+          comment_id: c["id"], in_reply_to: c["in_reply_to"],
           text: c["body"], user_login: c["author"], comment_at: c["created_at"]
         )
       end
@@ -252,6 +258,13 @@ module Chomper
       Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
     rescue => e
       log_script "gh-agent: CI give-up notice failed on #{repo}##{number} — #{e.message}"
+    end
+
+    # The one recognised PR command word: "@chomper refresh" asks for the full
+    # `pr`-command treatment of this PR (GhAgent hands it to PrRunner). Any
+    # other trigger text is a plain comment for Claude to converse over.
+    def parse_command(body)
+      :refresh if body.to_s.match?(/#{mention_re.source}\s+refresh\b/i)
     end
 
     def allowed?(login, pr_url)

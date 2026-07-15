@@ -422,6 +422,50 @@ module Chomper
       assert_empty @op_pull.fetched
     end
 
+    # ── gh-agent's "@chomper refresh" entry point ────────────────────────────
+
+    def test_refresh_one_forces_the_base_merge_on_an_active_pr
+      make_pr_fresh   # the trigger comment itself bumped updated_at
+      @worktree.behind = true
+      capture_io { @runner.refresh_one("42", "openproject") }
+
+      assert_equal ["Merge dev into bug/42-fix"], @worktree.merges,
+                   "an explicit refresh request overrides the quiet-day heuristic"
+      assert_equal 1, @github.pushed.length
+    end
+
+    def test_refresh_one_raises_for_a_wp_without_a_shipped_pr
+      e = assert_raises(RuntimeError) { @runner.refresh_one("77", "openproject") }
+      assert_includes e.message, "no shipped PR recorded"
+    end
+
+    def test_non_interactive_refresh_pushes_to_the_fork_without_prompting
+      runner = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull,
+                            op_pull: @op_pull, interactive: false)
+      inject_worktree(runner, @worktree)
+      @ctx.auto_approve = false   # would prompt in interactive mode
+      @worktree.behind = true
+
+      out, = with_stdin("") { capture_io { runner.refresh_one("42", "openproject") } }
+
+      refute_includes out, "[y]es push", "a gh-agent-triggered refresh must not block on a terminal prompt"
+      assert_equal 1, @github.pushed.length, "fork-mode pushes go straight through, as gh-agent's do"
+    end
+
+    def test_non_interactive_refresh_in_direct_mode_declines_without_a_tty
+      @ctx.pr_mode = "direct"
+      runner = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull,
+                            op_pull: @op_pull, interactive: false)
+      inject_worktree(runner, @worktree)
+      @worktree.behind = true
+
+      out, = with_stdin("") { capture_io { runner.refresh_one("42", "openproject") } }
+
+      assert_empty @github.pushed, "a direct-mode push must never happen unconfirmed"
+      assert_includes @worktree.resets, "origsha", "the declined refresh is discarded"
+      assert_includes out, "discarded"
+    end
+
     def test_direct_mode_prompts_even_with_auto_approval
       @ctx.pr_mode = "direct"   # auto_approve stays true
       @worktree.behind = true

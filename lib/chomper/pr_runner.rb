@@ -20,15 +20,22 @@ module Chomper
   # regardless of CHOMPER_CI_FIX, act-state, or the attempt cap. The draft-PR +
   # human-gated-merge safety is unchanged — pushes go to the PR's head branch
   # only, and the terminal confirmation adds a gate gh-agent doesn't have.
+  #
+  # gh-agent reuses this via #refresh_one for an allowlisted "@chomper refresh"
+  # PR comment, constructed with `interactive: false`: the push then follows
+  # gh-agent's rules instead of the terminal prompt — fork-mode pushes go
+  # straight to the bot's fork (a maintainer still gates the merge), direct-mode
+  # pushes stay behind the interactive confirm_direct_push? gate.
   class PrRunner
     include Helpers
     include GhPrCache
 
     def initialize(ctx, claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.github_token),
-                   gh_pull: nil, op_pull: nil)
-      @ctx     = ctx
-      @claude  = claude
-      @github  = github
+                   gh_pull: nil, op_pull: nil, interactive: true)
+      @ctx         = ctx
+      @claude      = claude
+      @github      = github
+      @interactive = interactive
       # Reused only for its act-state writers (comment cutoff + own-reply ids),
       # so gh-agent never re-handles feedback this command already addressed.
       @gh_pull = gh_pull || GhPull.new(ctx, github: github)
@@ -45,6 +52,18 @@ module Chomper
         break if Chomper.stopping?
         target.match?(%r{\Ahttps?://}) ? refresh_url(target) : refresh_wp(target)
       end
+    end
+
+    # One PR, driven by gh-agent's "@chomper refresh" trigger. The commenter
+    # explicitly asked for a refresh, so the base merge is forced — the trigger
+    # comment itself just bumped the PR's updated_at, which would otherwise
+    # always trip the quiet-day heuristic. Raises on failure so gh-agent's
+    # error path reports it on the PR.
+    def refresh_one(wp_id, repo_name)
+      dir = Helpers.item_dir(@ctx, wp_id) / "repos" / repo_name.to_s
+      raise "no shipped PR recorded for #{wp_label(wp_id)} (#{repo_name})" unless Helpers.file_has_content?(dir / "pr_url.txt")
+      mirror_wp(wp_id)
+      refresh!(wp_id, dir, force_base_merge: true)
     end
 
     private
@@ -177,7 +196,7 @@ module Chomper
       log_script "#{wp_label(wp_id)} (#{dir.basename}) — refresh failed: #{e.message}"
     end
 
-    def refresh!(wp_id, dir)
+    def refresh!(wp_id, dir, force_base_merge: false)
       repo_name = dir.basename.to_s
       repo      = @ctx.repos[repo_name]
       unless repo
@@ -214,7 +233,7 @@ module Chomper
       wt            = worktree(repo)
       original_head = wt.revparse("HEAD")
 
-      conflicts  = stale_pr?(content) ? merge_base(wt, repo, branch, base_ref) : []
+      conflicts  = (force_base_merge || stale_pr?(content)) ? merge_base(wt, repo, branch, base_ref) : []
       ci_ref     = ci_failure_ref(dir, base_repo, content["head_sha"].to_s)
       ci_expired = ci_ref == :ci_detail_expired
       ci_ref     = nil if ci_expired
@@ -406,7 +425,7 @@ module Chomper
       wt = worktree(repo)
       if wt.revparse("HEAD") == original_head
         log_script "#{wp_label(wp_id)} (#{repo.name}) — no code changes to push."
-      elsif confirm_push?(wp_id, branch)
+      elsif confirm_push?(wp_id, branch, head_repo)
         @github.push_branch(head_repo, branch: branch, worktree_path: repo.worktree_host)
         log_script "Pushed to #{head_repo} — PR ##{number} updated."
         record_progress(wp_id, branch, "refreshed:#{repo.name}")
@@ -421,7 +440,11 @@ module Chomper
       @gh_pull.mark_acted(wp_id, repo.name, latest) if latest
     end
 
-    def confirm_push?(wp_id, branch)
+    def confirm_push?(wp_id, branch, head_repo)
+      # A gh-agent-triggered refresh follows gh-agent's push rules: a fork-mode
+      # push passes straight through (the branch only touches the bot's fork),
+      # a direct-mode one stays behind the interactive confirm_direct_push? gate.
+      return confirm_direct_push?(head_repo, branch) unless @interactive
       # AUTO_PLAN_APPROVAL never bypasses the gate in direct mode — there the
       # push lands on the canonical repo, and every such push stays interactive.
       return true if @ctx.auto_plan_approval? && !@ctx.direct_pr?
