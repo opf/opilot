@@ -24,15 +24,16 @@ module Chomper
     end
 
     class FakeGitHub
-      attr_reader :comment_fetches, :reacted, :ci_comments, :check_runs_calls
+      attr_reader :comment_fetches, :reacted, :ci_comments, :check_runs_calls, :pr_fetches
       def initialize(pr:, issue: [], review: [], reviews: [],
                      check_runs: [], annotations: [], workflow_runs: [], jobs: [], job_log: nil)
         @pr = pr; @issue = issue; @review = review; @reviews = reviews
         @check_runs = check_runs; @annotations = annotations
         @workflow_runs = workflow_runs; @jobs = jobs; @job_log = job_log
         @comment_fetches = 0; @reacted = []; @ci_comments = []; @check_runs_calls = 0
+        @pr_fetches = 0
       end
-      def pull_request(_repo, _num);   @pr;      end
+      def pull_request(_repo, _num);   @pr_fetches += 1; @pr; end
       def issue_comments(_repo, _num); @comment_fetches += 1; @issue; end
       def review_comments(_repo, _num); @review;  end
       def reviews(_repo, _num);         @reviews; end
@@ -143,7 +144,31 @@ module Chomper
     def test_skips_closed_or_merged_prs
       gh = pull(issue: [issue_c(id: 1, body: "@chomper go", login: "thykel", at: "2026-06-18T18:05:00Z")],
                 pr_obj: pr(state: "closed"))
-      assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
+      capture_io { assert_empty gh.poll_intents("2000-01-01T00:00:00Z") }
+    end
+
+    def test_a_closed_pr_is_marked_done_and_never_polled_again
+      # First poll observes the closure (one metadata call) and records it.
+      gh = pull(pr_obj: pr(state: "closed"))
+      capture_io { assert_empty gh.poll_intents("2000-01-01T00:00:00Z") }
+      assert_equal 1, @github.pr_fetches
+      assert JSON.parse((@pr_dir / "gh_pr.json").read)["pr_done"], "the closure is recorded"
+
+      # Every later poll skips the dir before any API call.
+      gh2 = pull(pr_obj: pr(state: "closed"))
+      assert_empty gh2.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 0, @github.pr_fetches, "a done PR must not cost even the metadata call"
+      assert_equal 0, gh2.scanned_count, "a done dir no longer counts as polled"
+    end
+
+    def test_clear_pr_done_resumes_polling
+      gh = pull(pr_obj: pr(state: "closed"))
+      capture_io { gh.poll_intents("2000-01-01T00:00:00Z") }
+
+      gh.clear_pr_done("42", "openproject")
+      gh2 = pull   # open PR again (the default)
+      gh2.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 1, @github.pr_fetches, "a cleared flag puts the PR back in the poll set"
     end
 
     def test_ignores_comments_without_mention

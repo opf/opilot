@@ -91,7 +91,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream`/`protected_bases` lookups |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:fix` intents |
-| `gh_pull.rb` | Polls chomper's own open PRs; skips closed/merged PRs and parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist); when `CHOMPER_CI_FIX` is on, also yields per-head-SHA `:ci` intents for failed CI |
+| `gh_pull.rb` | Polls chomper's own open PRs; a PR seen merged/closed is stamped `pr_done` and dropped from polling for good (no more API calls — the `pr` command clears the stamp on a reopened PR); parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist); when `CHOMPER_CI_FIX` is on, also yields per-head-SHA `:ci` intents for failed CI |
 | `upstream_gh_pull.rb` | Polls every registry repo's `upstream` for open PRs that @-mention chomper (GitHub search pre-filter); yields `reply_only` `GhIntent`s; requires an allowlist |
 | `gh_pr_cache.rb` | `GhPrCache` — PR-content caching (`pr.json` keyed by `updated_at`), `@chomper` mention matching, fresh-comment filtering, and CI-failure caching (`ci.json` keyed by head SHA + `ci_status` classifier) shared by the pollers |
 | `gh_agent.rb` | `gh-agent` event loop — polls both sources; for own PRs replies + writes code + pushes to the fork (incl. `:ci` auto-fix when enabled); for upstream PRs reviews read-only and replies (never pushes) |
@@ -143,7 +143,7 @@ by `<owner>-<repo>/<number>` (globally unique on github.com), so it's a flat
 │           ├── pr_url.txt       # published PR URL
 │           ├── pr.json          # gh-agent cache of PR content (comments + reviews), keyed by PR updated_at
 │           ├── ci.json          # gh-agent cache of CI failure detail (failed checks + annotations + log tails), keyed by head SHA
-│           ├── gh_pr.json       # gh-agent act-state: last_acted_comment_at + reply ids; CI: ci_acted_sha, ci_quiet_sha (green, immutable per SHA), ci_attempts, ci_gave_up
+│           ├── gh_pr.json       # gh-agent act-state: last_acted_comment_at + reply ids; CI: ci_acted_sha, ci_quiet_sha (green, immutable per SHA), ci_attempts, ci_gave_up; pr_done (PR seen merged/closed — dir dropped from polling; `pr` clears it on reopen)
 │           └── gh_session_id    # gh-agent's Claude session (separate from session_id)
 ├── pr_reviews/<owner>-<repo>/<number>/   # gh-agent review state for an upstream PR chomper didn't open
 │   ├── pr.json              # cached PR content (comments + reviews)

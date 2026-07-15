@@ -214,9 +214,13 @@ module Chomper
 
       pr = @github.pull_request(base_repo, number)
       unless pr.state.to_s == "open"
+        @gh_pull.mark_pr_done(wp_id, repo_name)   # spare gh-agent the dead poll too
         log_script "#{wp_label(wp_id)} (#{repo_name}) — PR ##{number} is #{pr.state}; nothing to refresh."
         return
       end
+      # An open PR must be polled: lift a pr_done left by an earlier closure, so
+      # a reopened PR resumes gh-agent watching via this command.
+      @gh_pull.clear_pr_done(wp_id, repo_name)
 
       content   = fetch_pr_content(dir, base_repo, number, pr)
       branch    = content["head_ref"].to_s

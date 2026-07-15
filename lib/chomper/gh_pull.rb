@@ -69,7 +69,10 @@ module Chomper
     # `scan_from_at` (ISO8601) is the floor cutoff entered at startup.
     def poll_intents(scan_from_at)
       @scan_from_at = scan_from_at
-      dirs = shipped_pr_dirs
+      # A dir whose PR was already seen merged/closed (pr_done, set below when
+      # the closure is first observed) costs nothing — not even the metadata
+      # call. `./chomper pr <url>` clears the flag if the PR is ever reopened.
+      dirs = shipped_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
       @scanned_count = dirs.length
       intents = []
       dirs.each do |d|
@@ -106,6 +109,27 @@ module Chomper
       Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
     end
 
+    # Record that this dir's PR has been seen merged/closed, so the poller stops
+    # spending an API call on it every tick (a long-dead PR would otherwise be
+    # re-fetched forever). Merged is irreversible; a closed PR *can* be reopened,
+    # which is what clear_pr_done (driven by the `pr` command) is for.
+    def mark_pr_done(item_id, repo_name)
+      dir   = pr_dir(item_id, repo_name)
+      state = gh_state(dir)
+      state["pr_done"] = true
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+    end
+
+    # Resume polling a PR that turned out to be open again (reopened after a
+    # close). No-op when the flag isn't set, so routine refreshes don't churn
+    # the state file.
+    def clear_pr_done(item_id, repo_name)
+      dir   = pr_dir(item_id, repo_name)
+      state = gh_state(dir)
+      return unless state.delete("pr_done")
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+    end
+
     # Record that chomper has addressed a head SHA's CI failure. Unlike comment
     # acks (timestamp cutoff), CI dedup is per-SHA: `ci_acted_sha` blocks acting
     # twice on the same commit, and `ci_attempts` caps how many times chomper
@@ -131,8 +155,13 @@ module Chomper
       return [] unless repo && number
 
       pr = @github.pull_request(repo, number)
-      # Don't touch PRs that are merged or closed — only ones still in review.
-      return [] unless pr.state.to_s == "open"
+      # Don't touch PRs that are merged or closed — and remember the closure so
+      # this dir never costs another poll (see poll_intents).
+      unless pr.state.to_s == "open"
+        mark_pr_done(item_dir.basename.to_s, repo_name)
+        log_script "gh-agent: #{repo}##{number} is #{pr.state} — dropping it from future polls."
+        return []
+      end
 
       content = fetch_pr_content(dir, repo, number, pr)
 

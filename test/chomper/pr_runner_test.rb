@@ -44,10 +44,12 @@ module Chomper
     end
 
     class FakePull
-      attr_reader :acted, :recorded
-      def initialize; @acted = []; @recorded = []; end
+      attr_reader :acted, :recorded, :done, :cleared
+      def initialize; @acted = []; @recorded = []; @done = []; @cleared = []; end
       def mark_acted(id, repo_name, at); @acted << [id, repo_name, at]; end
       def record_chomper_comment(id, repo_name, cid); @recorded << [id, repo_name, cid]; end
+      def mark_pr_done(id, repo_name); @done << [id, repo_name]; end
+      def clear_pr_done(id, repo_name); @cleared << [id, repo_name]; end
     end
 
     class FakeOpPull
@@ -206,6 +208,8 @@ module Chomper
       out, = capture_io { @runner.run("42") }
       assert_includes out, "is merged"
       assert_empty @github.fetched, "a non-open PR must not be fetched or touched"
+      assert_equal [["42", "openproject"]], @pull.done,
+                   "the closure is recorded so gh-agent stops polling the dir too"
     end
 
     def test_fresh_pr_is_a_noop
@@ -214,6 +218,8 @@ module Chomper
       assert_empty @claude.runs, "nothing to do → no Claude spend"
       assert_empty @github.pushed
       assert_empty @github.issue_posts
+      assert_equal [["42", "openproject"]], @pull.cleared,
+                   "an open PR lifts any pr_done left by an earlier closure (reopen support)"
     end
 
     def test_a_pr_active_within_a_day_is_not_merged_from_base
