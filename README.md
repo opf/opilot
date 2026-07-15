@@ -1,6 +1,6 @@
-## Proof of Concept -- use at your own risk!
-
 # openproject-chomper
+
+> ⚠️ **Proof of concept — use at your own risk!**
 
 An OpenProject AI development orchestrator that helps you implement work packages, end to end.
 
@@ -9,7 +9,7 @@ An OpenProject AI development orchestrator that helps you implement work package
 * Just tag `@chomper` to ask questions, plan together, and even generate PRs.
 * **Operates a dedicated [OpenProject](https://community.openproject.org/users/100163) & [GitHub user](https://github.com/op-chomper).**
 
-**Script mode** 
+**Script mode**
 * Works entirely within your terminal.
 * Run `./chomper <command>`
 * **Can be scoped to your own OpenProject & GitHub user.**
@@ -21,10 +21,8 @@ An OpenProject AI development orchestrator that helps you implement work package
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
 - [Bird's-eye view](#birds-eye-view)
-- [Commands](#commands)
+- [Interface](#interface)
 - [Reviewing & pushing](#reviewing--pushing)
-- [Repo layout](#repo-layout)
-- [Environment variables](#environment-variables)
 - [Development](#development)
 - [TODO](#todo)
 
@@ -50,13 +48,13 @@ cd openproject-chomper
 ```
 
 ### Agent mode
-```
+```bash
 # Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
 ./chomper agent
 ```
 
 ### Script mode
-```
+```bash
 # Run one-time E2E fix of one or more specific WPs
 ./chomper ship <id>...
 # OR just draft (and approve) a plan without building
@@ -74,7 +72,7 @@ cd openproject-chomper
               │ (shell wrapper) │
               └─────────────────┘
                        │
-                       │ docker compose exec
+                       │ docker compose run
                        │
 ┌─ Docker ─────────────┼──────────────────────────────────────────────┐
 │                      ▼                                              │
@@ -138,61 +136,32 @@ comments), so it is boxed in from several directions:
 
 ---
 
-## Commands
+## Interface
 
-| Invocation | Behaviour |
+### Script mode (terminal-driven)
+
+| Command | What it does |
 |---|---|
-| `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
-| `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
-| `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork. `@chomper refresh` on a PR gives it the full `pr`-command treatment: base merge (forced), CI fix, feedback sweep |
-| `./chomper ship <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest). `fix` is kept as an alias |
-| `./chomper build <id>...` | Like `ship`, but stops after committing the fix to the local clone — nothing is pushed and no PR is opened. `ship <id>` later publishes the built branch |
-| `./chomper plan <id>...` | Plan-only counterpart of `ship`: same loop, but stops once each plan is approved instead of building |
-| `./chomper pr <id\|url>...` | Refresh a work package's shipped PR(s): merge in the latest base branch (only when the PR has been quiet for over a day; Claude resolves conflicts), fix failing CI, and address review comments since chomper last acted — then push after a terminal confirmation. Also takes a pasted GitHub PR URL, resolved to its WP via the OpenProject ticket link at the top of the PR description (the WP is mirrored first, as `pull` does) |
-| `./chomper pull [<id>...]` | Mirror work packages into the local cache for later `chat`, without planning or shipping. Ids fetch exactly those; no ids runs the filter wizard for a bulk grab |
-| `./chomper chat [message]` | Free read-only chat about your local mirrors (items + PRs); no fetch, plan, or ship |
-| `./chomper status` | List the work packages chomper has planned or shipped |
-| `./chomper reset` | Delete `.chomper/` — clones included — for a fresh start |
-| `./chomper --help` | Show usage |
+| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit |
+| `./chomper pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
+| `./chomper pull [<id>...]` | Mirror work packages into the local cache |
+| `./chomper chat [message]` | Free read-only chat about the local mirrors |
+| `./chomper status` / `reset` | List planned/shipped work packages / wipe `.chomper/` for a fresh start |
 
-### `./chomper ship` / `build` / `plan` flow
+The `ship` / `build` / `plan` loop prompts `[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`
+for each drafted plan; several ids run in turn and one failure doesn't abort the rest.
 
-`ship <id>...` fetches one or more work packages by id (ignoring any saved filters) and, for each in turn, streams an implementation plan and prompts:
+### Agent mode (comment-driven)
 
-`[y]es ship / [s]kip / [d]rop / [c]hat / [r]e-plan`
-- **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
-- **s** — skip this WP and move on
-- **d** — drop this WP, discarding the drafted plan
-- **c** — open a chat session to ask questions before deciding; chat alone never changes the saved plan
-- **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
+Simply run `./chomper agent`
 
-With several ids each runs in turn and one failure (a bad id, a Claude error) doesn't abort the rest. A WP already shipped (`pr_url.txt` present) is reported and passed over. `fix` is kept as an alias of `ship`.
+On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
+`@chomper fix` plans and ships in one step, `@chomper plan` drafts a plan for
+review, `@chomper approve` ships the drafted plan — anything else just chats.
 
-`build <id>...` is the same loop, but `[y]` implements and commits the fix to the local clone and stops there — nothing is pushed and no PR is opened. Review the branch in `.chomper/repos/<name>`, then publish it with `ship <id>` (which finds the committed branch and skips straight to opening the PR).
-
-`plan <id>...` is the plan-only counterpart: the same loop, but `[y]` accepts the plan and stops without building. Build or ship it later with `build <id>` / `ship <id>`.
-
-### `@chomper` comment commands
-
-While the agent runs, drive it by mentioning `@chomper` in a comment on any watched work package:
-
-| Comment | Behaviour |
-|---|---|
-| `@chomper fix [feedback]` | Plan and ship in one step — the right choice for most tasks |
-| `@chomper plan [feedback]` | For complex tasks: draft a plan for human review before touching any code (optional feedback revises an existing plan) |
-| `@chomper approve` | Implement and ship a plan that was drafted with `@chomper plan` |
-| `@chomper <anything else>` | Chat — replies using the current plan as context, no state change |
-
-Triggers are gated by the `CHOMPER_ALLOWED_OP_USER_IDS` allowlist (when set). A work
-package's status is just the files in `.chomper/work_packages/<host>/<id>/`:
-`plan.md` present means it has a plan, `pr_url.txt` present means it shipped.
-
-On chomper's own GitHub PRs (while `gh-agent` or `agent` runs, gated by
-`CHOMPER_ALLOWED_GH_USERS`), `@chomper <anything>` replies — and writes code when
-asked — while `@chomper refresh` runs the full `./chomper pr` refresh on that PR:
-the base branch is merged in (forced, even on a recently active PR), failing CI
-is fixed, and fresh review feedback is addressed, with the result pushed to the
-PR's branch.
+On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
+`@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
+runs the full `pr`-command refresh (forced base merge, CI fix, feedback sweep).
 
 ---
 
@@ -204,13 +173,16 @@ Chomper may operate in one of two PR publishing modes:
   * A dedicated unprivileged user (such as [op-chomper](https://github.com/op-chomper)) publishes **contributor** PRs
   * The contributor PR offers an easy way to _overtake the PR_ via closing the bot PR & re-opening a new one under your own account.
 * **Direct publishing**:
-  * Default for the Script mode
+  * Built for the Script mode
   * Publishes PRs under your own GitHub account
   * While there are lots of safeguards in place, this option is less secure and mostly here for experimental purposes.
- 
+
 ### Taking over a chomper PR
 
 Set up the following alias:
+
+<details>
+<summary><code>gh alias set overtake …</code></summary>
 
 ```bash
 gh alias set overtake '!pr="${1##*/}"; branch="$(gh pr view "$pr" --json headRefName -q .headRefName)"
@@ -224,6 +196,8 @@ echo "Old PR (closed): $(gh pr view "$pr" --json url -q .url)"
 echo "New PR (yours):  $url"'
 ```
 
+</details>
+
 Then, from inside your OpenProject repo, run this:
 
 ```bash
@@ -231,31 +205,6 @@ gh overtake 23811        # or paste the PR URL
 ```
 
 This closes the original Chomper-generated PR and publishes a clone _under your own account_.
-
----
-
-## Repo layout
-
-`chomper` is the bash entry point (Docker setup); `bin/chomper` is the Ruby CLI
-that runs inside the runner container; `server.js` wraps `claude -p` in the
-claude container. The agent itself lives in `lib/chomper/` — one module per
-concern (`pull.rb`, `agent.rb`, `gh_agent.rb`, `fix_runner.rb`, `publish.rb`,
-`prompts.rb`, `clients/`, …), with matching tests under `test/chomper/`.
-
-See **CLAUDE.md** for the authoritative module-by-module breakdown and the full
-`.chomper/` runtime-state layout (both kept in sync with the code there).
-
----
-
-## Environment variables
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `OPENPROJECT_URL` | — | URL of your OpenProject instance |
-| `OPENPROJECT_TOKEN` | — | OpenProject API token (My Account → Access Tokens); needs WP read access plus comment write — chomper posts replies and 👀 reactions |
-| `ANTHROPIC_API_KEY` | — | Recommended. When set, held only by the `authgw` gateway (injected into Anthropic requests), never passed to the claude container. If unset, chomper falls back to interactive `claude auth login` — OAuth creds then live in the claude container (less isolated). The setup wizard prompts for it (blank = use login). |
-| `GITHUB_TOKEN` | — | Used to push branches and open PRs via the GitHub API |
-| `CHOMPER_ALLOWED_OP_USER_IDS` | — | Comma-separated OpenProject user ids allowed to trigger the agent via `@chomper` comments (the number in a profile URL, `/users/<id>` — not emails, since a non-admin API token can't read other users' emails). The setup wizard prompts for this; it is **required when targeting the public community instance** (otherwise anyone on the internet could trigger the agent), and leaving it empty elsewhere needs explicit confirmation. |
 
 ---
 
@@ -303,15 +252,15 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
   * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
 * Replace Claude!
-  * We can likely save a lot on costs by switching to Codex. 
-  * Or, lean away from US by switching to Mistral. 
+  * We can likely save a lot on costs by switching to Codex.
+  * Or, lean away from US by switching to Mistral.
   * Or, **ideally**, plug in an open model.
 * Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
 * Try to compact token usage
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
-  
+
 ### Feature ideas
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
