@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y bash git && rm -rf /var/lib/apt/lists/*
 # ANTHROPIC_AUTH_TOKEN, no API key in this container) regressed to "Not logged
 # in" somewhere after 2.1.170. Bump deliberately after verifying the gateway
 # path still works headless.
-RUN npm install -g @anthropic-ai/claude-code@2.1.170
+RUN npm install -g @anthropic-ai/claude-code@2.1.210
 
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true
