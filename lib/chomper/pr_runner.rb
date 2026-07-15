@@ -52,7 +52,7 @@ module Chomper
     def refresh_wp(wp_id)
       dirs = pr_dirs_for(wp_id)
       if dirs.empty?
-        log_script "#{wp_label(wp_id)} — no shipped PR found. Ship one first with `./chomper fix #{wp_id}`."
+        log_script "#{wp_label(wp_id)} — no shipped PR found. Ship one first with `./chomper ship #{wp_id}`."
         return
       end
       mirror_wp(wp_id)

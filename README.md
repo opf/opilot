@@ -44,8 +44,10 @@ cd openproject-chomper
 # Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
 ./chomper agent
 # OR run a one-time E2E fix of one or more specific WPs
-./chomper fix <id>...
-# OR just draft (and approve) a plan without shipping
+./chomper ship <id>...
+# OR implement the fix locally without pushing or opening a PR
+./chomper build <id>...
+# OR just draft (and approve) a plan without building
 ./chomper plan <id>...
 # OR refresh a stale shipped PR (merge base, fix CI, address comments)
 ./chomper pr <id-or-pr-url>...
@@ -130,8 +132,9 @@ comments), so it is boxed in from several directions:
 | `./chomper agent` | Run `op-agent` and `gh-agent` together in one loop (polls PRs first, then work packages). Falls back to `op-agent` only when `GITHUB_TOKEN` is unset |
 | `./chomper op-agent` | Poll OpenProject every 10s and act on `@chomper` mentions |
 | `./chomper gh-agent` | Poll chomper's open PRs every 10s; reply to `@chomper` comments and, when asked, push code to the bot's fork |
-| `./chomper fix <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest) |
-| `./chomper plan <id>...` | Plan-only counterpart of `fix`: same loop, but stops once each plan is approved instead of shipping |
+| `./chomper ship <id>...` | Plan and ship one or more work packages by id, with a terminal approval loop (each id runs in turn; one failure doesn't abort the rest). `fix` is kept as an alias |
+| `./chomper build <id>...` | Like `ship`, but stops after committing the fix to the local clone — nothing is pushed and no PR is opened. `ship <id>` later publishes the built branch |
+| `./chomper plan <id>...` | Plan-only counterpart of `ship`: same loop, but stops once each plan is approved instead of building |
 | `./chomper pr <id\|url>...` | Refresh a work package's shipped PR(s): merge in the latest base branch (Claude resolves conflicts), fix failing CI, and address review comments since chomper last acted — then push after a terminal confirmation. Also takes a pasted GitHub PR URL, resolved to its WP via the OpenProject ticket link at the top of the PR description (the WP is mirrored first, as `pull` does) |
 | `./chomper pull [<id>...]` | Mirror work packages into the local cache for later `chat`, without planning or shipping. Ids fetch exactly those; no ids runs the filter wizard for a bulk grab |
 | `./chomper chat [message]` | Free read-only chat about your local mirrors (items + PRs); no fetch, plan, or ship |
@@ -139,20 +142,22 @@ comments), so it is boxed in from several directions:
 | `./chomper reset` | Delete `.chomper/` — clones included — for a fresh start |
 | `./chomper --help` | Show usage |
 
-### `./chomper fix` / `./chomper plan` flow
+### `./chomper ship` / `build` / `plan` flow
 
-`fix <id>...` fetches one or more work packages by id (ignoring any saved filters) and, for each in turn, streams an implementation plan and prompts:
+`ship <id>...` fetches one or more work packages by id (ignoring any saved filters) and, for each in turn, streams an implementation plan and prompts:
 
-`[y]es implement / [s]kip / [d]rop / [c]hat / [r]e-plan`
+`[y]es ship / [s]kip / [d]rop / [c]hat / [r]e-plan`
 - **y** — implement, commit, and open a draft PR (same as `@chomper fix`)
 - **s** — skip this WP and move on
 - **d** — drop this WP, discarding the drafted plan
 - **c** — open a chat session to ask questions before deciding; chat alone never changes the saved plan
 - **r** — rewrite `plan.md` from feedback you type, or — left empty — from the changes discussed in the preceding chat
 
-With several ids each runs in turn and one failure (a bad id, a Claude error) doesn't abort the rest. A WP already shipped (`pr_url.txt` present) is reported and passed over.
+With several ids each runs in turn and one failure (a bad id, a Claude error) doesn't abort the rest. A WP already shipped (`pr_url.txt` present) is reported and passed over. `fix` is kept as an alias of `ship`.
 
-`plan <id>...` is the plan-only counterpart: the same loop, but `[y]` accepts the plan and stops without shipping. Ship it later with `fix <id>`.
+`build <id>...` is the same loop, but `[y]` implements and commits the fix to the local clone and stops there — nothing is pushed and no PR is opened. Review the branch in `.chomper/repos/<name>`, then publish it with `ship <id>` (which finds the committed branch and skips straight to opening the PR).
+
+`plan <id>...` is the plan-only counterpart: the same loop, but `[y]` accepts the plan and stops without building. Build or ship it later with `build <id>` / `ship <id>`.
 
 ### `@chomper` comment commands
 
@@ -263,7 +268,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   
 ### Feature ideas
 * Lean more into the dev console "toolbox" interface
-  * rename `fix` to `build`
+  * ✅ rename `fix` to `build` (split into `build` = local fix only and `ship` = fix + draft PR; `fix` stays as an alias of `ship`)
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * chatting should have explicit options for those who want them: grill, simplify etc.
     * also add option to include the sub-WPs

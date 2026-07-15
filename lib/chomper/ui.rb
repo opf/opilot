@@ -73,8 +73,11 @@ module Chomper
           op-agent  Poll OpenProject every 20s and act on @chomper mentions
           gh-agent  Poll chomper's PRs every 20s; reply to @chomper comments and
                     (if asked) write code, committing it and pushing to the bot's fork
-          fix <id>...       Plan and ship one or more work packages with terminal approval
-          plan <id>...      Plan one or more work packages with approval, but stop before shipping
+          plan <id>...      Plan one or more work packages with approval, but stop before building
+          build <id>...     Plan, approve, and implement one or more work packages, committing the
+                            fix to the local clone — nothing is pushed and no PR is opened
+          ship <id>...      Plan, approve, implement, and ship one or more work packages as draft
+                            PRs; picks up a branch committed earlier by build (`fix` is an alias)
           pr <id|url>...    Refresh a work package's shipped PR(s): merge in the latest base branch,
                             fix failing CI, and address new review comments, then push (with confirmation).
                             A pasted GitHub PR URL is resolved to its WP (and the WP mirrored) via the

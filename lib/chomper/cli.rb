@@ -31,8 +31,10 @@ module Chomper
         @ctx.load_config!
         @ctx.log_file.open("a") { |f| f.puts "\n=== Chat #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         ChatRunner.new(@ctx).run(argv[1..].to_a.join(" "))
-      when "fix"
-        with_ids(argv, "Fix", "fix") { |ids| FixRunner.new(@ctx).fix(*ids) }
+      when "ship", "fix"   # `fix` stays as an alias of `ship`
+        with_ids(argv, "Ship", "ship") { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
+      when "build"
+        with_ids(argv, "Build", "build") { |ids| FixRunner.new(@ctx).build_ids(*ids) }
       when "plan"
         with_ids(argv, "Plan", "plan") { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
       when "pr"

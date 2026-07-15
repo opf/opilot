@@ -1,9 +1,11 @@
 require "json"
 
 module Chomper
-  # The terminal `fix` and `plan` commands: plan/approve/(optionally ship) one or
-  # more work packages named by id, outside any filter set. Each WP is fetched
-  # live; `fix` ships an approved plan, `plan` stops once the plan is approved.
+  # The terminal `ship`, `build`, and `plan` commands: plan/approve/(optionally
+  # build and ship) one or more work packages named by id, outside any filter
+  # set. Each WP is fetched live; `ship` (alias `fix`) publishes an approved
+  # plan as a draft PR, `build` stops after committing the fix locally, and
+  # `plan` stops once the plan is approved.
   class FixRunner
     include Helpers
 
@@ -14,22 +16,28 @@ module Chomper
       @publish = publish
     end
 
-    # Plan/approve/implement one or more work packages by id. Each WP is fetched
-    # live; an already-shipped WP is reported and skipped. With several ids a
-    # failure on one (bad id, Claude error) is logged and the rest still run;
-    # with a single id the failure is fatal since there is nothing else to do.
-    def fix(*wp_ids)
-      process_ids(wp_ids, plan_only: false)
+    # Plan/approve/implement/ship one or more work packages by id. Each WP is
+    # fetched live; an already-shipped WP is reported and skipped. With several
+    # ids a failure on one (bad id, Claude error) is logged and the rest still
+    # run; with a single id the failure is fatal since there is nothing else to do.
+    def ship_ids(*wp_ids)
+      process_ids(wp_ids, mode: :ship)
     end
 
-    # Like `fix`, but stops once each plan is approved instead of shipping.
+    # Like `ship`, but stops after committing the fix locally — nothing is
+    # pushed and no PR is opened; `ship <id>` later publishes the built branch.
+    def build_ids(*wp_ids)
+      process_ids(wp_ids, mode: :build)
+    end
+
+    # Like `ship`, but stops once each plan is approved instead of building.
     def plan_ids(*wp_ids)
-      process_ids(wp_ids, plan_only: true)
+      process_ids(wp_ids, mode: :plan)
     end
 
     private
 
-    def process_ids(wp_ids, plan_only:)
+    def process_ids(wp_ids, mode:)
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         break if Chomper.stopping?
@@ -54,7 +62,7 @@ module Chomper
         end
 
         begin
-          process_item(item, plan_only: plan_only)
+          process_item(item, mode: mode)
         rescue Claude::Error => e
           raise Chomper::FatalError, "Claude run failed: #{e.message}" if total == 1
           log_script "#{wp_label(wp_id)} — Claude run failed: #{e.message}"
@@ -66,7 +74,7 @@ module Chomper
       (Helpers.item_dir(@ctx, item_data["id"]) / "pr_url.txt").exist?
     end
 
-    def process_item(item_data, plan_only: false)
+    def process_item(item_data, mode:)
       id      = item_data["id"].to_s
       subject = item_data["subject"].to_s
       type    = item_data["type"].to_s
@@ -162,14 +170,15 @@ module Chomper
           puts render_markdown(st.plan_file.read)
         end
         puts ""
-        case prompt_approval(id, plan_only: plan_only)
+        case prompt_approval(id, mode: mode)
         when :approve
-          # plan_only: leave the approved plan.md in place (no outcome marker) so
-          # a later `fix` ships it; otherwise ship now.
-          if plan_only
-            log_script "#{wp_label(id)} — plan approved; ship it later with `fix #{id}`."
-          else
-            ship(st, model)
+          case mode
+          when :plan
+            # Leave the approved plan.md in place (no outcome marker) so a later
+            # `build`/`ship` picks it up.
+            log_script "#{wp_label(id)} — plan approved; build or ship it later with `build #{id}` / `ship #{id}`."
+          when :build then build(st, model)
+          when :ship  then ship(st, model)
           end
           break
         when :chat    then run_chat(st, model)
@@ -217,13 +226,13 @@ module Chomper
       end
     end
 
-    def prompt_approval(id, plan_only: false)
+    def prompt_approval(id, mode: :ship)
       if @ctx.auto_plan_approval?
         log_script "#{wp_label(id)} — auto-approving plan (AUTO_PLAN_APPROVAL set)."
         return :approve
       end
       ping_terminal("chomper: plan for #{wp_label(id)} ready for review")
-      yes = plan_only ? "[y]es accept plan" : "[y]es implement"
+      yes = { plan: "[y]es accept plan", build: "[y]es build", ship: "[y]es ship" }.fetch(mode)
       loop do
         print "  #{yes} / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -267,16 +276,14 @@ module Chomper
       end
     end
 
-    def ship(st, model = Claude::MODEL_WORK)
-      if st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
-        st.repos.each { |r| puts "  Already shipped (#{r.name}): #{st.pr_url_file(r).read.strip}" }
-        return
-      end
-
+    # Implement the approved plan once across every target worktree (the resumed
+    # planning session carries its exploration in; --allowedTools just adds the
+    # write tools) and commit per repo. Skipped when every fix branch already
+    # has commits — a prior `build` — so `ship` then only publishes. Returns the
+    # repos that actually changed ([] when the plan turned out to be a no-op).
+    def implement(st, model = Claude::MODEL_WORK)
       st.repos.each { |r| checkout_branch(st, r) }
 
-      # Implement once across every target worktree (the resumed planning session
-      # carries its exploration in; --allowedTools just adds the write tools).
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
         @claude.run(
@@ -291,10 +298,24 @@ module Chomper
       if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced."
         puts "  ⚠ No changes produced — plan may be a no-op or already applied."
-        return
       end
+      changed
+    end
 
-      changed.each do |repo|
+    # `build`: implement and commit, then stop — nothing is pushed and no PR is
+    # opened. The committed branch sits in the local clone for review; a later
+    # `ship <id>` finds it via branch_has_commits? and goes straight to publish.
+    def build(st, model = Claude::MODEL_WORK)
+      return if report_already_shipped(st)
+      implement(st, model).each do |repo|
+        record_progress(st.item_id, st.branch, "built:#{repo.name}")
+        puts "  ✓ Built #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./chomper ship #{st.item_id}`"
+      end
+    end
+
+    def ship(st, model = Claude::MODEL_WORK)
+      return if report_already_shipped(st)
+      implement(st, model).each do |repo|
         generate_pr_description(st, repo, model: model)
         url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
         if url
@@ -304,6 +325,14 @@ module Chomper
           puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is GITHUB_TOKEN set?"
         end
       end
+    end
+
+    # True (with the URLs reported) when every target repo already has a PR —
+    # there is nothing left to build or ship for this WP.
+    def report_already_shipped(st)
+      return false unless st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
+      st.repos.each { |r| puts "  Already shipped (#{r.name}): #{st.pr_url_file(r).read.strip}" }
+      true
     end
   end
 end

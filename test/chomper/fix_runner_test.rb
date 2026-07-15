@@ -48,6 +48,13 @@ module Chomper
       private def checkout_branch(_st, _repo); end
     end
 
+    # A runner whose fix branch already carries commits, so the build/ship
+    # paths can run without a worktree or a Claude implementation pass.
+    class PrebuiltRunner < FixRunner
+      private def checkout_branch(_st, _repo); end
+      private def branch_has_commits?(_st, _repo); true; end
+    end
+
     def setup
       @tmpdir = Dir.mktmpdir
       state_dir = Pathname(@tmpdir) / ".chomper"
@@ -114,17 +121,17 @@ module Chomper
       assert_equal :approve, verdict
     end
 
-    def test_fix_fails_when_wp_cannot_be_fetched
-      err = assert_raises(Chomper::FatalError) { capture_io { runner(single: nil).fix("999") } }
+    def test_ship_fails_when_wp_cannot_be_fetched
+      err = assert_raises(Chomper::FatalError) { capture_io { runner(single: nil).ship_ids("999") } }
       assert_match(/could not fetch work package #999/, err.message)
     end
 
-    def test_fix_reports_already_shipped
+    def test_ship_reports_already_shipped
       data = write_item(4, "Shipped one")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "4" / "pr_url.txt").write("https://github.com/o/r/pull/9")
       r = runner(single: data)
 
-      out, = capture_io { r.fix("4") }
+      out, = capture_io { r.ship_ids("4") }
 
       assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
     end
@@ -132,15 +139,46 @@ module Chomper
     # With several ids a fetch failure on one is logged, not fatal, and the
     # remaining ids still run. Both items here resolve without Claude (one
     # missing, one already shipped) so the run completes without an agent.
-    def test_fix_with_multiple_ids_continues_past_a_fetch_failure
+    def test_ship_with_multiple_ids_continues_past_a_fetch_failure
       shipped = write_item(7, "Shipped one")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "7" / "pr_url.txt").write("https://github.com/o/r/pull/9")
       r = runner(singles: { "999" => nil, "7" => shipped })
 
-      out, = capture_io { r.fix("999", "7") }
+      out, = capture_io { r.ship_ids("999", "7") }
 
       assert_match(/could not fetch work package #999/, out)
       assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
+    end
+
+    # publish: nil doubles as the assertion — any attempt to open a PR from the
+    # build path would crash on the nil publisher.
+    def test_build_ids_commits_locally_without_publishing
+      claude = FakePlanClaude.new
+      r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "8" => item(8, "Buildable") }),
+                             claude: claude, publish: nil)
+
+      out, = with_stdin("y\n") { capture_io { r.build_ids("8") } }
+
+      assert_includes out, "[y]es build", "approval prompt reflects build mode"
+      assert_includes out, "✓ Built task/8-buildable (openproject)"
+      assert_includes out, "ship it with `./chomper ship 8`"
+      refute (@ctx.state_dir / "work_packages" / "op.example.com" / "8" / "repos" / "openproject" / "pr_url.txt").exist?,
+             "build must not ship"
+    end
+
+    def test_build_ids_reports_an_already_shipped_wp
+      claude = FakePlanClaude.new
+      pr_dir = @ctx.state_dir / "work_packages" / "op.example.com" / "9" / "repos" / "openproject"
+      pr_dir.mkpath
+      (pr_dir / "pr_url.txt").write("https://github.com/o/r/pull/12")
+      (@ctx.state_dir / "work_packages" / "op.example.com" / "9" / "plan.md").write("## Plan: done")
+      r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "9" => item(9, "Done one") }),
+                             claude: claude, publish: nil)
+
+      out, = with_stdin("y\n") { capture_io { r.build_ids("9") } }
+
+      assert_includes out, "Already shipped (openproject): https://github.com/o/r/pull/12"
+      refute_includes out, "✓ Built", "a shipped WP is not rebuilt"
     end
 
     def test_plan_ids_plans_a_live_wp_and_stops_without_shipping
