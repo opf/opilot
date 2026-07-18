@@ -6,7 +6,10 @@ module Chomper
     PostedComment = Struct.new(:id, keyword_init: true)
     FakeHead      = Struct.new(:ref, :sha, :repo, keyword_init: true)
     FakeBase      = Struct.new(:ref, keyword_init: true)
-    FakePr        = Struct.new(:state, :updated_at, :html_url, :title, :body, :head, :base, keyword_init: true)
+    FakeUser      = Struct.new(:login, keyword_init: true)
+    FakeSearchRef = Struct.new(:number, keyword_init: true)
+    FakePr        = Struct.new(:state, :updated_at, :html_url, :title, :body, :head, :base,
+                               :number, :user, keyword_init: true)
     FakeCheck     = Struct.new(:id, :name, :status, :conclusion, :completed_at, :output, keyword_init: true)
     FakeOutput    = Struct.new(:title, :summary, :text, :annotations_count, keyword_init: true)
 
@@ -22,13 +25,15 @@ module Chomper
     end
 
     class FakeGitHub
-      attr_reader :fetched, :pushed, :issue_posts
-      attr_accessor :pr, :checks
+      attr_reader :fetched, :pushed, :issue_posts, :searches
+      attr_accessor :pr, :checks, :search_results
       def initialize(pr:, checks: [])
         @pr = pr; @checks = checks
         @fetched = []; @pushed = []; @issue_posts = []
+        @searches = []; @search_results = []
       end
       def login; "op-chomper"; end
+      def search_prs(query, per_page: 50); @searches << query; @search_results; end
       def pull_request(_repo, _number); @pr; end
       def check_runs(_repo, _sha); @checks; end
       def check_run_annotations(_repo, _id); []; end
@@ -106,7 +111,6 @@ module Chomper
     UPDATED_AT = Time.utc(2026, 1, 1)
 
     def setup
-      Chomper.reset_stop!
       @tmpdir = Dir.mktmpdir
       state_dir = Pathname(@tmpdir) / ".chomper"
       state_dir.mkpath
@@ -150,9 +154,10 @@ module Chomper
       runner.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
     end
 
-    def open_pr(state: "open", number: 7, body: "", updated_at: UPDATED_AT)
+    def open_pr(state: "open", number: 7, body: "", updated_at: UPDATED_AT, author: "op-chomper")
       FakePr.new(
         state: state, updated_at: updated_at, title: "Fix the bug", body: body,
+        number: number, user: FakeUser.new(login: author),
         html_url: "https://github.com/opf/openproject/pull/#{number}",
         head: FakeHead.new(ref: "bug/42-fix", sha: "headsha", repo: nil),
         base: FakeBase.new(ref: "dev")
@@ -397,6 +402,43 @@ module Chomper
                    "the PR is adopted into the WP's normal state dir"
       assert_includes out, "Adopted opf/openproject#9 as #99"
       assert_includes out, "already fresh", "the normal refresh flow then runs"
+    end
+
+    def test_wp_id_with_no_local_state_adopts_the_bots_open_pr_from_github
+      @github.pr = open_pr(number: 9, body: "Ticket: https://test.host/work_packages/77\n\nFixes a thing.")
+      @github.search_results = [FakeSearchRef.new(number: 9)]
+      @op_pull.item = { "id" => "77" }
+      out, = capture_io { @runner.run("77") }
+
+      assert_equal ['repo:opf/openproject is:pr is:open author:op-chomper "77" in:body'], @github.searches,
+                   "discovery is scoped to the registry upstream and the bot author"
+      adopted = @ctx.state_dir / "work_packages" / "test.host" / "77" / "repos" / "openproject" / "pr_url.txt"
+      assert_equal "https://github.com/opf/openproject/pull/9", adopted.read,
+                   "the discovered PR is adopted into the WP's normal state dir"
+      assert_includes out, "Adopted opf/openproject#9 as #77"
+      assert_includes out, "already fresh", "the normal refresh flow then runs"
+    end
+
+    def test_wp_id_adoption_rejects_a_pr_not_authored_by_the_bot
+      @github.pr = open_pr(number: 9, body: "Ticket: https://test.host/work_packages/77\n",
+                           author: "someone-else")
+      @github.search_results = [FakeSearchRef.new(number: 9)]
+      out, = capture_io { @runner.run("77") }
+
+      assert_includes out, "no shipped PR found"
+      refute (@ctx.state_dir / "work_packages" / "test.host" / "77" / "repos").exist?,
+             "a foreign-authored PR must not be adopted"
+      assert_empty @github.fetched, "an unadopted PR is never fetched into a worktree"
+    end
+
+    def test_wp_id_adoption_rejects_a_pr_whose_ticket_link_points_elsewhere
+      @github.pr = open_pr(number: 9, body: "Ticket: https://test.host/work_packages/99\n")
+      @github.search_results = [FakeSearchRef.new(number: 9)]
+      out, = capture_io { @runner.run("77") }
+
+      assert_includes out, "no shipped PR found"
+      refute (@ctx.state_dir / "work_packages" / "test.host" / "77" / "repos").exist?,
+             "a PR for another WP must not be adopted"
     end
 
     def test_pasted_url_without_a_ticket_link_is_reported

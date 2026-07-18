@@ -34,18 +34,14 @@ def reset_terminal
   $stdout.flush
 end
 
-# First Ctrl-C asks the agent loop to stop after the current intent; a second
-# one forces an immediate exit (the agent sets stopping? after the first).
+# Ctrl-C ends everything immediately. `exit` raises SystemExit at whatever
+# point the main thread is blocked, and SystemExit is not a StandardError, so
+# it passes every `rescue => e` on the way out — the in-flight item is neither
+# acked nor error-reported, and the next run retries it.
 Signal.trap("INT") do
-  if Chomper.stopping?
-    reset_terminal
-    puts ""
-    puts "Forced stop."
-    exit 130
-  else
-    Chomper.request_stop
-    $stderr.puts "\nStopping after the current item… (Ctrl-C again to force)"
-  end
+  reset_terminal
+  puts ""
+  exit 130
 end
 
 Signal.trap("TERM") do

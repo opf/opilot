@@ -2,6 +2,11 @@ require_relative "../test_helper"
 
 module Chomper
   class CombinedAgentTest < Minitest::Test
+    # The run loop is endless (in production only Ctrl-C's SystemExit ends it),
+    # so the fake ends it by raising StopLoop — an Exception, not a
+    # StandardError, so it escapes guarded_tick the same way SystemExit does.
+    class StopLoop < Exception; end
+
     # Records the order in which setup/tick are called, and stops the loop after
     # one cycle so the test terminates. `tick` appends a tag per call.
     class FakeLoop
@@ -17,24 +22,21 @@ module Chomper
 
       def tick(arg)
         @calls << "#{@tag}:tick(#{arg})"
-        Chomper.request_stop if @stop_after
+        raise StopLoop if @stop_after
       end
     end
 
     def setup
-      Chomper.reset_stop!
       @calls = []
       @ctx   = Struct.new(:github_token).new("ghp_token")
-    end
-
-    def teardown
-      Chomper.reset_stop!
     end
 
     def test_polls_github_before_openproject_each_cycle
       gh = FakeLoop.new("gh", @calls)
       op = FakeLoop.new("op", @calls, stop_after: true) # stop after one full cycle
-      capture_io { CombinedAgent.new(@ctx, agent: op, gh_agent: gh).run }
+      assert_raises(StopLoop) do
+        capture_io { CombinedAgent.new(@ctx, agent: op, gh_agent: gh).run }
+      end
 
       # Both setups run before the loop; GitHub's tick precedes OpenProject's.
       assert_equal ["gh:setup", "op:setup", "gh:tick(gh)", "op:tick(op)"], @calls
@@ -44,7 +46,9 @@ module Chomper
       @ctx = Struct.new(:github_token).new(nil)
       gh = FakeLoop.new("gh", @calls)
       op = FakeLoop.new("op", @calls, stop_after: true)
-      capture_io { CombinedAgent.new(@ctx, agent: op, gh_agent: gh).run }
+      assert_raises(StopLoop) do
+        capture_io { CombinedAgent.new(@ctx, agent: op, gh_agent: gh).run }
+      end
 
       # No GitHub setup or tick — degrades to the OpenProject loop.
       assert_equal ["op:setup", "op:tick(op)"], @calls

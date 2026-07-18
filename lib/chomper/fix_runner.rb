@@ -40,7 +40,6 @@ module Chomper
     def process_ids(wp_ids, mode:)
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
-        break if Chomper.stopping?
         counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""
 
         log_script "Fetching work package #{wp_label(wp_id)}…"

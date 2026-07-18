@@ -46,7 +46,6 @@ module Chomper
 
       intents = []
       @ctx.repos.all.each do |repo|
-        break if Chomper.stopping?
         refs = discover(repo.upstream)
         @scanned_count += refs.length
         refs.each { |ref| intents.concat(intents_for_pr(repo, ref.number)) }

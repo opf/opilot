@@ -20,7 +20,6 @@ module Chomper
     def pull_by_ids(wp_ids)
       ok = 0
       wp_ids.each do |wp_id|
-        break if Chomper.stopping?
         log_script "Fetching work package #{wp_label(wp_id)}…"
         item = @pull.fetch_single_item(wp_id)
         if item

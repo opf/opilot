@@ -84,7 +84,6 @@ module Chomper
     end
 
     def setup
-      Chomper.reset_stop!   # the stop flag is process-global; isolate each test
       @tmpdir = Dir.mktmpdir
       state_dir = Pathname(@tmpdir) / ".chomper"
       state_dir.mkpath
@@ -281,20 +280,6 @@ module Chomper
       run = @claude.runs.first
       assert_equal Claude::TOOLS_IMPL, run[:tools]
       assert_equal gh_session_path, run[:session_file]
-    end
-
-    def test_ctrl_c_aborts_quietly_without_posting_or_acking
-      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: FakeClaude.new(boom: true), github: @github)
-      inject_worktree(agent, FakeWorktree.new(has_changes: false))
-      Chomper.request_stop   # simulate Ctrl-C interrupting a child process mid-handle
-
-      capture_io { agent.handle_and_ack(gh_intent) }
-
-      assert_empty @github.issue_posts, "an interrupted handle must not leak an error onto the PR"
-      assert_empty @pull.acted, "the comment is left un-acked so the next run retries it"
-    ensure
-      Chomper.reset_stop!
     end
 
     def test_handle_and_ack_marks_acted_and_reports_on_error

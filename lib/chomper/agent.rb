@@ -13,15 +13,6 @@ module Chomper
   # How long the agent loops sleep between polling passes.
   POLL_INTERVAL = 20
 
-  # Cooperative shutdown flag, shared with the SIGINT handler in bin/chomper.
-  # The agent loop checks it between items so Ctrl-C finishes the current intent
-  # rather than tearing partial state; a second Ctrl-C force-exits.
-  @stop = false
-  def self.request_stop; @stop = true; end
-  def self.stopping?;    @stop; end
-  # Clear the stop flag (tests, or restarting the loop in-process).
-  def self.reset_stop!;  @stop = false; end
-
   # The whole program: poll OpenProject for @chomper comments, turn each into an
   # Intent, and dispatch it through #handle. Per-WP "state" is just the files in
   # work_packages/<host>/<id>/ — plan.md present = has a plan, pr_url.txt present = shipped.
@@ -40,11 +31,10 @@ module Chomper
       filters = setup
       puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
-      until Chomper.stopping?
+      loop do
         guarded_tick("OpenProject poll") { tick(filters) }
-        sleep POLL_INTERVAL unless Chomper.stopping?
+        sleep POLL_INTERVAL
       end
-      puts "  Stopped."
     end
 
     # Resolve the search filters and print the allowlist banner. Returned filters
@@ -66,29 +56,20 @@ module Chomper
       n = intents.length
       log_script "Polled #{@pull.scanned_count} work package(s) — " \
                  "#{@pull.changed_count} changed — #{n} @chomper trigger#{n == 1 ? "" : "s"}"
-      intents.each do |intent|
-        break if Chomper.stopping?
-        handle_and_ack(intent)
-      end
+      intents.each { |intent| handle_and_ack(intent) }
     end
 
     # Handle one intent, then mark its trigger acted. A *handled* error (raised
     # and caught here) is logged and still acked, so a permanent failure — e.g. a
     # denied push — is not replayed every poll. We do NOT post an error note to
     # the WP: a transient failure (e.g. a Claude error_during_execution) would
-    # leave noise on the work package for no benefit. Only a hard crash (uncaught,
-    # so `ensure` never runs) leaves the trigger for the next poll to retry.
+    # leave noise on the work package for no benefit. Only a hard crash or a
+    # Ctrl-C (SystemExit is not a StandardError, so it passes this rescue)
+    # leaves the trigger for the next poll to retry.
     def handle_and_ack(intent)
       handle(intent)   # sets @requester as its first step
       @pull.mark_acted(intent.item_id, intent.comment_at)
     rescue => e
-      # Ctrl-C kills any child process in the foreground group, surfacing here as
-      # an error. On a requested stop, abort quietly — don't ack the comment, so
-      # the next run handles it cleanly.
-      if Chomper.stopping?
-        log_script "Interrupted on #{wp_label(intent.item_id)} — will retry next run"
-        return
-      end
       log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.class}: #{e.message}"
       @pull.mark_acted(intent.item_id, intent.comment_at)
     end

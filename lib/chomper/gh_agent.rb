@@ -36,11 +36,10 @@ module Chomper
       scan_from_at = setup
       puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
-      until Chomper.stopping?
+      loop do
         guarded_tick("PR poll") { tick(scan_from_at) }
-        sleep POLL_INTERVAL unless Chomper.stopping?
+        sleep POLL_INTERVAL
       end
-      puts "  Stopped."
     end
 
     # Prompt for the scan window and print the allowlist banner. Returned value
@@ -66,27 +65,18 @@ module Chomper
       summary = "#{trig} @chomper trigger#{trig == 1 ? "" : "s"}"
       summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}" if @ctx.ci_fix?
       log_script "Polled #{@pull.scanned_count} chomper PR(s) + #{@upstream_pull.scanned_count} upstream PR(s) — #{summary}"
-      intents.each do |intent|
-        break if Chomper.stopping?
-        handle_and_ack(intent)
-      end
+      intents.each { |intent| handle_and_ack(intent) }
     end
 
     # Handle one comment, then mark it acted. As in Agent#handle_and_ack, a
     # *handled* error is reported on the PR and still acked (no replay); only an
-    # uncaught crash leaves the comment for the next poll.
+    # uncaught crash or a Ctrl-C (SystemExit passes this rescue) leaves the
+    # comment for the next poll — an interrupt must not leak an error onto a
+    # public PR or ack the comment unhandled.
     def handle_and_ack(intent)
       handle(intent)
       mark_acted(intent)
     rescue => e
-      # Ctrl-C kills any child process (e.g. git) in the foreground group,
-      # surfacing here as an error. On a requested stop, abort quietly — don't
-      # post an error on the PR or ack the comment, so the next run handles it
-      # cleanly (otherwise an interrupt leaks a raw error onto a public PR).
-      if Chomper.stopping?
-        log_script "Interrupted on #{intent.repo}##{intent.pr_number} — will retry next run"
-        return
-      end
       log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.class}: #{e.message}"
       post_reply(intent, "sorry — I hit an error handling that comment:\n\n#{e.message}") rescue nil
       mark_acted(intent)

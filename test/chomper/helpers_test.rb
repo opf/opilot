@@ -20,7 +20,6 @@ module Chomper
     end
 
     def test_guarded_tick_swallows_errors_so_the_loop_survives
-      Chomper.reset_stop!
       ran = false
       # An uncaught error in a poll must not propagate out of the loop.
       h.guarded_tick("test") { raise "boom" }
@@ -29,18 +28,13 @@ module Chomper
     end
 
     def test_guarded_tick_returns_block_value_on_success
-      Chomper.reset_stop!
       assert_equal 42, h.guarded_tick("test") { 42 }
     end
 
-    def test_guarded_tick_stays_quiet_on_a_requested_stop
-      Chomper.request_stop
-      # On Ctrl-C a killed child surfaces as an error here; it must be swallowed
-      # silently (no log line) so the loop exits cleanly rather than crashing.
-      h.define_singleton_method(:log_script) { |*| flunk("must not log on a requested stop") }
-      h.guarded_tick("test") { raise "interrupted" }
-    ensure
-      Chomper.reset_stop!
+    def test_guarded_tick_lets_system_exit_escape_so_ctrl_c_ends_the_loop
+      # Ctrl-C exits via SystemExit (raised by the trap in bin/chomper); it is
+      # not a StandardError, so the backstop must not swallow it.
+      assert_raises(SystemExit) { h.guarded_tick("test") { raise SystemExit }; }
     end
 
     def test_wp_label_prefixes_numeric_ids_only

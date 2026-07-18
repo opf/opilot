@@ -4,24 +4,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export SCRIPT_DIR
 ENV_FILE="$SCRIPT_DIR/.env"
-CMD="${1:-}"; SUBCMD="${2:-}"
+CMD="${1:-}"
 
 # Read / append a single KEY=value in .env. A missing key yields empty (not a
 # failure), so a bare `VAR="$(_env_get KEY)"` is safe under `set -euo pipefail`.
 _env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
 _save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
+# True when CMD is one of the listed words, e.g. `_is agent op-agent`.
+_is() { [[ " $* " == *" $CMD "* ]]; }
 # docker compose bound to chomper's compose file.
 dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 
-# Teardown commands like `reset` must never run the first-run wizard — it would
-# prompt for config (and tokens) it's about to discard.
-case "$CMD" in reset) _WIZARD=false ;; *) _WIZARD=true ;; esac
-# True when the wizard should prompt for KEY (enabled and not yet in .env).
-_need() { [[ "$_WIZARD" == true ]] && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
+# True when the wizard should prompt for KEY (not yet in .env). Teardown
+# commands like `reset` never prompt — the wizard would ask for config (and
+# tokens) reset is about to discard.
+_need() { ! _is reset && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 
 # ── First-run setup ───────────────────────────────────────────────────────
 if _need OPENPROJECT_URL; then
-  mkdir -p "$SCRIPT_DIR/.chomper"
   echo ""; echo "=== First run — quick setup ==="; echo ""
   printf "  OpenProject URL [https://community.openproject.org]: "
   read -r OPENPROJECT_URL; OPENPROJECT_URL="${OPENPROJECT_URL:-https://community.openproject.org}"
@@ -38,7 +38,10 @@ if _need OPENPROJECT_URL; then
 fi
 
 
-if _need CHOMPER_ALLOWED_OP_USER_IDS; then
+# The OP allowlist only gates op-agent's @chomper comment triggers — terminal
+# modes (ship/build/plan/pr/pull/chat) are operator-driven and never read it,
+# so only agent mode should demand it during setup.
+if _is agent op-agent && _need CHOMPER_ALLOWED_OP_USER_IDS; then
   echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
   echo "  Use OpenProject user ids (the number in a profile URL, /users/<id>) —"
   echo "  a non-admin API token can't read other users' emails."
@@ -129,8 +132,10 @@ if _need GITHUB_TOKEN; then
   echo ""
 fi
 
-# Only meaningful once a token is set (gh-agent needs it); skip otherwise.
-if _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_TOKEN)" ]; then
+# The GH allowlist only gates gh-agent's PR triggers (the `pr` command ignores
+# it), so only the agent modes that include gh-agent should demand it — and only
+# once a token is set (gh-agent needs it).
+if _is agent gh-agent && _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_TOKEN)" ]; then
   # gh-agent lets the listed GitHub users push code to chomper's PR branches, so
   # an empty list (any user can trigger on a public PR) needs explicit confirmation.
   echo "  GitHub logins allowed to trigger @chomper on a PR (gh-agent), comma-separated."
@@ -152,7 +157,7 @@ fi
 # faster clone) — exported so `bin/repos` sees it inside the runner container.
 OP_REPO_PATH="$(_env_get OP_REPO_PATH)"
 export OP_REPO_PATH
-mkdir -p "$SCRIPT_DIR/.chomper/claude-auth"
+mkdir -p "$SCRIPT_DIR/.chomper/claude-auth" "$SCRIPT_DIR/.chomper/repos"
 
 # Run the containers as the host user so everything they write into the bind-mounted
 # .chomper/ (runner: logs + item state; claude: its auth creds) is owned by you, not
@@ -173,11 +178,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # ── Run ───────────────────────────────────────────────────────────────────
 # status/reset work from local state — no worktree, claude, or proxy needed.
 # Unknown subcommands are passed through to Ruby.
-_needs_claude=false
-case "$CMD" in
-  agent|op-agent|gh-agent|ship|fix|build|plan|pr|chat) _needs_claude=true ;;
-esac
-if [[ "$_needs_claude" == true ]]; then
+if _is agent op-agent gh-agent ship fix build plan pr chat; then
   # Auth: an API key (preferred) is held only by the authgw gateway and never
   # reaches the claude container. With no key, fall back to interactive
   # `claude auth login` — its OAuth creds live in the claude container's config
@@ -195,7 +196,6 @@ if [[ "$_needs_claude" == true ]]; then
   # point each throwaway clone at chomper's pre-push hook so no push from it can
   # ever reach a base/release branch, keyed on the destination ref.
   HOOKS_DIR="$SCRIPT_DIR/githooks"
-  mkdir -p "$SCRIPT_DIR/.chomper/repos"
 
   # Clone each repo into .chomper/repos/<name>. `bin/repos list` emits a real host
   # path for repos that have a local checkout to seed from; --reference-if-able

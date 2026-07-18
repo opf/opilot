@@ -45,11 +45,12 @@ module Chomper
 
     # Each target is a work-package id or a pasted GitHub PR URL (resolved to
     # its WP via chomper's own state, else via the OpenProject ticket link at
-    # the top of the PR description).
+    # the top of the PR description). A WP id with no local PR state is looked
+    # up on GitHub — an open PR by the bot carrying the WP's ticket link — and
+    # adopted the same way.
     def run(*targets)
       raise FatalError, "GITHUB_TOKEN is not set — `pr` needs it to read and update PRs." unless @ctx.github_token
       targets.each do |target|
-        break if Chomper.stopping?
         target.match?(%r{\Ahttps?://}) ? refresh_url(target) : refresh_wp(target)
       end
     end
@@ -70,15 +71,14 @@ module Chomper
 
     def refresh_wp(wp_id)
       dirs = pr_dirs_for(wp_id)
+      dirs = adopt_wp_prs(wp_id) if dirs.empty?
       if dirs.empty?
-        log_script "#{wp_label(wp_id)} — no shipped PR found. Ship one first with `./chomper ship #{wp_id}`."
+        log_script "#{wp_label(wp_id)} — no shipped PR found, locally or on GitHub. " \
+                   "Ship one first with `./chomper ship #{wp_id}`."
         return
       end
       mirror_wp(wp_id)
-      dirs.each do |dir|
-        break if Chomper.stopping?
-        refresh(wp_id, dir)
-      end
+      dirs.each { |dir| refresh(wp_id, dir) }
     end
 
     # A pasted PR URL: refresh the WP dir chomper already tracks for it, or —
@@ -120,6 +120,38 @@ module Chomper
       (dir / "pr_url.txt").write(pr.html_url.to_s) unless Helpers.file_has_content?(dir / "pr_url.txt")
       log_script "Adopted #{base_repo}##{number} as #{wp_label(wp_id)} (#{repo.name})."
       refresh(wp_id, dir)
+    end
+
+    # A WP id chomper has no local PR state for (the state was reset, or the PR
+    # was shipped from another machine) may still have a live PR. Discover it:
+    # search each registry repo's upstream for open PRs authored by the bot
+    # that mention the id, and adopt the one whose ticket link resolves to this
+    # WP — the same rule as URL adoption. The author check is the trust
+    # boundary: `pr` pushes to a PR's head branch, and that is only chomper's
+    # to touch on the bot's own PRs. Returns the adopted dirs ([] if none).
+    def adopt_wp_prs(wp_id)
+      bot = (@github.login rescue nil).to_s
+      return [] if bot.empty?
+      @ctx.repos.all.filter_map do |repo|
+        query = %(repo:#{repo.upstream} is:pr is:open author:#{bot} "#{wp_id}" in:body)
+        # The search is an untrusted pre-filter; each hit is re-fetched and the
+        # author, host repo, and ticket link verified on the live PR.
+        pr = @github.search_prs(query).lazy
+                    .map  { |ref| @github.pull_request(repo.upstream, ref.number) }
+                    .find { |p| adoptable?(p, repo, wp_id, bot) }
+        next unless pr
+        dir = Helpers.item_dir(@ctx, wp_id) / "repos" / repo.name
+        dir.mkpath
+        (dir / "pr_url.txt").write(pr.html_url.to_s)
+        log_script "Adopted #{repo.upstream}##{pr.number} as #{wp_label(wp_id)} (#{repo.name})."
+        dir
+      end
+    end
+
+    def adoptable?(pr, repo, wp_id, bot)
+      pr.user&.login.to_s.casecmp?(bot) &&
+        Clients::GitHub.repo_from_url(pr.html_url.to_s)&.casecmp?(repo.upstream) &&
+        op_ticket_id(pr.body).to_s.casecmp?(wp_id.to_s)
     end
 
     # The (wp_id, dir) already tracking this PR, matched on parsed repo+number
@@ -187,12 +219,6 @@ module Chomper
     def refresh(wp_id, dir)
       refresh!(wp_id, dir)
     rescue => e
-      # Ctrl-C kills any child process (e.g. git) in the foreground group,
-      # surfacing here as an error — abort quietly, as gh-agent does.
-      if Chomper.stopping?
-        log_script "Interrupted on #{wp_label(wp_id)} (#{dir.basename}) — leaving it for a re-run."
-        return
-      end
       log_script "#{wp_label(wp_id)} (#{dir.basename}) — refresh failed: #{e.message}"
     end
 

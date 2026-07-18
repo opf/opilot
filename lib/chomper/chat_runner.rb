@@ -27,7 +27,6 @@ module Chomper
 
       pending = initial_message.to_s.strip
       loop do
-        break if Chomper.stopping?
         if pending.empty?
           print "\n  You (empty line to exit): "
           pending = $stdin.gets&.chomp.to_s

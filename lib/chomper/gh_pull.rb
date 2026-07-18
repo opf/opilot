@@ -75,10 +75,7 @@ module Chomper
       dirs = shipped_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
       @scanned_count = dirs.length
       intents = []
-      dirs.each do |d|
-        break if Chomper.stopping?
-        intents.concat(intents_for_dir(d))
-      end
+      dirs.each { |d| intents.concat(intents_for_dir(d)) }
       intents
     end
 

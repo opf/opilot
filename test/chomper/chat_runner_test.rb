@@ -31,7 +31,6 @@ module Chomper
       end.new(
         Pathname(@tmpdir), state_dir, "/state", Pathname(@tmpdir) / "chomp.log", registry
       )
-      Chomper.reset_stop!
     end
 
     def teardown

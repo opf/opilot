@@ -60,7 +60,6 @@ module Chomper
       processed = 0; progressed = false; reached_floor = false
       page = 1; page_size = 50; total_written = 0; total = 0
       loop do
-        break if Chomper.stopping?
         code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
         raise Chomper::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
         raise Chomper::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
@@ -70,7 +69,6 @@ module Chomper
         break if count == 0
 
         (resp.dig("_embedded", "elements") || []).each do |wp|
-          break if Chomper.stopping?
           # Results are sorted updatedAt desc, and posting a @chomper comment bumps
           # the WP's updatedAt — so a WP last touched before the scan floor can't
           # carry a trigger newer than the floor, and neither can any WP after it.
@@ -94,7 +92,7 @@ module Chomper
           yield wp, cached, comments
         end
 
-        break if reached_floor || Chomper.stopping?
+        break if reached_floor
         total_written += count
         break if total_written >= total
         page += 1
