@@ -109,16 +109,19 @@ module Chomper
     # trades the fork's isolation for the protected-branch guard + human-gated
     # merge. The default "fork" path forks, pushes to the fork, and opens a
     # cross-repo PR, so the token never needs write access to the canonical repo.
+    # Direct is a script-mode option only: the CLI calls #force_fork! for the
+    # agent loops, which pins this to fork regardless of the env.
     def direct_pr?
+      return false if @force_fork
       ENV["CHOMPER_PR_MODE"].to_s.strip.downcase == "direct"
     end
 
-    # Let gh-agent auto-fix failed CI on chomper's own draft PRs (default off).
-    # When on, a completed-and-failed CI run on a chomper PR triggers a fix that
-    # is committed and pushed to update the PR — autonomous spend + push, so it's
-    # explicitly opt-in. Bounded by #ci_max_attempts.
-    def ci_fix?
-      %w[1 true yes].include?(ENV["CHOMPER_CI_FIX"].to_s.strip.downcase)
+    # Pin PR publishing to fork mode for this process, overriding a
+    # CHOMPER_PR_MODE=direct. Used by the agent loops, which run unattended —
+    # direct mode's safety story is an interactive yes before every
+    # canonical-repo push, and an unattended loop cannot provide one.
+    def force_fork!
+      @force_fork = true
     end
 
     # How many times gh-agent will chase a single PR's CI before giving up and

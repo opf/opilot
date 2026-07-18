@@ -233,7 +233,7 @@ module Chomper
       @ctx.pr_mode = "direct"
       out, = with_stdin("s\n") { capture_io { @agent.handle(gh_intent) } }
 
-      assert_includes out, "DIRECT mode: push bug/42-fix-the-bug"
+      assert_includes out, "Push bug/42-fix-the-bug"
       assert_equal 1, @worktree.commits.length, "the commit itself still lands in the clone"
       assert_empty @github.pushed, "a declined direct push must not reach the remote"
       assert_includes out, "declined"
@@ -248,6 +248,18 @@ module Chomper
       yield
     ensure
       $stdin = old
+    end
+
+    def test_fork_mode_push_to_a_canonical_head_repo_is_still_gated
+      # A PR shipped in direct mode has its head branch on the canonical repo; a
+      # later fork-mode run (incl. agent mode's forced fork) must not wave its
+      # follow-up pushes through — non-interactive stdin declines.
+      intent = gh_intent
+      intent.head_repo = @repo.upstream   # the registry upstream, not a fork
+      out, = with_stdin("") { capture_io { @agent.handle(intent) } }
+
+      assert_empty @github.pushed, "an unconfirmed push to the canonical repo must never happen"
+      assert_includes out, "declined"
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push

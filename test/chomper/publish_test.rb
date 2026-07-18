@@ -130,7 +130,7 @@ module Chomper
       url = nil
       out, = with_stdin("y\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
-      assert_includes out, "DIRECT mode: push bug/42-fix-the-bug to opf/openproject?",
+      assert_includes out, "Push bug/42-fix-the-bug to opf/openproject?",
                       "a direct push must be gated on an interactive yes"
       assert_empty @github.forked, "direct mode must not fork"
       assert_equal [["opf/openproject", "bug/42-fix-the-bug"]], @github.pushed,

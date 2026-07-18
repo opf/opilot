@@ -15,11 +15,9 @@ module Chomper
     WfRun         = Struct.new(:id, keyword_init: true)
     WfJob         = Struct.new(:id, :name, :status, :conclusion, keyword_init: true)
 
-    # ctx exposing the predicate/reader methods GhPull calls (`ci_fix?` can't be a
-    # plain Struct member because of the `?`), with CI off by default.
+    # ctx exposing the reader methods GhPull calls.
     CtxClass = Struct.new(:state_dir, :allowed_gh_users, :github_token, :log_file,
-                          :ci_fix, :ci_max_attempts, :ci_ignored_checks) do
-      def ci_fix? = ci_fix
+                          :ci_max_attempts, :ci_ignored_checks) do
       def op_host = "test.host"   # WP mirror namespace
     end
 
@@ -50,7 +48,7 @@ module Chomper
     def setup
       @tmpdir = Dir.mktmpdir
       @ctx = CtxClass.new(
-        Pathname(@tmpdir) / ".chomper", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", false, 2, []
+        Pathname(@tmpdir) / ".chomper", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", 2, []
       )
       @dir = @ctx.state_dir / "work_packages" / "test.host" / "42"
       @pr_dir = @dir / "repos" / "openproject"   # per-repo PR subdir
@@ -274,20 +272,12 @@ module Chomper
 
     # ── CI auto-fix ──────────────────────────────────────────────────────────
 
-    def test_no_ci_intent_when_ci_fix_is_disabled
-      @ctx.ci_fix = false
-      gh = pull(check_runs: [check_run])
-      assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
-    end
-
     def test_no_ci_intent_while_checks_are_still_running
-      @ctx.ci_fix = true
       gh = pull(check_runs: [check_run(status: "in_progress", conclusion: nil)])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
     end
 
     def test_acts_on_the_first_failure_without_waiting_for_pending_checks
-      @ctx.ci_fix = true
       gh = pull(check_runs: [
         check_run(name: "yamllint", conclusion: "failure"),         # fast job already failed
         check_run(name: "RSpec", status: "in_progress", conclusion: nil)  # slow job still running
@@ -297,13 +287,11 @@ module Chomper
     end
 
     def test_no_ci_intent_when_all_checks_are_green
-      @ctx.ci_fix = true
       gh = pull(check_runs: [check_run(conclusion: "success")])
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
     end
 
     def test_green_verdict_is_cached_for_a_settled_pr_so_check_runs_isnt_re_polled
-      @ctx.ci_fix = true
       # The default PR updated_at is days old → settled, so green is trusted.
       gh = pull(check_runs: [check_run(conclusion: "success")])
       gh.poll_intents("2000-01-01T00:00:00Z")
@@ -317,7 +305,6 @@ module Chomper
     end
 
     def test_green_is_not_cached_until_the_commit_settles
-      @ctx.ci_fix = true
       # A just-pushed commit: only the fast green checks have registered so far.
       # Caching green now would hide the failing checks that register seconds later.
       pull(check_runs: [check_run(conclusion: "success")],
@@ -329,7 +316,6 @@ module Chomper
     end
 
     def test_pending_checks_are_not_cached_and_keep_being_polled
-      @ctx.ci_fix = true
       pull(check_runs: [check_run(status: "in_progress", conclusion: nil)]).poll_intents("2000-01-01T00:00:00Z")
       gh2 = pull(check_runs: [check_run(status: "in_progress", conclusion: nil)])
       gh2.poll_intents("2000-01-01T00:00:00Z")
@@ -337,7 +323,6 @@ module Chomper
     end
 
     def test_failed_checks_yield_one_ci_intent_and_cache_failure_detail
-      @ctx.ci_fix = true
       gh = pull(
         check_runs:    [check_run(annotations_count: 1)],
         annotations:   [Annotation.new(path: "app/x.rb", start_line: 42,
@@ -362,7 +347,6 @@ module Chomper
     end
 
     def test_ignored_check_names_do_not_trigger_a_ci_fix
-      @ctx.ci_fix = true
       @ctx.ci_ignored_checks = ["saas tests"]
       gh = pull(check_runs: [
         check_run(name: "SaaS tests", conclusion: "failure"),   # ignored → not actionable
@@ -373,7 +357,6 @@ module Chomper
     end
 
     def test_a_real_failure_alongside_an_ignored_one_still_triggers
-      @ctx.ci_fix = true
       @ctx.ci_ignored_checks = ["saas tests"]
       gh = pull(check_runs: [
         check_run(name: "SaaS tests", conclusion: "failure"),
@@ -386,14 +369,12 @@ module Chomper
     end
 
     def test_does_not_act_twice_on_the_same_head_sha
-      @ctx.ci_fix = true
       gh = pull(check_runs: [check_run])
       gh.mark_ci_acted("42", "openproject", "sha123")     # already chased this commit
       assert_empty gh.poll_intents("2000-01-01T00:00:00Z")
     end
 
     def test_gives_up_after_the_attempt_cap_and_posts_once
-      @ctx.ci_fix = true
       @ctx.ci_max_attempts = 2
       gh = pull(check_runs: [check_run])
       # Two prior attempts on earlier commits exhaust the cap.
@@ -411,7 +392,6 @@ module Chomper
     end
 
     def test_a_comment_trigger_suppresses_the_ci_intent_this_tick
-      @ctx.ci_fix = true
       gh = pull(
         issue:      [issue_c(id: 1, body: "@chomper please tweak", login: "thykel", at: "2026-06-18T18:05:00Z")],
         check_runs: [check_run]

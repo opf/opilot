@@ -54,11 +54,13 @@ module Chomper
       with_env("OPENPROJECT_URL" => nil) { assert_equal "unknown-host", Context.build(@tmpdir).op_host }
     end
 
-    def test_ci_fix_is_off_by_default_and_opt_in
-      with_env("CHOMPER_CI_FIX" => nil) { refute Context.build(@tmpdir).ci_fix? }
-      with_env("CHOMPER_CI_FIX" => "1") { assert Context.build(@tmpdir).ci_fix? }
-      with_env("CHOMPER_CI_FIX" => "true") { assert Context.build(@tmpdir).ci_fix? }
-      with_env("CHOMPER_CI_FIX" => "0") { refute Context.build(@tmpdir).ci_fix? }
+    def test_force_fork_overrides_direct_pr_mode
+      with_env("CHOMPER_PR_MODE" => "direct") do
+        ctx = Context.build(@tmpdir)
+        assert ctx.direct_pr?, "sanity: env selects direct mode"
+        ctx.force_fork!
+        refute ctx.direct_pr?, "force_fork! must pin publishing to fork mode"
+      end
     end
 
     def test_assign_trigger_is_on_by_default_and_opt_out

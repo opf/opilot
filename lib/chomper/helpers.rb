@@ -221,17 +221,20 @@ module Chomper
       $stdout.flush
     end
 
-    # Gate for pushes when chomper is NOT in fork mode: a direct-mode push goes
-    # to the canonical repo, so every single one needs an explicit interactive
-    # yes — neither AUTO_PLAN_APPROVAL nor the agent loops bypass it. Fork-mode
-    # pushes only ever touch the bot's fork and pass straight through. A
-    # non-interactive stdin (unattended run) declines rather than pushing
-    # unconfirmed.
+    # Gate for pushes that could land on a canonical repo: fires for every push
+    # while direct mode is on, and — regardless of mode — for any push whose
+    # target IS a registry upstream (a PR shipped in direct mode has its head
+    # branch on the canonical repo, and a later fork-mode run — including agent
+    # mode's forced fork — must not wave its follow-up pushes through). Every
+    # gated push needs an explicit interactive yes; neither AUTO_PLAN_APPROVAL
+    # nor the agent loops bypass it. Pushes to the bot's own fork pass straight
+    # through. A non-interactive stdin (unattended run) declines rather than
+    # pushing unconfirmed.
     def confirm_direct_push?(target_repo, branch)
-      return true unless @ctx.direct_pr?
-      ping_terminal("chomper: confirm DIRECT push of #{branch}")
+      return true unless @ctx.direct_pr? || canonical_repo?(target_repo)
+      ping_terminal("chomper: confirm push of #{branch} to #{target_repo}")
       loop do
-        print "  DIRECT mode: push #{branch} to #{target_repo}? [y]es push / [s]kip: "
+        print "  Push #{branch} to #{target_repo}? [y]es push / [s]kip: "
         response = $stdin.gets
         return false if response.nil?   # no interactive stdin — never push unconfirmed
         case response.chomp.downcase
@@ -240,6 +243,12 @@ module Chomper
         else puts "  Please enter y or s."
         end
       end
+    end
+
+    # Is this "owner/repo" one of the registry upstreams, i.e. a canonical repo?
+    # (Registry#by_upstream can't answer this — it falls back to the default repo.)
+    def canonical_repo?(owner_repo)
+      @ctx.repos.all.any? { |r| r.upstream.casecmp?(owner_repo.to_s) }
     end
 
     def safe_rm(*paths)

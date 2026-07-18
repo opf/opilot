@@ -171,11 +171,11 @@ runs the full `pr`-command refresh (forced base merge, CI fix, feedback sweep).
 
 Chomper may operate in one of two PR publishing modes:
 * **Fork publishing**
-  * Default for the Agent mode
+  * Default everywhere, and **enforced in Agent mode** — the agent loops run unattended, so `CHOMPER_PR_MODE=direct` is ignored there (with a startup notice)
   * A dedicated unprivileged user (such as [op-chomper](https://github.com/op-chomper)) publishes **contributor** PRs
   * The contributor PR offers an easy way to _overtake the PR_ via closing the bot PR & re-opening a new one under your own account.
 * **Direct publishing**:
-  * Built for the Script mode
+  * Script mode only (`ship` / `build` / `pr`), where every push to the canonical repo is confirmed interactively
   * Publishes PRs under your own GitHub account
   * While there are lots of safeguards in place, this option is less secure and mostly here for experimental purposes.
 

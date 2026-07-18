@@ -58,12 +58,12 @@ module Chomper
 
     # One poll-and-handle pass over both PR sources (no sleep).
     def tick(scan_from_at)
-      log_script "Polling chomper fork PRs + upstream PRs#{@ctx.ci_fix? ? " (incl. CI status)" : ""}…"
+      log_script "Polling chomper fork PRs + upstream PRs (incl. CI status)…"
       intents = @pull.poll_intents(scan_from_at) + @upstream_pull.poll_intents(scan_from_at)
       ci      = intents.count { |i| i.kind == :ci }
       trig    = intents.length - ci
       summary = "#{trig} @chomper trigger#{trig == 1 ? "" : "s"}"
-      summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}" if @ctx.ci_fix?
+      summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}"
       log_script "Polled #{@pull.scanned_count} chomper PR(s) + #{@upstream_pull.scanned_count} upstream PR(s) — #{summary}"
       intents.each { |intent| handle_and_ack(intent) }
     end
@@ -145,7 +145,7 @@ module Chomper
       push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
-    # CI failed on one of chomper's own PRs (opt-in, CHOMPER_CI_FIX). Same shape
+    # CI failed on one of chomper's own PRs. Same shape
     # as handle_own — sync the PR head, let Claude read the cached failure detail
     # (ci.json: failed checks, annotations, failed-job log tails) and fix it in
     # the worktree, then commit + push to update the draft PR. Claude may make no
@@ -180,7 +180,7 @@ module Chomper
     # "@chomper refresh" on one of chomper's own PRs: hand it to PrRunner for
     # the full `pr`-command treatment — a forced base-branch merge (the trigger
     # comment just bumped updated_at, so the quiet-day heuristic would always
-    # skip it), a CI fix regardless of CHOMPER_CI_FIX/act-state/attempt cap, and
+    # skip it), a CI fix regardless of act-state/attempt cap, and
     # a sweep of fresh feedback (the trigger comment included, so the commenter
     # gets a reply). PrRunner posts its own summary and advances the comment
     # cutoff; handle_and_ack then acks the trigger comment as usual.

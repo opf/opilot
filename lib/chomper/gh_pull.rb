@@ -189,10 +189,10 @@ module Chomper
         )
       end
 
-      # When enabled, also react to a failed CI run — but not in the same tick as
-      # a comment trigger for this PR: let the requested change land first, since
-      # CI re-runs on the new commit anyway.
-      if @ctx.ci_fix? && intents.empty?
+      # Also react to a failed CI run — but not in the same tick as a comment
+      # trigger for this PR: let the requested change land first, since CI
+      # re-runs on the new commit anyway.
+      if intents.empty?
         ci = ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject)
         intents << ci if ci
       end

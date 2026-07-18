@@ -17,7 +17,7 @@ module Chomper
   # This is gh-agent's own-PR machinery driven by the operator instead of a
   # polling trigger: no @chomper mention is needed, no allowlist applies (the
   # operator running the command is the authorization), and CI fixing works
-  # regardless of CHOMPER_CI_FIX, act-state, or the attempt cap. The draft-PR +
+  # regardless of act-state or the attempt cap. The draft-PR +
   # human-gated-merge safety is unchanged — pushes go to the PR's head branch
   # only, and the terminal confirmation adds a gate gh-agent doesn't have.
   #
@@ -347,8 +347,8 @@ module Chomper
     # failure (detail freshly cached); :ci_detail_expired when it failed but
     # every summary/annotation/log has aged out of retention (nothing for Claude
     # to act on — the caller falls back to a base sync + push, which re-runs
-    # CI); else nil. Unlike gh-agent's poller this ignores CHOMPER_CI_FIX,
-    # act-state, and the attempt cap — the operator explicitly asked.
+    # CI); else nil. Unlike gh-agent's poller this ignores
+    # act-state and the attempt cap — the operator explicitly asked.
     def ci_failure_ref(dir, base_repo, head_sha)
       return nil if head_sha.empty?
       ignore = @ctx.ci_ignored_checks
