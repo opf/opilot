@@ -32,7 +32,7 @@ module Chomper
     def poll_intents(filters)
       intents = []
       each_filtered_wp(filters, label: "Polling") do |wp, _cached, comments|
-        intent = intent_from_comments(wp, comments)
+        intent = intent_from_comments(wp, comments) || intent_from_assignment(wp)
         intents << intent if intent
       end
       intents
@@ -107,6 +107,18 @@ module Chomper
     # re-emitted on later polls. Called by the agent after a successful handle.
     def mark_acted(item_id, comment_at)
       mark_chomper_acted(item_id, comment_at)
+    end
+
+    # Record that chomper's assignment on this WP has been acted on — the
+    # assignment trigger fires once per WP, ever (unassign→reassign does not
+    # re-fire; later re-work goes through @chomper comments). Called by the
+    # agent after a handle, like #mark_acted.
+    def mark_assignment_acted(wp_id)
+      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
+      return unless item_path.exist?
+      data = JSON.parse(item_path.read)
+      data["assignee_acted_at"] = Time.now.utc.iso8601
+      item_path.write(JSON.generate(data))
     end
 
     # Record the ID of a note posted by chomper so it is never re-detected as a
@@ -390,6 +402,49 @@ module Chomper
       )
     end
 
+    # Setting chomper as a WP's assignee means "just fix it": synthesize the same
+    # :fix intent a `@chomper fix` comment produces (plan + implement + draft PR,
+    # no approval gate). Deliberately not allowlist-gated — assigning requires
+    # OpenProject's edit-work-package permission — and fires at most once per WP,
+    # ever (assignee_acted_at in item.json). A WP that already shipped a PR is
+    # marked acted without firing, so a comment-shipped WP assigned later does
+    # no double work.
+    def intent_from_assignment(wp)
+      return nil unless @ctx.assign_trigger?
+      return nil unless assigned_to_chomper?(wp)
+
+      wp_id = wp_display_id(wp)
+      saved = Helpers.safe_json_read(Helpers.item_dir(@ctx, wp_id) / "item.json") || {}
+      return nil if saved["assignee_acted_at"]
+      if shipped?(wp_id)
+        mark_assignment_acted(wp_id)
+        return nil
+      end
+
+      Intent.new(
+        item_id: wp_id,
+        subject: wp["subject"],
+        type:    wp.dig("_embedded", "type", "name").to_s,
+        command: :fix,
+        text:    "",
+        source:  :assignment
+      )
+    end
+
+    # The assignee link must be a *user* matching chomper's own id — an assignee
+    # can also be a group or placeholder user, whose numeric id could collide
+    # with the bot's user id under a different resource type.
+    def assigned_to_chomper?(wp)
+      id = wp.dig("_links", "assignee", "href").to_s[%r{/users/(\d+)\z}, 1]
+      !id.nil? && !own_user_id.empty? && id == own_user_id
+    end
+
+    # Any repo's pr_url.txt with content — the WP already shipped a PR.
+    def shipped?(wp_id)
+      Dir.glob((Helpers.item_dir(@ctx, wp_id) / "repos" / "*" / "pr_url.txt").to_s)
+         .any? { |p| Helpers.file_has_content?(Pathname.new(p)) }
+    end
+
     # Map @chomper trigger text to a [command, free-text] pair. Anything that is
     # not a known command word becomes a :chat carrying the message body.
     def parse_command(raw)
@@ -462,8 +517,9 @@ module Chomper
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
-        full["last_acted_comment_at"]  = prev["last_acted_comment_at"]  if prev.key?("last_acted_comment_at")
-        full["last_chomper_comment_id"] = prev["last_chomper_comment_id"] if prev.key?("last_chomper_comment_id")
+        %w[last_acted_comment_at last_chomper_comment_id assignee_acted_at].each do |key|
+          full[key] = prev[key] if prev.key?(key)
+        end
       end
       item_dir.mkpath
       item_path.write(JSON.generate(full))

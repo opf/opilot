@@ -61,6 +61,13 @@ module Chomper
       with_env("CHOMPER_CI_FIX" => "0") { refute Context.build(@tmpdir).ci_fix? }
     end
 
+    def test_assign_trigger_is_on_by_default_and_opt_out
+      with_env("CHOMPER_ASSIGN_TRIGGER" => nil) { assert Context.build(@tmpdir).assign_trigger? }
+      with_env("CHOMPER_ASSIGN_TRIGGER" => "1") { assert Context.build(@tmpdir).assign_trigger? }
+      with_env("CHOMPER_ASSIGN_TRIGGER" => "0") { refute Context.build(@tmpdir).assign_trigger? }
+      with_env("CHOMPER_ASSIGN_TRIGGER" => "false") { refute Context.build(@tmpdir).assign_trigger? }
+    end
+
     def test_ci_max_attempts_defaults_to_five_and_is_floored_at_one
       with_env("CHOMPER_CI_MAX_ATTEMPTS" => nil) { assert_equal 5, Context.build(@tmpdir).ci_max_attempts }
       with_env("CHOMPER_CI_MAX_ATTEMPTS" => "3") { assert_equal 3, Context.build(@tmpdir).ci_max_attempts }

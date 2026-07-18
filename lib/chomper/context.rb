@@ -86,6 +86,15 @@ module Chomper
       %w[1 true yes].include?(ENV["CHOMPER_PLAN_REVIEW"].to_s.strip.downcase)
     end
 
+    # Act on chomper being set as a WP's assignee as if the assigner commented
+    # `@chomper fix` (default on; set CHOMPER_ASSIGN_TRIGGER=0 to disable).
+    # Assignment needs OpenProject's edit-work-package permission, but is not
+    # gated by the comment allowlist — turn this off on instances where WP edit
+    # rights are broad.
+    def assign_trigger?
+      !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
+    end
+
     # Auto-approve every plan instead of waiting for a human (default off). In
     # fix/plan the terminal approval prompt resolves to "yes"; in agent mode a
     # planned WP is implemented immediately rather than waiting for `@chomper

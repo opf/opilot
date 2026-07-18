@@ -42,10 +42,11 @@ module Chomper
     end
 
     class FakePull
-      attr_reader :acted
+      attr_reader :acted, :assignment_acted
       attr_accessor :related
-      def initialize; @acted = []; @related = []; end
+      def initialize; @acted = []; @assignment_acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
+      def mark_assignment_acted(id); @assignment_acted << id; end
       def record_chomper_comment(*, **); end
       def related_work_packages(_id); @related; end
     end
@@ -134,9 +135,11 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
-    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil, user_href: nil, internal: nil)
+    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil,
+               user_href: nil, internal: nil, comment_at: "2024-02-01T00:00:00Z", source: nil)
       Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
-                 comment_at: "2024-02-01T00:00:00Z", user: user, user_href: user_href, internal: internal)
+                 comment_at: comment_at, user: user, user_href: user_href, internal: internal,
+                 source: source)
     end
 
     # Make worktree(repo) return the same fake for every repo, so tests can drive
@@ -389,6 +392,33 @@ module Chomper
       # A handled error is logged, not posted — no error note left on the WP.
       refute(@notes.any? { |n| n.include?("hit an error") }, "must not post an error note on the WP")
       refute pr_url_path.exist?
+    end
+
+    # ── assignment trigger ────────────────────────────────────────────────────
+
+    def assignment_intent
+      intent(:fix, source: :assignment, comment_at: nil, text: "")
+    end
+
+    def test_assignment_intent_plans_ships_and_acks_the_marker
+      @agent.send(:handle_and_ack, assignment_intent)
+
+      assert plan_path.exist?
+      assert pr_url_path.exist?
+      assert_equal ["42"], @pull.assignment_acted
+      assert_empty @pull.acted, "must not touch last_acted_comment_at — that would reopen old comment triggers"
+      refute(@notes.any? { |n| n.include?("<mention") }, "no commenter to address")
+      assert(@note_visibility.all?, "assignment replies default to internal")
+    end
+
+    def test_assignment_intent_acks_the_marker_on_error
+      agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
+      inject_worktree(agent, FakeWorktree.new)
+
+      agent.send(:handle_and_ack, assignment_intent)
+
+      assert_equal ["42"], @pull.assignment_acted
+      assert_empty @pull.acted
     end
 
     def test_replies_mention_the_requesting_user

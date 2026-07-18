@@ -258,9 +258,11 @@ module Chomper
       (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
     end
 
-    def build_pull(allowed_op_user_ids = [])
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
-                  .new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids)
+    def build_pull(allowed_op_user_ids = [], assign_trigger: true)
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids, :assign_trigger) do
+        def op_host; "example.com"; end
+        def assign_trigger?; assign_trigger; end
+      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids, assign_trigger)
       Pull.new(ctx)
     end
 
@@ -468,6 +470,103 @@ module Chomper
       assert @pull.send(:chomper_mentioned?, "@chomper plan")
       refute @pull.send(:chomper_mentioned?, %q(<mention data-id="2">@Alice</mention> hi))
       refute @pull.send(:chomper_mentioned?, "just a normal comment")
+    end
+
+    # ── assignment trigger ────────────────────────────────────────────────────
+
+    def wp_assigned(id, updated_at, href: "/api/v3/users/1")
+      wp(id, updated_at).merge("_links" => { "assignee" => { "href" => href } })
+    end
+
+    def item_path(id)
+      Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s / "item.json"
+    end
+
+    def test_assignment_emits_fix_intent_bypassing_allowlist
+      # The allowlist gates comment triggers only — assignment needs edit rights.
+      @pull = build_pull(["99"])
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal "1",         intents[0].item_id
+      assert_equal :fix,        intents[0].command
+      assert_equal "",          intents[0].text
+      assert_equal :assignment, intents[0].source
+      assert_nil intents[0].comment_at
+      assert_nil intents[0].user
+    end
+
+    def test_assignment_does_not_refire_after_acted
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.mark_assignment_acted("1")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_assignment_ignores_other_users_and_groups
+      # User 2 is not chomper; a *group* with chomper's numeric id must not match.
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      seed_item(2, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp_assigned(1, "2024-01-02T00:00:00Z", href: "/api/v3/users/2"),
+         wp_assigned(2, "2024-01-02T00:00:00Z", href: "/api/v3/groups/1")], total: 2))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_assignment_disabled_by_kill_switch
+      @pull = build_pull(assign_trigger: false)
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_comment_trigger_wins_over_assignment_in_same_tick
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan watch the edges" }
+      ])
+      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(FILTERS)
+      assert_equal 1, intents.length
+      assert_equal :plan, intents[0].command
+      assert_nil intents[0].source
+    end
+
+    def test_assignment_on_shipped_wp_is_marked_acted_without_intent
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      pr_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "repos" / "openproject"
+      pr_dir.mkpath
+      (pr_dir / "pr_url.txt").write("https://github.com/opf/openproject/pull/1")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
+    end
+
+    def test_mark_assignment_acted_persists
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.mark_assignment_acted("1")
+      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
+    end
+
+    def test_assignment_marker_survives_item_refresh
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.mark_assignment_acted("1")
+      # Simulate a re-fetch that rewrites item.json (updated_at changes).
+      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stale_wp = wp(1, "2024-03-01T00:00:00Z")
+      @pull.send(:fetch_work_package_item, stale_wp)
+      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
     end
 
     # mirror caches every matched WP (no intent parsing) and reports counts.

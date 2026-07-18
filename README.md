@@ -158,6 +158,8 @@ Simply run `./chomper agent`
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
 `@chomper fix` plans and ships in one step, `@chomper plan` drafts a plan for
 review, `@chomper approve` ships the drafted plan — anything else just chats.
+Setting the chomper user as a WP's **assignee** also triggers the `fix` flow —
+once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
@@ -270,7 +272,6 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * AppSignal integration
   * [by implication] Ticket creation workflow
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
-* Trigger agent interaction by assigning a WP to the chomper user
 * Make the agent mode work off webhooks instead of constant polling
 * Update the WP while work is being done: transition to "in development", add release, etc.
   * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)

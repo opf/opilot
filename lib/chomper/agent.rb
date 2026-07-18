@@ -7,8 +7,11 @@ module Chomper
   # `user` / `user_href` identify the commenter, so replies can address them.
   # `internal` is the trigger comment's visibility, so the reply can mirror it
   # (an internal @chomper prompt gets an internal answer, a public one a public).
+  # `source` is nil for comment triggers and :assignment for a WP assigned to
+  # chomper (see Pull#intent_from_assignment) — assignment intents carry no
+  # comment fields, so replies are unaddressed and acked via the assignment marker.
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
-                      :user, :user_href, :internal, keyword_init: true)
+                      :user, :user_href, :internal, :source, keyword_init: true)
 
   # How long the agent loops sleep between polling passes.
   POLL_INTERVAL = 20
@@ -68,10 +71,22 @@ module Chomper
     # leaves the trigger for the next poll to retry.
     def handle_and_ack(intent)
       handle(intent)   # sets @requester as its first step
-      @pull.mark_acted(intent.item_id, intent.comment_at)
+      ack(intent)
     rescue => e
       log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.class}: #{e.message}"
-      @pull.mark_acted(intent.item_id, intent.comment_at)
+      ack(intent)
+    end
+
+    # Route act-state to the trigger's source: a comment trigger is keyed by its
+    # timestamp, an assignment trigger by the once-per-WP assignment marker
+    # (reusing mark_acted with the intent's nil comment_at would null out
+    # last_acted_comment_at and reopen old comment triggers).
+    def ack(intent)
+      if intent.source == :assignment
+        @pull.mark_assignment_acted(intent.item_id)
+      else
+        @pull.mark_acted(intent.item_id, intent.comment_at)
+      end
     end
 
     def handle(intent)
@@ -264,7 +279,7 @@ module Chomper
       if opened.any?
         links = opened.map { |repo, url| "- [#{st.subject} → `#{repo.name}`](#{url})" }.join("\n")
         suffix = failed.any? ? "\n\n(couldn't open a PR in: #{failed.map(&:name).join(", ")} — is GITHUB_TOKEN set?)" : ""
-        post_note(st.item_id, addressed("here's your draft PR#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
+        post_note(st.item_id, addressed("Here is your AI-generated prototype#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
       else
         post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
       end
