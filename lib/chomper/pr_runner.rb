@@ -56,10 +56,9 @@ module Chomper
     end
 
     # One PR, driven by gh-agent's "@chomper refresh" trigger. The commenter
-    # explicitly asked for a refresh, so the base merge is forced — the trigger
-    # comment itself just bumped the PR's updated_at, which would otherwise
-    # always trip the quiet-day heuristic. Raises on failure so gh-agent's
-    # error path reports it on the PR.
+    # explicitly asked for a refresh, so the base merge is forced — it happens
+    # even when the quiet-day heuristic (fresh commits on the branch) would
+    # skip it. Raises on failure so gh-agent's error path reports it on the PR.
     def refresh_one(wp_id, repo_name)
       dir = Helpers.item_dir(@ctx, wp_id) / "repos" / repo_name.to_s
       raise "no shipped PR recorded for #{wp_label(wp_id)} (#{repo_name})" unless Helpers.file_has_content?(dir / "pr_url.txt")
@@ -263,7 +262,7 @@ module Chomper
       wt            = worktree(repo)
       original_head = wt.revparse("HEAD")
 
-      conflicts  = (force_base_merge || stale_pr?(content)) ? merge_base(wt, repo, branch, base_ref) : []
+      conflicts  = (force_base_merge || stale_pr?(wt)) ? merge_base(wt, repo, branch, base_ref) : []
       ci_ref     = ci_failure_ref(dir, base_repo, content["head_sha"].to_s)
       ci_expired = ci_ref == :ci_detail_expired
       ci_ref     = nil if ci_expired
@@ -292,20 +291,21 @@ module Chomper
               reply: reply, feedback: feedback)
     end
 
-    # Only PRs with no activity for a day get the base branch merged in — an
-    # actively moving PR (a push, review, or comment within the last day) does
-    # not need merge commits churned into it, and its CI/feedback are usually
-    # about the change itself, not base drift. CI fixes and comment handling
-    # still run regardless of age.
+    # Only PRs whose branch has been quiet for a day get the base branch merged
+    # in — a branch with fresh commits does not need merge commits churned into
+    # it. Judged on the head commit's date (the worktree is already synced to
+    # the PR head here), NOT the PR's updated_at: comments and reviews bump
+    # updated_at too, and a fresh comment must not block the merge. CI fixes
+    # and comment handling still run regardless of age.
     PR_REFRESH_MIN_AGE = 24 * 60 * 60
 
-    def stale_pr?(content)
-      updated = content["updated_at"].to_s
-      return true if updated.empty?   # unknown age — keep the old always-merge behaviour
-      stale = Time.now - Time.parse(updated) > PR_REFRESH_MIN_AGE
-      log_script "PR was active in the last day — skipping the base merge." unless stale
+    def stale_pr?(wt)
+      committed_at = wt.log(1).execute.first&.date
+      return true if committed_at.nil?   # unknown age — keep the old always-merge behaviour
+      stale = Time.now - committed_at > PR_REFRESH_MIN_AGE
+      log_script "PR has commits from the last day — skipping the base merge." unless stale
       stale
-    rescue ArgumentError
+    rescue Git::Error
       true
     end
 

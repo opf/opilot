@@ -65,6 +65,8 @@ module Chomper
     end
 
     class FakeCommit
+      attr_reader :date
+      def initialize(date: Time.utc(2026, 1, 1)); @date = date; end
       def sha; "abcdef1234567"; end
       def message; "[#42] Guard the nil case"; end
     end
@@ -84,9 +86,10 @@ module Chomper
 
     class FakeWorktree
       attr_reader :commits, :merges, :fetched, :resets, :checkouts
-      attr_accessor :behind, :has_changes, :merge_conflicts
+      attr_accessor :behind, :has_changes, :merge_conflicts, :head_committed_at
       def initialize(behind: false, has_changes: false, merge_conflicts: false)
         @behind = behind; @has_changes = has_changes; @merge_conflicts = merge_conflicts
+        @head_committed_at = Time.utc(2026, 1, 1)   # old by default → branch counts as quiet
         @head = "origsha"
         @commits = []; @merges = []; @fetched = []; @resets = []; @checkouts = []
       end
@@ -99,7 +102,7 @@ module Chomper
       def diff(*_args); FakeDiff.new(@has_changes); end
       # Argless log is the behind-base check (log.between…); log(1) is the
       # just-made commit lookup after commit_refresh.
-      def log(n = nil); FakeLog.new(n || @behind ? [FakeCommit.new] : []); end
+      def log(n = nil); FakeLog.new(n || @behind ? [FakeCommit.new(date: @head_committed_at)] : []); end
       def merge(_branch, _message)
         @merges << _message
         raise Git::Error, "merge conflict" if @merge_conflicts
@@ -176,11 +179,13 @@ module Chomper
       }, "pr")
     end
 
-    # Make the PR look recently active (updated within the last day).
+    # Make the PR look just-pushed: updated_at within the last day AND a head
+    # commit from the last day (commit recency is what gates the base merge).
     def make_pr_fresh(comments: [])
       now = Time.now.utc
       @github.pr = open_pr(updated_at: now)
       seed_pr_cache(comments: comments, updated_at: now)
+      @worktree.head_committed_at = now
     end
 
     # A failed check that completed recently (detail still within retention).
@@ -227,7 +232,7 @@ module Chomper
                    "an open PR lifts any pr_done left by an earlier closure (reopen support)"
     end
 
-    def test_a_pr_active_within_a_day_is_not_merged_from_base
+    def test_a_pr_with_commits_within_a_day_is_not_merged_from_base
       make_pr_fresh
       @worktree.behind = true
       out, = capture_io { @runner.run("42") }
@@ -235,6 +240,17 @@ module Chomper
       assert_empty @worktree.merges, "an actively moving PR must not get a base merge churned in"
       assert_includes out, "skipping the base merge"
       assert_empty @github.pushed
+    end
+
+    def test_a_comment_bumped_pr_with_old_commits_still_gets_the_base_merge
+      now = Time.now.utc
+      @github.pr = open_pr(updated_at: now)   # a fresh comment bumped updated_at…
+      seed_pr_cache(updated_at: now)
+      @worktree.behind = true                 # …but the branch itself is old and behind
+      capture_io { @runner.run("42") }
+
+      assert_equal ["Merge dev into bug/42-fix"], @worktree.merges,
+                   "the quiet window is judged on commit history, not any PR activity"
     end
 
     def test_a_fresh_prs_ci_failure_is_still_fixed_without_a_base_merge
@@ -473,7 +489,7 @@ module Chomper
     # ── gh-agent's "@chomper refresh" entry point ────────────────────────────
 
     def test_refresh_one_forces_the_base_merge_on_an_active_pr
-      make_pr_fresh   # the trigger comment itself bumped updated_at
+      make_pr_fresh   # the branch has fresh commits, which would normally skip the merge
       @worktree.behind = true
       capture_io { @runner.refresh_one("42", "openproject") }
 
