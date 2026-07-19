@@ -229,7 +229,7 @@ module Chomper
     # Post Claude's reply: in-thread for an inline review comment, otherwise on
     # the PR's conversation. Records our comment id so it isn't re-triggered.
     def post_reply(intent, body)
-      text = body.to_s.strip
+      text = Helpers.extract_reply(body)
       return if text.empty?
       # Label every reply as automated so readers don't mistake it for a human
       # comment posted under the token owner's identity.

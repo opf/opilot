@@ -511,7 +511,7 @@ module Chomper
     # Post Claude's summary as a PR comment (labelled automated, like gh-agent's
     # replies) and record its id so the pollers never treat it as a trigger.
     def post_summary(wp_id, dir, base_repo, number, reply)
-      text = reply.to_s.strip
+      text = Helpers.extract_reply(reply)
       return if text.empty?
       comment = @github.add_issue_comment(base_repo, number, "🤖 #{text}")
       @gh_pull.record_chomper_comment(wp_id, dir.basename.to_s, comment&.id)

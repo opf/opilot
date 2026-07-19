@@ -156,6 +156,15 @@ module Chomper
       Time.now.strftime(LOG_TIME_FORMAT)
     end
 
+    # The PR-reply prompts (Prompts::REPLY_CONTRACT) mark the comment to post
+    # with a final "REPLY:" line; anything the model produced before it —
+    # narration about tooling trouble, "here's my reply:" framing — is discarded
+    # rather than posted. Output without the marker is posted whole, and the
+    # last marker wins if the text contains several.
+    def self.extract_reply(text)
+      text.to_s.split(/^REPLY:[ \t]*/, -1).last.to_s.strip
+    end
+
     # The bracketed prefix every log line starts with, e.g. "[ 14:23:01 ]".
     def log_prefix
       "[ #{log_timestamp} ]"

@@ -71,6 +71,20 @@ module Chomper
       Helpers.instance_variable_set(:@github_author_adopted, nil)
     end
 
+    def test_extract_reply_drops_everything_before_the_marker
+      raw = "I couldn't fetch PR #127 — no web access.\n\nHere's my honest reply:\n\nREPLY:\nWhat #128 does: wraps toModel.\n"
+      assert_equal "What #128 does: wraps toModel.", Helpers.extract_reply(raw)
+    end
+
+    def test_extract_reply_accepts_same_line_content_and_takes_the_last_marker
+      assert_equal "final", Helpers.extract_reply("REPLY: draft\nmore thinking\nREPLY: final")
+    end
+
+    def test_extract_reply_without_a_marker_returns_the_whole_text_stripped
+      assert_equal "just the answer", Helpers.extract_reply("  just the answer\n")
+      assert_equal "", Helpers.extract_reply(nil)
+    end
+
     def test_strip_ansi_passthrough_plain_string
       assert_equal "plain text", h.strip_ansi("plain text")
     end

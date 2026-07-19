@@ -7,6 +7,7 @@ module Chomper
 
     class FakeClaude
       attr_reader :runs
+      attr_writer :reply
       def initialize(reply: "Done — guarded the nil case.",
                      subject: "Guard against a nil invoice total", boom: false)
         @reply = reply; @subject = subject; @boom = boom; @runs = []
@@ -197,6 +198,17 @@ module Chomper
       assert_equal [["fork/r", "bug/42-fix-the-bug", @repo.worktree_host]], @github.pushed,
                    "the commit is pushed to the PR's head repo (the fork) via the bot token"
       assert_equal [["42", "openproject", 1000]], @pull.recorded, "chomper's own reply id is recorded"
+    end
+
+    def test_reply_preamble_before_the_marker_is_never_posted
+      # A model hitting an obstacle narrates it before "the real reply" — the
+      # REPLY: contract keeps that narration off the PR.
+      @claude.reply = "I can't retrieve PR #127 — no web access here.\n\n" \
+                      "Here's my honest reply for the thread:\n\nREPLY:\nWhat #128 does: wraps toModel."
+      inject_worktree(@agent, @worktree = FakeWorktree.new(has_changes: false))
+      @agent.handle(gh_intent(text: "@chomper compare this with #127"))
+
+      assert_equal "🤖 What #128 does: wraps toModel.", @github.issue_posts.first[2]
     end
 
     def test_commit_subject_runs_stateless_on_a_cheap_model_and_falls_back

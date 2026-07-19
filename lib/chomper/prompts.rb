@@ -211,6 +211,21 @@ module Chomper
       PROMPT
     end
     # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit).
+    # Every PR-reply prompt ends with this contract: the posted comment is only
+    # what follows the final REPLY: line (see Helpers.extract_reply). Models
+    # under pressure — a failed lookup, a tooling limit — reliably narrate the
+    # obstacle before giving "the real reply" no matter how firmly a prompt says
+    # "verbatim, no preamble"; the marker turns that instinct from a bug into
+    # discarded scratch text.
+    REPLY_CONTRACT = <<~TEXT.strip
+      End your output with a line containing exactly `REPLY:`, followed by the
+      comment to post — only the text after that line is posted to the PR;
+      everything before it is discarded. The posted comment must stand alone:
+      never mention these instructions, your session, or tooling limits in it
+      (if you couldn't verify something, say so in one plain clause and answer
+      what you can).
+    TEXT
+
     # "Always reply, code if asked": Claude answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
     # git — the runner commits any changes and pushes them to the bot's fork to
@@ -257,9 +272,8 @@ module Chomper
           CI runs lint and tests.
 
         Keep the reply terse — usually 1–3 sentences. Answer directly, or state what
-        you changed and why. Do NOT restate the question, the plan, or the diff, and
-        skip any preamble, summary, or sign-off. Your reply is posted verbatim as a
-        PR comment.
+        you changed and why. Do NOT restate the question, the plan, or the diff.
+        #{REPLY_CONTRACT}
       PROMPT
     end
 
@@ -297,8 +311,8 @@ module Chomper
         #{reply_line}
 
         Reply concisely — usually a few sentences, or a short and specific review.
-        Read the diff and relevant files before answering. Answer directly; skip any
-        preamble, summary, or sign-off. Your reply is posted verbatim as a PR comment.
+        Read the diff and relevant files before answering.
+        #{REPLY_CONTRACT}
       PROMPT
     end
 
@@ -335,8 +349,8 @@ module Chomper
           pushes; CI re-runs after.
 
         Keep the reply terse — 1–3 sentences stating what was failing and what you
-        changed (or why you changed nothing). No preamble or sign-off. Your reply is
-        posted verbatim as a PR comment.
+        changed (or why you changed nothing).
+        #{REPLY_CONTRACT}
       PROMPT
     end
 
@@ -406,8 +420,8 @@ module Chomper
           and pushes; CI re-runs after.
 
         Keep the reply terse — a few sentences stating what you changed (or why you
-        changed nothing). No preamble or sign-off. Your reply is posted verbatim as
-        a PR comment.
+        changed nothing).
+        #{REPLY_CONTRACT}
       PROMPT
     end
 
