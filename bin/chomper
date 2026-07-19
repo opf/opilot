@@ -40,7 +40,7 @@ end
 # acked nor error-reported, and the next run retries it.
 Signal.trap("INT") do
   reset_terminal
-  puts ""
+  puts "\nCtrl-C received, aborting..."
   exit 130
 end
 
