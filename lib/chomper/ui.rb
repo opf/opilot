@@ -106,7 +106,8 @@ module Chomper
         Environment:
           OPENPROJECT_URL         OpenProject instance URL
           OPENPROJECT_TOKEN       OpenProject API token
-          ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
+          ANTHROPIC_API_KEY       A real key (recommended; held by authgw, never in claude) or the
+                                  literal "oauth" for interactive claude auth login
           GITHUB_CONTRIBUTOR_TOKEN  Bot account token — fork publishing; used by the agent modes
           GITHUB_MAINTAINER_TOKEN   Push-access token — direct publishing for ship/pr (each push confirmed)
           CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper

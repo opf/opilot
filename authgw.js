@@ -16,7 +16,9 @@ const UPSTREAM = 'api.anthropic.com';
 const API_KEY   = process.env.ANTHROPIC_API_KEY;
 const GW_TOKEN  = process.env.CHOMPER_GW_TOKEN;
 
-if (!API_KEY)  { process.stderr.write('authgw: ANTHROPIC_API_KEY is not set\n'); process.exit(1); }
+// "oauth" is the sentinel that selects the claude-auth-login path, where this
+// gateway never runs — refuse to start rather than inject it as a key.
+if (!API_KEY || API_KEY === 'oauth') { process.stderr.write('authgw: ANTHROPIC_API_KEY is not set to a real key\n'); process.exit(1); }
 if (!GW_TOKEN) { process.stderr.write('authgw: CHOMPER_GW_TOKEN is not set\n');  process.exit(1); }
 
 // Reuse upstream TLS connections so inference calls don't pay a fresh handshake

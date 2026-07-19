@@ -64,13 +64,14 @@ fi
 
 if _need ANTHROPIC_API_KEY; then
   # With a key, it's held only by the authgw gateway — never passed to the claude
-  # container. Left blank, chomper falls back to interactive `claude auth login`
-  # (OAuth creds live in the claude container, so that path is less isolated).
+  # container. The literal value "oauth" selects interactive `claude auth login`
+  # instead (OAuth creds live in the claude container, so that path is less
+  # isolated); a blank entry saves that sentinel so the choice is explicit in .env.
   echo "  Anthropic API key — recommended; kept out of the claude container."
-  echo "  Leave blank to log in interactively instead (OAuth)."
-  printf "  Anthropic API key (sk-ant-…), or blank: "
+  echo "  Leave blank to log in interactively instead (saved as ANTHROPIC_API_KEY=oauth)."
+  printf "  Anthropic API key (sk-ant-…), or blank for OAuth: "
   read -rs ANTHROPIC_API_KEY_ENTRY; echo ""
-  _save ANTHROPIC_API_KEY "$ANTHROPIC_API_KEY_ENTRY"
+  _save ANTHROPIC_API_KEY "${ANTHROPIC_API_KEY_ENTRY:-oauth}"
   echo ""
 fi
 
@@ -172,9 +173,12 @@ if _is agent op-agent gh-agent ship fix build plan pr chat; then
   # reaches the claude container. With no key, fall back to interactive
   # `claude auth login` — its OAuth creds live in the claude container's config
   # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
+  # ANTHROPIC_API_KEY holds either a real key (→ the authgw gateway path) or
+  # the literal "oauth" (→ interactive `claude auth login`); a legacy blank
+  # value also means OAuth.
   : "${ANTHROPIC_API_KEY:=$(_env_get ANTHROPIC_API_KEY)}"
   _USE_GATEWAY=false
-  if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+  if [[ -n "$ANTHROPIC_API_KEY" && "$ANTHROPIC_API_KEY" != "oauth" ]]; then
     export ANTHROPIC_API_KEY
     export CHOMPER_GW_TOKEN="chomper-internal-gateway"
     export CHOMPER_CLAUDE_BASE_URL="http://authgw:47292"
