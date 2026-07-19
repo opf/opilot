@@ -139,7 +139,8 @@ module Chomper
       return unless produce_plan(st, intent.text) == :ok
       post_note(st.item_id, addressed(
         "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
-        "Reply `@chomper approve` to implement it, or `@chomper plan <feedback>` to revise."))
+        "Reply `@chomper approve` to implement it, `@chomper plan <feedback>` to revise, " \
+        "or `@chomper grill` to stress-test it first."))
     end
 
     def handle_approve(intent)

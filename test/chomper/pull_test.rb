@@ -139,6 +139,27 @@ module Chomper
                    @pull.send(:parse_command, "@chomper what about tests?")
     end
 
+    # ── chat lenses ───────────────────────────────────────────────────────────
+
+    def test_parse_command_grill_is_a_chat_with_the_lens_instruction
+      command, text = @pull.send(:parse_command, "@chomper grill")
+      assert_equal :chat, command
+      assert_equal Prompts::LENSES["grill"], text
+    end
+
+    def test_parse_command_lens_folds_trailing_text_into_a_focus_hint
+      command, text = @pull.send(:parse_command, "@chomper summarize the permissions discussion")
+      assert_equal :chat, command
+      assert text.start_with?(Prompts::LENSES["summarize"])
+      assert_includes text, "Focus especially on: the permissions discussion"
+    end
+
+    def test_parse_command_lens_is_case_insensitive_and_handles_mention_markup
+      command, text = @pull.send(:parse_command, "#{MENTION} GRILL")
+      assert_equal :chat, command
+      assert_equal Prompts::LENSES["grill"], text
+    end
+
     # OpenProject wraps the handle in CKEditor mention markup.
     MENTION = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 

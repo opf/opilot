@@ -158,7 +158,9 @@ Simply run `./chomper agent`
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
 `@chomper ship` plans and ships in one step (`fix` is a legacy alias),
 `@chomper plan` drafts a plan for review, `@chomper approve` ships the drafted
-plan — anything else just chats.
+plan. `@chomper grill` stress-tests the ticket or plan (gaps, edge cases,
+risks), `@chomper summarize` recaps a long thread — and anything else just
+chats.
 Setting the chomper user as a WP's **assignee** also triggers the `ship` flow —
 once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
 
@@ -275,7 +277,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ### Feature ideas
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
-    * chatting should have explicit options for those who want them: grill, simplify etc.
+    * more chat lenses beyond grill/summarize: simplify, options, explain, test-plan, impact
     * also add option to include the sub-WPs
 * Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
 * AppSignal integration

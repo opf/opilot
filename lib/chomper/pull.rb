@@ -454,6 +454,9 @@ module Chomper
       when /\A@chomper\s+ship\b\s*(.*)/im     then [:ship,    $1.strip]
       when /\A@chomper\s+fix\b\s*(.*)/im      then [:ship,    $1.strip]   # legacy alias of ship
       when /\A@chomper\s+approve\b/i          then [:approve, nil]
+      # Chat lenses: a preset instruction over the ordinary chat path, with any
+      # trailing text folded in as a focus hint (see Prompts::LENSES).
+      when /\A@chomper\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts.lens($1, $2)]
       else [:chat, text.sub(/@chomper\s*/i, "").strip]
       end
     end

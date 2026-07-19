@@ -98,6 +98,8 @@ module Chomper
           @chomper plan [feedback] Generate (or revise) an implementation plan
           @chomper approve         Implement the plan and open a draft PR
           @chomper ship [feedback] Plan and ship in one step, skipping approval (`fix` is an alias)
+          @chomper grill [focus]   Stress-test the ticket/plan: gaps, edge cases, risks
+          @chomper summarize [focus] Recap the thread: state, decisions, open questions
 
         @chomper PR comments (gh-agent, on a chomper-opened PR):
           @chomper <text>          Reply to the comment; if it asks for a code change,

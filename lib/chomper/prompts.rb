@@ -17,6 +17,36 @@ module Chomper
       approves, in a separate step.
     TEXT
 
+    # Chat lenses — named presets over the free-form :chat path. A lens word in
+    # an @chomper comment (`@chomper grill …`) maps to the ordinary chat intent
+    # with this instruction as the message, so it reuses the whole chat pipeline
+    # (session, related WPs, reply posting) with zero extra machinery. Any free
+    # text after the lens word becomes a focus hint.
+    LENSES = {
+      "grill" => <<~TEXT.strip,
+        Adversarially stress-test this work package — and its plan, if one exists.
+        Hunt for: missing acceptance criteria, unstated assumptions, edge cases
+        nobody mentioned, affected users/roles that were overlooked, and risks
+        that would make a fix wrong or incomplete. Be specific and terse — a
+        pointed list, not prose; no praise, no filler. End with the 2–3 questions
+        whose answers would most de-risk this work.
+      TEXT
+      "summarize" => <<~TEXT.strip,
+        Summarize this work package's thread for someone catching up: the current
+        state in one line, what has been decided (and by whom), how the
+        understanding evolved, and the open questions blocking progress. Use
+        short bullets; attribute decisions to their commenters; do not add your
+        own opinions or proposals.
+      TEXT
+    }.freeze
+
+    # The instruction for a lens word, with any trailing free text folded in as
+    # a focus hint.
+    def self.lens(name, focus = "")
+      base = LENSES.fetch(name.to_s.downcase)
+      focus.to_s.strip.empty? ? base : "#{base}\n\nFocus especially on: #{focus.strip}"
+    end
+
     # The AVAILABLE REPOS block + repo-selection instruction shared by plan/replan.
     # `repos` is an array of { name:, path:, description: }; `summary` is the
     # registry's top-level routing hint. Claude reads across the listed repos and
@@ -204,6 +234,8 @@ module Chomper
         - @chomper ship [feedback]  — plan and ship in one step (use this for most tasks)
         - @chomper plan [feedback]  — for complex tasks: draft a plan for review before touching any code
         - @chomper approve          — implement and ship a plan that was drafted with @chomper plan
+        - @chomper grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions
+        - @chomper summarize [focus] — recap the thread: state, decisions, open questions
 
         USER: #{message}
 
