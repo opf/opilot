@@ -41,10 +41,12 @@ module Chomper
       # author's user id in the activity's `_links.user.href`.
       @allowed_op_user_ids   = ENV.fetch("CHOMPER_ALLOWED_OP_USER_IDS", "")
                                   .split(",").map { |id| id.strip }.reject(&:empty?)
-      # GitHub logins allowed to trigger `gh-agent` on a chomper PR. Unlike the
-      # email allowlist, this defaults to a single user rather than "everyone" —
-      # an open trigger on a public PR would let anyone push code to your branch.
-      @allowed_gh_users      = ENV.fetch("CHOMPER_ALLOWED_GH_USERS", "thykel")
+      # GitHub logins allowed to trigger `gh-agent` on a chomper PR. Empty means
+      # any GitHub user can trigger on chomper's own PRs (and disables upstream
+      # PR scanning) — the setup wizard demands an explicit confirmation to run
+      # the gh-agent modes that way, since an open trigger on a public PR would
+      # let anyone push code to the bot's branch.
+      @allowed_gh_users      = ENV.fetch("CHOMPER_ALLOWED_GH_USERS", "")
                                   .split(",").map { |u| u.strip.downcase.delete_prefix("@") }.reject(&:empty?)
 
       @state_dir.mkpath
@@ -87,12 +89,6 @@ module Chomper
       raise FatalError, "Invalid repos.json — #{e.message}"
     end
 
-    # Opt-in agent self-review of plans (default off). A human approves every plan
-    # via `@chomper approve`, so the reviewer pass is redundant unless re-enabled.
-    def plan_review?
-      %w[1 true yes].include?(ENV["CHOMPER_PLAN_REVIEW"].to_s.strip.downcase)
-    end
-
     # Act on chomper being set as a WP's assignee as if the assigner commented
     # `@chomper fix` (default on; set CHOMPER_ASSIGN_TRIGGER=0 to disable).
     # Assignment needs OpenProject's edit-work-package permission, but is not
@@ -100,14 +96,6 @@ module Chomper
     # rights are broad.
     def assign_trigger?
       !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
-    end
-
-    # Auto-approve every plan instead of waiting for a human (default off). In
-    # fix/plan the terminal approval prompt resolves to "yes"; in agent mode a
-    # planned WP is implemented immediately rather than waiting for `@chomper
-    # approve`. Unattended — use with care.
-    def auto_plan_approval?
-      %w[1 true yes].include?(ENV["AUTO_PLAN_APPROVAL"].to_s.strip.downcase)
     end
 
     # How many times gh-agent will chase a single PR's CI before giving up and

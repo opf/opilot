@@ -62,16 +62,15 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :state_container,
-        :log_file, :progress_file, :auto_plan_approval, :repos,
+        :log_file, :progress_file, :repos,
         :contributor_token, :maintainer_token
       ) do
-        def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
         def default_repo; repos.default; end
         def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
       end.new(
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state",
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, registry,
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry,
         nil, nil
       )
     end
@@ -114,15 +113,6 @@ module Chomper
                       "the approval prompt should post an OSC 9 notification naming the WP"
     end
 
-    def test_auto_plan_approval_skips_the_prompt
-      @ctx.auto_plan_approval = true
-      r = runner
-      verdict = nil
-      # $stdin untouched: auto-approval must not read a keystroke.
-      capture_io { verdict = r.send(:prompt_approval, "42") }
-      assert_equal :approve, verdict
-    end
-
     def test_ship_fails_when_wp_cannot_be_fetched
       err = assert_raises(Chomper::FatalError) { capture_io { runner(single: nil).ship_ids("999") } }
       assert_match(/could not fetch work package #999/, err.message)
@@ -152,8 +142,6 @@ module Chomper
       assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
     end
 
-    # publish: nil doubles as the assertion — any attempt to open a PR from the
-    # build path would crash on the nil publisher.
     def test_build_ids_commits_locally_without_publishing
       claude = FakePlanClaude.new
       r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "8" => item(8, "Buildable") }),

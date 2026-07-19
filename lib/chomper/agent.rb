@@ -137,15 +137,9 @@ module Chomper
     def handle_plan(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       return unless produce_plan(st, intent.text) == :ok
-      if @ctx.auto_plan_approval?
-        post_note(st.item_id, addressed(
-          "here's the plan:\n\n#{st.plan_file.read.strip}\n\nAUTO_PLAN_APPROVAL is set — implementing it now."))
-        ship(st)
-      else
-        post_note(st.item_id, addressed(
-          "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
-          "Reply `@chomper approve` to implement it, or `@chomper plan <feedback>` to revise."))
-      end
+      post_note(st.item_id, addressed(
+        "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
+        "Reply `@chomper approve` to implement it, or `@chomper plan <feedback>` to revise."))
     end
 
     def handle_approve(intent)
@@ -159,17 +153,16 @@ module Chomper
 
     def handle_fix(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
-      # Express lane: skip the internal reviewer (NEEDS_INFO still guards blind fixes).
-      return unless produce_plan(st, intent.text, review: false) == :ok
+      # Express lane: plan and ship in one pass (NEEDS_INFO still guards blind fixes).
+      return unless produce_plan(st, intent.text) == :ok
       ship(st)
     end
 
     # ── shared steps ──────────────────────────────────────────────────────────
 
     # Generate (or revise) the plan for a WP. Returns :ok when plan.md is saved,
-    # or :needs_info / :rejected (having already posted the explanatory note).
-    # `review: false` skips the internal reviewer pass (used by the fix express lane).
-    def produce_plan(st, feedback, review: true)
+    # or :needs_info (having already posted the questions as a note).
+    def produce_plan(st, feedback)
       # Planning is read-only across every repo's worktree (all mounted at
       # /repos/<name>); the branch checkout waits until #ship, once Claude has
       # chosen the target repo(s) in the plan.
@@ -205,31 +198,6 @@ module Chomper
       end
 
       record_chosen_repos(st)
-
-      return :ok unless review && @ctx.plan_review?   # reviewer is opt-in; human approval is the gate
-
-      log_script "Reviewer: checking plan for #{wp_label(st.item_id)}"
-      review_prompt = Prompts.plan_review(plan: plan_c, item_id: st.item_id)
-      # Deliberately no session_file: the reviewer must judge the plan without
-      # inheriting the writer's exploration context.
-      @claude.capture(review_prompt, tools: Claude::TOOLS_READ, outfile: st.review_file)
-      verdict = st.review_file.read.scan(/\b(PROCEED|REVISE|REJECT)\b/i).last&.first&.upcase || "PROCEED"
-
-      case verdict
-      when "REJECT"
-        issues = st.review_file.read.strip
-        safe_rm(st.review_file, st.plan_file)
-        log_script "Plan REJECTED for #{wp_label(st.item_id)}."
-        post_note(st.item_id, addressed("I don't think this is safe to fix as specified:\n\n#{issues}"))
-        return :rejected
-      when "REVISE"
-        log_script "Revising plan for #{wp_label(st.item_id)} from reviewer feedback"
-        revise_prompt = Prompts.plan_revise(plan: plan_c, review: container_path(st.review_file))
-        @claude.capture(revise_prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
-                        session_file: st.session_file)
-      end
-
-      safe_rm(st.review_file)
       :ok
     end
 

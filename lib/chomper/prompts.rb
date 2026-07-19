@@ -121,30 +121,6 @@ module Chomper
       PROMPT
     end
 
-    # REVIEWER: critique a plan and emit a PROCEED|REVISE|REJECT verdict.
-    def self.plan_review(plan:, item_id:)
-      <<~PROMPT
-        You are the REVIEWER. Read the plan at #{plan} and critique it.
-        #{READ_ONLY}
-        Flag: wrong file paths, missing edge cases, unnecessary complexity, blast radius.
-
-        ## Review: #{Helpers.wp_label(item_id)}
-        ### Issues found  (or 'None')
-        ### Suggested adjustments  (or 'None')
-        ### Verdict  PROCEED | REVISE | REJECT
-      PROMPT
-    end
-
-    # WRITER: revise a plan based on the reviewer's critique.
-    def self.plan_revise(plan:, review:)
-      <<~PROMPT
-        Read the original plan at #{plan} and the review at #{review}.
-        Revise the plan incorporating the reviewer's suggestions.
-        Print the complete revised plan to stdout only.
-        #{READ_ONLY}
-      PROMPT
-    end
-
     # IMPLEMENTER: apply the approved plan to the worktree (tools: Read/Write/Edit/Bash).
     # `resumed:` — true when the call resumes the planning session (the plan is
     # already in context); false for a fresh session (must read the plan first).

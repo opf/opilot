@@ -121,15 +121,19 @@ module Chomper
       @repo = registry.default
       @ctx = Struct.new(
         :state_dir, :state_container, :contributor_token, :maintainer_token, :op_url,
-        :log_file, :progress_file, :repos, :auto_approve, :ignored_checks
+        :log_file, :progress_file, :repos, :ignored_checks
       ) do
         def op_host; "test.host"; end
-        def auto_plan_approval?; auto_approve; end
         def ci_ignored_checks; ignored_checks; end
       end.new(
         state_dir, "/state", "gh-token", nil, "https://test.host", Pathname(@tmpdir) / "chomp.log",
-        Pathname(@tmpdir) / "progress.txt", registry, true, ["saas tests"]
+        Pathname(@tmpdir) / "progress.txt", registry, ["saas tests"]
       )
+      # The interactive push prompt treats an empty line as "yes"; pin stdin to
+      # EOF so tests that don't care about the prompt auto-confirm instead of
+      # blocking on the real stdin (with_stdin overrides per test).
+      @orig_stdin = $stdin
+      $stdin = StringIO.new("")
       # Keep adopt_github_author! a no-op so the suite never calls the real API.
       Helpers.instance_variable_set(:@github_author_adopted, true)
 
@@ -148,6 +152,7 @@ module Chomper
     end
 
     def teardown
+      $stdin = @orig_stdin
       Helpers.instance_variable_set(:@github_author_adopted, nil)
       FileUtils.rm_rf(@tmpdir)
     end
@@ -507,7 +512,6 @@ module Chomper
       runner = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull,
                             op_pull: @op_pull, interactive: false)
       inject_worktree(runner, @worktree)
-      @ctx.auto_approve = false   # would prompt in interactive mode
       @worktree.behind = true
 
       out, = with_stdin("") { capture_io { runner.refresh_one("42", "openproject") } }
@@ -533,8 +537,8 @@ module Chomper
       assert_includes out, "discarded"
     end
 
-    def test_canonical_head_prompts_even_with_auto_approval
-      @ctx.maintainer_token = "maint-tok"   # auto_approve stays true
+    def test_canonical_head_push_is_gated_on_an_interactive_yes
+      @ctx.maintainer_token = "maint-tok"
       seed_pr_cache(head_repo: "opf/openproject")
       runner = PrRunner.new(@ctx, claude: @claude, github: @github, maintainer_github: @github,
                             gh_pull: @pull, op_pull: @op_pull)
@@ -557,7 +561,6 @@ module Chomper
     end
 
     def test_discard_resets_the_branch_and_acks_nothing
-      @ctx.auto_approve = false
       seed_pr_cache(comments: [feedback_comment])
       @worktree.has_changes = true
       with_stdin("d\n") { capture_io { @runner.run("42") } }

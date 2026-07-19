@@ -101,7 +101,7 @@ module Chomper
     # several repos — resolve them with the per-repo helpers below. Shared by both
     # runners (agent and the terminal fix/plan flow) via #state_for.
     ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
-                           :item_file, :related_file, :review_file, :target_repos_file,
+                           :item_file, :related_file, :target_repos_file,
                            :target_base_file, :session_file, keyword_init: true) do
       # Per-repo artifact directory (<id>/repos/<name>/), created on demand.
       def repo_dir(repo)
@@ -142,18 +142,14 @@ module Chomper
 
     # Render Markdown as ANSI for the terminal — used both for Claude's streamed
     # text and for re-displaying saved plans from disk, so they look the same.
-    # Skipped when stdout isn't a tty (piped, captured by tests, redirected) or
-    # when CHOMPER_MARKDOWN is off; then the raw, cyan-tinted text is shown.
-    # Falls back to the raw text if rendering raises (e.g. a partial fence).
+    # Skipped when stdout isn't a tty (piped, captured by tests, redirected);
+    # then the raw, cyan-tinted text is shown. Falls back to the raw text if
+    # rendering raises (e.g. a partial fence).
     def render_markdown(text)
-      return Rainbow(text).cyan unless $stdout.tty? && markdown_enabled?
+      return Rainbow(text).cyan unless $stdout.tty?
       TTY::Markdown.parse(text)
     rescue StandardError
       Rainbow(text).cyan
-    end
-
-    def markdown_enabled?
-      !%w[0 false no off].include?(ENV["CHOMPER_MARKDOWN"].to_s.strip.downcase)
     end
 
     def log_timestamp
@@ -223,10 +219,10 @@ module Chomper
     end
 
     # The one push-safety rule: no push ever lands on a canonical repo (a
-    # registry upstream) without an explicit interactive yes — neither
-    # AUTO_PLAN_APPROVAL nor the agent loops bypass it, and a non-interactive
-    # stdin (unattended run) declines rather than pushing unconfirmed. Pushes
-    # anywhere else (the contributor bot's fork) pass straight through.
+    # registry upstream) without an explicit interactive yes — nothing bypasses
+    # it, and a non-interactive stdin (unattended run) declines rather than
+    # pushing unconfirmed. Pushes anywhere else (the contributor bot's fork)
+    # pass straight through.
     def confirm_canonical_push?(target_repo, branch)
       return true unless canonical_repo?(target_repo)
       ping_terminal("chomper: confirm push of #{branch} to #{target_repo}")
@@ -360,7 +356,6 @@ module Chomper
         plan_file:         dir / "plan.md",
         item_file:         dir / "item.json",
         related_file:      dir / "related.json",
-        review_file:       dir / "review.txt",
         target_repos_file: dir / "target_repos.json",
         target_base_file:  dir / "target_base.json",
         session_file:      dir / "session_id"

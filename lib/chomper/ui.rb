@@ -110,8 +110,7 @@ module Chomper
           GITHUB_CONTRIBUTOR_TOKEN  Bot account token — fork publishing; used by the agent modes
           GITHUB_MAINTAINER_TOKEN   Push-access token — direct publishing for ship/pr (each push confirmed)
           CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper
-          CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent (default thykel)
-          AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)
+          CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent
 
         State (all in .chomper/, gitignored):
           work_packages/<host>/                    Per-instance WP state (namespaced by OpenProject host)

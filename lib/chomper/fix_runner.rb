@@ -230,10 +230,6 @@ module Chomper
     end
 
     def prompt_approval(id, mode: :ship)
-      if @ctx.auto_plan_approval?
-        log_script "#{wp_label(id)} — auto-approving plan (AUTO_PLAN_APPROVAL set)."
-        return :approve
-      end
       ping_terminal("chomper: plan for #{wp_label(id)} ready for review")
       yes = { plan: "[y]es accept plan", build: "[y]es build", ship: "[y]es ship" }.fetch(mode)
       loop do

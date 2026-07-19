@@ -42,12 +42,9 @@ services:
       - CHOMPER_ALLOWED_GH_USERS=${CHOMPER_ALLOWED_GH_USERS:-}
       - CHOMPER_MODEL
       - CHOMPER_TRIAGE_MODEL
-      - CHOMPER_PLAN_REVIEW
       - CHOMPER_ASSIGN_TRIGGER
-      - AUTO_PLAN_APPROVAL
       - CHOMPER_CI_MAX_ATTEMPTS
       - CHOMPER_CI_IGNORE_CHECKS
-      - CHOMPER_MARKDOWN
       # Optional: seeds the openproject clone from a local checkout (bin/repos).
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/chomper}

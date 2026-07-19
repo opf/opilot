@@ -6,18 +6,17 @@ module Chomper
 
     class FakeClaude
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
-      def initialize(plan: "## Plan\nDo the thing.\n", review: "### Verdict\nPROCEED",
+      def initialize(plan: "## Plan\nDo the thing.\n",
                      chat: "Here's my take.", impl: "", pr: "# PR title\nbody")
-        @plan, @review, @chat, @impl, @pr = plan, review, chat, impl, pr
+        @plan, @chat, @impl, @pr = plan, chat, impl, pr
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
       def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
-        content = prompt.include?("REVIEWER") ? @review : @plan
-        Pathname(outfile).write(content)
-        content
+        Pathname(outfile).write(@plan)
+        @plan
       end
 
       def run(prompt, tools: nil, model: nil, session_file: nil)
@@ -102,16 +101,14 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :state_container,
-        :allowed_op_user_ids, :log_file, :progress_file, :plan_review, :auto_plan_approval, :repos
+        :allowed_op_user_ids, :log_file, :progress_file, :repos
       ) do
-        def plan_review?; plan_review; end                 # opt-in agent self-review (off by default)
-        def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
         def default_repo; repos.default; end
         def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
       end.new(
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state", [],
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, false, registry
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
       )
 
       @repo    = registry.default
@@ -174,17 +171,6 @@ module Chomper
       assert_equal :needs_info, @agent.send(:produce_plan, st, nil)
       refute plan_path.exist?
       assert(@notes.any? { |n| n.include?("How do I reproduce it?") })
-    end
-
-    def test_produce_plan_reject_posts_concerns_and_drops_plan
-      @ctx.plan_review = true   # reviewer is opt-in
-      @claude = FakeClaude.new(review: "### Issues found\nUnsafe.\n### Verdict\nREJECT")
-      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
-      inject_worktree(@agent, FakeWorktree.new)
-
-      st = @agent.send(:state_for, "42", "Fix the bug")
-      assert_equal :rejected, @agent.send(:produce_plan, st, nil)
-      refute plan_path.exist?
     end
 
     # ── ship ──────────────────────────────────────────────────────────────────
@@ -294,35 +280,11 @@ module Chomper
       assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
     end
 
-    def test_handle_fix_skips_the_reviewer
-      @agent.handle(intent(:fix))
-      refute(@claude.captures.any? { |p| p.include?("REVIEWER") }, "fix should not run the reviewer")
-    end
-
-    def test_handle_plan_runs_the_reviewer_when_opted_in
-      @ctx.plan_review = true
-      @agent.handle(intent(:plan))
-      assert(@claude.captures.any? { |p| p.include?("REVIEWER") }, "plan should run the reviewer when opted in")
-    end
-
-    def test_handle_plan_skips_the_reviewer_by_default
-      @agent.handle(intent(:plan))
-      refute(@claude.captures.any? { |p| p.include?("REVIEWER") },
-             "plan should not run the reviewer unless CHOMPER_PLAN_REVIEW is set")
-    end
-
     def test_handle_fix_threads_one_session_through_plan_implement_and_pr
       @agent.handle(intent(:fix))
       session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session], @claude.capture_sessions.uniq, "plan must use the per-WP session"
       assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
-    end
-
-    def test_handle_plan_keeps_the_reviewer_session_free
-      @ctx.plan_review = true
-      @agent.handle(intent(:plan))
-      session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
-      assert_equal [session, nil], @claude.capture_sessions, "the reviewer must not inherit the writer's session"
     end
 
     def test_handle_plan_posts_the_plan_text_as_a_comment
@@ -332,14 +294,9 @@ module Chomper
       assert_includes note, "@chomper approve"
     end
 
-    def test_handle_plan_auto_approves_and_ships_when_env_set
-      @ctx.auto_plan_approval = true
+    def test_handle_plan_waits_for_approval_without_shipping
       @agent.handle(intent(:plan))
-      assert pr_url_path.exist?, "AUTO_PLAN_APPROVAL should implement the plan without waiting for approve"
-      assert(@notes.any? { |n| n.include?("implementing it now") })
-      assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
-      refute(@notes.any? { |n| n.include?("@chomper approve") },
-             "auto-approval shouldn't ask the user to approve")
+      refute pr_url_path.exist?, "a plan must wait for @chomper approve before shipping"
     end
 
     def test_handle_chat_posts_reply_and_changes_no_files

@@ -496,9 +496,6 @@ module Chomper
       # the bot's fork passes straight through, a canonical-repo target stays
       # behind the interactive confirm_canonical_push? gate.
       return confirm_canonical_push?(head_repo, branch) unless @interactive
-      # AUTO_PLAN_APPROVAL never bypasses the gate for a canonical-repo push —
-      # every push that lands on a canonical repo stays interactive.
-      return true if @ctx.auto_plan_approval? && !canonical_repo?(head_repo)
       ping_terminal("chomper: refreshed #{wp_label(wp_id)} — ready to push")
       loop do
         print "  [y]es push #{branch} / [d]iscard: "
