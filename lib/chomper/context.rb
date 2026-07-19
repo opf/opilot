@@ -90,7 +90,7 @@ module Chomper
     end
 
     # Act on chomper being set as a WP's assignee as if the assigner commented
-    # `@chomper fix` (default on; set CHOMPER_ASSIGN_TRIGGER=0 to disable).
+    # `@chomper ship` (default on; set CHOMPER_ASSIGN_TRIGGER=0 to disable).
     # Assignment needs OpenProject's edit-work-package permission, but is not
     # gated by the comment allowlist — turn this off on instances where WP edit
     # rights are broad.

@@ -156,9 +156,10 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 Simply run `./chomper agent`
 
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
-`@chomper fix` plans and ships in one step, `@chomper plan` drafts a plan for
-review, `@chomper approve` ships the drafted plan — anything else just chats.
-Setting the chomper user as a WP's **assignee** also triggers the `fix` flow —
+`@chomper ship` plans and ships in one step (`fix` is a legacy alias),
+`@chomper plan` drafts a plan for review, `@chomper approve` ships the drafted
+plan — anything else just chats.
+Setting the chomper user as a WP's **assignee** also triggers the `ship` flow —
 once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any

@@ -122,8 +122,12 @@ module Chomper
                    @pull.send(:parse_command, "@chomper plan also handle nil input")
     end
 
-    def test_parse_command_fix_with_feedback
-      assert_equal [:fix, "be careful"], @pull.send(:parse_command, "@chomper fix be careful")
+    def test_parse_command_ship_with_feedback
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper ship be careful")
+    end
+
+    def test_parse_command_fix_is_a_legacy_alias_of_ship
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper fix be careful")
     end
 
     def test_parse_command_approve
@@ -142,8 +146,8 @@ module Chomper
       assert_equal [:approve, nil], @pull.send(:parse_command, "#{MENTION} approve")
     end
 
-    def test_parse_command_handles_mention_markup_fix_with_feedback
-      assert_equal [:fix, "be careful"], @pull.send(:parse_command, "#{MENTION} fix be careful")
+    def test_parse_command_handles_mention_markup_ship_with_feedback
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "#{MENTION} ship be careful")
     end
 
     def test_parse_command_handles_mention_markup_chat
@@ -482,7 +486,7 @@ module Chomper
       Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s / "item.json"
     end
 
-    def test_assignment_emits_fix_intent_bypassing_allowlist
+    def test_assignment_emits_ship_intent_bypassing_allowlist
       # The allowlist gates comment triggers only — assignment needs edit rights.
       @pull = build_pull(["99"])
       seed_item(1, "2024-01-02T00:00:00Z", [])
@@ -491,7 +495,7 @@ module Chomper
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
       assert_equal "1",         intents[0].item_id
-      assert_equal :fix,        intents[0].command
+      assert_equal :ship,       intents[0].command
       assert_equal "",          intents[0].text
       assert_equal :assignment, intents[0].source
       assert_nil intents[0].comment_at

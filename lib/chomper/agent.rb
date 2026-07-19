@@ -97,7 +97,7 @@ module Chomper
       when :chat    then handle_chat(intent)
       when :plan    then handle_plan(intent)
       when :approve then handle_approve(intent)
-      when :fix     then handle_fix(intent)
+      when :ship    then handle_ship(intent)
       end
     end
 
@@ -145,13 +145,13 @@ module Chomper
     def handle_approve(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       unless Helpers.file_has_content?(st.plan_file)
-        post_note(st.item_id, addressed("there's no plan yet — comment `@chomper plan` first, or `@chomper fix` to plan and ship in one go."))
+        post_note(st.item_id, addressed("there's no plan yet — comment `@chomper plan` first, or `@chomper ship` to plan and ship in one go."))
         return
       end
       ship(st)
     end
 
-    def handle_fix(intent)
+    def handle_ship(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       # Express lane: plan and ship in one pass (NEEDS_INFO still guards blind fixes).
       return unless produce_plan(st, intent.text) == :ok

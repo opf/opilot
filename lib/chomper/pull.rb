@@ -402,9 +402,9 @@ module Chomper
       )
     end
 
-    # Setting chomper as a WP's assignee means "just fix it": synthesize the same
-    # :fix intent a `@chomper fix` comment produces (plan + implement + draft PR,
-    # no approval gate). Deliberately not allowlist-gated — assigning requires
+    # Setting chomper as a WP's assignee means "just ship it": synthesize the
+    # same :ship intent a `@chomper ship` comment produces (plan + implement +
+    # draft PR, no approval gate). Deliberately not allowlist-gated — assigning requires
     # OpenProject's edit-work-package permission — and fires at most once per WP,
     # ever (assignee_acted_at in item.json). A WP that already shipped a PR is
     # marked acted without firing, so a comment-shipped WP assigned later does
@@ -425,7 +425,7 @@ module Chomper
         item_id: wp_id,
         subject: wp["subject"],
         type:    wp.dig("_embedded", "type", "name").to_s,
-        command: :fix,
+        command: :ship,
         text:    "",
         source:  :assignment
       )
@@ -450,8 +450,9 @@ module Chomper
     def parse_command(raw)
       text = strip_mention(raw)
       case text
-      when /\A@chomper\s+plan\b\s*(.*)/im    then [:plan,    $1.strip]
-      when /\A@chomper\s+fix\b\s*(.*)/im      then [:fix,     $1.strip]
+      when /\A@chomper\s+plan\b\s*(.*)/im     then [:plan,    $1.strip]
+      when /\A@chomper\s+ship\b\s*(.*)/im     then [:ship,    $1.strip]
+      when /\A@chomper\s+fix\b\s*(.*)/im      then [:ship,    $1.strip]   # legacy alias of ship
       when /\A@chomper\s+approve\b/i          then [:approve, nil]
       else [:chat, text.sub(/@chomper\s*/i, "").strip]
       end

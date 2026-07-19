@@ -227,7 +227,7 @@ module Chomper
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
       inject_worktree(@agent, FakeWorktree.new)
 
-      @agent.handle(intent(:fix))
+      @agent.handle(intent(:ship))
 
       items = @ctx.state_dir / "work_packages" / "op.example.com" / "42"
       assert (items / "repos" / "openproject" / "pr_url.txt").exist?, "openproject PR opened"
@@ -237,7 +237,7 @@ module Chomper
     end
 
     def test_plan_without_a_repos_line_falls_back_to_the_default_repo
-      @agent.handle(intent(:fix))   # FakeClaude's plan has no REPOS line
+      @agent.handle(intent(:ship))   # FakeClaude's plan has no REPOS line
       assert pr_url_path.exist?, "ships to the default repo when no REPOS line is given"
     end
 
@@ -264,24 +264,24 @@ module Chomper
       assert_equal [true], @note_visibility
     end
 
-    def test_handle_fix_skips_ship_when_needs_info
+    def test_handle_ship_skips_ship_when_needs_info
       @claude = FakeClaude.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- repro?")
       @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
       inject_worktree(@agent, FakeWorktree.new)
 
-      @agent.handle(intent(:fix))
+      @agent.handle(intent(:ship))
       refute pr_url_path.exist?, "must not ship when info is missing"
     end
 
-    def test_handle_fix_plans_and_ships
-      @agent.handle(intent(:fix))
+    def test_handle_ship_plans_and_ships
+      @agent.handle(intent(:ship))
       assert plan_path.exist?
       assert pr_url_path.exist?
       assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
     end
 
-    def test_handle_fix_threads_one_session_through_plan_implement_and_pr
-      @agent.handle(intent(:fix))
+    def test_handle_ship_threads_one_session_through_plan_implement_and_pr
+      @agent.handle(intent(:ship))
       session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session], @claude.capture_sessions.uniq, "plan must use the per-WP session"
       assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
@@ -356,7 +356,7 @@ module Chomper
     # ── assignment trigger ────────────────────────────────────────────────────
 
     def assignment_intent
-      intent(:fix, source: :assignment, comment_at: nil, text: "")
+      intent(:ship, source: :assignment, comment_at: nil, text: "")
     end
 
     def test_assignment_intent_plans_ships_and_acks_the_marker
