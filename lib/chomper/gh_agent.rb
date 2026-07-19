@@ -17,8 +17,10 @@ module Chomper
   class GhAgent
     include Helpers
 
+    # gh-agent acts exclusively as the CONTRIBUTOR bot: it watches the bot's
+    # own PRs and pushes only to the bot's fork.
     def initialize(ctx, pull: GhPull.new(ctx), upstream_pull: UpstreamGhPull.new(ctx),
-                   claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.github_token),
+                   claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
                    pr_runner: nil)
       @ctx           = ctx
       @pull          = pull
@@ -29,8 +31,8 @@ module Chomper
     end
 
     def run
-      unless @ctx.github_token
-        puts "  Error: GITHUB_TOKEN is not set — gh-agent needs it to read and comment on PRs."
+      unless @ctx.contributor_token
+        puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — gh-agent acts as the bot account and needs its token."
         return
       end
       scan_from_at = setup
@@ -268,7 +270,7 @@ module Chomper
     # Commit whatever Claude changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
     def commit_followup(intent, repo)
-      Helpers.adopt_github_author!(@ctx)
+      Helpers.adopt_github_author!(@ctx.contributor_token)
       wt = worktree(repo)
       wt.add(all: true)
       diff = wt.diff("HEAD")
@@ -292,13 +294,14 @@ module Chomper
     end
 
     # Push the new commit to the PR's head repo with the bot token, updating the
-    # draft PR. In fork mode there is no confirmation: the branch lives on the
-    # bot's fork and a maintainer still gates the merge, so nothing reaches the
-    # canonical repo without human review. In direct mode the head repo IS the
-    # canonical repo, so every push is gated on an interactive yes.
+    # draft PR. For the bot's own PRs there is no confirmation: the branch lives
+    # on the bot's fork and a maintainer still gates the merge, so nothing
+    # reaches the canonical repo without human review. A head that IS a
+    # canonical repo (e.g. a PR the maintainer shipped directly) stays gated on
+    # an interactive yes — and the bot token couldn't push there anyway.
     def push_followup(intent, repo)
       target = head_repo(intent)
-      unless confirm_direct_push?(target, intent.branch)
+      unless confirm_canonical_push?(target, intent.branch)
         log_script "Push to #{target} declined — PR ##{intent.pr_number} not updated (the commit stays in the clone)."
         return
       end

@@ -49,11 +49,10 @@ module Chomper
         status: 200, headers: { "Content-Type" => "application/json" },
         body: JSON.generate("login" => "chomper-bot", "id" => 7, "name" => "Chomper Bot")
       )
-      ctx  = Struct.new(:github_token).new("tok")
       keys = %w[GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL]
       saved = keys.to_h { |k| [k, ENV[k]] }
       begin
-        Helpers.adopt_github_author!(ctx)
+        Helpers.adopt_github_author!("tok")
         assert_equal "Chomper Bot", ENV["GIT_AUTHOR_NAME"]
         assert_equal "7+chomper-bot@users.noreply.github.com", ENV["GIT_AUTHOR_EMAIL"]
         assert_equal "Chomper Bot", ENV["GIT_COMMITTER_NAME"]
@@ -67,7 +66,7 @@ module Chomper
     def test_adopt_github_author_is_a_noop_without_a_token
       Helpers.instance_variable_set(:@github_author_adopted, nil)
       # No WebMock stub: if it tried to reach GitHub, the request would raise.
-      Helpers.adopt_github_author!(Struct.new(:github_token).new(nil))
+      Helpers.adopt_github_author!(nil)
     ensure
       Helpers.instance_variable_set(:@github_author_adopted, nil)
     end

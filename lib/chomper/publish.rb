@@ -4,9 +4,21 @@ module Chomper
   class Publish
     include Helpers
 
-    def initialize(ctx)
+    # `as` is the publishing identity. :contributor (the default) is the bot
+    # account: it forks the upstream, pushes there, and opens a cross-repo draft
+    # PR — the agent loops always publish this way. :maintainer is an account
+    # with push access: the branch goes straight to the canonical repo and a
+    # same-repo draft PR is opened, every push gated on an interactive yes.
+    def initialize(ctx, as: :contributor)
       @ctx    = ctx
-      @github = Clients::GitHub.new(ctx.github_token)
+      @as     = as
+      @github = Clients::GitHub.new(author_token)
+    end
+
+    # The token of the identity this publisher acts as — also the author
+    # identity adopted for commits, so a PR's commits match its opener.
+    def author_token
+      contributor? ? @ctx.contributor_token : @ctx.maintainer_token
     end
 
     # Push the WP's fix branch in `repo` and open a draft PR there, returning the
@@ -14,8 +26,8 @@ module Chomper
     # returned. Upstream, base branch, and worktree all come from `repo`, so a WP
     # that spans several repos opens an independent PR in each.
     def open_pr(item_id, subject, branch, repo)
-      unless @ctx.github_token
-        puts "  Error: GITHUB_TOKEN is not set — cannot open PRs."
+      unless author_token
+        puts "  Error: #{contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"} is not set — cannot open PRs."
         return nil
       end
 
@@ -34,13 +46,13 @@ module Chomper
         return nil
       end
 
-      # In the default "fork" mode the branch goes to the bot's fork and the PR
-      # is opened against upstream with a cross-repo head ("fork_owner:branch"),
-      # keeping the token off the canonical repo. In "direct" mode the branch is
-      # pushed straight to upstream and a same-repo PR is opened — the token
+      # As the contributor the branch goes to the bot's fork and the PR is
+      # opened against upstream with a cross-repo head ("fork_owner:branch"),
+      # keeping the token off the canonical repo. As the maintainer the branch
+      # is pushed straight to upstream and a same-repo PR is opened — the token
       # needs push access there, and maintainer-edits must be disabled (GitHub
       # 422s on a same-repo PR). Either way the head is "owner:branch".
-      target_repo = @ctx.direct_pr? ? upstream : @github.ensure_fork(upstream)
+      target_repo = contributor? ? @github.ensure_fork(upstream) : upstream
       head        = "#{target_repo.split('/').first}:#{branch}"
 
       existing = @github.find_open_pr(upstream, head: head)
@@ -49,7 +61,7 @@ module Chomper
         return existing
       end
 
-      log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}) — #{subject}"
+      log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}, as #{@as}) — #{subject}"
 
       # Keep the PR body compact; attach the full plan as a (secret) gist and
       # link it under the banner for anyone who wants to read deeper.
@@ -58,7 +70,7 @@ module Chomper
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
       pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
 
-      unless confirm_direct_push?(target_repo, branch)
+      unless confirm_canonical_push?(target_repo, branch)
         puts "  Push declined — #{branch} was not pushed and no PR was opened."
         return nil
       end
@@ -66,14 +78,18 @@ module Chomper
 
       title = pr_title(item_id, subject)
       url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
-                                    maintainer_can_modify: !@ctx.direct_pr?)
-      add_overtake_note(upstream, url, pr_body, banner) unless @ctx.direct_pr?
+                                    maintainer_can_modify: contributor?)
+      add_overtake_note(upstream, url, pr_body, banner) if contributor?
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
       url
     end
 
     private
+
+    def contributor?
+      @as == :contributor
+    end
 
     # Where the `gh overtake` alias (one-time setup) is documented.
     OVERTAKE_DOC_URL = "https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr"

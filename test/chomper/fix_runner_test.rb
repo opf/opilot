@@ -62,7 +62,8 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :state_container,
-        :log_file, :progress_file, :auto_plan_approval, :repos
+        :log_file, :progress_file, :auto_plan_approval, :repos,
+        :contributor_token, :maintainer_token
       ) do
         def auto_plan_approval?; auto_plan_approval; end   # auto-approve plans (off by default)
         def default_repo; repos.default; end
@@ -70,7 +71,8 @@ module Chomper
       end.new(
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state",
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, registry
+        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", false, registry,
+        nil, nil
       )
     end
 

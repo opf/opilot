@@ -28,7 +28,7 @@ module Chomper
 
     def setup
       @calls = []
-      @ctx   = Struct.new(:github_token).new("ghp_token")
+      @ctx   = Struct.new(:contributor_token).new("ghp_token")
     end
 
     def test_polls_github_before_openproject_each_cycle
@@ -43,7 +43,7 @@ module Chomper
     end
 
     def test_runs_openproject_only_when_no_github_token
-      @ctx = Struct.new(:github_token).new(nil)
+      @ctx = Struct.new(:contributor_token).new(nil)
       gh = FakeLoop.new("gh", @calls)
       op = FakeLoop.new("op", @calls, stop_after: true)
       assert_raises(StopLoop) do

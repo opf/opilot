@@ -278,10 +278,10 @@ module Chomper
 
       if opened.any?
         links = opened.map { |repo, url| "- [#{st.subject} → `#{repo.name}`](#{url})" }.join("\n")
-        suffix = failed.any? ? "\n\n(couldn't open a PR in: #{failed.map(&:name).join(", ")} — is GITHUB_TOKEN set?)" : ""
+        suffix = failed.any? ? "\n\n(couldn't open a PR in: #{failed.map(&:name).join(", ")} — is GITHUB_CONTRIBUTOR_TOKEN set?)" : ""
         post_note(st.item_id, addressed("Here is your AI-generated prototype#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
       else
-        post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_TOKEN set?)."))
+        post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_CONTRIBUTOR_TOKEN set?)."))
       end
     end
 

@@ -12,8 +12,9 @@ module Chomper
   # one tick of each per cycle gives "watch both sources from one command"
   # without the concurrency hazards.
   #
-  # When GITHUB_TOKEN is unset the GitHub side is skipped and this degrades to an
-  # OpenProject-only loop (same as `op-agent`), rather than erroring out.
+  # When GITHUB_CONTRIBUTOR_TOKEN is unset the GitHub side is skipped and this
+  # degrades to an OpenProject-only loop (same as `op-agent`), rather than
+  # erroring out — the agent loops act only as the contributor bot.
   class CombinedAgent
     include Helpers
 
@@ -24,9 +25,9 @@ module Chomper
     end
 
     def run
-      gh_enabled = !@ctx.github_token.nil?
+      gh_enabled = !@ctx.contributor_token.nil?
       unless gh_enabled
-        puts "  GITHUB_TOKEN not set — running OpenProject only (no PR watching)."
+        puts "  GITHUB_CONTRIBUTOR_TOKEN not set — running OpenProject only (no PR watching)."
       end
 
       # GitHub first, so its scan-window prompt and OpenProject's filter prompt

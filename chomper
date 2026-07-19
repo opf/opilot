@@ -74,68 +74,57 @@ if _need ANTHROPIC_API_KEY; then
   echo ""
 fi
 
-if _need CHOMPER_PR_MODE; then
-  # How chomper delivers PRs decides what kind of GitHub token it needs, so ask
-  # this before the token. Fork mode (default) is the isolated path; direct mode
-  # trades that isolation for a token with push access to the canonical repo.
-  echo "  How should chomper deliver PRs?"
-  echo "    [f]ork   (default) — runs as a dedicated BOT account with NO access to the"
-  echo "                         canonical repo; forks it, pushes to the fork, opens a"
-  echo "                         cross-repo draft PR. Most isolated."
-  echo "    [d]irect           — pushes the fix branch straight to the canonical repo and"
-  echo "                         opens a same-repo draft PR. Needs a token with push"
-  echo "                         access; every push asks for an interactive confirmation."
-  printf "  Mode [F/d]: "
-  read -r _MODE
-  if [[ "${_MODE:-f}" =~ ^[Dd] ]]; then CHOMPER_PR_MODE=direct; else CHOMPER_PR_MODE=fork; fi
-  _save CHOMPER_PR_MODE "$CHOMPER_PR_MODE"
+if _need GITHUB_CONTRIBUTOR_TOKEN; then
+  # The CONTRIBUTOR is a dedicated GitHub BOT account — it forks the product
+  # repo, pushes fix branches to that fork, and opens cross-repo draft PRs
+  # against upstream. The agent modes publish exclusively as it. The isolation
+  # comes from the bot account having NO access to the canonical repo — so even
+  # a classic 'public_repo' token can't write there.
+  # Classic public_repo is required (fine-grained tokens can't open fork→upstream PRs).
+  # 'workflow' scope is also required: the bot's fork lags upstream, so a fix
+  # branch based on the current base re-introduces upstream's .github/workflows/*
+  # files relative to the stale fork, and GitHub rejects a classic PAT that
+  # creates/updates any workflow file without it. 'gist' lets chomper attach
+  # each WP's full plan as a secret gist linked from the PR (skipped if absent).
+  echo "  CONTRIBUTOR token — the dedicated BOT account chomper publishes as (not you)."
+  echo "  Used by the agent modes (always) and by 'ship' when no maintainer token"
+  echo "  is set. Create a SEPARATE"
+  echo "  GitHub account that is NOT a collaborator on the product repo (a personal/user"
+  echo "  account — org accounts can't grant maintainer edits), then make a classic"
+  echo "  token for IT with the 'public_repo', 'workflow' and 'gist' scopes:"
+  echo "    https://github.com/settings/tokens (classic → public_repo + workflow + gist)"
+  echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
+  echo "  access to the canonical repo, it physically cannot push there."
+  echo "  Leave blank to skip (agent modes then can't publish PRs)."
+  printf "  Contributor (bot) GitHub token (ghp_…), or blank: "
+  read -rs GITHUB_CONTRIBUTOR_TOKEN_ENTRY; echo ""
+  _save GITHUB_CONTRIBUTOR_TOKEN "$GITHUB_CONTRIBUTOR_TOKEN_ENTRY"
   echo ""
 fi
 
-if _need GITHUB_TOKEN; then
-  if [[ "${CHOMPER_PR_MODE:-$(_env_get CHOMPER_PR_MODE)}" == "direct" ]]; then
-    # Direct mode: the token pushes branches to the canonical repo and opens
-    # same-repo PRs, so it MUST have push access there. No fork, no isolation —
-    # every push is gated on an interactive confirmation, with the protected-
-    # branch guard + draft-PR-with-human-merge as the backstop.
-    echo "  GitHub token — DIRECT mode: chomper pushes branches to the canonical repo."
-    echo "  Use a token for an account WITH push access to the product repo, with the"
-    echo "  classic 'repo' scope ('public_repo' is enough for a public repo), plus 'gist'"
-    echo "  (so chomper can attach each plan as a gist linked from the PR):"
-    echo "    https://github.com/settings/tokens (classic → repo + gist)"
-    echo "  chomper still opens DRAFT PRs; merging stays gated on a maintainer."
-    echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
-    printf "  GitHub token (ghp_…), or blank: "
-  else
-    # Fork mode: chomper acts as a dedicated GitHub BOT account — it forks the
-    # product repo, pushes fix branches to that fork, and opens draft PRs against
-    # upstream. The isolation comes from the bot account having NO access to the
-    # canonical repo — so even a classic 'public_repo' token can't write there.
-    # Classic public_repo is required (fine-grained tokens can't open fork→upstream PRs).
-    # 'workflow' scope is also required: the bot's fork lags upstream, so a fix
-    # branch based on the current base re-introduces upstream's .github/workflows/*
-    # files relative to the stale fork, and GitHub rejects a classic PAT that
-    # creates/updates any workflow file without it. 'gist' lets chomper attach
-    # each WP's full plan as a secret gist linked from the PR (skipped if absent).
-    echo "  GitHub token — chomper runs as a dedicated BOT account, not you."
-    echo "  Create a SEPARATE GitHub account that is NOT a collaborator on the product"
-    echo "  repo (a personal/user account — org accounts can't grant maintainer edits),"
-    echo "  then make a classic token for IT with the 'public_repo', 'workflow' and 'gist' scopes:"
-    echo "    https://github.com/settings/tokens (classic → public_repo + workflow + gist)"
-    echo "  chomper auto-creates the bot's fork on first publish. Because the bot has no"
-    echo "  access to the canonical repo, it physically cannot push there."
-    echo "  Leave blank to skip (planning/chat work; publishing PRs won't)."
-    printf "  Bot GitHub token (ghp_…), or blank: "
-  fi
-  read -rs GITHUB_TOKEN_ENTRY; echo ""
-  _save GITHUB_TOKEN "$GITHUB_TOKEN_ENTRY"
+if _need GITHUB_MAINTAINER_TOKEN; then
+  # The MAINTAINER is an account WITH push access to the canonical repo. Script
+  # mode (`ship`/`pr`) publishes as it by default: the fix branch is pushed
+  # straight to the canonical repo and a same-repo draft PR is opened — every
+  # such push is gated on an interactive confirmation, with the protected-
+  # branch guard + draft-PR-with-human-merge as the backstop.
+  echo "  MAINTAINER token — your account, with push access to the product repo."
+  echo "  Used by script mode (ship/pr) for direct pushes to the canonical repo,"
+  echo "  each one confirmed interactively. Classic 'repo' scope ('public_repo' is"
+  echo "  enough for a public repo), plus 'gist' for the plan link:"
+  echo "    https://github.com/settings/tokens (classic → repo + gist)"
+  echo "  chomper still opens DRAFT PRs; merging stays gated on a maintainer."
+  echo "  Leave blank to skip — ship then publishes via the contributor bot's fork."
+  printf "  Maintainer GitHub token (ghp_…), or blank: "
+  read -rs GITHUB_MAINTAINER_TOKEN_ENTRY; echo ""
+  _save GITHUB_MAINTAINER_TOKEN "$GITHUB_MAINTAINER_TOKEN_ENTRY"
   echo ""
 fi
 
 # The GH allowlist only gates gh-agent's PR triggers (the `pr` command ignores
 # it), so only the agent modes that include gh-agent should demand it — and only
 # once a token is set (gh-agent needs it).
-if _is agent gh-agent && _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_TOKEN)" ]; then
+if _is agent gh-agent && _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_CONTRIBUTOR_TOKEN)" ]; then
   # gh-agent lets the listed GitHub users push code to chomper's PR branches, so
   # an empty list (any user can trigger on a public PR) needs explicit confirmation.
   echo "  GitHub logins allowed to trigger @chomper on a PR (gh-agent), comma-separated."

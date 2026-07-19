@@ -23,18 +23,24 @@ module Chomper
   #
   # gh-agent reuses this via #refresh_one for an allowlisted "@chomper refresh"
   # PR comment, constructed with `interactive: false`: the push then follows
-  # gh-agent's rules instead of the terminal prompt — fork-mode pushes go
-  # straight to the bot's fork (a maintainer still gates the merge), direct-mode
-  # pushes stay behind the interactive confirm_direct_push? gate.
+  # gh-agent's rules instead of the terminal prompt — pushes to the bot's fork
+  # go straight through (a maintainer still gates the merge), canonical-repo
+  # targets stay behind the interactive confirm_canonical_push? gate.
   class PrRunner
     include Helpers
     include GhPrCache
 
-    def initialize(ctx, claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.github_token),
-                   gh_pull: nil, op_pull: nil, interactive: true)
+    # `pr` serves both identities and lets the PR itself decide: reads and
+    # comments go through the primary client (contributor-first — the bot is
+    # chomper's public persona), while a push uses whichever identity owns the
+    # target (see #push_client).
+    def initialize(ctx, claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.contributor_token || ctx.maintainer_token),
+                   maintainer_github: nil, gh_pull: nil, op_pull: nil, interactive: true)
       @ctx         = ctx
       @claude      = claude
       @github      = github
+      @maintainer_github = maintainer_github ||
+                           (ctx.maintainer_token ? Clients::GitHub.new(ctx.maintainer_token) : nil)
       @interactive = interactive
       # Reused only for its act-state writers (comment cutoff + own-reply ids),
       # so gh-agent never re-handles feedback this command already addressed.
@@ -49,7 +55,9 @@ module Chomper
     # up on GitHub — an open PR by the bot carrying the WP's ticket link — and
     # adopted the same way.
     def run(*targets)
-      raise FatalError, "GITHUB_TOKEN is not set — `pr` needs it to read and update PRs." unless @ctx.github_token
+      unless @ctx.contributor_token || @ctx.maintainer_token
+        raise FatalError, "No GitHub token is set — `pr` needs GITHUB_CONTRIBUTOR_TOKEN and/or GITHUB_MAINTAINER_TOKEN to read and update PRs."
+      end
       targets.each do |target|
         target.match?(%r{\Ahttps?://}) ? refresh_url(target) : refresh_wp(target)
       end
@@ -316,7 +324,7 @@ module Chomper
     def merge_base(wt, repo, branch, base_ref)
       fetch_base(wt, repo, base_ref)
       return [] if wt.log.between("HEAD", "origin/#{base_ref}").execute.none?
-      Helpers.adopt_github_author!(@ctx)
+      Helpers.adopt_github_author!(@ctx.contributor_token || @ctx.maintainer_token)
       log_script "Merging origin/#{base_ref} into #{branch}…"
       wt.merge("origin/#{base_ref}", "Merge #{base_ref} into #{branch}")
       []
@@ -422,7 +430,7 @@ module Chomper
     # commit with a generated subject, exactly like gh-agent's comment fixes.
     # No-ops when Claude changed nothing (e.g. it only answered questions).
     def commit_refresh(wp_id, wt, repo, branch, base_ref, conflicts)
-      Helpers.adopt_github_author!(@ctx)
+      Helpers.adopt_github_author!(@ctx.contributor_token || @ctx.maintainer_token)
       if conflicts.any?
         still = unresolved_conflicts(repo, conflicts)
         if still.any?
@@ -453,10 +461,16 @@ module Chomper
     # resets the branch and acknowledges nothing, so a re-run starts over.
     def deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head, reply:, feedback:)
       wt = worktree(repo)
+      pusher = push_client(head_repo)
       if wt.revparse("HEAD") == original_head
         log_script "#{wp_label(wp_id)} (#{repo.name}) — no code changes to push."
+      elsif pusher.nil?
+        wt.reset_hard(original_head)
+        log_script "#{wp_label(wp_id)} (#{repo.name}) — #{head_repo} is a canonical repo and " \
+                   "GITHUB_MAINTAINER_TOKEN is not set; discarded."
+        return
       elsif confirm_push?(wp_id, branch, head_repo)
-        @github.push_branch(head_repo, branch: branch, worktree_path: repo.worktree_host)
+        pusher.push_branch(head_repo, branch: branch, worktree_path: repo.worktree_host)
         log_script "Pushed to #{head_repo} — PR ##{number} updated."
         record_progress(wp_id, branch, "refreshed:#{repo.name}")
       else
@@ -470,14 +484,21 @@ module Chomper
       @gh_pull.mark_acted(wp_id, repo.name, latest) if latest
     end
 
+    # The client whose identity owns the push target: a canonical upstream may
+    # only be pushed as the maintainer (nil when that token is absent — the
+    # caller discards); anything else (the bot's fork) uses the primary client.
+    def push_client(head_repo)
+      canonical_repo?(head_repo) ? @maintainer_github : @github
+    end
+
     def confirm_push?(wp_id, branch, head_repo)
-      # A gh-agent-triggered refresh follows gh-agent's push rules: a fork-mode
-      # push passes straight through (the branch only touches the bot's fork),
-      # a direct-mode one stays behind the interactive confirm_direct_push? gate.
-      return confirm_direct_push?(head_repo, branch) unless @interactive
-      # AUTO_PLAN_APPROVAL never bypasses the gate in direct mode — there the
-      # push lands on the canonical repo, and every such push stays interactive.
-      return true if @ctx.auto_plan_approval? && !@ctx.direct_pr?
+      # A gh-agent-triggered refresh follows gh-agent's push rules: a push to
+      # the bot's fork passes straight through, a canonical-repo target stays
+      # behind the interactive confirm_canonical_push? gate.
+      return confirm_canonical_push?(head_repo, branch) unless @interactive
+      # AUTO_PLAN_APPROVAL never bypasses the gate for a canonical-repo push —
+      # every push that lands on a canonical repo stays interactive.
+      return true if @ctx.auto_plan_approval? && !canonical_repo?(head_repo)
       ping_terminal("chomper: refreshed #{wp_label(wp_id)} — ready to push")
       loop do
         print "  [y]es push #{branch} / [d]iscard: "

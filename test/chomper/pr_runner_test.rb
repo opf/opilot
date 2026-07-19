@@ -120,16 +120,15 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @repo = registry.default
       @ctx = Struct.new(
-        :state_dir, :state_container, :github_token, :op_url, :log_file, :progress_file, :repos,
-        :auto_approve, :ignored_checks, :pr_mode
+        :state_dir, :state_container, :contributor_token, :maintainer_token, :op_url,
+        :log_file, :progress_file, :repos, :auto_approve, :ignored_checks
       ) do
         def op_host; "test.host"; end
         def auto_plan_approval?; auto_approve; end
         def ci_ignored_checks; ignored_checks; end
-        def direct_pr?; pr_mode == "direct"; end
       end.new(
-        state_dir, "/state", "gh-token", "https://test.host", Pathname(@tmpdir) / "chomp.log",
-        Pathname(@tmpdir) / "progress.txt", registry, true, ["saas tests"], "fork"
+        state_dir, "/state", "gh-token", nil, "https://test.host", Pathname(@tmpdir) / "chomp.log",
+        Pathname(@tmpdir) / "progress.txt", registry, true, ["saas tests"]
       )
       # Keep adopt_github_author! a no-op so the suite never calls the real API.
       Helpers.instance_variable_set(:@github_author_adopted, true)
@@ -169,12 +168,12 @@ module Chomper
 
     # Pre-seed pr.json so fetch_pr_content reuses the cache (updated_at matches)
     # instead of re-fetching comment streams the fake doesn't serve.
-    def seed_pr_cache(comments: [], updated_at: UPDATED_AT)
+    def seed_pr_cache(comments: [], updated_at: UPDATED_AT, head_repo: "op-chomper/openproject")
       Helpers.write_json_atomic(@pr_dir / "pr.json", {
         "number" => 7, "repo" => "opf/openproject", "title" => "Fix the bug",
         "state" => "open", "updated_at" => updated_at.utc.iso8601,
         "head_ref" => "bug/42-fix", "head_sha" => "headsha",
-        "head_repo" => "op-chomper/openproject",
+        "head_repo" => head_repo,
         "comments" => comments, "reviews" => []
       }, "pr")
     end
@@ -203,7 +202,8 @@ module Chomper
     end
 
     def test_requires_a_github_token
-      @ctx.github_token = nil
+      @ctx.contributor_token = nil
+      @ctx.maintainer_token  = nil
       assert_raises(FatalError) { @runner.run("42") }
     end
 
@@ -516,27 +516,44 @@ module Chomper
       assert_equal 1, @github.pushed.length, "fork-mode pushes go straight through, as gh-agent's do"
     end
 
-    def test_non_interactive_refresh_in_direct_mode_declines_without_a_tty
-      @ctx.pr_mode = "direct"
-      runner = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull,
-                            op_pull: @op_pull, interactive: false)
+    def test_non_interactive_refresh_of_a_canonical_head_declines_without_a_tty
+      # A PR whose head branch lives on the canonical repo (shipped as the
+      # maintainer): a gh-agent-triggered refresh must not push it unconfirmed.
+      @ctx.maintainer_token = "maint-tok"
+      seed_pr_cache(head_repo: "opf/openproject")
+      runner = PrRunner.new(@ctx, claude: @claude, github: @github, maintainer_github: @github,
+                            gh_pull: @pull, op_pull: @op_pull, interactive: false)
       inject_worktree(runner, @worktree)
       @worktree.behind = true
 
       out, = with_stdin("") { capture_io { runner.refresh_one("42", "openproject") } }
 
-      assert_empty @github.pushed, "a direct-mode push must never happen unconfirmed"
+      assert_empty @github.pushed, "a canonical-repo push must never happen unconfirmed"
       assert_includes @worktree.resets, "origsha", "the declined refresh is discarded"
       assert_includes out, "discarded"
     end
 
-    def test_direct_mode_prompts_even_with_auto_approval
-      @ctx.pr_mode = "direct"   # auto_approve stays true
+    def test_canonical_head_prompts_even_with_auto_approval
+      @ctx.maintainer_token = "maint-tok"   # auto_approve stays true
+      seed_pr_cache(head_repo: "opf/openproject")
+      runner = PrRunner.new(@ctx, claude: @claude, github: @github, maintainer_github: @github,
+                            gh_pull: @pull, op_pull: @op_pull)
+      inject_worktree(runner, @worktree)
       @worktree.behind = true
-      out, = with_stdin("y\n") { capture_io { @runner.run("42") } }
+      out, = with_stdin("y\n") { capture_io { runner.run("42") } }
 
-      assert_includes out, "[y]es push", "direct mode must not silently auto-push"
+      assert_includes out, "[y]es push", "a canonical-repo push must not silently auto-push"
       assert_equal 1, @github.pushed.length
+    end
+
+    def test_canonical_head_without_a_maintainer_token_is_discarded
+      seed_pr_cache(head_repo: "opf/openproject")   # ctx has no maintainer token
+      @worktree.behind = true
+      out, = capture_io { @runner.run("42") }
+
+      assert_empty @github.pushed
+      assert_includes @worktree.resets, "origsha"
+      assert_includes out, "GITHUB_MAINTAINER_TOKEN is not set"
     end
 
     def test_discard_resets_the_branch_and_acks_nothing

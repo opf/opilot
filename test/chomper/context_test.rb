@@ -54,12 +54,16 @@ module Chomper
       with_env("OPENPROJECT_URL" => nil) { assert_equal "unknown-host", Context.build(@tmpdir).op_host }
     end
 
-    def test_force_fork_overrides_direct_pr_mode
-      with_env("CHOMPER_PR_MODE" => "direct") do
+    def test_github_identity_tokens_come_from_their_env_vars
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "bot-tok", "GITHUB_MAINTAINER_TOKEN" => "maint-tok") do
         ctx = Context.build(@tmpdir)
-        assert ctx.direct_pr?, "sanity: env selects direct mode"
-        ctx.force_fork!
-        refute ctx.direct_pr?, "force_fork! must pin publishing to fork mode"
+        assert_equal "bot-tok",   ctx.contributor_token
+        assert_equal "maint-tok", ctx.maintainer_token
+      end
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => nil, "GITHUB_MAINTAINER_TOKEN" => nil) do
+        ctx = Context.build(@tmpdir)
+        assert_nil ctx.contributor_token
+        assert_nil ctx.maintainer_token
       end
     end
 

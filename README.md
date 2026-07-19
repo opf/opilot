@@ -142,7 +142,7 @@ comments), so it is boxed in from several directions:
 
 | Command | What it does |
 |---|---|
-| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit |
+| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit. Publishes via the contributor bot's fork; with `GITHUB_MAINTAINER_TOKEN` set, directly as the maintainer (each push confirmed) |
 | `./chomper pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
 | `./chomper pull [<id>...]` | Mirror work packages into the local cache |
 | `./chomper chat [message]` | Free read-only chat about the local mirrors |
@@ -169,15 +169,23 @@ runs the full `pr`-command refresh (forced base merge, CI fix, feedback sweep).
 
 ## Reviewing & pushing
 
-Chomper may operate in one of two PR publishing modes:
-* **Fork publishing**
-  * Default everywhere, and **enforced in Agent mode** — the agent loops run unattended, so `CHOMPER_PR_MODE=direct` is ignored there (with a startup notice)
-  * A dedicated unprivileged user (such as [op-chomper](https://github.com/op-chomper)) publishes **contributor** PRs
+Chomper publishes as one of two GitHub **identities** — the command determines
+which one acts, the identity determines the publishing shape, and an existing
+PR determines its own push target:
+
+* **Contributor** (`GITHUB_CONTRIBUTOR_TOKEN`)
+  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
+  * The **only** identity Agent mode uses: the loops run unattended, and the bot physically cannot push to the canonical repo
+  * Also used by `ship` when no maintainer token is configured
   * The contributor PR offers an easy way to _overtake the PR_ via closing the bot PR & re-opening a new one under your own account.
-* **Direct publishing**:
-  * Script mode only (`ship` / `build` / `pr`), where every push to the canonical repo is confirmed interactively
-  * Publishes PRs under your own GitHub account
-  * While there are lots of safeguards in place, this option is less secure and mostly here for experimental purposes.
+* **Maintainer** (`GITHUB_MAINTAINER_TOKEN`)
+  * Your own account, with push access to the canonical repo
+  * Used by script mode (`ship` / `pr`) whenever it is configured: pushes the fix branch straight to the canonical repo and opens a same-repo draft PR
+  * Every push to a canonical repo is confirmed interactively — no flag or env var bypasses that
+  * Optional: without it, `ship` publishes via the contributor bot's fork instead.
+
+Refreshing an existing PR (`pr <id|url>`, `@chomper refresh`) needs no choice:
+the push goes to the PR's head repo with whichever identity owns it.
 
 ### Taking over a chomper PR
 

@@ -29,7 +29,8 @@ services:
     environment:
       # Non-root needs a writable HOME for bundler/git config scratch.
       - HOME=/tmp
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - GITHUB_CONTRIBUTOR_TOKEN=${GITHUB_CONTRIBUTOR_TOKEN:-}
+      - GITHUB_MAINTAINER_TOKEN=${GITHUB_MAINTAINER_TOKEN:-}
       - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL
@@ -42,7 +43,6 @@ services:
       - CHOMPER_MODEL
       - CHOMPER_TRIAGE_MODEL
       - CHOMPER_PLAN_REVIEW
-      - CHOMPER_PR_MODE
       - CHOMPER_ASSIGN_TRIGGER
       - AUTO_PLAN_APPROVAL
       - CHOMPER_CI_MAX_ATTEMPTS

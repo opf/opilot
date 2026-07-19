@@ -9,11 +9,15 @@ module Chomper
   class FixRunner
     include Helpers
 
-    def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
+    # The publishing identity is derived from the configured tokens: with a
+    # maintainer token, ship publishes as the MAINTAINER (direct push to the
+    # canonical repo, each push confirmed interactively); without one it
+    # publishes as the CONTRIBUTOR bot (fork + cross-repo PR).
+    def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: nil)
       @ctx     = ctx
       @pull    = pull
       @claude  = claude
-      @publish = publish
+      @publish = publish || Publish.new(ctx, as: ctx.maintainer_token ? :maintainer : :contributor)
     end
 
     # Plan/approve/implement/ship one or more work packages by id. Each WP is
@@ -321,7 +325,7 @@ module Chomper
           record_progress(st.item_id, st.branch, "shipped:#{repo.name}")
           puts "  ✓ Draft PR (#{repo.name}): #{url}"
         else
-          puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is GITHUB_TOKEN set?"
+          puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is a GitHub token set?"
         end
       end
     end

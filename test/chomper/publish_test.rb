@@ -30,8 +30,7 @@ module Chomper
       def revparse(_ref); "sha"; end          # branch "exists"
     end
 
-    CtxStruct = Struct.new(:github_token, :state_dir, :log_file, :progress_file, :pr_mode, :repos) do
-      def direct_pr?; pr_mode == "direct"; end
+    CtxStruct = Struct.new(:contributor_token, :maintainer_token, :state_dir, :log_file, :progress_file, :repos) do
       def default_repo; repos.default; end
       def op_host; "test.host"; end   # WP mirror namespace
     end
@@ -42,16 +41,21 @@ module Chomper
       state.mkpath
       registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: "/op")
       @repo = registry.default
-      @ctx = CtxStruct.new("ghtok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", "fork", registry)
+      @ctx = CtxStruct.new("bot-tok", "maint-tok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", registry)
 
       @dir = state / "work_packages" / "test.host" / "42"
       (@dir / "repos" / @repo.name).mkpath
       (@dir / "repos" / @repo.name / "pr.md").write("PR body here")
 
-      @publish = Publish.new(@ctx)
-      @publish.instance_variable_set(:@github, FakeGitHub.new)
-      @publish.instance_variable_set(:@worktrees, { @repo.name => FakeWorktree.new })
-      @github = @publish.instance_variable_get(:@github)
+      @publish = build_publish   # contributor (fork) by default
+      @github  = @publish.instance_variable_get(:@github)
+    end
+
+    def build_publish(as: :contributor)
+      publish = Publish.new(@ctx, as: as)
+      publish.instance_variable_set(:@github, FakeGitHub.new)
+      publish.instance_variable_set(:@worktrees, { @repo.name => FakeWorktree.new })
+      publish
     end
 
     def teardown
@@ -95,8 +99,9 @@ module Chomper
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
     end
 
-    def test_direct_mode_pr_gets_no_overtake_note
-      @ctx.pr_mode = "direct"
+    def test_maintainer_pr_gets_no_overtake_note
+      @publish = build_publish(as: :maintainer)
+      @github  = @publish.instance_variable_get(:@github)
       with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
       assert_empty @github.body_updates, "a same-repo PR has no fork-CI limitation to note"
@@ -125,40 +130,50 @@ module Chomper
                    "the PR targets the per-WP base override, not the repo default"
     end
 
-    def test_direct_mode_pushes_to_upstream_and_opens_same_repo_pr
-      @ctx.pr_mode = "direct"
+    def test_maintainer_pushes_to_upstream_and_opens_same_repo_pr
+      @publish = build_publish(as: :maintainer)
+      @github  = @publish.instance_variable_get(:@github)
       url = nil
       out, = with_stdin("y\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
       assert_includes out, "Push bug/42-fix-the-bug to opf/openproject?",
-                      "a direct push must be gated on an interactive yes"
-      assert_empty @github.forked, "direct mode must not fork"
+                      "a canonical push must be gated on an interactive yes"
+      assert_empty @github.forked, "the maintainer identity must not fork"
       assert_equal [["opf/openproject", "bug/42-fix-the-bug"]], @github.pushed,
-                   "direct mode pushes the branch straight to upstream"
+                   "the maintainer pushes the branch straight to upstream"
       call = @github.pr_calls.first
       assert_equal "opf/openproject", call[:repo]
       assert_equal "opf:bug/42-fix-the-bug", call[:head], "same-repo head is upstream_owner:branch"
       assert_equal false, call[:mcm], "same-repo PRs must disable maintainer edits (GitHub 422s otherwise)"
     end
 
-    def test_direct_mode_declined_push_opens_no_pr
-      @ctx.pr_mode = "direct"
+    def test_maintainer_declined_push_opens_no_pr
+      @publish = build_publish(as: :maintainer)
+      @github  = @publish.instance_variable_get(:@github)
       url = :unset
       out, = with_stdin("s\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
       assert_nil url
-      assert_empty @github.pushed, "a declined direct push must not reach the remote"
+      assert_empty @github.pushed, "a declined canonical push must not reach the remote"
       assert_empty @github.pr_calls, "no push → no PR"
       refute pr_url_file.exist?
       assert_includes out, "Push declined"
     end
 
-    def test_direct_mode_with_non_interactive_stdin_declines_the_push
-      @ctx.pr_mode = "direct"
+    def test_maintainer_with_non_interactive_stdin_declines_the_push
+      @publish = build_publish(as: :maintainer)
+      @github  = @publish.instance_variable_get(:@github)
       url = :unset
       with_stdin("") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
-      assert_nil url, "an unattended direct run must never push unconfirmed"
+      assert_nil url, "an unattended canonical push must never happen unconfirmed"
+      assert_empty @github.pushed
+    end
+
+    def test_missing_identity_token_opens_no_pr
+      @ctx.contributor_token = nil
+      out, = capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+      assert_includes out, "GITHUB_CONTRIBUTOR_TOKEN is not set"
       assert_empty @github.pushed
     end
 

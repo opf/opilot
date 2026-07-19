@@ -77,7 +77,9 @@ module Chomper
           build <id>...     Plan, approve, and implement one or more work packages, committing the
                             fix to the local clone — nothing is pushed and no PR is opened
           ship <id>...      Plan, approve, implement, and ship one or more work packages as draft
-                            PRs; picks up a branch committed earlier by build (`fix` is an alias)
+                            PRs; picks up a branch committed earlier by build (`fix` is an alias).
+                            Publishes via the contributor bot's fork; with GITHUB_MAINTAINER_TOKEN
+                            set, publishes directly as the maintainer (each push confirmed)
           pr <id|url>...    Refresh a work package's shipped PR(s): merge in the latest base branch,
                             fix failing CI, and address new review comments, then push (with confirmation).
                             A pasted GitHub PR URL is resolved to its WP (and the WP mirrored) via the
@@ -105,7 +107,8 @@ module Chomper
           OPENPROJECT_URL         OpenProject instance URL
           OPENPROJECT_TOKEN       OpenProject API token
           ANTHROPIC_API_KEY       Recommended; held by authgw, never in claude. Unset → claude auth login fallback
-          GITHUB_TOKEN            Required for pushing branches and opening PRs
+          GITHUB_CONTRIBUTOR_TOKEN  Bot account token — fork publishing; used by the agent modes
+          GITHUB_MAINTAINER_TOKEN   Push-access token — direct publishing for ship/pr (each push confirmed)
           CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper
           CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent (default thykel)
           AUTO_PLAN_APPROVAL      Set 1/true to auto-approve plans (skip the approval prompt)

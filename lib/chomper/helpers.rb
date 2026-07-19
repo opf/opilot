@@ -48,20 +48,21 @@ module Chomper
       raise
     end
 
-    # Set the process git identity (author + committer) to the GitHub bot
-    # account the token belongs to, so commits are attributed to the bot and the
-    # operator's email never lands on a public PR. Runs once per process; a no-op
-    # when no token is set (planning-only). Falls back silently to the host
-    # identity ./chomper exported if the lookup fails.
-    def self.adopt_github_author!(ctx)
+    # Set the process git identity (author + committer) to the GitHub account
+    # the given token belongs to, so a PR's commits are attributed to the
+    # identity that publishes it and the operator's private email never lands
+    # on a public PR. Runs once per process; a no-op when no token is given
+    # (planning-only). Falls back silently to the host identity ./chomper
+    # exported if the lookup fails.
+    def self.adopt_github_author!(token)
       return if @github_author_adopted
-      return unless ctx.respond_to?(:github_token) && ctx.github_token
-      name, email = Clients::GitHub.new(ctx.github_token).author_identity
+      return unless token
+      name, email = Clients::GitHub.new(token).author_identity
       ENV["GIT_AUTHOR_NAME"]  = ENV["GIT_COMMITTER_NAME"]  = name
       ENV["GIT_AUTHOR_EMAIL"] = ENV["GIT_COMMITTER_EMAIL"] = email
       @github_author_adopted = true
     rescue StandardError => e
-      warn "  Warning: couldn't resolve bot git identity (#{e.message}); using host git identity"
+      warn "  Warning: couldn't resolve the publishing git identity (#{e.message}); using host git identity"
     end
 
     # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
@@ -221,17 +222,13 @@ module Chomper
       $stdout.flush
     end
 
-    # Gate for pushes that could land on a canonical repo: fires for every push
-    # while direct mode is on, and — regardless of mode — for any push whose
-    # target IS a registry upstream (a PR shipped in direct mode has its head
-    # branch on the canonical repo, and a later fork-mode run — including agent
-    # mode's forced fork — must not wave its follow-up pushes through). Every
-    # gated push needs an explicit interactive yes; neither AUTO_PLAN_APPROVAL
-    # nor the agent loops bypass it. Pushes to the bot's own fork pass straight
-    # through. A non-interactive stdin (unattended run) declines rather than
-    # pushing unconfirmed.
-    def confirm_direct_push?(target_repo, branch)
-      return true unless @ctx.direct_pr? || canonical_repo?(target_repo)
+    # The one push-safety rule: no push ever lands on a canonical repo (a
+    # registry upstream) without an explicit interactive yes — neither
+    # AUTO_PLAN_APPROVAL nor the agent loops bypass it, and a non-interactive
+    # stdin (unattended run) declines rather than pushing unconfirmed. Pushes
+    # anywhere else (the contributor bot's fork) pass straight through.
+    def confirm_canonical_push?(target_repo, branch)
+      return true unless canonical_repo?(target_repo)
       ping_terminal("chomper: confirm push of #{branch} to #{target_repo}")
       loop do
         print "  Push #{branch} to #{target_repo}? [y]es push / [s]kip: "
@@ -483,7 +480,7 @@ module Chomper
     # Commit the worktree changes for one repo. Returns true when a commit was
     # made, false when this repo had no changes (so the caller can skip its PR).
     def commit(st, repo)
-      Helpers.adopt_github_author!(@ctx)
+      Helpers.adopt_github_author!(@publish.author_token)
       wt = worktree(repo)
       wt.add(all: true)
       diff = wt.diff("HEAD")

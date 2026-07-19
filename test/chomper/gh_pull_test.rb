@@ -16,7 +16,7 @@ module Chomper
     WfJob         = Struct.new(:id, :name, :status, :conclusion, keyword_init: true)
 
     # ctx exposing the reader methods GhPull calls.
-    CtxClass = Struct.new(:state_dir, :allowed_gh_users, :github_token, :log_file,
+    CtxClass = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file,
                           :ci_max_attempts, :ci_ignored_checks) do
       def op_host = "test.host"   # WP mirror namespace
     end

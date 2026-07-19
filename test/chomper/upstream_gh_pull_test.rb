@@ -33,7 +33,7 @@ module Chomper
       state   = @tmpdir / ".chomper"
       state.mkpath
       @registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: @tmpdir)
-      @ctx = Struct.new(:state_dir, :allowed_gh_users, :github_token, :log_file, :repos).new(
+      @ctx = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file, :repos).new(
         state, ["thykel"], "ghtok", @tmpdir / "chomp.log", @registry
       )
     end

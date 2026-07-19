@@ -17,17 +17,14 @@ module Chomper
         ui.reset
       when "agent"
         @ctx.load_config!
-        force_fork_publishing
         @ctx.log_file.open("a") { |f| f.puts "\n=== Combined Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         CombinedAgent.new(@ctx).run
       when "op-agent"
         @ctx.load_config!
-        force_fork_publishing
         @ctx.log_file.open("a") { |f| f.puts "\n=== Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         Agent.new(@ctx).run
       when "gh-agent"
         @ctx.load_config!
-        force_fork_publishing
         @ctx.log_file.open("a") { |f| f.puts "\n=== GH Session #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
         GhAgent.new(@ctx).run
       when "chat"
@@ -52,15 +49,6 @@ module Chomper
     end
 
     private
-
-    # The agent loops always publish via the bot's fork: direct mode's safety
-    # story is an interactive yes before every canonical-repo push, which an
-    # unattended loop can't provide. CHOMPER_PR_MODE=direct stays a script-mode
-    # (ship/pr) option.
-    def force_fork_publishing
-      puts "  CHOMPER_PR_MODE=direct is ignored in agent mode — publishing via the bot's fork." if @ctx.direct_pr?
-      @ctx.force_fork!
-    end
 
     # `pr` refreshes shipped PRs; it accepts work-package ids and/or pasted
     # GitHub PR URLs (a URL is resolved to its WP via chomper's own state, else

@@ -8,7 +8,7 @@ module Chomper
 
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
-                :log_file, :claude_url, :github_token,
+                :log_file, :claude_url, :contributor_token, :maintainer_token,
                 :state_container, :op_url, :token
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
@@ -22,7 +22,14 @@ module Chomper
       @state_dir          = @script_dir / ".chomper"
       @progress_file      = @state_dir / "progress.txt"
       @log_file           = @state_dir / "chomp.log"
-      @github_token       = ENV["GITHUB_TOKEN"]
+      # Two GitHub identities, and the command determines which one acts:
+      # the CONTRIBUTOR is the dedicated bot account (no access to the canonical
+      # repos — it forks, pushes to its fork, opens cross-repo draft PRs; the
+      # agent loops always publish as it), the MAINTAINER is an account with
+      # push access (script `ship`/`pr` publish as it by default: direct pushes
+      # to the canonical repo, each gated on an interactive yes).
+      @contributor_token  = ENV["GITHUB_CONTRIBUTOR_TOKEN"]
+      @maintainer_token   = ENV["GITHUB_MAINTAINER_TOKEN"]
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @state_container    = "/state"
       @op_url             = ENV["OPENPROJECT_URL"]
@@ -101,27 +108,6 @@ module Chomper
     # approve`. Unattended — use with care.
     def auto_plan_approval?
       %w[1 true yes].include?(ENV["AUTO_PLAN_APPROVAL"].to_s.strip.downcase)
-    end
-
-    # PR delivery mode (`CHOMPER_PR_MODE`, default "fork"). When "direct", the
-    # fix branch is pushed straight to the canonical repo and a same-repo PR is
-    # opened — which requires the token to have push access to that repo, and
-    # trades the fork's isolation for the protected-branch guard + human-gated
-    # merge. The default "fork" path forks, pushes to the fork, and opens a
-    # cross-repo PR, so the token never needs write access to the canonical repo.
-    # Direct is a script-mode option only: the CLI calls #force_fork! for the
-    # agent loops, which pins this to fork regardless of the env.
-    def direct_pr?
-      return false if @force_fork
-      ENV["CHOMPER_PR_MODE"].to_s.strip.downcase == "direct"
-    end
-
-    # Pin PR publishing to fork mode for this process, overriding a
-    # CHOMPER_PR_MODE=direct. Used by the agent loops, which run unattended —
-    # direct mode's safety story is an interactive yes before every
-    # canonical-repo push, and an unattended loop cannot provide one.
-    def force_fork!
-      @force_fork = true
     end
 
     # How many times gh-agent will chase a single PR's CI before giving up and

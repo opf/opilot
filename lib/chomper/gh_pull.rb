@@ -43,7 +43,7 @@ module Chomper
     include Helpers
     include GhPrCache
 
-    def initialize(ctx, github: Clients::GitHub.new(ctx.github_token))
+    def initialize(ctx, github: Clients::GitHub.new(ctx.contributor_token))
       @ctx    = ctx
       @github = github
     end

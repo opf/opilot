@@ -33,6 +33,7 @@ module Chomper
     # the URL.
     class FakePublish
       def initialize(state_dir, pr:); @state_dir = state_dir; @pr = pr; end
+      def author_token; nil; end   # nil keeps adopt_github_author! a no-op
       def open_pr(id, _subject, _branch, repo)
         dir = @state_dir / "work_packages" / "op.example.com" / id.to_s / "repos" / repo.name
         dir.mkpath
@@ -53,6 +54,7 @@ module Chomper
 
     # A publisher whose push always fails, to exercise the error path.
     class BoomPublish
+      def author_token; nil; end
       def open_pr(*); raise "git push failed for branch fix/x"; end
     end
 
