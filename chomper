@@ -103,24 +103,10 @@ if _need GITHUB_CONTRIBUTOR_TOKEN; then
   echo ""
 fi
 
-if _need GITHUB_MAINTAINER_TOKEN; then
-  # The MAINTAINER is an account WITH push access to the canonical repo. Script
-  # mode (`ship`/`pr`) publishes as it by default: the fix branch is pushed
-  # straight to the canonical repo and a same-repo draft PR is opened — every
-  # such push is gated on an interactive confirmation, with the protected-
-  # branch guard + draft-PR-with-human-merge as the backstop.
-  echo "  MAINTAINER token — your account, with push access to the product repo."
-  echo "  Used by script mode (ship/pr) for direct pushes to the canonical repo,"
-  echo "  each one confirmed interactively. Classic 'repo' scope ('public_repo' is"
-  echo "  enough for a public repo), plus 'gist' for the plan link:"
-  echo "    https://github.com/settings/tokens (classic → repo + gist)"
-  echo "  chomper still opens DRAFT PRs; merging stays gated on a maintainer."
-  echo "  Leave blank to skip — ship then publishes via the contributor bot's fork."
-  printf "  Maintainer GitHub token (ghp_…), or blank: "
-  read -rs GITHUB_MAINTAINER_TOKEN_ENTRY; echo ""
-  _save GITHUB_MAINTAINER_TOKEN "$GITHUB_MAINTAINER_TOKEN_ENTRY"
-  echo ""
-fi
+# The MAINTAINER identity (GITHUB_MAINTAINER_TOKEN — an account with push
+# access; switches `ship`/`pr` to direct publishing, every canonical push
+# confirmed interactively) is deliberately NOT part of the wizard: it's an
+# advanced opt-in, set by adding the key to .env by hand.
 
 # The GH allowlist only gates gh-agent's PR triggers (the `pr` command ignores
 # it), so only the agent modes that include gh-agent should demand it — and only
