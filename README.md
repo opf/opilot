@@ -198,17 +198,18 @@ Set up the following alias:
 <summary><code>gh alias set adopt …</code></summary>
 
 ```bash
-gh alias set adopt '!set -e; pr="$1"
-v() { gh pr view "$pr" --json "$1" -q ".$1"; }
-branch="$(v headRefName)"
-fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository -q "\(.headRepositoryOwner.login)/\(.headRepository.name)")"
+gh alias set adopt '!set -e
+v() { gh pr view "$1" --json "$2" -q ".$2"; }
+branch="$(v "$1" headRefName)"; base="$(v "$1" baseRefName)"
+fork="$(gh pr view "$1" --json headRepositoryOwner,headRepository -q "\(.headRepositoryOwner.login)/\(.headRepository.name)")"
+git fetch origin "$base"
 git fetch "https://github.com/$fork.git" "$branch"
-git push origin "FETCH_HEAD:refs/heads/$branch"
-url="$(gh pr create --draft --head "$branch" \
-  --base "$(v baseRefName)" --title "$(v title)" --body "$(v body)")"
-gh pr close "$pr" --comment "Adopted in $url."
-echo "Old PR (closed): $(v url)"
-echo "New PR (yours):  $url"'
+git checkout -B "$branch" FETCH_HEAD
+git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
+git push origin "$branch"
+url="$(gh pr create --draft --head "$branch" --base "$base" --title "$(v "$1" title)" --body "$(v "$1" body)")"
+gh pr close "$1" --comment "Adopted in $url."
+echo "New PR (yours): $url"'
 ```
 
 </details>
@@ -219,7 +220,7 @@ The bot's PR lives on its **fork**, so pass its **URL** (a bare number would res
 gh adopt https://github.com/op-chomper/openproject/pull/42
 ```
 
-It fetches the branch from the bot's fork, pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and closes the bot's fork PR.
+It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and closes the bot's fork PR. The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
 
 ---
 
@@ -279,7 +280,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 ### Feature ideas
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
-  * Rewrite commit author (and squash?)
+  * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * more chat lenses beyond grill/summarize: simplify, options, explain, test-plan, impact
