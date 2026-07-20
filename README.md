@@ -201,14 +201,14 @@ Set up the following alias:
 gh alias set adopt '!set -e
 v() { gh pr view "$1" --json "$2" -q ".$2"; }
 branch="$(v "$1" headRefName)"; base="$(v "$1" baseRefName)"
-fork="$(gh pr view "$1" --json headRepositoryOwner,headRepository -q "\(.headRepositoryOwner.login)/\(.headRepository.name)")"
+fork="$(gh pr view "$1" --json headRepositoryOwner,headRepository --template "{{.headRepositoryOwner.login}}/{{.headRepository.name}}")"
 git fetch origin "$base"
 git fetch "https://github.com/$fork.git" "$branch"
 git checkout -B "$branch" FETCH_HEAD
 git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
 git push origin "$branch"
 url="$(gh pr create --draft --head "$branch" --base "$base" --title "$(v "$1" title)" --body "$(v "$1" body)")"
-gh pr close "$1" --comment "Adopted in $url."
+gh pr comment "$1" --body "Adopted in $url."
 echo "New PR (yours): $url"'
 ```
 
