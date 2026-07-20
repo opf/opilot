@@ -275,6 +275,9 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ### Feature ideas
+* Make forked PRs aim to the _fork's_ dev branch to reduce noise
+* More universal `overtake` alias that does not require `gh`
+* Rename `overtake`, as that currently implies we're driving a car
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * more chat lenses beyond grill/summarize: simplify, options, explain, test-plan, impact
