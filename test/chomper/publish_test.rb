@@ -87,25 +87,25 @@ module Chomper
       assert_equal url, pr_url_file.read
     end
 
-    def test_fork_pr_gets_the_overtake_note_pointing_at_its_url
+    def test_fork_pr_gets_the_adopt_note_pointing_at_its_url
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
-      refute_includes @github.pr_calls.first[:body], "gh overtake",
+      refute_includes @github.pr_calls.first[:body], "gh adopt",
                       "the note needs the PR URL, which doesn't exist at create time"
       update = @github.body_updates.first
       refute_nil update, "the body is patched right after creation"
       assert_equal "me/openproject", update[:repo], "the note is patched onto the fork PR"
       assert_equal 7, update[:number]
       assert_includes update[:body],
-                      "[run](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr) " \
-                      "`gh overtake https://github.com/me/openproject/pull/7`",
+                      "[run](https://github.com/opf/openproject-chomper#adopting-a-chomper-pr) " \
+                      "`gh adopt https://github.com/me/openproject/pull/7`",
                       "the note links the setup doc and passes this PR's URL (not a bare number)"
-      assert update[:body].lines[1].include?("gh overtake"),
+      assert update[:body].lines[1].include?("gh adopt"),
              "the note sits at the top, right under the banner"
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
     end
 
-    def test_maintainer_pr_gets_no_overtake_note
+    def test_maintainer_pr_gets_no_adopt_note
       @publish = build_publish(as: :maintainer)
       @github  = @publish.instance_variable_get(:@github)
       with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }

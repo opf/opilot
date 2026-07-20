@@ -49,7 +49,7 @@ module Chomper
       # As the contributor the branch goes to the bot's fork AND the PR is opened
       # there too — against the fork's own base branch — so it never lands in the
       # upstream repo's PR queue; maintainers promote a good one to upstream with
-      # `gh overtake`. The fork's base is first synced level with upstream so the
+      # `gh adopt`. The fork's base is first synced level with upstream so the
       # fork-hosted PR is diffed against a current base and shows only the fix. As
       # the maintainer the branch is pushed straight to upstream and a same-repo
       # PR opened there — the token needs push access. Either way the PR is
@@ -87,7 +87,7 @@ module Chomper
       title = pr_title(item_id, subject)
       url = @github.create_draft_pr(pr_repo, base: base, head: head, title: title, body: pr_body,
                                     maintainer_can_modify: false)
-      add_overtake_note(pr_repo, url, pr_body, banner) if contributor?
+      add_adopt_note(pr_repo, url, pr_body, banner) if contributor?
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
       url
@@ -99,8 +99,8 @@ module Chomper
       @as == :contributor
     end
 
-    # Where the `gh overtake` alias (one-time setup) is documented.
-    OVERTAKE_DOC_URL = "https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr"
+    # Where the `gh adopt` alias (one-time setup) is documented.
+    ADOPT_DOC_URL = "https://github.com/opf/openproject-chomper#adopting-a-chomper-pr"
 
     # The bot's PR lives on its fork (off the upstream queue) and can't run
     # secret-gated CI there, so tell maintainers up front how to promote it to
@@ -108,14 +108,14 @@ module Chomper
     # bare number): the PR isn't in the maintainer's canonical repo, so a number
     # wouldn't resolve. The URL only exists after creation — hence the follow-up
     # body edit. Best-effort: a failed update just leaves the note off.
-    def add_overtake_note(pr_repo, url, pr_body, banner)
+    def add_adopt_note(pr_repo, url, pr_body, banner)
       return unless Clients::GitHub.pr_number_from_url(url)
-      note = "🔁 Maintainers: [run](#{OVERTAKE_DOC_URL}) `gh overtake #{url}` to publish this PR " \
+      note = "🔁 Maintainers: [run](#{ADOPT_DOC_URL}) `gh adopt #{url}` to publish this PR " \
              "under your own account (it lives on the bot's fork, off your PR queue)."
       @github.update_pr_body(pr_repo, Clients::GitHub.pr_number_from_url(url),
                              pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
-      log_script "Could not add the overtake note to #{url}: #{e.message}"
+      log_script "Could not add the adopt note to #{url}: #{e.message}"
     end
 
     # The secret gist URL for this WP's plan, created once and cached in

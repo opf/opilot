@@ -180,7 +180,7 @@ PR determines its own push target:
   * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens the draft PR **on the fork itself** (against the fork's own base branch, kept synced with upstream), so it never clutters the canonical repo's PR queue
   * The **only** identity Agent mode uses: the loops run unattended, and the bot physically cannot push to the canonical repo
   * Also used by `ship` when no maintainer token is configured
-  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the fork PR), and promote a good one to a real upstream PR by _overtaking_ it (below)
+  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the fork PR), and promote a good one to a real upstream PR by _adopting_ it (below)
 * **Maintainer** (`GITHUB_MAINTAINER_TOKEN`)
   * Your own account, with push access to the canonical repo
   * Used by script mode (`ship` / `pr`) whenever it is configured: pushes the fix branch straight to the canonical repo and opens a same-repo draft PR
@@ -190,15 +190,15 @@ PR determines its own push target:
 Refreshing an existing PR (`pr <id|url>`, `@chomper refresh`) needs no choice:
 the push goes to the PR's head repo with whichever identity owns it.
 
-### Taking over a chomper PR
+### Adopting a chomper PR
 
 Set up the following alias:
 
 <details>
-<summary><code>gh alias set overtake …</code></summary>
+<summary><code>gh alias set adopt …</code></summary>
 
 ```bash
-gh alias set overtake '!set -e; pr="$1"
+gh alias set adopt '!set -e; pr="$1"
 v() { gh pr view "$pr" --json "$1" -q ".$1"; }
 branch="$(v headRefName)"
 fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository -q "\(.headRepositoryOwner.login)/\(.headRepository.name)")"
@@ -206,7 +206,7 @@ git fetch "https://github.com/$fork.git" "$branch"
 git push origin "FETCH_HEAD:refs/heads/$branch"
 url="$(gh pr create --draft --head "$branch" \
   --base "$(v baseRefName)" --title "$(v title)" --body "$(v body)")"
-gh pr close "$pr" --comment "Taken over in $url."
+gh pr close "$pr" --comment "Adopted in $url."
 echo "Old PR (closed): $(v url)"
 echo "New PR (yours):  $url"'
 ```
@@ -216,7 +216,7 @@ echo "New PR (yours):  $url"'
 The bot's PR lives on its **fork**, so pass its **URL** (a bare number would resolve against your own repo, where the PR isn't). Run this from inside your OpenProject repo:
 
 ```bash
-gh overtake https://github.com/op-chomper/openproject/pull/42
+gh adopt https://github.com/op-chomper/openproject/pull/42
 ```
 
 It fetches the branch from the bot's fork, pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and closes the bot's fork PR.
@@ -278,9 +278,7 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 
 ### Feature ideas
 * Agent forking workflow:
-  * Make forked PRs aim to the _fork's_ dev branch to reduce noise
-  * More universal `overtake` alias that does not require `gh`
-  * Rename `overtake`, as that currently implies we're driving a car
+  * More universal `adopt` alias that does not require `gh`
   * Rewrite commit author (and squash?)
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
