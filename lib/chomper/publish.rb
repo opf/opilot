@@ -110,8 +110,8 @@ module Chomper
     # body edit. Best-effort: a failed update just leaves the note off.
     def add_adopt_note(pr_repo, url, pr_body, banner)
       return unless Clients::GitHub.pr_number_from_url(url)
-      note = "🔁 Maintainers: [run](#{ADOPT_DOC_URL}) `gh adopt #{url}` to publish this PR " \
-             "under your own account (it lives on the bot's fork, off your PR queue)."
+      note = "🔁 Maintainers: Run `gh adopt #{url}` ([setup guide](#{ADOPT_DOC_URL})) to publish this PR " \
+             "under your own account in the main repo's queue."
       @github.update_pr_body(pr_repo, Clients::GitHub.pr_number_from_url(url),
                              pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
