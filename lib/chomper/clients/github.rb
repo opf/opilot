@@ -92,6 +92,22 @@ module Chomper
         full_name
       end
 
+      # Sync a branch of the authenticated account's fork with its upstream
+      # parent — fast-forwarding "<fork>:<branch>" to the parent repo's same
+      # branch (GitHub's "Sync fork": POST /repos/{fork}/merge-upstream). chomper
+      # opens a fork-hosted PR against the fork's own base branch to keep it off
+      # the upstream queue; the PR is then diffed against that base, so the fork's
+      # base must track upstream or the diff fills with base drift. Best-effort
+      # and not retried (a POST): a branch that has diverged (unmergeable) or a
+      # fork with no parent just leaves the fork as-is and the caller carries on.
+      def sync_fork_branch(fork, branch)
+        @octokit.post("/repos/#{fork}/merge-upstream", branch: branch)
+        true
+      rescue Octokit::Error, Faraday::Error => e
+        warn "  Warning: could not sync #{fork}:#{branch} with upstream: #{e.message}"
+        false
+      end
+
       # The bot account's git identity, as [name, email], for authoring commits.
       # Uses GitHub's no-reply email (`<id>+<login>@users.noreply.github.com`) so
       # commits attribute to the bot account and the operator's address is never

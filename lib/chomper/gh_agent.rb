@@ -120,7 +120,7 @@ module Chomper
     end
 
     def handle_own(intent)
-      repo         = @ctx.repos.by_upstream(intent.repo)
+      repo         = repo_for_own(intent)
       item_dir     = Helpers.item_dir(@ctx, intent.item_id)
       pr_dir       = item_dir / "repos" / intent.repo_name
       item_file    = item_dir / "item.json"
@@ -154,7 +154,7 @@ module Chomper
     # change (e.g. a flaky/infra failure it shouldn't "fix"), in which case it
     # just replies and nothing is pushed.
     def handle_ci(intent)
-      repo         = @ctx.repos.by_upstream(intent.repo)
+      repo         = repo_for_own(intent)
       item_dir     = Helpers.item_dir(@ctx, intent.item_id)
       pr_dir       = item_dir / "repos" / intent.repo_name
       item_file    = item_dir / "item.json"
@@ -313,6 +313,16 @@ module Chomper
     # for a same-repo PR or a cached intent from before head_repo was tracked.
     def head_repo(intent)
       intent.head_repo || intent.repo
+    end
+
+    # The clone to work in for one of chomper's own PRs. The intent's `repo` is
+    # the PR's base repo, which for a fork-hosted PR is the bot's fork (e.g.
+    # "op-chomper/openproject") — that never matches a registry upstream, so map
+    # by the state dir's repo name instead (authoritative — it's the registry
+    # key). Falls back to by_upstream for a maintainer PR opened on the canonical
+    # repo, or a cached intent with no repo_name.
+    def repo_for_own(intent)
+      (intent.repo_name && @ctx.repos[intent.repo_name]) || @ctx.repos.by_upstream(intent.repo)
     end
   end
 end

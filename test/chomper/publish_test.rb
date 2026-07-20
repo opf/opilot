@@ -4,15 +4,17 @@ require "stringio"
 module Chomper
   class PublishTest < Minitest::Test
     # Records what Publish asks the GitHub client to do, so we can assert the
-    # branch goes to the fork and the PR is opened against the repo's upstream.
+    # branch goes to the fork and the PR is opened on the fork (contributor) or
+    # the upstream (maintainer).
     class FakeGitHub
-      attr_reader :forked, :pushed, :pr_calls, :gist_calls, :body_updates
+      attr_reader :forked, :synced, :pushed, :pr_calls, :gist_calls, :body_updates
       def initialize(existing: nil)
-        @existing = existing; @forked = []; @pushed = []; @pr_calls = []; @gist_calls = []
+        @existing = existing; @forked = []; @synced = []; @pushed = []; @pr_calls = []; @gist_calls = []
         @body_updates = []
       end
       def login; "op-chomper"; end
       def ensure_fork(upstream); @forked << upstream; "me/#{upstream.split('/').last}"; end
+      def sync_fork_branch(fork, branch); @synced << [fork, branch]; true; end
       def find_open_pr(_base_repo, head:); @existing; end
       def push_branch(repo, branch:, worktree_path:); @pushed << [repo, branch]; end
       def create_gist(description:, filename:, content:, public: false)
@@ -66,34 +68,38 @@ module Chomper
       @dir / "repos" / @repo.name / "pr_url.txt"
     end
 
-    def test_pushes_to_fork_and_opens_pr_against_upstream
+    def test_pushes_to_fork_and_opens_pr_on_the_fork
       url = nil
       capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       assert_equal ["opf/openproject"], @github.forked
+      assert_equal [["me/openproject", "dev"]], @github.synced,
+                   "the fork's base branch is synced with upstream before the PR is opened"
       assert_equal [["me/openproject", "bug/42-fix-the-bug"]], @github.pushed,
                    "the branch must be pushed to the fork, never to upstream"
       call = @github.pr_calls.first
-      assert_equal "opf/openproject", call[:repo], "the PR is opened against the repo's upstream"
+      assert_equal "me/openproject", call[:repo],
+                   "the PR is opened on the fork, keeping it off the upstream queue"
       assert_equal "dev", call[:base], "base comes from the repo, not a hardcoded dev"
-      assert_equal "me:bug/42-fix-the-bug", call[:head], "cross-repo head is fork_owner:branch"
-      assert_equal true, call[:mcm], "fork PRs allow maintainer edits"
-      assert_equal "https://github.com/opf/openproject/pull/7", url
+      assert_equal "me:bug/42-fix-the-bug", call[:head], "head is fork_owner:branch"
+      assert_equal false, call[:mcm], "a same-repo (fork) PR must disable maintainer edits (GitHub 422s otherwise)"
+      assert_equal "https://github.com/me/openproject/pull/7", url
       assert_equal url, pr_url_file.read
     end
 
-    def test_fork_pr_gets_the_overtake_note_with_its_real_number
+    def test_fork_pr_gets_the_overtake_note_pointing_at_its_url
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       refute_includes @github.pr_calls.first[:body], "gh overtake",
-                      "the note needs the PR number, which doesn't exist at create time"
+                      "the note needs the PR URL, which doesn't exist at create time"
       update = @github.body_updates.first
       refute_nil update, "the body is patched right after creation"
-      assert_equal "opf/openproject", update[:repo]
+      assert_equal "me/openproject", update[:repo], "the note is patched onto the fork PR"
       assert_equal 7, update[:number]
       assert_includes update[:body],
-                      "[Run](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr) `gh overtake 7`",
-                      "the note links the setup doc and names this PR's concrete number"
+                      "[run](https://github.com/opf/openproject-chomper#taking-over-a-chomper-pr) " \
+                      "`gh overtake https://github.com/me/openproject/pull/7`",
+                      "the note links the setup doc and passes this PR's URL (not a bare number)"
       assert update[:body].lines[1].include?("gh overtake"),
              "the note sits at the top, right under the banner"
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
@@ -118,7 +124,9 @@ module Chomper
 
       capture_io { @publish.open_pr("42", "Fix", "bug/42-fix", ck) }
       assert_equal "main", @github.pr_calls.first[:base]
-      assert_equal "opf/commonmark-ckeditor-build", @github.pr_calls.first[:repo]
+      assert_equal "me/commonmark-ckeditor-build", @github.pr_calls.first[:repo],
+                   "the PR opens on this repo's fork"
+      assert_equal [["me/commonmark-ckeditor-build", "main"]], @github.synced
     end
 
     def test_uses_the_per_wp_base_override_when_present

@@ -177,10 +177,10 @@ which one acts, the identity determines the publishing shape, and an existing
 PR determines its own push target:
 
 * **Contributor** (`GITHUB_CONTRIBUTOR_TOKEN`)
-  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
+  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens the draft PR **on the fork itself** (against the fork's own base branch, kept synced with upstream), so it never clutters the canonical repo's PR queue
   * The **only** identity Agent mode uses: the loops run unattended, and the bot physically cannot push to the canonical repo
   * Also used by `ship` when no maintainer token is configured
-  * The contributor PR offers an easy way to _overtake the PR_ via closing the bot PR & re-opening a new one under your own account.
+  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the fork PR), and promote a good one to a real upstream PR by _overtaking_ it (below)
 * **Maintainer** (`GITHUB_MAINTAINER_TOKEN`)
   * Your own account, with push access to the canonical repo
   * Used by script mode (`ship` / `pr`) whenever it is configured: pushes the fix branch straight to the canonical repo and opens a same-repo draft PR
@@ -198,26 +198,28 @@ Set up the following alias:
 <summary><code>gh alias set overtake …</code></summary>
 
 ```bash
-gh alias set overtake '!pr="${1##*/}"; branch="$(gh pr view "$pr" --json headRefName -q .headRefName)"
-git fetch origin "pull/$pr/head" && git push origin "FETCH_HEAD:refs/heads/$branch" || exit 1
+gh alias set overtake '!set -e; pr="$1"
+v() { gh pr view "$pr" --json "$1" -q ".$1"; }
+branch="$(v headRefName)"
+fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository -q "\(.headRepositoryOwner.login)/\(.headRepository.name)")"
+git fetch "https://github.com/$fork.git" "$branch"
+git push origin "FETCH_HEAD:refs/heads/$branch"
 url="$(gh pr create --draft --head "$branch" \
-  --base  "$(gh pr view "$pr" --json baseRefName -q .baseRefName)" \
-  --title "$(gh pr view "$pr" --json title -q .title)" \
-  --body  "$(gh pr view "$pr" --json body -q .body)")"
+  --base "$(v baseRefName)" --title "$(v title)" --body "$(v body)")"
 gh pr close "$pr" --comment "Taken over in $url."
-echo "Old PR (closed): $(gh pr view "$pr" --json url -q .url)"
+echo "Old PR (closed): $(v url)"
 echo "New PR (yours):  $url"'
 ```
 
 </details>
 
-Then, from inside your OpenProject repo, run this:
+The bot's PR lives on its **fork**, so pass its **URL** (a bare number would resolve against your own repo, where the PR isn't). Run this from inside your OpenProject repo:
 
 ```bash
-gh overtake 23811        # or paste the PR URL
+gh overtake https://github.com/op-chomper/openproject/pull/42
 ```
 
-This closes the original Chomper-generated PR and publishes a clone _under your own account_.
+It fetches the branch from the bot's fork, pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and closes the bot's fork PR.
 
 ---
 

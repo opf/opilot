@@ -25,14 +25,15 @@ module Chomper
     end
 
     class FakeGitHub
-      attr_reader :fetched, :pushed, :issue_posts, :searches
+      attr_reader :fetched, :pushed, :issue_posts, :searches, :synced
       attr_accessor :pr, :checks, :search_results
       def initialize(pr:, checks: [])
         @pr = pr; @checks = checks
         @fetched = []; @pushed = []; @issue_posts = []
-        @searches = []; @search_results = []
+        @searches = []; @search_results = []; @synced = []
       end
       def login; "op-chomper"; end
+      def sync_fork_branch(fork, branch); @synced << [fork, branch]; true; end
       def search_prs(query, per_page: 50); @searches << query; @search_results; end
       def pull_request(_repo, _number); @pr; end
       def check_runs(_repo, _sha); @checks; end
@@ -280,6 +281,28 @@ module Chomper
       assert_equal [["op-chomper/openproject", "bug/42-fix", @repo.worktree_host]], @github.pushed,
                    "the merge is pushed to the PR's head repo (the fork)"
       assert_empty @github.issue_posts, "no Claude pass → no PR comment"
+    end
+
+    def test_fork_hosted_pr_syncs_the_forks_base_before_merging
+      # A contributor PR now lives on the bot's fork (base repo = the fork), so
+      # its diff is against the fork's own base — which must be synced level with
+      # upstream first, or base drift shows up in the PR.
+      (@pr_dir / "pr_url.txt").write("https://github.com/op-chomper/openproject/pull/7")
+      @worktree.behind = true
+      capture_io { @runner.run("42") }
+
+      assert_equal [["op-chomper/openproject", "dev"]], @github.synced,
+                   "the fork's base branch is synced with upstream before the diff is computed"
+      assert_equal ["Merge dev into bug/42-fix"], @worktree.merges
+      assert_equal [["op-chomper/openproject", "bug/42-fix", @repo.worktree_host]], @github.pushed,
+                   "the merge is pushed to the fork that hosts the PR"
+    end
+
+    def test_canonical_pr_is_never_fork_synced
+      # A maintainer/canonical-base PR has no fork — the sync must be skipped.
+      @worktree.behind = true
+      capture_io { @runner.run("42") }
+      assert_empty @github.synced, "a canonical-repo PR has no fork base to sync"
     end
 
     def test_ci_failure_runs_claude_commits_and_pushes
