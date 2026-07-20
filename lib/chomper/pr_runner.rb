@@ -190,28 +190,6 @@ module Chomper
       nil
     end
 
-    # How many leading description lines are scanned for the ticket link — the
-    # convention puts it at the very top ("Ticket: <link>"), and matching the
-    # whole body would pick up incidental WP references further down.
-    OP_TICKET_SCAN_LINES = 15
-
-    # The work-package id from an OpenProject work-package link at the top of a
-    # PR description, or nil. Only links to the configured instance count: a WP
-    # on another instance can't be mirrored with this token, and per-instance
-    # state means its id would collide with a local one.
-    def op_ticket_id(body)
-      host = op_link_host
-      return nil unless host
-      head = body.to_s.lines.first(OP_TICKET_SCAN_LINES).join
-      head[%r{https?://#{Regexp.escape(host)}(?::\d+)?/(?:\S*?/)?(?:work_packages|wp)/(\d+|[A-Z][A-Z0-9_]*-\d+)\b}, 1]
-    end
-
-    def op_link_host
-      URI(@ctx.op_url.to_s).host
-    rescue URI::InvalidURIError
-      nil
-    end
-
     # The <id>/repos/<name>/ dirs holding a shipped PR for this WP (mirrors
     # GhPull#shipped_pr_dirs, scoped to one WP).
     def pr_dirs_for(wp_id)

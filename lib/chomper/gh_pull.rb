@@ -141,6 +141,53 @@ module Chomper
 
     private
 
+    # The URL a closed fork PR was adopted into, pulled from the "Adopted in
+    # <url>" comment `gh adopt` leaves behind. Most-recent comment wins.
+    ADOPTED_RE = %r{adopted in\s+<?(https://github\.com/[^/\s>]+/[^/\s>]+/pull/\d+)}i
+
+    # If this closed fork PR was adopted into a new upstream PR, repoint the dir
+    # at it and reset its act-state so gh-agent tracks the live PR from here on;
+    # returns true when it did. The trust boundary: the target must be an open PR
+    # on a canonical repo whose ticket link resolves to *this* WP — so a stray
+    # "Adopted in <url>" comment from anyone can't redirect tracking to a PR the
+    # commenter doesn't control (forging that needs canonical write access).
+    def follow_adoption(wp_id, repo_name, dir, closed_repo, closed_number)
+      new_url = adopted_pr_url(closed_repo, closed_number)
+      return false unless new_url
+      new_repo   = Clients::GitHub.repo_from_url(new_url)
+      new_number = Clients::GitHub.pr_number_from_url(new_url)
+      return false unless new_repo && new_number && canonical_repo?(new_repo)
+
+      new_pr = @github.pull_request(new_repo, new_number)
+      return false unless new_pr.state.to_s == "open"
+      return false unless op_ticket_id(new_pr.body).to_s.casecmp?(wp_id.to_s)
+
+      repoint_pr(dir, new_url)
+      log_script "gh-agent: #{closed_repo}##{closed_number} was adopted → now tracking #{new_repo}##{new_number}."
+      true
+    rescue => e
+      # Never let a handoff probe stop the PR being marked done as usual.
+      log_script "gh-agent: adoption check failed on #{closed_repo}##{closed_number} — #{e.message}"
+      false
+    end
+
+    def adopted_pr_url(repo, number)
+      @github.issue_comments(repo, number).reverse_each do |c|
+        m = c.body.to_s.match(ADOPTED_RE)
+        return m[1] if m
+      end
+      nil
+    end
+
+    # Move a dir's tracking to a new PR: rewrite pr_url.txt and drop the caches
+    # and act-state keyed to the old PR (content/CI caches and comment cutoffs),
+    # so the new PR is polled fresh. The Claude session is kept for continuity.
+    def repoint_pr(dir, new_url)
+      (dir / "pr_url.txt").write(new_url)
+      safe_rm(dir / "pr.json", dir / "ci.json")
+      Helpers.write_json_atomic(dir / "gh_pr.json", {}, "gh_pr")
+    end
+
     # `dir` is <id>/repos/<name>/ — the repo subdir holds the PR url, cache,
     # and act-state; item.json/plan.md live one level up at the WP root.
     def intents_for_dir(dir)
@@ -152,10 +199,15 @@ module Chomper
       return [] unless repo && number
 
       pr = @github.pull_request(repo, number)
-      # Don't touch PRs that are merged or closed — and remember the closure so
-      # this dir never costs another poll (see poll_intents).
+      # A closed PR may have been *adopted* — a maintainer re-published it under
+      # their own account with `gh adopt`, closing this fork PR with an "Adopted
+      # in <url>" comment. Follow the handoff so the WP keeps being tracked;
+      # next poll picks up the new PR. Otherwise remember the closure so this
+      # dir never costs another poll (see poll_intents).
       unless pr.state.to_s == "open"
-        mark_pr_done(item_dir.basename.to_s, repo_name)
+        wp_id = item_dir.basename.to_s
+        return [] if follow_adoption(wp_id, repo_name, dir, repo, number)
+        mark_pr_done(wp_id, repo_name)
         log_script "gh-agent: #{repo}##{number} is #{pr.state} — dropping it from future polls."
         return []
       end

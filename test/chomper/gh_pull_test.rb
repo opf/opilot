@@ -5,7 +5,7 @@ module Chomper
     User          = Struct.new(:login)
     Repo          = Struct.new(:full_name)
     Head          = Struct.new(:ref, :sha, :repo)
-    PR            = Struct.new(:state, :updated_at, :html_url, :title, :head, keyword_init: true)
+    PR            = Struct.new(:state, :updated_at, :html_url, :title, :head, :body, keyword_init: true)
     IssueC        = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
     ReviewC       = Struct.new(:id, :body, :user, :created_at, :in_reply_to_id, :path, :line, :diff_hunk, keyword_init: true)
     ReviewSummary = Struct.new(:id, :body, :user, :state, :submitted_at, keyword_init: true)
@@ -17,21 +17,23 @@ module Chomper
 
     # ctx exposing the reader methods GhPull calls.
     CtxClass = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file,
-                          :ci_max_attempts, :ci_ignored_checks) do
+                          :ci_max_attempts, :ci_ignored_checks, :script_dir, :op_url, :repos) do
       def op_host = "test.host"   # WP mirror namespace
     end
 
     class FakeGitHub
       attr_reader :comment_fetches, :reacted, :ci_comments, :check_runs_calls, :pr_fetches
       def initialize(pr:, issue: [], review: [], reviews: [],
-                     check_runs: [], annotations: [], workflow_runs: [], jobs: [], job_log: nil)
+                     check_runs: [], annotations: [], workflow_runs: [], jobs: [], job_log: nil, prs: {})
         @pr = pr; @issue = issue; @review = review; @reviews = reviews
         @check_runs = check_runs; @annotations = annotations
         @workflow_runs = workflow_runs; @jobs = jobs; @job_log = job_log
         @comment_fetches = 0; @reacted = []; @ci_comments = []; @check_runs_calls = 0
-        @pr_fetches = 0
+        @pr_fetches = 0; @prs = prs
       end
-      def pull_request(_repo, _num);   @pr_fetches += 1; @pr; end
+      # A specific "repo#num" from `prs` wins (used to model the adopted PR being
+      # a different PR from the closed one); otherwise the single @pr is returned.
+      def pull_request(repo, num);     @pr_fetches += 1; @prs["#{repo}##{num}"] || @pr; end
       def issue_comments(_repo, _num); @comment_fetches += 1; @issue; end
       def review_comments(_repo, _num); @review;  end
       def reviews(_repo, _num);         @reviews; end
@@ -47,8 +49,12 @@ module Chomper
 
     def setup
       @tmpdir = Dir.mktmpdir
+      state_dir = Pathname(@tmpdir) / ".chomper"
+      state_dir.mkpath
+      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @ctx = CtxClass.new(
-        Pathname(@tmpdir) / ".chomper", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", 2, []
+        state_dir, ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", 2, [],
+        Pathname(@tmpdir), "https://test.host", registry
       )
       @dir = @ctx.state_dir / "work_packages" / "test.host" / "42"
       @pr_dir = @dir / "repos" / "openproject"   # per-repo PR subdir
@@ -62,9 +68,10 @@ module Chomper
     end
 
     def pr(state: "open", updated_at: "2026-06-18T18:00:00Z", title: "PR title",
-           ref: "bug/42-fix-the-bug", head_repo: "fork/r")
+           ref: "bug/42-fix-the-bug", head_repo: "fork/r", body: nil,
+           html_url: "https://github.com/o/r/pull/7")
       PR.new(state: state, updated_at: Time.parse(updated_at),
-             html_url: "https://github.com/o/r/pull/7", title: title,
+             html_url: html_url, title: title, body: body,
              head: Head.new(ref, "sha123", Repo.new(head_repo)))
     end
 
