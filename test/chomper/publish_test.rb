@@ -97,8 +97,8 @@ module Chomper
       assert_equal "me/openproject", update[:repo], "the note is patched onto the fork PR"
       assert_equal 7, update[:number]
       assert_includes update[:body],
-                      "Run `gh adopt https://github.com/me/openproject/pull/7` " \
-                      "([setup guide](https://github.com/opf/openproject-chomper#adopting-a-chomper-pr))",
+                      "[run](https://github.com/opf/openproject-chomper#adopting-a-chomper-pr) " \
+                      "`gh adopt https://github.com/me/openproject/pull/7`",
                       "the note links the setup doc and passes this PR's URL (not a bare number)"
       assert update[:body].lines[1].include?("gh adopt"),
              "the note sits at the top, right under the banner"
