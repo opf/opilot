@@ -134,12 +134,18 @@ module Chomper
     end
 
     # A reply-only intent for an upstream PR chomper did not open.
-    def review_intent(kind: :issue, id: 99, text: "@chomper what do you think?")
+    def review_intent(kind: :issue, id: 99, text: "@chomper what do you think?", head_sha: nil)
       GhIntent.new(item_id: nil, repo_name: "openproject", subject: "Fix a thing",
                    branch: "contrib-branch", repo: "opf/openproject", head_repo: "contributor/openproject",
                    pr_number: 7, pr_url: "https://github.com/opf/openproject/pull/7",
                    kind: kind, comment_id: id, text: text, user_login: "thykel",
-                   comment_at: "2026-06-20T09:00:00Z", reply_only: true)
+                   comment_at: "2026-06-20T09:00:00Z", reply_only: true, head_sha: head_sha)
+    end
+
+    def write_review_ci_json(head_sha)
+      dir = @ctx.state_dir / "pr_reviews" / "opf-openproject" / "7"
+      dir.mkpath
+      (dir / "ci.json").write(JSON.generate("head_sha" => head_sha, "failed" => [{ "name" => "rspec" }]))
     end
 
     # A CI-failure intent for one of chomper's own PRs (the auto-fix path).
@@ -185,6 +191,30 @@ module Chomper
       assert_empty @github.pushed,    "reply-only must never push"
       review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
       assert_equal Claude::TOOLS_READ, review_run[:tools], "review runs read-only"
+    end
+
+    def test_upstream_review_includes_failing_ci_when_it_matches_the_head
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, FakeWorktree.new)
+      write_review_ci_json("abc123")
+
+      capture_io { agent.handle(review_intent(head_sha: "abc123")) }
+
+      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      assert_includes review_run[:prompt], "FAILING CI", "the review is handed the CI failure detail"
+    end
+
+    def test_upstream_review_ignores_ci_cached_against_a_different_head
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, FakeWorktree.new)
+      write_review_ci_json("oldsha")   # a failure from an earlier commit
+
+      capture_io { agent.handle(review_intent(head_sha: "newsha")) }
+
+      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      refute_includes review_run[:prompt], "FAILING CI", "a stale failure isn't shown as current"
     end
 
     def test_code_request_replies_commits_and_pushes_to_fork

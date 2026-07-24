@@ -113,24 +113,51 @@ module Chomper
       cutoff  = [state["last_acted_comment_at"], @scan_from_at].compact.max
       acted   = (state["chomper_comment_ids"] || []).map(&:to_s)
 
+      ci_read = false
       fresh_mentions(content["comments"], cutoff, acted).filter_map do |c|
         unless allowed?(c["author"], content["url"])
           mark_acted(repo_str, number, c["created_at"])
           next nil
         end
         @github.react(repo_str, c["id"], kind: c["kind"].to_sym)
+        # Populate ci.json once per poll for a PR that will actually be handled,
+        # so a review triggered by a CI question has the failure detail on hand.
+        # Read-only — chomper can't fix an upstream PR, only explain it.
+        unless ci_read
+          write_review_ci(dir, repo_str, content)
+          ci_read = true
+        end
         GhIntent.new(
           item_id: nil, repo_name: registry_repo.name, subject: subject,
           branch: content["head_ref"], repo: repo_str, head_repo: content["head_repo"],
           pr_number: number, pr_url: content["url"], kind: c["kind"].to_sym,
           comment_id: c["id"], in_reply_to: c["in_reply_to"], text: c["body"],
-          user_login: c["author"], comment_at: c["created_at"], reply_only: true
+          user_login: c["author"], comment_at: c["created_at"], reply_only: true,
+          head_sha: content["head_sha"]
         )
       end
     rescue => e
       # One unreachable/renamed PR shouldn't stop the others being polled.
       log_script "gh-agent(upstream): skipping #{repo_str}##{number} — #{e.message}"
       []
+    end
+
+    # Cache the PR's CI-failure detail to ci.json so a review can answer
+    # questions about red checks (`GhPrCache#fetch_ci_content`, keyed by head
+    # SHA). Only a failing run writes the file — green/pending/none leaves it
+    # absent and the review runs on the diff + thread alone. Ignored checks
+    # (`CHOMPER_CI_IGNORE_CHECKS`) are dropped so a fork-only failure like "SaaS
+    # tests" doesn't masquerade as the problem. Best-effort: a CI-read hiccup
+    # (rate limit, expired logs) must never block the review reply.
+    def write_review_ci(dir, repo_str, content)
+      head_sha = content["head_sha"].to_s
+      return if head_sha.empty?
+      ignore     = @ctx.ci_ignored_checks
+      check_runs = @github.check_runs(repo_str, head_sha)
+                          .reject { |c| ignore.include?(c.name.to_s.strip.downcase) }
+      fetch_ci_content(dir, repo_str, head_sha, check_runs, ignore: ignore) if ci_status(check_runs) == :failed
+    rescue => e
+      log_script "gh-agent(upstream): CI read failed for #{repo_str}##{content['number']} — #{e.message}"
     end
 
     # A PR opened by the bot account itself (fork mode's cross-repo PRs and

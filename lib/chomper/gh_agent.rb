@@ -104,6 +104,7 @@ module Chomper
       repo         = @ctx.repos.by_upstream(intent.repo)
       dir          = @upstream_pull.pr_dir(intent.repo, intent.pr_number)
       pr_file      = dir / "pr.json"
+      ci_file      = dir / "ci.json"
       session_file = dir / "gh_session_id"
 
       @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
@@ -113,10 +114,22 @@ module Chomper
         repo: intent.repo, pr_number: intent.pr_number, title: intent.subject,
         worktree: repo.worktree_container, base: repo.base, pr_thread: container_path(pr_file),
         comment: intent.text.to_s, author: intent.user_login.to_s,
-        comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
+        comment_id: intent.comment_id, in_reply_to: intent.in_reply_to,
+        ci: review_ci_ref(ci_file, intent.head_sha)
       )
       reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: session_file)
       post_reply(intent, reply)
+    end
+
+    # The container path to the upstream PR's cached CI-failure detail, or nil.
+    # UpstreamGhPull writes ci.json only when CI is failing; guard on the head
+    # SHA so a stale failure cached against an earlier commit isn't shown as
+    # current after a new push.
+    def review_ci_ref(ci_file, head_sha)
+      return nil if head_sha.to_s.empty?
+      data = Helpers.safe_json_read(ci_file)
+      return nil unless data && data["head_sha"].to_s == head_sha.to_s
+      container_path(ci_file)
     end
 
     def handle_own(intent)
