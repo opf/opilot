@@ -207,7 +207,8 @@ git fetch "https://github.com/$fork.git" "$branch"
 git checkout -B "$branch" FETCH_HEAD
 git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
 git push origin "$branch"
-url="$(gh pr create --draft --head "$branch" --base "$base" --title "$(v "$1" title)" --body "$(v "$1" body)")"
+body="$(v "$1" body | sed "s#hxxp://#http://#g; s#hxxps://#https://#g")"
+url="$(gh pr create --draft --head "$branch" --base "$base" --title "$(v "$1" title)" --body "$body")"
 gh pr comment "$1" --body "Adopted in $url."
 echo "New PR (yours): $url"'
 ```
@@ -220,7 +221,7 @@ Then, from inside your OpenProject repo, run this:
 gh adopt 42        # or paste the PR URL
 ```
 
-It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and comments a link to the new PR on the bot's original (leaving it open so gh-agent keeps tracking it). The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
+It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and comments a link to the new PR on the bot's original (leaving it open so gh-agent keeps tracking it). The adopted PR's body has the work-package link re-fanged (`hxxp://` → `http://`), so **your** PR is the one OpenProject's GitHub integration references on the ticket — the bot's defanged PR never clutters the activity tab. The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
 
 ---
 

@@ -182,7 +182,7 @@ module Chomper
       end
 
       # Replace a PR's description (used to slot in content that needs the PR
-      # number, which only exists after creation — e.g. the overtake note).
+      # number, which only exists after creation — e.g. the adopt note).
       def update_pr_body(repo, number, body)
         with_retry { @octokit.update_pull_request(repo, number, body: body) }
       end

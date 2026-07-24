@@ -1,6 +1,7 @@
 require "json"
 require "tempfile"
 require "time"
+require "uri"
 require "rainbow"
 require "tty-markdown"
 
@@ -251,6 +252,34 @@ module Chomper
     # (Registry#by_upstream can't answer this — it falls back to the default repo.)
     def canonical_repo?(owner_repo)
       @ctx.repos.all.any? { |r| r.upstream.casecmp?(owner_repo.to_s) }
+    end
+
+    # The OpenProject instance host (no port), for matching WP links, or nil.
+    def op_link_host
+      URI(@ctx.op_url.to_s).host
+    rescue URI::InvalidURIError
+      nil
+    end
+
+    # Defang the scheme of every OpenProject WP link in `text` (http→hxxp), so
+    # the OpenProject GitHub integration won't pick the link up. chomper writes
+    # the link so the PR can be traced back to its WP (and later adopted), but
+    # the integration ALSO scans PR bodies for it and would auto-reference the
+    # WP — cluttering its activity tab with a fork PR no maintainer has taken
+    # over yet. `hxxp://` fails the integration's `https?://…/(?:work_packages|wp)/<id>`
+    # matcher while leaving the id plainly readable; chomper re-fangs it when
+    # reading the link back (`op_ticket_id` accepts the `hxxp` scheme), and
+    # `gh adopt` restores `http` so the maintainer's real PR links cleanly.
+    # Host-scoped (links to other hosts are untouched) and idempotent (an
+    # already-defanged link has no `http` scheme left to match). No-op when the
+    # host is unknown.
+    def neutralize_wp_links(text)
+      host = op_link_host
+      return text if host.to_s.empty?
+      text.to_s.gsub(
+        %r{http(s?://#{Regexp.escape(host)}(?::\d+)?/(?:\S+?/)*?(?:work_packages|wp)/)}i,
+        "hxxp\\1"
+      )
     end
 
     def safe_rm(*paths)

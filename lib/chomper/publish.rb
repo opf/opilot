@@ -70,6 +70,13 @@ module Chomper
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
       pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
 
+      # A contributor PR lives on upstream but isn't a maintainer's PR yet —
+      # defang its WP link (http→hxxp) so the OpenProject GitHub integration
+      # doesn't auto-reference the WP and clutter its activity tab (`gh adopt`
+      # re-fangs it when a maintainer promotes it). Maintainer PRs are real, so
+      # their link is left intact and links immediately.
+      pr_body = neutralize_wp_links(pr_body) if contributor?
+
       unless confirm_canonical_push?(target_repo, branch)
         puts "  Push declined — #{branch} was not pushed and no PR was opened."
         return nil

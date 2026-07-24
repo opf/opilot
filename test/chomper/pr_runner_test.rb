@@ -425,6 +425,19 @@ module Chomper
       assert_includes out, "already fresh", "the normal refresh flow then runs"
     end
 
+    def test_pasted_url_adopts_a_pr_whose_ticket_link_is_defanged
+      # A contributor PR defangs its WP link (hxxps://…/work_packages/99) so
+      # OpenProject won't auto-reference it; op_ticket_id must still read the id.
+      @github.pr = open_pr(number: 9, body: "Ticket: hxxps://test.host/work_packages/99\n\nFixes a thing.")
+      @op_pull.item = { "id" => "99" }
+      out, = capture_io { @runner.run("https://github.com/opf/openproject/pull/9") }
+
+      assert_equal ["99"], @op_pull.fetched, "the defanged link still resolves to its WP"
+      adopted = @ctx.state_dir / "work_packages" / "test.host" / "99" / "repos" / "openproject" / "pr_url.txt"
+      assert_equal "https://github.com/opf/openproject/pull/9", adopted.read
+      assert_includes out, "Adopted opf/openproject#9 as #99"
+    end
+
     def test_wp_id_with_no_local_state_adopts_the_bots_open_pr_from_github
       @github.pr = open_pr(number: 9, body: "Ticket: https://test.host/work_packages/77\n\nFixes a thing.")
       @github.search_results = [FakeSearchRef.new(number: 9)]

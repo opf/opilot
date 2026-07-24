@@ -32,7 +32,8 @@ module Chomper
 
     CtxStruct = Struct.new(:contributor_token, :maintainer_token, :state_dir, :log_file, :progress_file, :repos) do
       def default_repo; repos.default; end
-      def op_host; "test.host"; end   # WP mirror namespace
+      def op_host; "test.host"; end            # WP mirror namespace
+      def op_url; "https://test.host"; end     # instance URL (for WP-link matching)
     end
 
     def setup
@@ -45,7 +46,7 @@ module Chomper
 
       @dir = state / "work_packages" / "test.host" / "42"
       (@dir / "repos" / @repo.name).mkpath
-      (@dir / "repos" / @repo.name / "pr.md").write("PR body here")
+      (@dir / "repos" / @repo.name / "pr.md").write("# Ticket\nhttps://test.host/work_packages/42\n\nPR body here")
 
       @publish = build_publish   # contributor (fork) by default
       @github  = @publish.instance_variable_get(:@github)
@@ -105,6 +106,27 @@ module Chomper
       with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
 
       assert_empty @github.body_updates, "a same-repo PR has no fork-CI limitation to note"
+    end
+
+    def test_contributor_pr_body_defangs_the_wp_link
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      body = @github.pr_calls.first[:body]
+      assert_includes body, "hxxps://test.host/work_packages/42",
+                      "the WP link's scheme is defanged so OpenProject won't auto-reference the WP"
+      refute_includes body, "https://test.host/work_packages/42",
+                      "the live (linkable) scheme must not survive in a contributor PR"
+    end
+
+    def test_maintainer_pr_body_keeps_the_wp_link_intact
+      @publish = build_publish(as: :maintainer)
+      @github  = @publish.instance_variable_get(:@github)
+      with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
+
+      body = @github.pr_calls.first[:body]
+      assert_includes body, "https://test.host/work_packages/42",
+                      "a maintainer PR is real, so its link references the WP immediately"
+      refute_includes body, "hxxp"
     end
 
     def test_base_branch_comes_from_the_repo
