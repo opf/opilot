@@ -21,8 +21,10 @@ module Chomper
     end
 
     class FakeGitHub
-      attr_reader :issue_posts, :review_posts, :fetched, :pushed
-      def initialize; @issue_posts = []; @review_posts = []; @fetched = []; @pushed = []; end
+      attr_reader :issue_posts, :review_posts, :reviews_created, :fetched, :pushed
+      def initialize
+        @issue_posts = []; @review_posts = []; @reviews_created = []; @fetched = []; @pushed = []
+      end
       def fetch_branch(repo, branch:, worktree_path:)
         @fetched << [repo, branch, worktree_path]
       end
@@ -34,6 +36,10 @@ module Chomper
       end
       def reply_to_review_comment(repo, num, body, in_reply_to)
         @review_posts << [repo, num, body, in_reply_to]; PostedComment.new(id: 1001)
+      end
+      def create_review(repo, num, commit_id:, body:, comments:)
+        @reviews_created << { repo: repo, number: num, commit_id: commit_id, body: body, comments: comments }
+        PostedComment.new(id: 2000)
       end
     end
 
@@ -215,6 +221,61 @@ module Chomper
 
       review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
       refute_includes review_run[:prompt], "FAILING CI", "a stale failure isn't shown as current"
+    end
+
+    def test_upstream_review_posts_suggestions_as_an_applicable_review
+      @claude.reply = <<~OUT
+        A nil-guard is missing here.
+        SUGGESTIONS:
+        ```json
+        [{"path": "app/models/user.rb", "start_line": 10, "line": 12, "suggestion": "  return unless items[0]"}]
+        ```
+        REPLY:
+        Suggested a nil-guard inline.
+      OUT
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, FakeWorktree.new)
+
+      capture_io { agent.handle(review_intent(head_sha: "abc123")) }
+
+      review = @github.reviews_created.first
+      refute_nil review, "an applicable review is posted"
+      assert_equal "abc123", review[:commit_id], "suggestions anchor to the reviewed head SHA"
+      c = review[:comments].first
+      assert_equal "app/models/user.rb", c[:path]
+      assert_equal 12, c[:line]
+      assert_equal 10, c[:start_line], "a multi-line range carries start_line"
+      assert_equal "RIGHT", c[:side]
+      assert_includes c[:body], "```suggestion\n  return unless items[0]\n```",
+                      "code with a ] survives parsing intact"
+      assert_equal 1, @github.issue_posts.length, "the prose reply is still posted"
+      refute_includes @github.issue_posts.first[2], "SUGGESTIONS",
+                      "the machine block is stripped from the posted reply"
+    end
+
+    def test_upstream_review_without_suggestions_posts_no_review
+      @claude.reply = "Just a question — no change needed.\nREPLY:\nLooks fine to me."
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, FakeWorktree.new)
+
+      capture_io { agent.handle(review_intent(head_sha: "abc123")) }
+
+      assert_empty @github.reviews_created, "no suggestions → no review posted"
+      assert_equal 1, @github.issue_posts.length, "just the conversational reply"
+    end
+
+    def test_upstream_suggestions_need_a_head_sha_to_anchor
+      @claude.reply = "SUGGESTIONS:\n```json\n[{\"path\":\"a.rb\",\"line\":3,\"suggestion\":\"x = 1\"}]\n```\nREPLY:\nsee inline"
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          claude: @claude, github: @github)
+      inject_worktree(agent, FakeWorktree.new)
+
+      capture_io { agent.handle(review_intent(head_sha: nil)) }
+
+      assert_empty @github.reviews_created, "without a head SHA the suggestions can't be anchored"
+      assert_equal 1, @github.issue_posts.length, "the reply still posts"
     end
 
     def test_code_request_replies_commits_and_pushes_to_fork

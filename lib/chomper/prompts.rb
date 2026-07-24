@@ -322,6 +322,31 @@ module Chomper
       can).
     TEXT
 
+    # How a read-only review proposes an *applicable* code change on a PR chomper
+    # can't push to: a GitHub suggestion the author commits with one click. The
+    # block is machine-parsed (GhAgent#parse_suggestions) into inline review
+    # comments, so its shape is exact.
+    SUGGESTION_CONTRACT = <<~TEXT.strip
+      To propose a concrete edit the author can apply with one click, emit a
+      suggestions block — placed BEFORE the REPLY line — of exactly this form:
+
+      SUGGESTIONS:
+      ```json
+      [{"path": "app/foo.rb", "start_line": 10, "line": 12, "suggestion": "full replacement text for lines 10-12"}]
+      ```
+
+      - One element per contiguous hunk. `line` is the LAST line the suggestion
+        replaces, numbered in the PR's NEW version (the diff's right side);
+        `start_line` is the first line of a multi-line range (omit it for a single
+        line). `suggestion` is the exact replacement for those whole lines —
+        real indentation, no ``` fences, no diff +/- markers.
+      - Only suggest on lines that appear in `git diff origin/<base>...HEAD`; a
+        line outside the diff is rejected. Read the diff to get the numbers right.
+      - Include the block ONLY when you actually propose a change; omit it entirely
+        otherwise. In the reply, just note what you suggested (e.g. "2 fixes
+        inline") — the code lives in the block, not the reply.
+    TEXT
+
     # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit).
     # "Always reply, code if asked": Claude answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
@@ -361,10 +386,12 @@ module Chomper
         is checked out at #{worktree}; its changes are `git diff origin/#{base}...HEAD`.
         #{READ_ONLY}
 
-        You CANNOT change this PR — it isn't yours to push to. NEVER edit, create, or
-        delete files. Review and answer in text only. If a code change is warranted,
-        describe it precisely (which file, what to change, and why) so a human can
-        apply it — do not attempt the edit yourself.
+        You cannot push to this PR, and you must NEVER edit, create, or delete
+        files yourself. But you CAN propose concrete edits as GitHub *suggestions*
+        the author applies with one click: for a change to lines already in the
+        PR's diff, emit a suggestion (see the contract below). For anything a
+        suggestion can't express — a new file, a change outside the diff, a broad
+        refactor — describe it precisely in your reply instead.
 
         PR THREAD: #{pr_thread}  #{THREAD_NOTE}
         #{ci_review_section(ci)}
@@ -372,6 +399,9 @@ module Chomper
 
         Read the diff and relevant files before answering; a review should be short
         and specific.
+
+        #{SUGGESTION_CONTRACT}
+
         #{REPLY_CONTRACT}
       PROMPT
     end

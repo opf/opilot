@@ -118,7 +118,50 @@ module Chomper
         ci: review_ci_ref(ci_file, intent.head_sha)
       )
       reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: session_file)
+      post_suggestions(intent, reply)
       post_reply(intent, reply)
+    end
+
+    # Post any GitHub suggestions the review proposed as an applicable inline
+    # review, so the author can commit chomper's edits with one click — chomper
+    # can't push to a PR it doesn't own. Best-effort: a bad line range 422s the
+    # whole review, so a failure just logs and the prose reply still carries the
+    # details. Needs the head SHA to anchor the comments to the diff chomper read.
+    def post_suggestions(intent, reply)
+      comments = parse_suggestions(reply)
+      return if comments.empty? || intent.head_sha.to_s.empty?
+      @github.create_review(
+        intent.repo, intent.pr_number, commit_id: intent.head_sha,
+        body: "🤖 Suggested changes — click **Apply suggestion** on each to commit it to your branch.",
+        comments: comments
+      )
+      log_script "Posted #{comments.length} suggestion(s) on #{intent.repo}##{intent.pr_number}"
+    rescue => e
+      log_script "Suggestions failed on #{intent.repo}##{intent.pr_number} (posting reply only): #{e.message}"
+    end
+
+    # Parse the optional SUGGESTIONS block (before the REPLY line) into GitHub
+    # review-comment hashes carrying ```suggestion bodies. Best-effort: malformed
+    # or absent JSON yields none and only the prose reply is posted.
+    def parse_suggestions(text)
+      seg = text.to_s.split(/^\s*REPLY:/m, 2).first.to_s
+      raw = seg[/SUGGESTIONS:\s*(.+)/m, 1] or return []
+      json = raw[/```(?:json)?\s*(.*?)```/m, 1] || raw
+      Array(JSON.parse(json.strip)).filter_map do |s|
+        next unless s.is_a?(Hash)
+        path = s["path"].to_s
+        line = s["line"]
+        code = s["suggestion"].to_s
+        next if path.empty? || !line.is_a?(Integer) || code.empty?
+        c = { path: path, line: line, side: "RIGHT", body: "```suggestion\n#{code}\n```" }
+        if (sl = s["start_line"]).is_a?(Integer) && sl < line
+          c[:start_line] = sl
+          c[:start_side]  = "RIGHT"
+        end
+        c
+      end
+    rescue JSON::ParserError
+      []
     end
 
     # The container path to the upstream PR's cached CI-failure detail, or nil.

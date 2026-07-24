@@ -221,6 +221,21 @@ module Chomper
         @octokit.add_comment(repo, number, body)
       end
 
+      # Post a review carrying inline `suggestion` comments on a PR chomper does
+      # not own (`event: COMMENT` — chomper never approves or blocks). `comments`
+      # is an array of {path:, line:, side:, body:} hashes (optionally
+      # start_line:/start_side: for a multi-line range); each body wraps a
+      # ```suggestion block the author applies with one click, landing as their
+      # own commit. Anchored to `commit_id` (the reviewed head SHA) so the lines
+      # resolve against the diff chomper actually read. No push access needed.
+      def create_review(repo, number, commit_id:, body:, comments:)
+        with_retry do
+          @octokit.create_pull_request_review(
+            repo, number, commit_id: commit_id, event: "COMMENT", body: body, comments: comments
+          )
+        end
+      end
+
       # Reply to an inline review comment, keeping the reply in its thread;
       # returns the new comment.
       def reply_to_review_comment(repo, number, body, in_reply_to)
