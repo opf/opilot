@@ -177,10 +177,10 @@ which one acts, the identity determines the publishing shape, and an existing
 PR determines its own push target:
 
 * **Contributor** (`GITHUB_CONTRIBUTOR_TOKEN`)
-  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens the draft PR **on the fork itself** (against the fork's own base branch, kept synced with upstream), so it never clutters the canonical repo's PR queue
+  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
   * The **only** identity Agent mode uses: the loops run unattended, and the bot physically cannot push to the canonical repo
   * Also used by `ship` when no maintainer token is configured
-  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the fork PR), and promote a good one to a real upstream PR by _adopting_ it (below)
+  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
 * **Maintainer** (`GITHUB_MAINTAINER_TOKEN`)
   * Your own account, with push access to the canonical repo
   * Used by script mode (`ship` / `pr`) whenever it is configured: pushes the fix branch straight to the canonical repo and opens a same-repo draft PR
@@ -214,13 +214,13 @@ echo "New PR (yours): $url"'
 
 </details>
 
-The bot's PR lives on its **fork**, so pass its **URL** (a bare number would resolve against your own repo, where the PR isn't). Run this from inside your OpenProject repo:
+Then, from inside your OpenProject repo, run this:
 
 ```bash
-gh adopt https://github.com/op-chomper/openproject/pull/42
+gh adopt 42        # or paste the PR URL
 ```
 
-It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and closes the bot's fork PR. The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
+It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and comments a link to the new PR on the bot's original (leaving it open so gh-agent keeps tracking it). The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
 
 ---
 

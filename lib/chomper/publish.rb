@@ -46,24 +46,16 @@ module Chomper
         return nil
       end
 
-      # As the contributor the branch goes to the bot's fork AND the PR is opened
-      # there too — against the fork's own base branch — so it never lands in the
-      # upstream repo's PR queue; maintainers promote a good one to upstream with
-      # `gh adopt`. The fork's base is first synced level with upstream so the
-      # fork-hosted PR is diffed against a current base and shows only the fix. As
-      # the maintainer the branch is pushed straight to upstream and a same-repo
-      # PR opened there — the token needs push access. Either way the PR is
-      # same-repo (head and base share a repo), so maintainer-edits stay off
-      # (GitHub 422s on the flag otherwise) and the head is "owner:branch".
-      if contributor?
-        pr_repo = target_repo = @github.ensure_fork(upstream)
-        @github.sync_fork_branch(pr_repo, base)
-      else
-        pr_repo = target_repo = upstream
-      end
-      head = "#{target_repo.split('/').first}:#{branch}"
+      # As the contributor the branch goes to the bot's fork and the PR is
+      # opened against upstream with a cross-repo head ("fork_owner:branch"),
+      # keeping the token off the canonical repo. As the maintainer the branch
+      # is pushed straight to upstream and a same-repo PR is opened — the token
+      # needs push access there, and maintainer-edits must be disabled (GitHub
+      # 422s on a same-repo PR). Either way the head is "owner:branch".
+      target_repo = contributor? ? @github.ensure_fork(upstream) : upstream
+      head        = "#{target_repo.split('/').first}:#{branch}"
 
-      existing = @github.find_open_pr(pr_repo, head: head)
+      existing = @github.find_open_pr(upstream, head: head)
       if existing
         pr_url_file.write(existing)
         return existing
@@ -85,9 +77,9 @@ module Chomper
       @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
       title = pr_title(item_id, subject)
-      url = @github.create_draft_pr(pr_repo, base: base, head: head, title: title, body: pr_body,
-                                    maintainer_can_modify: false)
-      add_adopt_note(pr_repo, url, pr_body, banner) if contributor?
+      url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
+                                    maintainer_can_modify: contributor?)
+      add_adopt_note(upstream, url, pr_body, banner) if contributor?
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
       url
@@ -102,18 +94,18 @@ module Chomper
     # Where the `gh adopt` alias (one-time setup) is documented.
     ADOPT_DOC_URL = "https://github.com/opf/openproject-chomper#adopting-a-chomper-pr"
 
-    # The bot's PR lives on its fork (off the upstream queue) and can't run
-    # secret-gated CI there, so tell maintainers up front how to promote it to
-    # an upstream PR under their own account. The note passes the PR *URL* (not a
-    # bare number): the PR isn't in the maintainer's canonical repo, so a number
-    # wouldn't resolve. The URL only exists after creation — hence the follow-up
-    # body edit. Best-effort: a failed update just leaves the note off.
-    def add_adopt_note(pr_repo, url, pr_body, banner)
-      return unless Clients::GitHub.pr_number_from_url(url)
-      note = "🔁 Maintainers: Run `gh adopt #{url}` ([setup guide](#{ADOPT_DOC_URL})) to publish this PR " \
-             "under your own account in the main repo's queue."
-      @github.update_pr_body(pr_repo, Clients::GitHub.pr_number_from_url(url),
-                             pr_body.sub(banner, "#{banner}\n#{note}"))
+    # A contributor PR is opened cross-repo against upstream from the bot's fork,
+    # which can't run secret-gated CI, so tell maintainers up front how to
+    # re-publish it under their own account. The PR lives in the upstream repo, so
+    # a bare number resolves against the maintainer's canonical checkout. The
+    # number only exists after creation — hence the follow-up body edit.
+    # Best-effort: a failed update just leaves the note off.
+    def add_adopt_note(upstream, url, pr_body, banner)
+      number = Clients::GitHub.pr_number_from_url(url)
+      return unless number
+      note = "🔁 Maintainers: Run `gh adopt #{number}` ([setup guide](#{ADOPT_DOC_URL})) to re-publish " \
+             "this PR under your own account (so secret-gated CI can run)."
+      @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
       log_script "Could not add the adopt note to #{url}: #{e.message}"
     end

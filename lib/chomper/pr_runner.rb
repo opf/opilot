@@ -270,12 +270,6 @@ module Chomper
       wt            = worktree(repo)
       original_head = wt.revparse("HEAD")
 
-      # A fork-hosted PR is diffed against the fork's own base branch, so keep it
-      # level with upstream (the merge below advances the branch onto upstream's
-      # base; without this the fork's stale base would leave that drift showing
-      # in the PR diff). No-op for a canonical-repo PR — there is no fork.
-      @github.sync_fork_branch(base_repo, base_ref) unless canonical_repo?(base_repo)
-
       conflicts  = (force_base_merge || stale_pr?(wt)) ? merge_base(wt, repo, branch, base_ref) : []
       ci_ref     = ci_failure_ref(dir, base_repo, content["head_sha"].to_s)
       ci_expired = ci_ref == :ci_detail_expired

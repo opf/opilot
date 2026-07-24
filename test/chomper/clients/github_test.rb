@@ -63,24 +63,6 @@ module Chomper
         assert_requested(stub)
       end
 
-      def test_sync_fork_branch_posts_merge_upstream_with_the_branch
-        stub = stub_request(:post, "https://api.github.com/repos/me/openproject/merge-upstream")
-               .with(body: hash_including("branch" => "dev"))
-               .to_return(status: 200, headers: { "Content-Type" => "application/json" },
-                          body: JSON.generate("merge_type" => "fast-forward"))
-
-        assert GitHub.new("token").sync_fork_branch("me/openproject", "dev")
-        assert_requested(stub)
-      end
-
-      def test_sync_fork_branch_swallows_errors_so_a_diverged_fork_never_aborts
-        # A branch that can't fast-forward (409) or a fork with no parent must
-        # leave publishing to carry on — the diff just shows some base drift.
-        stub_request(:post, "https://api.github.com/repos/me/openproject/merge-upstream")
-          .to_return(status: 409, body: "{}")
-        refute GitHub.new("token").sync_fork_branch("me/openproject", "dev")
-      end
-
       def test_react_routes_issue_and_review_comments_to_their_endpoints
         issue  = stub_request(:post, "https://api.github.com/repos/o/r/issues/comments/11/reactions")
                  .with(body: hash_including("content" => "eyes")).to_return(status: 201, body: "{}")
