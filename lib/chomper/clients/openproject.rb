@@ -88,10 +88,35 @@ module Chomper
       # carries :view_documents. Its query supports project/document/title/type
       # filters but NOT updatedAt, so any "since" narrowing is client-side.
 
+      # The project filter coerces its values to integers, so a project
+      # IDENTIFIER ("my-project") does not raise — it matches nothing, and the
+      # sweep silently comes back empty. Resolve to the numeric id first.
       def documents(project_id, page: 1, page_size: 100)
-        filters = HTTP.encode_filters(%Q([{"project":{"operator":"=","values":["#{project_id}"]}}]))
+        code, numeric = project_numeric_id(project_id)
+        return [code, nil] unless numeric
+
+        filters = HTTP.encode_filters(%Q([{"project":{"operator":"=","values":["#{numeric}"]}}]))
         HTTP.get_json("#{@base}/api/v3/documents?pageSize=#{page_size}&offset=#{page}&filters=#{filters}",
                       token: @token)
+      end
+
+      # Numeric id for a project given either its id or its identifier. Returns
+      # [code, id], with id nil when the project could not be read, so callers
+      # keep mapping 403/404 to their own wording. Memoized per client: the
+      # documents flow asks repeatedly and a project's id cannot change under a
+      # running command. /api/v3/projects/<x> accepts both spellings, which is
+      # why the identifier gets this far in the first place.
+      def project_numeric_id(project_id)
+        return [200, project_id.to_i] if project_id.to_s.match?(/\A\d+\z/)
+
+        @project_numeric_ids ||= {}
+        cached = @project_numeric_ids[project_id.to_s]
+        return cached if cached
+
+        code, body = project(project_id)
+        id = body && body["id"]
+        return [code, nil] unless code == 200 && id
+        @project_numeric_ids[project_id.to_s] = [200, id]
       end
 
       # One document, with links embedded — carries title, the formattable

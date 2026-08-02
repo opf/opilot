@@ -67,19 +67,25 @@ module Chomper
       end
 
       state = state_for(change_id, store)
-      store.materialise!
 
       scope = opts[:doc_ids].any? ? "#{opts[:doc_ids].length} document(s)" : "every document"
       log_script "Intake — project #{project_id}, #{scope} → change #{change_id}"
       result = @intake.fetch(state, project_id: project_id, doc_ids: opts[:doc_ids])
+      record_intake(state, project_id, opts[:doc_ids], result) if result.changed?
+
+      # Canonical → working on the way OUT, not on the way in. Intake is written
+      # by the runner, into the canonical store (state.intake_dir, tracker.json);
+      # the materialise-then-persist order the Claude-driven stages use would
+      # mirror the stale working copy straight back over everything just written
+      # and lose the whole intake. Nothing is committed here — the store commits
+      # on the next persist!, with the change that consumed this intake.
+      store.materialise!
 
       unless result.changed?
         puts "  No change since the last intake (#{result.hash[0, 19]}…) — nothing written."
         return result
       end
 
-      record_intake(state, project_id, opts[:doc_ids], result)
-      store.persist!("Intake for #{change_id} (#{result.documents.length} document(s))")
       report_intake(result, state)
       result
     end

@@ -6,18 +6,28 @@ module Chomper
     # Stands in for Clients::OpenProject. Documents are keyed by id; each may
     # carry attachments as [{name:, content_type:, body:}].
     class FakeOP
-      attr_reader :downloads
+      attr_reader :downloads, :filtered_by
       # Report a size over the cap without materialising a 25MB fixture.
       attr_accessor :oversize
 
-      def initialize(docs: {}, list: nil, list_code: 200)
+      # `identifiers` maps a project identifier to its numeric id, standing in
+      # for the /projects/<identifier> lookup the real client memoizes.
+      def initialize(docs: {}, list: nil, list_code: 200, identifiers: {})
         @docs = docs
         @list = list
         @list_code = list_code
+        @identifiers = identifiers
         @downloads = []
       end
 
-      def documents(_project_id, page: 1, page_size: 100)
+      def project_numeric_id(project_id)
+        return [200, project_id.to_i] if project_id.to_s.match?(/\A\d+\z/)
+        id = @identifiers[project_id.to_s]
+        id ? [200, id] : [404, nil]
+      end
+
+      def documents(project_id, page: 1, page_size: 100)
+        @filtered_by = project_id
         return [@list_code, nil] unless @list_code == 200
         ids = (@list || @docs.keys).map { |id| { "id" => id } }
         [200, { "_embedded" => { "elements" => ids } }]
@@ -215,6 +225,33 @@ module Chomper
       op = FakeOP.new(docs: {}, list_code: 403)
       error = assert_raises(Chomper::FatalError) { Intake.new(@ctx, op: op).fetch(@state, project_id: "42") }
       assert_match(/view_documents/, error.message)
+    end
+
+    def test_project_identifier_is_resolved_to_the_numeric_id
+      # The documents filter coerces its values to integers, so an identifier
+      # would match nothing and the sweep would come back silently empty.
+      op = FakeOP.new(docs: { 118 => doc(118, title: "Concept") }, identifiers: { "my-project" => 42 })
+      result = Intake.new(@ctx, op: op).fetch(@state, project_id: "my-project")
+
+      assert_equal 42, op.filtered_by
+      assert_equal 1, result.documents.length
+    end
+
+    def test_doc_id_ownership_is_checked_against_the_resolved_numeric_id
+      op = FakeOP.new(docs: { 118 => doc(118, title: "Wanted", project: "42") },
+                      identifiers: { "my-project" => 42 })
+      Intake.new(@ctx, op: op).fetch(@state, project_id: "my-project", doc_ids: %w[118])
+
+      assert (@state.intake_dir / "001-wanted.md").exist?,
+             "a document's project href carries the numeric id, not the identifier"
+    end
+
+    def test_unresolvable_project_reports_a_useful_error
+      op = FakeOP.new(docs: {})
+      error = assert_raises(Chomper::FatalError) do
+        Intake.new(@ctx, op: op).fetch(@state, project_id: "no-such-project")
+      end
+      assert_match(/project no-such-project is not readable \(HTTP 404\)/, error.message)
     end
 
     def test_reintake_drops_documents_no_longer_selected

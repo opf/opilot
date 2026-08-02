@@ -63,7 +63,7 @@ module Chomper
     # branches and spec-derived work to opf/*. Refuse before load_config! does
     # any network work rather than discovering it at push time.
     def pd(argv)
-      if @ctx.maintainer_token
+      unless @ctx.maintainer_token.empty?
         raise Chomper::FatalError, <<~MSG.strip
           pd commands are unavailable while GITHUB_MAINTAINER_TOKEN is set (direct-publish
           mode). The product-development pipeline publishes as the contributor bot.

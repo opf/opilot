@@ -60,21 +60,34 @@ module Chomper
     # through #document so the payloads are shaped identically (the collection
     # representer is thinner than the single-document one).
     def select_documents(project_id, doc_ids)
-      return fetch_named(project_id, doc_ids) if doc_ids.any?
+      numeric = numeric_project_id(project_id)
+      return fetch_named(project_id, numeric, doc_ids) if doc_ids.any?
 
-      code, body = @op.documents(project_id)
+      code, body = @op.documents(numeric)
       raise Chomper::FatalError, document_error(code, project_id) unless code == 200
       ids = (body&.dig("_embedded", "elements") || []).map { |d| d["id"] }
       ids.filter_map { |id| fetch_one(id) }
     end
 
-    def fetch_named(project_id, doc_ids)
+    # The project argument is whatever the operator typed — an id or an
+    # identifier ("my-project"). The Documents API filters on the numeric id,
+    # and a document's _links.project href carries the numeric id too, so both
+    # the sweep and the ownership check below need it resolved once, up front.
+    def numeric_project_id(project_id)
+      code, id = @op.project_numeric_id(project_id)
+      return id if id
+      raise Chomper::FatalError,
+            "project #{project_id} is not readable (HTTP #{code}) — pass the project's " \
+            "numeric id or its identifier as shown in OpenProject"
+    end
+
+    def fetch_named(project_id, numeric, doc_ids)
       doc_ids.map do |id|
         doc = fetch_one(id)
         raise Chomper::FatalError, "document #{id} not found (or not visible to this token)" unless doc
 
         actual = href_id(doc.dig("_links", "project", "href"))
-        unless actual.to_s == project_id.to_s
+        unless actual.to_s == numeric.to_s
           raise Chomper::FatalError,
                 "document #{id} belongs to project #{actual || "(unknown)"}, not #{project_id} — " \
                 "check the --doc-id, or run without it to sweep the whole project"

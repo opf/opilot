@@ -50,6 +50,22 @@ module Chomper
       end
     end
 
+    # The unit check above only proves the predicate; this proves the command
+    # actually runs it — and runs it before anything touches disk or the network,
+    # so a malformed id can never become a directory name.
+    def test_intake_refuses_a_malformed_change_id_before_doing_any_work
+      seeded_store
+      # (a leading dash never gets this far — parse_options rejects it as a flag)
+      ["Read Only", "Read-Only", "read_only", "../escape", "read.only"].each do |bad|
+        error = assert_raises(Chomper::FatalError, "#{bad.inspect} should be refused") do
+          ProductRunner.new(@ctx, op: Object.new, intake: FakeIntake.new).run(["intake", "42", bad])
+        end
+        assert_match(/invalid change id/, error.message)
+      end
+      refute (@ctx.state_dir / "openspec" / @repo.name / "openspec" / "changes").exist?,
+             "a refused id must not have created anything"
+    end
+
     def test_unknown_repo_names_are_reported_with_the_available_set
       error = assert_raises(Chomper::FatalError) { @runner.send(:resolve_repo, "nope") }
       assert_match(/unknown repo "nope"/, error.message)
@@ -63,6 +79,60 @@ module Chomper
     def test_intake_refuses_before_the_store_is_seeded
       error = assert_raises(Chomper::FatalError) { @runner.intake("42", "add-x") }
       assert_match(/run `\.\/chomper pd init/, error.message)
+    end
+
+    # Regression: intake writes into the CANONICAL store, so mirroring the
+    # working copy back over it on the way out (persist!) deleted every file
+    # intake had just produced — the command reported success and left nothing
+    # on disk.
+    def test_intake_output_survives_and_reaches_the_working_copy
+      store  = seeded_store
+      runner = ProductRunner.new(@ctx, op: Object.new, intake: FakeIntake.new)
+      runner.intake("42", "add-x")
+
+      intake = store.change_dir("add-x") / "intake"
+      assert (intake / "001-doc.md").exist?, "the intake document must survive the command"
+      assert (store.change_dir("add-x") / "tracker.json").exist?
+      assert (store.working_change_dir("add-x") / "intake" / "001-doc.md").exist?,
+             "and reach the clone, where Claude reads it"
+    end
+
+    def test_intake_records_the_identity_it_short_circuits_on_next_time
+      seeded_store
+      state = ProductRunner.new(@ctx, op: Object.new, intake: FakeIntake.new)
+                           .intake("42", "add-x", "--doc-id", "317")
+                           .then { change_state("add-x") }
+
+      assert_equal "sha256:fake", state.tracker.dig("intake", "hash")
+      assert_equal %w[317], state.tracker.dig("intake", "selection")
+      assert_equal "42", state.tracker["project_id"]
+    end
+
+    # Seed the store by hand rather than through setup!, which shells out to the
+    # openspec CLI (not on PATH outside the runner image).
+    def seeded_store
+      store = ChangeStore.new(@ctx, @repo)
+      store.tree.mkpath
+      (store.tree / "config.yaml").write("schema: spec-driven\n")
+      store
+    end
+
+    def change_state(change_id)
+      ChangeState.new(change_id: change_id, store: seeded_store,
+                      state_dir: Helpers.change_dir(@ctx, change_id))
+    end
+
+    # Stands in for Intake: writes where the real one writes (the canonical
+    # store) and reports a change, which is all the runner's plumbing depends on.
+    class FakeIntake
+      def fetch(state, project_id:, doc_ids: [])
+        dir = state.intake_dir
+        dir.mkpath
+        (dir / "001-doc.md").write("# Read-only mode\n")
+        Intake::Result.new(changed: true, hash: "sha256:fake", unconvertible: [],
+                           documents: [{ "id" => 317, "title" => "Read-only mode",
+                                         "updatedAt" => "2026-08-02T22:07:56.784Z" }])
+      end
     end
 
     def test_unknown_subcommand_lists_the_real_ones
