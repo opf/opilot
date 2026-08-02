@@ -98,6 +98,20 @@ module Chomper
       !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
     end
 
+    # Work-package type names the `pd` (product development) pipeline maps the
+    # OpenSpec model onto: a change becomes one parent WP of the first type, and
+    # each top-level tasks.md section becomes a child of the second. Neither is
+    # a stock OpenProject type, so both are configurable and are resolved to ids
+    # BY NAME at `pd init` (never hardcoded) — a missing type fails fast there
+    # rather than surfacing as a confusing 422 two stages later.
+    def pd_parent_type
+      ENV.fetch("CHOMPER_PD_PARENT_TYPE", "FEATURE").strip
+    end
+
+    def pd_child_type
+      ENV.fetch("CHOMPER_PD_CHILD_TYPE", "IMPLEMENTATION").strip
+    end
+
     # How many times gh-agent will chase a single PR's CI before giving up and
     # asking for a human (`CHOMPER_CI_MAX_ATTEMPTS`, default 5, floored at 1).
     def ci_max_attempts

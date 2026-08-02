@@ -81,6 +81,79 @@ module Chomper
         HTTP.get_json("#{@base}/api/v3/work_packages/schemas/#{project_id}-#{type_id}", token: @token)
       end
 
+      # --- Documents (product-development intake) -------------------------
+      #
+      # The v3 Documents API is provided by the `documents` project module, so
+      # it 404s unless that module is enabled on the project and the token
+      # carries :view_documents. Its query supports project/document/title/type
+      # filters but NOT updatedAt, so any "since" narrowing is client-side.
+
+      def documents(project_id, page: 1, page_size: 100)
+        filters = HTTP.encode_filters(%Q([{"project":{"operator":"=","values":["#{project_id}"]}}]))
+        HTTP.get_json("#{@base}/api/v3/documents?pageSize=#{page_size}&offset=#{page}&filters=#{filters}",
+                      token: @token)
+      end
+
+      # One document, with links embedded — carries title, the formattable
+      # description, created_at/updated_at, and the project link that
+      # Intake uses to verify a --doc-id belongs to the named project.
+      def document(document_id)
+        HTTP.get_json("#{@base}/api/v3/documents/#{document_id}", token: @token)
+      end
+
+      # Attachment metadata for a document: fileName, contentType, fileSize and
+      # _links.downloadLocation for each. The content itself is fetched with
+      # #download_attachment, since it is binary and behind a redirect.
+      def document_attachments(document_id)
+        HTTP.get_json("#{@base}/api/v3/documents/#{document_id}/attachments?pageSize=100", token: @token)
+      end
+
+      # Raw attachment bytes. Returns [code, bytes]; the download location 302s
+      # to wherever the file actually lives, which HTTP.get_binary follows.
+      def download_attachment(download_url)
+        HTTP.get_binary(download_url, token: @token)
+      end
+
+      # --- Work-package writes --------------------------------------------
+      #
+      # `notify` is a QUERY parameter, not a body field (the API reads
+      # params[:notify] != "false"). Without it a generated tree of tasks mails
+      # every watcher, so both writers default it off.
+
+      # Create a work package. `payload` is the full v3 body — subject,
+      # description, and _links (type, project, parent). Returns [code, hash].
+      def create_work_package(payload, notify: false)
+        HTTP.post_json("#{@base}/api/v3/work_packages?notify=#{notify}", payload, token: @token)
+      end
+
+      # Update a work package. v3 uses optimistic locking: the PATCH must carry
+      # the current lockVersion or it 409s. Callers pass only the fields they
+      # want changed; this fetches the current lockVersion, injects it, and on a
+      # 409 (someone edited between our read and our write) refetches and
+      # retries exactly once before giving up — per the API's own guidance that
+      # a conflict is retry-once-then-escalate, not an error. Returns
+      # [code, hash]; a persistent 409 is returned for the caller to escalate.
+      def update_work_package(wp_id, payload, notify: false)
+        url = "#{@base}/api/v3/work_packages/#{wp_id}?notify=#{notify}"
+        code, body = patch_with_lock(url, wp_id, payload)
+        code == 409 ? patch_with_lock(url, wp_id, payload) : [code, body]
+      end
+
+      # The current lockVersion, or nil when the work package can't be read.
+      def lock_version(wp_id)
+        code, body = work_package(wp_id)
+        code == 200 ? body["lockVersion"] : nil
+      end
+
+      # Re-reads the lockVersion immediately before each attempt — that freshness
+      # is the whole point, since a stale one is what produced the 409.
+      def patch_with_lock(url, wp_id, payload)
+        version = lock_version(wp_id)
+        return [409, nil] unless version
+        HTTP.patch_json(url, payload.merge("lockVersion" => version), token: @token)
+      end
+      private :patch_with_lock
+
       # Posts a comment to a work package. Returns [code, response_hash].
       def post_activity(wp_id, comment:, internal: true)
         HTTP.post_json(

@@ -63,6 +63,27 @@ module Chomper
       [code, parsed]
     end
 
+    # Returns [status_code, raw_bytes]. Unlike .get this does not assume text —
+    # it is for attachment content, which is arbitrary binary. OpenProject's
+    # attachment `downloadLocation` 302s to wherever the file actually lives
+    # (local storage, S3, …), and .request never follows redirects, so this
+    # follows up to MAX_REDIRECTS of them. The token is only sent on the first
+    # hop: a redirect to presigned storage carries its own credentials in the
+    # URL, and forwarding an OpenProject API key to a third-party host would
+    # leak it.
+    MAX_REDIRECTS   = 3
+    REDIRECT_CODES  = [301, 302, 303, 307, 308].freeze
+
+    def self.get_binary(url, token:, hops: MAX_REDIRECTS)
+      code, body, location = request_raw(Net::HTTP::Get, url, token: token)
+      return [code, body] unless REDIRECT_CODES.include?(code) && location
+
+      raise Error, "too many redirects fetching #{url}" if hops.zero?
+      # token: nil on the follow — dropping the credential falls out of the
+      # recursive call rather than needing a "is this the first hop?" flag.
+      get_binary(URI.join(url, location).to_s, token: nil, hops: hops - 1)
+    end
+
     def self.post_json(url, body, token:)
       code, raw = request(Net::HTTP::Post, url, token: token, body: body)
       parsed = JSON.parse(raw) rescue nil
@@ -80,17 +101,26 @@ module Chomper
     end
 
     private_class_method def self.request(verb, url, token:, body: nil)
+      code, resp_body, = request_raw(verb, url, token: token, body: body)
+      [code, resp_body]
+    end
+
+    # As .request, but also returns the Location header so .get_binary can follow
+    # redirects, and sends no JSON Content-Type when there is no body (an
+    # attachment download is not a JSON request). A nil token skips auth
+    # entirely — see .get_binary on why redirect hops must not carry the key.
+    private_class_method def self.request_raw(verb, url, token:, body: nil)
       uri = URI(url)
       last_response = nil
       Retriable.retriable(**retry_opts) do
         Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
                         read_timeout: 30, open_timeout: 10) do |http|
           req = verb.new(uri)
-          req.basic_auth("apikey", token)
-          req["Content-Type"] = "application/json"
+          req.basic_auth("apikey", token) if token
+          req["Content-Type"] = "application/json" if body
           req.body = JSON.generate(body) if body
           res = http.request(req)
-          last_response = [res.code.to_i, res.body]
+          last_response = [res.code.to_i, res.body, res["location"]]
           raise TransientError, "HTTP #{res.code}" if RETRYABLE_CODES.include?(res.code.to_i)
           last_response
         end

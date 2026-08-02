@@ -23,6 +23,18 @@ Modes:
 - **pull** — `./chomper pull [<id>...]` mirrors work packages into the local cache so they can later be discussed via `chat`, without planning or shipping. With ids it fetches exactly those WPs (`Pull#fetch_single_item`, ignoring filters); with no ids it runs the same project-scope filter wizard as `op-agent` (`load_or_prompt_agent_filters`) and bulk-mirrors every match (`Pull#mirror`, which shares `op-agent`'s paginated, scan-window-bounded fetch via `each_filtered_wp` but skips intent parsing). `PullRunner` (`lib/chomper/pull_runner.rb`) is a thin wrapper; needs only an OpenProject token (no GitHub token or allowlist — it just refreshes local `item.json`s)
 - **chat** — `./chomper chat [message]` is a free, read-only terminal conversation over chomper's **local mirrors** — not scoped to any one WP and never fetching, planning, or shipping. The whole `.chomper/` cache is already mounted read-only into the claude container at `/state`, so `Prompts.free_chat` just orients Claude at that layout (`work_packages/<op_host>/<id>/` item.json/plan.md/related.json, `<id>/repos/<name>/pr.json` for shipped PR threads, `pr_reviews/…/pr.json` for upstream ones) plus the repo clones at `/repos/<name>`, and Claude Greps/Reads whatever the question needs (read-only Bash for git history). `ChatRunner` (`lib/chomper/chat_runner.rb`) is a small REPL mirroring the ship/build/plan `[c]hat`: a fresh per-run session (`.chomper/chat_session_id`, cleared at start), empty line exits, and an inline `chat <message>` seeds the first turn. Needs no allowlist or GitHub/OpenProject token (it only reads local files)
 
+- **pd** — `./chomper pd <subcommand>` is the **product-development** pipeline, a spec-driven flow that is separate from the bug-fix modes above: OpenProject **Documents** → an [OpenSpec](https://github.com/Fission-AI/OpenSpec) change proposal reviewed as a PR → generated work packages → one implementation run per WP → archive. It has its own namespace because the bug-fix verbs (`plan`/`build`/`ship`/`pr`) also take a work-package id while meaning something else entirely. **The whole namespace refuses to run while `GITHUB_MAINTAINER_TOKEN` is set** (`CLI#pd`, before `load_config!`): every `pd` stage assumes the contributor identity and its own fork, whereas direct-publish mode would push spec branches and spec-derived work straight to `opf/*`. `ProductRunner#publish` hard-codes `Publish.new(ctx, as: :contributor)` so that once a `pd` stage actually pushes (M1 onward) the identity cannot be derived from the tokens the way `FixRunner` does — at M0 nothing publishes yet, so the CLI check is the only live guard. Currently implemented (M0):
+  - `pd init <project-id> [--repo <name>]` — resolves the OpenProject ids **by name** (`ResolvedIds`): the project, the parent/child work-package types (`CHOMPER_PD_PARENT_TYPE`/`CHOMPER_PD_CHILD_TYPE`, default `FEATURE`/`IMPLEMENTATION` — neither is a stock type), and every status with its `isClosed` flag (so "is this child closed?" needs no status-name mapping). Fails fast listing everything missing plus the types the project actually offers. Then seeds the canonical spec store.
+  - `pd intake <project-id> <change-id> [--doc-id <id>]...` — mirrors OpenProject Documents into `openspec/changes/<change-id>/intake/`, one ordinal markdown file per document with `id`/`title`/`updated_at` frontmatter. Project-wide by default; `--doc-id` (repeatable) narrows it and is **validated against the named project**, so a typo can't pull an unrelated project's document in. Re-running short-circuits when nothing moved: `intake.hash` covers the sorted `(id, updated_at)` pairs **and the `--doc-id` selection**, since narrowing or widening the selection changes the material even when no document was touched.
+
+  `change-id` is author-supplied kebab-case (`[a-z0-9][a-z0-9-]*`), validated rather than sanitised — it is the directory name everything downstream binds to, so silently rewriting it would break the binding the operator thinks they made.
+
+  **The spec tree exists in three copies**, and every `pd` command moves between them (`ChangeStore` in `lib/chomper/change_state.rb`): the **canonical** store at `.chomper/openspec/<repo>/` (a runner-owned `git init` repo — the durable copy, carrying its own commit identity since it is never pushed), the **working** copy at `<clone>/openspec/` (the only place `guard-writes.js` lets Claude write, and where the `openspec` CLI expects the tree relative to the code), and the **review** copy on a `spec/<change-id>` branch pushed to the bot's fork. A command materialises canonical → working on entry and persists working → canonical on exit; both mirror rather than merge, because an archive run *moves* a change directory and a merge would resurrect it. `materialise!` also re-asserts `openspec/` in the clone's `.git/info/exclude` on **every** call — `Helpers#commit` does `add(all: true)`, so an unexcluded tree would be swept wholesale into an unrelated bug-fix commit; the propose flow commits it deliberately with `git add -f`.
+
+  **Attachments are converted in the runner, at intake time** (`lib/chomper/intake/converter.rb`). The claude container has no converter and `guard-bash.js` allows only read-only git, so Claude's `Read` tool is the sole way in — fine for text, images and PDFs, useless on `.xlsx`/`.docx`/`.pptx`, which are ZIP-of-XML. Spreadsheets go through `roo` to one **CSV per sheet** (capped at 500 rows, with the truncation written into the file itself); `.docx`/`.pptx` are extracted by hand with rubyzip + nokogiri (both already pulled in by roo, and no maintained Ruby gem reads `.pptx` at all) — pptx includes speaker notes, which often carry the actual reasoning. PDFs, images and text pass through. Legacy OLE formats (`.xls`/`.doc`/`.ppt`) and unknown types land in **`unconvertible[]`**, recorded in `tracker.json` and in an `intake/attachments/README.md` index, because a requirement hiding in a file nobody could read is *missing* from the intake and that must be visible, not silent. This is the one place chomper parses attacker-influenceable binary input inside the trusted container, so it enforces a size cap, a zip entry-count cap, an inflated-size cap and `Zip.validate_entry_sizes`, and isolates every failure per attachment.
+
+  **`openspec` runs in the runner, never in the claude container** (`lib/chomper/openspec.rb`) — widening `guard-bash.js` for a non-git binary would undo the container's whole posture. `openspec init` is always run with `--tools none`, which writes only `openspec/`: without it the CLI would drop an `AGENTS.md` into the product clone, over the real one OpenProject already has (and which `CLAUDE.md` symlinks to). Validation uses `--strict --json`, so failures come back structured for the re-prompt loop rather than scraped from prose.
+
 ## Commands
 
 ```bash
@@ -56,6 +68,11 @@ Modes:
 
 # Free read-only chat about the local mirrors (no fetch, plan, or ship)
 ./chomper chat [message]
+
+# Product development (spec-driven). Refuses to run while GITHUB_MAINTAINER_TOKEN
+# is set — the whole pipeline publishes as the contributor bot.
+./chomper pd init <project-id> [--repo <name>]
+./chomper pd intake <project-id> <change-id> [--doc-id <id>]...
 
 # Other CLI modes
 ./chomper status    # list planned/shipped work packages
@@ -102,7 +119,14 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch to the user's fork via git credential helper; opens cross-repo draft PRs against upstream via Octokit |
-| `clients/openproject.rb` | OpenProject REST API |
+| `openspec.rb` | `Chomper::OpenSpec` — Open3 wrapper around the `openspec` CLI (runner-only); `validate --strict --json`, `show`, `list`, `archive`, and `init --tools none` |
+| `tasks_file.rb` | Parse/rewrite a change's `tasks.md` — top-level sections, inline `(#id)` bindings, checkbox ticking; blanks fenced code blocks so an example `##` can't mint a work package |
+| `change_state.rb` | `ChangeState` (per-change paths, branch, `tracker.json`) + `ChangeStore` (the canonical spec store, materialise/persist, `.git/info/exclude`, the WP→change reverse index) |
+| `resolved_ids.rb` | Stage-0 id resolution by name — project, parent/child types, statuses with `isClosed`; fails fast listing what's missing |
+| `intake.rb` | `pd intake` — Documents → `intake/*.md` + converted attachments, `intake.hash` short-circuit |
+| `intake/converter.rb` | Attachment conversion (roo for spreadsheets, rubyzip+nokogiri for docx/pptx), `unconvertible[]`, zip-bomb guards |
+| `product_runner.rb` | The `pd` command family (M0: `init`, `intake`); always publishes as `:contributor` |
+| `clients/openproject.rb` | OpenProject REST API (incl. Documents, attachment download, and WP create/update with `notify=false` + `lockVersion` retry) |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
@@ -132,6 +156,7 @@ by `<owner>-<repo>/<number>` (globally unique on github.com), so it's a flat
 ├── chat_session_id          # Claude session for the current `chat` REPL (reset each run)
 ├── work_packages/<op_host>/                # per-OpenProject-instance WP state
 │   ├── op_agent_filters.json   # saved op-agent search filters (project ids are instance-specific)
+│   ├── resolved-ids.json       # `pd init` cache: project id, parent/child type ids (resolved by name), statuses + isClosed
 │   └── <wp_id>/
 │       ├── item.json            # WP metadata + poll cache + acted_at timestamps (incl. assignee_acted_at — assignment trigger consumed)
 │       ├── related.json         # index of related WPs pulled in at plan time (relations + parent/children): id, relation, subject, status, item_path
@@ -152,7 +177,17 @@ by `<owner>-<repo>/<number>` (globally unique on github.com), so it's a flat
 │   ├── ci.json              # cached CI failure detail (failed checks + annotations + log tails), keyed by head SHA — read-only context for CI questions
 │   ├── gh_pr.json           # act-state: last_acted_comment_at + chomper's own reply ids
 │   └── gh_session_id        # the review session
+├── changes/<op_host>/<change_id>/   # `pd` per-change local state (the cache half; tracker.json lives in the store)
+│   ├── session_id           # Claude session for the change (propose + revise)
+│   ├── pr_url.txt           # the spec PR on the bot's fork
+│   ├── gh_pr.json           # gh-agent act-state for the spec PR
+│   └── gh_session_id        # gh-agent's Claude session for the spec PR
+├── openspec/<repo_name>/    # CANONICAL spec store — a runner-owned git repo, the durable copy
+│   └── openspec/            #   config.yaml, specs/, changes/<change-id>/{proposal,design,tasks}.md
+│                            #   + tracker.json (parent_wp, intake hash/selection, unconvertible[])
+│                            #   + intake/ (documents as markdown, converted attachments)
 ├── repos/<repo_name>/       # this repo's isolated standalone clone (mounted at /repos/<name>)
+│   └── openspec/            #   WORKING copy, materialised per `pd` command; git-excluded in the clone
 └── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
 ```
 
@@ -180,5 +215,7 @@ Runner POSTs to `http://claude:47291` with headers:
 | `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used for all planning and implementation |
 | `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) used for stateless one-shot passes (e.g. the gh-agent commit subject) |
 | `CHOMPER_ASSIGN_TRIGGER` | Optional; set `0`/`false` to disable the assignment trigger (on by default). When on, setting the chomper OP user as a WP's assignee acts like `@chomper ship` — once per WP, from any assigner (not gated by `CHOMPER_ALLOWED_OP_USER_IDS`; assignment already requires OpenProject edit-WP permission). Turn off on instances where WP edit rights are broad |
+| `CHOMPER_PD_PARENT_TYPE` | Optional; the work-package type name a `pd` change becomes (default `FEATURE`). Resolved to an id **by name** at `pd init` — not a stock OpenProject type, and ids differ per instance, so a missing one fails fast there instead of as an opaque 422 two stages later |
+| `CHOMPER_PD_CHILD_TYPE` | Optional; the type name each top-level `tasks.md` section becomes (default `IMPLEMENTATION`), resolved the same way |
 | `CHOMPER_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` will chase one PR's CI before giving up and posting a "needs a human" note (default `5`, floored at 1) |
 | `CHOMPER_CI_IGNORE_CHECKS` | Optional; comma-separated, case-insensitive check-run names `gh-agent` ignores when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails and chomper can't fix it). Set empty to ignore none |
