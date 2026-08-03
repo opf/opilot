@@ -872,7 +872,7 @@ module Chomper
     # plan.md, written by the runner rather than Claude: for a `pd` work package
     # the spec IS the plan. It exists because everything downstream of a shipped
     # PR expects one — the PR body's gist link, and the prompts gh-agent and
-    # `./chomper pr` build (`plan:`) — so without it a pd PR would be the one kind
+    # `wp pr` build (`plan:`) — so without it a pd PR would be the one kind
     # of chomper PR that can't explain itself.
     def write_plan_file(st, state, section)
       body = +"# #{section.title}\n\n"

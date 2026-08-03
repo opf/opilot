@@ -23,12 +23,12 @@ module Chomper
     end
 
     # Per-change local cache files. Derived rather than stored: they are all
-    # `state_dir / <name>`, and gh-agent will need to build the same paths from
-    # a directory at M1, so the names have to live in one place.
-    def session_file    = state_dir / "session_id"
-    def pr_url_file     = state_dir / "pr_url.txt"
-    def gh_pr_file      = state_dir / "gh_pr.json"
-    def gh_session_file = state_dir / "gh_session_id"
+    # `state_dir / <name>`. gh-agent's own per-PR state (gh_pr.json,
+    # gh_session_id) is deliberately NOT here — it keys on a PR directory from
+    # `GhPull#pr_dir(…, spec: true)` rather than on a change, so accessors for it
+    # on this class went unused and were removed.
+    def session_file = state_dir / "session_id"
+    def pr_url_file  = state_dir / "pr_url.txt"
 
     # --- canonical (the store) ------------------------------------------
 
@@ -70,10 +70,6 @@ module Chomper
     # per-repo base override, so it is always the registry default.
     def base_for(_repo = nil)
       repo.base
-    end
-
-    def archive_branch
-      "archive/#{change_id}"
     end
 
     # --- tracker.json -----------------------------------------------------
@@ -303,10 +299,6 @@ module Chomper
           index[section.wp_id.to_s] = { change_id: cid, section: section.title }
         end
       end
-    end
-
-    def change_id_for_wp(wp_id)
-      reverse_index.dig(wp_id.to_s, :change_id)
     end
 
     def head_sha

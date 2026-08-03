@@ -27,7 +27,7 @@ module Chomper
       end
 
       if rows.empty?
-        puts "Nothing yet. Run ./chomper op-agent and mention @chomper on a work package."
+        puts "Nothing yet. Run ./chomper agent and mention @chomper on a work package."
         return
       end
 

@@ -37,10 +37,6 @@ module Chomper
         HTTP.get_json!("#{@base}/api/v3/statuses", token: @token)
       end
 
-      def project_versions(project_id)
-        HTTP.get_json("#{@base}/api/v3/projects/#{project_id}/versions", token: @token)
-      end
-
       def work_package(wp_id)
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}", token: @token)
       end
@@ -74,11 +70,6 @@ module Chomper
           { "reaction" => reaction },
           token: @token
         )
-      end
-
-      # Schema for one project/type pair — fields (incl. custom fields) depend on both.
-      def work_package_schema(project_id, type_id)
-        HTTP.get_json("#{@base}/api/v3/work_packages/schemas/#{project_id}-#{type_id}", token: @token)
       end
 
       # --- Documents (product-development intake) -------------------------

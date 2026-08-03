@@ -1,5 +1,4 @@
 require "json"
-require "uri"
 require "git"
 require_relative "clients"
 require_relative "pull"
@@ -53,7 +52,7 @@ module Chomper
     # adopted the same way.
     def run(*targets)
       unless @ctx.contributor_token
-        raise FatalError, "No GitHub token is set — `pr` needs GITHUB_CONTRIBUTOR_TOKEN to read and update PRs."
+        raise FatalError, "No GitHub token is set — `wp pr` needs GITHUB_CONTRIBUTOR_TOKEN to read and update PRs."
       end
       ensure_claude!
       targets.each do |target|
@@ -366,7 +365,7 @@ module Chomper
         fetch_ci_content(dir, base_repo, head_sha, checks, ignore: ignore)
         container_path(dir / "ci.json")
       when :pending
-        log_script "CI is still running — refreshing without it (re-run `pr` once it finishes)."
+        log_script "CI is still running — refreshing without it (re-run `wp pr` once it finishes)."
         nil
       end
     end

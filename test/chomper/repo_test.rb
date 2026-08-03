@@ -85,14 +85,6 @@ module Chomper
       assert_equal "op", reg.by_upstream("someone/unknown").name, "unknown upstream → default"
     end
 
-    def test_protected_bases_collects_every_base
-      write_repos("repos" => [
-        { "name" => "op", "upstream" => "opf/openproject", "base" => "dev" },
-        { "name" => "ck", "upstream" => "opf/ck", "base" => "main" }
-      ])
-      assert_equal Set["dev", "main"], build.protected_bases
-    end
-
     def test_fallback_to_op_repo_path_when_no_repos_json
       reg = Registry.build(script_dir: @tmpdir, state_dir: @state_dir, op_repo_path: "/some/op")
       assert_equal 1, reg.all.length

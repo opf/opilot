@@ -1,6 +1,5 @@
 require "json"
 require "pathname"
-require "set"
 
 module Chomper
   # One product repo chomper can plan and ship fixes in. A work package's fix may
@@ -123,12 +122,6 @@ module Chomper
     # back to its worktree); falls back to the default repo.
     def by_upstream(owner_repo)
       @repos.find { |r| r.upstream.casecmp?(owner_repo.to_s) } || default
-    end
-
-    # Branch names no fix branch may ever be pushed to — every repo's base — so
-    # the push guard refuses a push to any of them regardless of the registry size.
-    def protected_bases
-      @repos.map(&:base).to_set
     end
   end
 end

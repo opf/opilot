@@ -34,22 +34,12 @@ module Chomper
       when "pd"       then pd(rest)
       else
         $stderr.puts "Unknown argument: #{cmd}"
-        # The work-package verbs used to sit at the top level; point them at
-        # their new home rather than dumping the whole help screen on a
-        # near-miss.
-        if WP_COMMANDS.include?(cmd)
-          $stderr.puts "Did you mean `./chomper wp #{cmd}`? Work-package commands moved under `wp`."
-        else
-          @ui.usage
-        end
+        @ui.usage
         raise Chomper::FatalError
       end
     end
 
     private
-
-    # The `wp` subcommands, also used to recognise a pre-`wp` invocation.
-    WP_COMMANDS = %w[plan build ship fix pr pull].freeze
 
     def help_flag?(arg)
       %w[--help -h].include?(arg)

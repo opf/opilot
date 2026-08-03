@@ -166,7 +166,7 @@ _needs_claude() {
   _is agent op-agent gh-agent chat && return 0
   case "$CMD" in
     wp) case "$SUB" in ship|fix|build|plan|pr) return 0 ;; esac ;;
-    pd) case "$SUB" in propose|implement|archive) return 0 ;; esac ;;
+    pd) case "$SUB" in propose|implement) return 0 ;; esac ;;
   esac
   return 1
 }

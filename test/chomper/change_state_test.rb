@@ -171,7 +171,6 @@ module Chomper
       assert_equal "RRule parsing", index["59943"][:section]
       assert_equal "add-recurring-meetings", index["59944"][:change_id]
       assert_equal "other-change", index["60001"][:change_id]
-      assert_equal "add-recurring-meetings", @store.change_id_for_wp(59_943)
     end
 
     def test_reverse_index_ignores_unbound_sections
@@ -192,7 +191,6 @@ module Chomper
       assert_equal @tmpdir / "s" / "session_id", state.session_file
       assert_equal @tmpdir / "s" / "pr_url.txt", state.pr_url_file
       assert_equal "spec/add-recurring-meetings", state.branch
-      assert_equal "archive/add-recurring-meetings", state.archive_branch
       assert_equal @store.change_dir(change_id) / "tracker.json", state.tracker_file
       assert_equal "/repos/openproject/openspec/changes/add-recurring-meetings",
                    state.working_change_container

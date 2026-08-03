@@ -95,17 +95,6 @@ module Chomper
       assert_includes out, "Usage: ./chomper wp <command>"
     end
 
-    def test_a_pre_wp_invocation_is_pointed_at_its_new_home
-      # These verbs used to sit at the top level; a near-miss should say where
-      # they went rather than dumping the whole help screen.
-      %w[plan build ship fix pr pull].each do |verb|
-        cli = CLI.new(ctx_double)
-        out, err = capture_io { assert_raises(Chomper::FatalError) { cli.run([verb, "59942"]) } }
-        assert_includes err, "Did you mean `./chomper wp #{verb}`?"
-        refute_includes out, "Agent mode", "the full help screen is not the answer here"
-      end
-    end
-
     def test_the_top_level_help_is_a_map_and_leaves_detail_to_the_groups
       # It ran to 114 lines by inlining both groups plus the env and state docs.
       ui = UI.new(ctx_double)

@@ -260,12 +260,7 @@ module Chomper
   end
 
   class PullPollIntentsTest < Minitest::Test
-    FILTERS = FilterSet.new(
-      project_ids: ["123"],
-      type_ids:    ["1"],
-      status_ids:  ["2"],
-      version_ids: []
-    )
+    FILTERS = FilterSet.new(project_ids: ["123"])
 
     def wp(id, updated_at)
       { "id" => id, "subject" => "Bug ##{id}", "updatedAt" => updated_at, "createdAt" => "2024-01-01T00:00:00Z" }
@@ -340,9 +335,7 @@ module Chomper
       # Sorted updatedAt desc: WP 1 is above the floor, WP 2 below it. WP 2's
       # activities are deliberately left unstubbed — if the poll tried to fetch
       # it, WebMock would raise. So a clean run proves we stopped at the floor.
-      filters = FilterSet.new(project_ids: ["123"], type_ids: ["1"],
-                              status_ids: ["2"], version_ids: [],
-                              scan_from_at: "2024-02-01T00:00:00Z")
+      filters = FilterSet.new(project_ids: ["123"], scan_from_at: "2024-02-01T00:00:00Z")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
         [wp(1, "2024-03-01T00:00:00Z"), wp(2, "2024-01-01T00:00:00Z")], total: 2))
       stub_request(:get, %r{/work_packages/1/activities\z})
@@ -624,8 +617,7 @@ module Chomper
     end
 
     def test_filters_json_scopes_to_all_selected_projects
-      filters = FilterSet.new(project_ids: ["10", "20"], type_ids: ["1"],
-                              status_ids: ["2"], version_ids: [])
+      filters = FilterSet.new(project_ids: ["10", "20"])
       clauses = JSON.parse(@pull.send(:filters_json, filters))
       project = clauses.find { |c| c.key?("project_id") }
       refute_nil project, "the query must carry a project_id filter"
@@ -666,8 +658,7 @@ module Chomper
 
     def test_describe_filters_prefers_semantic_identifier
       filters = FilterSet.new(project_ids: ["1182"], project_idents: ["chomper-testing"],
-                              project_names: ["Chomper testing area"], type_names: "bug",
-                              status_names: "new")
+                              project_names: ["Chomper testing area"])
       assert_includes @pull.send(:describe_filters, filters), "chomper-testing — Chomper testing area"
       refute_includes @pull.send(:describe_filters, filters), "1182"
     end
@@ -678,43 +669,46 @@ module Chomper
       assert path.exist?
       data = JSON.parse(path.read)
       assert_equal FILTERS.project_ids, data["project_ids"]
-      assert_equal FILTERS.type_ids,    data["type_ids"]
-      assert_equal FILTERS.status_ids,  data["status_ids"]
-      assert_equal FILTERS.version_ids, data["version_ids"]
     end
 
-    # Agent mode polls the chosen projects with no type/status/version filter, so
-    # filters_json must emit a project clause only.
-    def test_filters_json_emits_only_project_clause_for_agent_filters
+    # A poll is scoped by project and nothing else, so filters_json must emit
+    # exactly one clause — this is the guard against a second one creeping back.
+    def test_filters_json_emits_only_the_project_clause
       filters = FilterSet.new(project_ids: ["10"])
       clauses = JSON.parse(@pull.send(:filters_json, filters))
       assert_equal 1, clauses.length
       assert clauses.first.key?("project_id")
     end
 
-    # The agent-mode read tolerates a file with no type/status (one a previous
-    # agent run wrote) and returns a project-only FilterSet.
-    def test_read_agent_filters_ignores_type_and_status
+    # A file written before type/status/version filtering was removed still carries
+    # those keys. The read looks up named keys and never splats the hash into
+    # FilterSet — a splat would raise ArgumentError on the unknown keywords, i.e.
+    # every previously-saved file would have become a hard crash.
+    def test_read_agent_filters_ignores_keys_from_an_older_chomper
       (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
         "project_ids" => ["1182"], "project_idents" => ["chomper-testing"],
-        "project_names" => ["Chomper testing area"], "scan_from_at" => "2024-01-01T00:00:00Z"
+        "project_names" => ["Chomper testing area"], "scan_from_at" => "2024-01-01T00:00:00Z",
+        "type_ids" => ["1"], "status_ids" => ["2"], "version_ids" => [],
+        "type_names" => "bug", "status_names" => "new", "version_names" => nil
       ))
       filters = @pull.send(:read_agent_filters)
       assert_equal ["1182"], filters.project_ids
-      assert_nil filters.type_ids
-      assert_nil filters.status_ids
+      assert_equal ["chomper-testing"], filters.project_idents
       assert_equal "2024-01-01T00:00:00Z", filters.scan_from_at
     end
 
-    # Saving agent-mode filters (which carry no type/status/version) must merge
-    # through, preserving any other keys already present in the file.
-    def test_save_agent_filters_preserves_existing_type_and_status
-      @pull.send(:save_agent_filters, FILTERS)   # writes type/status from a fully-populated set
+    # A save merges into whatever the file already holds rather than replacing it,
+    # so keys an older chomper wrote survive (and a rollback still finds them).
+    def test_save_agent_filters_merges_rather_than_clobbering
+      path = Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json"
+      path.dirname.mkpath
+      path.write(JSON.generate("project_ids" => ["1"], "type_ids" => ["7"]))
+
       @pull.send(:save_agent_filters, FilterSet.new(project_ids: ["999"]))
-      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").read)
+
+      data = JSON.parse(path.read)
       assert_equal ["999"], data["project_ids"]
-      assert_equal FILTERS.type_ids,   data["type_ids"]
-      assert_equal FILTERS.status_ids, data["status_ids"]
+      assert_equal ["7"], data["type_ids"], "a key this chomper no longer writes is not dropped"
     end
   end
 

@@ -1,7 +1,7 @@
 // PreToolUse hook: confine file mutations to the product worktrees (/repos).
-// The container also mounts /state (plans, item metadata, the audit log) and
-// the Claude credentials dir writable — the implementation phase must never
-// touch those, so anything outside /repos is denied (exit 2 blocks the call
+// The container also mounts /state (plans, item metadata, the audit log) and the
+// Claude credentials dir; /state is read-only at the mount, and this hook is the
+// belt to that brace — anything outside /repos is denied (exit 2 blocks the call
 // and feeds stderr back to Claude). Fails closed on unparseable input.
 const path = require('path');
 

@@ -39,11 +39,21 @@ services:
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - CHOMPER_ALLOWED_OP_USER_IDS=${CHOMPER_ALLOWED_OP_USER_IDS:-}
       - CHOMPER_ALLOWED_GH_USERS=${CHOMPER_ALLOWED_GH_USERS:-}
+      # The optional knobs, passed WITHOUT a default (`- VAR`, not
+      # `- VAR=${VAR:-}`): Compose resolves the bare form from .env too, but an
+      # explicit `${VAR:-}` would hand the container an empty string, and an
+      # empty string beats the default in every `ENV.fetch(name, default)`
+      # reader (Context, Claude). Unset must mean absent, not blank.
       - CHOMPER_MODEL
       - CHOMPER_TRIAGE_MODEL
       - CHOMPER_ASSIGN_TRIGGER
       - CHOMPER_CI_MAX_ATTEMPTS
       - CHOMPER_CI_IGNORE_CHECKS
+      - CHOMPER_TRACK_UPSTREAM_PRS
+      - CHOMPER_PD_PARENT_TYPE
+      - CHOMPER_PD_CHILD_TYPE
+      - CHOMPER_PD_IMPLEMENTING_STATUS
+      - CHOMPER_PD_IMPLEMENTED_STATUS
       # Optional: seeds the openproject clone from a local checkout (bin/repos).
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/chomper}

@@ -133,7 +133,8 @@ module Chomper
       assert_includes store_tasks, "## Materialisation (#502)"
       assert_equal({ change_id: "add-x", section: "RRule parsing" },
                    @store.reverse_index["501"])
-      assert_equal "add-x", @store.change_id_for_wp(502)
+      assert_equal({ change_id: "add-x", section: "Materialisation" },
+                   @store.reverse_index["502"])
       assert_equal TASKS.lines.length, store_tasks.lines.length, "only the headings change"
     end
 

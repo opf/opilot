@@ -73,16 +73,6 @@ module Chomper
       assert_includes @calls.first[:args], "none"
     end
 
-    def test_archive_skips_the_confirmation_prompt
-      with_open3 { |os| os.archive("c") }
-      assert_includes @calls.first[:args], "--yes"
-      refute_includes @calls.first[:args], "--skip-specs"
-
-      @calls.clear
-      with_open3 { |os| os.archive("c", skip_specs: true) }
-      assert_includes @calls.first[:args], "--skip-specs"
-    end
-
     def test_result_reports_success_and_parses_json
       with_open3(out: '{"summary":{"totals":{"failed":0}}}') do |os|
         result = os.validate("c")

@@ -31,9 +31,9 @@ An OpenProject AI development orchestrator that helps you implement work package
 
 ## Requirements
 
-- **Docker**
+- **Docker**, plus host `git` (the wrapper clones the product repos and uses your git identity) and `gh` for the [adopt](#adopting-a-chomper-pr) alias
 - GitHub auth token for a **bot account** that is not a collaborator on the product repos — chomper only ever opens fork PRs (we currently use [op-chomper](https://github.com/op-chomper))
-- OpenProject API token (read-only for script mode, comment-writable for agent mode)
+- OpenProject API token — read access is enough for `wp` and `chat`; agent mode also needs comment rights, and `pd` needs add-work-packages (it creates work packages)
 
 ---
 
@@ -177,6 +177,24 @@ those branches, so it replies in text and offers applicable changes as GitHub
 suggestions the author can apply in one click. Off by default — it is the only
 thing that makes chomper look outside its own PRs.
 
+### Product development (`pd`)
+
+A separate, spec-driven pipeline: OpenProject **Documents** → an
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) change proposal reviewed as a PR
+→ generated work packages → one implementation PR per work package.
+
+```bash
+./chomper pd init <project-id>                    # resolve ids, seed the spec store
+./chomper pd intake <project-id> <change-id>      # documents (+ attachments) → intake/
+./chomper pd propose <change-id>                  # proposal + the spec PR that gates it
+./chomper pd generate-wp <change-id>              # one parent + a child per tasks.md section
+./chomper pd implement <wp-id>...                 # build one work package from its spec
+```
+
+The spec PR **is** the approval gate: nothing is written to OpenProject until you run
+`generate-wp`, which is why that step needs a token with add-work-packages rights.
+`./chomper pd` lists the commands; CLAUDE.md carries the full design.
+
 ---
 
 ## Reviewing & pushing
@@ -230,8 +248,8 @@ It fetches the branch from the bot's fork, rebases it onto the current base with
 ## Configuration
 
 Everything lives in `.env`, which the first run writes interactively — the table
-below is for editing it afterwards. `CLAUDE.md` documents every variable,
-including the optional model and CI knobs.
+below is for editing it afterwards, and `.env.example` carries the same set with
+fuller comments. `CLAUDE.md` documents each one's rationale.
 
 | Variable | Purpose |
 |---|---|
@@ -239,9 +257,22 @@ including the optional model and CI knobs.
 | `OPENPROJECT_TOKEN` | API token — read work packages, comment on them |
 | `ANTHROPIC_API_KEY` | A real key (held by the authgw gateway, never by the claude container), or the literal `oauth` to log in with `claude auth login` instead |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — chomper's only identity |
+| `OP_REPO_PATH` | Optional. A local openproject checkout to seed that clone from, for a faster first clone |
 | `CHOMPER_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@chomper` (comma-separated). Empty = anyone |
 | `CHOMPER_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty = any GitHub user, on chomper's own PRs |
 | `CHOMPER_TRACK_UPSTREAM_PRS` | `1` to also track the product repos' upstream PRs, so an `@chomper` mention on one gets answered (read-only). Off by default; needs the allowlist too |
+
+### Repos
+
+The product repos are the committed registry in `repos.json` — each with a `name`,
+its `upstream` owner/repo, the `base` branch PRs target, and a description Claude
+reads. There is no per-repo setup beyond that: `./chomper` clones each one into
+`.chomper/repos/<name>` on first use.
+
+A fix is not tied to one repo. Claude declares its targets on the first line of the
+plan (`REPOS: openproject, primer_view_components`), and chomper then ships an
+independent branch and PR to each repo that actually changed. `REPOS:
+openproject@release/17.6` targets a non-default base branch, for a backport.
 
 State lives in `.chomper/` (gitignored) and is safe to delete with
 `./chomper reset`:
@@ -249,7 +280,7 @@ State lives in `.chomper/` (gitignored) and is safe to delete with
 | Path | What's in it |
 |---|---|
 | `work_packages/<host>/<id>/` | Per-work-package mirror: `item.json`, `plan.md`, `pr.md`, `pr_url.txt`, session ids |
-| `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `op-agent` run |
+| `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `agent op` run |
 | `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR chomper didn't open |
 | `openspec/<repo>/`, `changes/<host>/<id>/` | The `pd` pipeline's canonical spec store and per-change state |
 | `repos/<name>/` | Each product repo's standalone clone, mounted into the claude container |
@@ -281,6 +312,8 @@ docker compose build runner
 ```
 
 The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network calls are made during the test run.
+
+CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` rather than `Dockerfile.runner`, so it has no `openspec` CLI — the tests that would shell out to it stub `Open3` instead.
 
 ---
 
@@ -317,14 +350,11 @@ The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network
 * Lean more into the dev console "toolbox" interface
   * for new WPs: `chat` (-> `plan`) -> `build` -> `release`
     * more chat lenses beyond grill/summarize: simplify, options, explain, test-plan, impact
-    * also add option to include the sub-WPs
 * Make the interface more intuitive; The mix of hardcoded commands and free-form chatting confuses people
-* AppSignal integration
-  * [by implication] Ticket creation workflow
+* AppSignal integration — ingesting the errors is the open half; ticket creation itself now exists (`pd generate-wp`)
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
 * Make the agent mode work off webhooks instead of constant polling
-* Update the WP while work is being done: transition to "in development", add release, etc.
-  * Or, just set it manually for now. Or, explicitly prompt for it (when setting up new search filter query)
+* Update the WP while work is being done for the `wp` flow too — `pd implement` already transitions to "In progress" / "Developed"; the bug-fix flow still doesn't (release assignment is open for both)
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
   * Or just run chomper in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container

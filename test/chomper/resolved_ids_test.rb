@@ -49,9 +49,6 @@ module Chomper
       assert_equal 9, data.dig("types", "child", "id")
       assert_equal [12], ResolvedIds.closed_status_ids(data)
       assert_equal data, ResolvedIds.new(@ctx, op: Object.new).read, "and it round-trips through the cache"
-      assert ResolvedIds.new(@ctx, op: Object.new).resolved_for?("42")
-      refute ResolvedIds.new(@ctx, op: Object.new).resolved_for?("43"),
-             "a cache for another project is not this project's cache"
     end
 
     # --- the statuses `pd implement` transitions through -------------------

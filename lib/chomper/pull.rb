@@ -1,5 +1,4 @@
 require "json"
-require "tempfile"
 require "time"
 require_relative "clients"
 
@@ -7,9 +6,8 @@ module Chomper
   # `project_ids` / `project_idents` / `project_names` are parallel arrays.
   # `project_ids` (numeric) scope the query; `project_idents` are the semantic
   # identifiers, used for display when present (see Pull#describe_filters).
-  FilterSet = Struct.new(:project_ids, :project_idents, :project_names,
-                         :type_ids, :status_ids, :version_ids,
-                         :type_names, :status_names, :version_names, :scan_from_at, keyword_init: true)
+  FilterSet = Struct.new(:project_ids, :project_idents, :project_names, :scan_from_at,
+                         keyword_init: true)
 
   class Pull
     # Stats from the most recent poll (for logging): total scanned, and how many
@@ -131,9 +129,10 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
-    # Agent mode acts only on explicit @chomper triggers, so it does not narrow
-    # by type/status/version (a user may @chomper a WP of any kind). It needs
-    # only the project scope plus the scan window.
+    # A FilterSet is project scope plus the scan window, and nothing else: chomper
+    # acts only on explicit @chomper triggers, and a user may @chomper a WP of any
+    # type or status, so there is nothing to narrow by. (Type/status/version
+    # members existed once, were never set, and were removed.)
     def load_or_prompt_agent_filters
       if (saved = read_agent_filters)
         puts "  Saved filters: #{describe_filters(saved)}"
@@ -234,9 +233,8 @@ module Chomper
       id.to_s.empty? ? nil : id
     end
 
-    # Prompt for the project scope only (plus the scan window) — the agent-mode
-    # filter. Produces a FilterSet with no type/status/version, so #filters_json
-    # scopes the poll to the chosen projects and nothing else.
+    # Prompt for the project scope and the scan window — the whole FilterSet, so
+    # #filters_json scopes the poll to the chosen projects and nothing else.
     def prompt_agent_filters
       puts ""
       puts "=== Search filters ==="
@@ -302,8 +300,10 @@ module Chomper
       nil
     end
 
-    # Saved filters for agent mode: only the project scope (and scan window)
-    # matter, so this tolerates a file that has no type/status.
+    # Saved filters. Reads named keys off the parsed hash rather than splatting it
+    # into the struct, which is what makes a file written by an older chomper safe:
+    # its extra keys (type_ids, status_names, …) are inert here, where a splat
+    # would raise ArgumentError on the unknown keywords.
     def read_agent_filters
       return nil unless agent_filters_path.exist?
       data = JSON.parse(agent_filters_path.read)
@@ -358,17 +358,7 @@ module Chomper
       labels = Array(f.project_idents).empty? ? Array(f.project_ids) : Array(f.project_idents)
       projects = labels.zip(Array(f.project_names))
         .map { |id, name| name ? "#{id} — #{name}" : id }.join("; ")
-      # Agent-mode filters carry no type/status/version, so show only the parts
-      # that are actually set.
-      parts = ["projects=[#{projects}]"]
-      parts << "types=[#{f.type_names}]"       if present?(f.type_names)
-      parts << "statuses=[#{f.status_names}]"  if present?(f.status_names)
-      parts << "versions=[#{f.version_names}]" if present?(f.version_names)
-      parts.join("  ")
-    end
-
-    def present?(str)
-      !str.nil? && !str.empty?
+      "projects=[#{projects}]"
     end
 
     # Detect the latest unacted @chomper trigger on a WP and turn it into an
@@ -472,18 +462,12 @@ module Chomper
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # Builds the raw filters JSON for a FilterSet. The `project_id` filter scopes
-    # the global work-packages endpoint to the selected projects; its values must
-    # be NUMERIC project ids (OpenProject coerces them with to_i — identifiers
-    # would match nothing). The status/type/version clauses are each emitted only
-    # when the FilterSet carries values for them; agent mode sets none and so
-    # polls the projects unfiltered.
+    # Builds the raw filters JSON for a FilterSet — one `project_id` clause, which
+    # scopes the global work-packages endpoint to the selected projects. Its values
+    # must be NUMERIC project ids: OpenProject coerces them with to_i, so an
+    # identifier would match nothing rather than erroring.
     def filters_json(filters)
-      clauses = [%Q({"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}})]
-      clauses << %Q({"status":{"operator":"=","values":#{JSON.generate(Array(filters.status_ids))}}})   unless Array(filters.status_ids).empty?
-      clauses << %Q({"type":{"operator":"=","values":#{JSON.generate(Array(filters.type_ids))}}})        unless Array(filters.type_ids).empty?
-      clauses << %Q({"version":{"operator":"=","values":#{JSON.generate(Array(filters.version_ids))}}})  unless Array(filters.version_ids).empty?
-      "[#{clauses.join(",")}]"
+      %Q([{"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}}])
     end
 
     # The user-facing work package id: semantic ("PROJ-123") when the instance
@@ -578,9 +562,9 @@ module Chomper
       Helpers.items_dir(@ctx) / "op_agent_filters.json"
     end
 
-    # Persist agent-mode filters. They carry no type/status/version (those fields
-    # are nil), so those keys are only written when the FilterSet actually sets
-    # them — any keys already in the file are merged through, not clobbered.
+    # Persist the filters. A save MERGES into whatever the file already holds
+    # rather than replacing it, so keys chomper no longer writes (an older
+    # version's type/status filters) survive instead of being dropped.
     def save_agent_filters(filters)
       existing = (agent_filters_path.exist? && Helpers.safe_json_read(agent_filters_path)) || {}
       data = existing.merge(
@@ -589,14 +573,6 @@ module Chomper
         "project_names"  => filters.project_names,
         "scan_from_at"   => filters.scan_from_at
       )
-      {
-        "type_ids"      => filters.type_ids,
-        "status_ids"    => filters.status_ids,
-        "version_ids"   => filters.version_ids,
-        "type_names"    => filters.type_names,
-        "status_names"  => filters.status_names,
-        "version_names" => filters.version_names
-      }.each { |k, v| data[k] = v unless v.nil? }
       agent_filters_path.dirname.mkpath   # work_packages/<op_host>/ may not exist yet
       Helpers.write_json_atomic(agent_filters_path, data, "agent_filters")
     end

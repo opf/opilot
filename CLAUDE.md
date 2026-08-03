@@ -133,7 +133,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `cli.rb` | Argument parsing and dispatch for `./chomper <command>` — the one place a command's args are validated, the config loaded, and the log header stamped (`#session`, uniform `=== <command> [targets] <timestamp> ===`). `--help`/`-h` is honoured in any position (except inside `chat`'s free-text tail), and every bad invocation prints the same `Usage: ./chomper <name> <args>` shape (`#usage!`) |
 | `ui.rb` | Help text, `status`, and `reset` — the single home for every command description. One list per group (`#agent_commands`/`#wp_commands`/`#pd_commands`, plus `#triggers`): the group's own help renders it in full, the top-level `--help` is a one-screen map that just names the groups, and `ProductRunner#usage!` renders `#pd_usage_text` rather than keeping a second copy |
 | `context.rb` | Singleton config — env vars, paths, allowed emails, the repo registry (`#repos`) |
-| `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream`/`protected_bases` lookups |
+| `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream` lookups |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
 | `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:ship` intents |
 | `gh_pull.rb` | Polls chomper's own open PRs; a PR seen merged/closed is stamped `pr_done` and dropped from polling for good (no more API calls — the `pr` command clears the stamp on a reopened PR); parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist); also yields per-head-SHA `:ci` intents for failed CI |
@@ -145,7 +145,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
 | `publish.rb` | Pushes branch to the user's fork via git credential helper; opens cross-repo draft PRs against upstream via Octokit |
-| `openspec.rb` | `Chomper::OpenSpec` — Open3 wrapper around the `openspec` CLI (runner-only); `validate --strict --json`, `show`, `list`, `archive`, and `init --tools none` |
+| `openspec.rb` | `Chomper::OpenSpec` — Open3 wrapper around the `openspec` CLI (runner-only); `validate --strict --json`, `instructions <artifact>` (the artifact contracts `Prompts.propose` embeds), and `init --tools none` |
 | `tasks_file.rb` | Parse/rewrite a change's `tasks.md` — top-level sections, inline `(#id)` bindings, checkbox ticking; blanks fenced code blocks so an example `##` can't mint a work package |
 | `change_state.rb` | `ChangeState` (per-change paths, branch, `tracker.json`) + `ChangeStore` (the canonical spec store, materialise/persist, `.git/info/exclude`, the WP→change reverse index) |
 | `resolved_ids.rb` | Stage-0 id resolution by name — project, parent/child types, statuses with `isClosed`; fails fast listing what's missing |
@@ -233,7 +233,8 @@ Runner POSTs to `http://claude:47291` with headers:
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token (needs read access to WPs and write access to post comments) |
+| `OPENPROJECT_TOKEN` | API token. Read access to work packages suffices for `wp`/`chat`; agent mode also needs write access to post comments, and `pd` additionally needs `:add_work_packages` (`pd init` preflights exactly that — see above) |
+| `CLAUDE_URL` | Optional; where the runner reaches the claude container (default `http://claude:47291`, set explicitly in `compose.yml`). Only worth changing if the claude service is moved |
 | `OP_REPO_PATH` | Optional. Local openproject checkout to seed the openproject clone from (faster clone); absent → clones fresh. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | Token for the **contributor identity** — a dedicated bot account (not the operator) that is **not a collaborator on the canonical repo**. chomper forks as the bot, pushes branches there, and opens cross-repo PRs against upstream — chomper's only identity, used by every mode that publishes. Prompted by the setup wizard; use a classic token with the `public_repo`, `workflow` and `gist` scopes (the account's lack of canonical-repo access is what enforces isolation — `workflow` is needed because the lagging fork makes a fix branch re-introduce upstream's `.github/workflows/*` files, which GitHub rejects from a classic PAT without that scope; `gist` lets chomper attach each WP's full plan as a secret gist linked from the PR, and the link is simply skipped if the scope is absent). Must be a personal/user account. Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent (the number in a profile URL, `/users/<id>` — not emails, since a non-admin API token can't read other users' emails; the id is taken from each comment's `_links.user.href`). Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |

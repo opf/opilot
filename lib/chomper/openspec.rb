@@ -118,22 +118,6 @@ module Chomper
       text.to_s.gsub(WARNING_BLOCK, "")
     end
 
-    def show(item, json: true)
-      args = ["show", item]
-      args << "--json" if json
-      run(*args)
-    end
-
-    # Fold a completed change's deltas into openspec/specs/. --yes skips the
-    # confirmation prompt (there is no operator at the terminal for the
-    # auto-archive path); --skip-specs is for tooling-only changes with no
-    # capability deltas.
-    def archive(change_id, skip_specs: false)
-      args = ["archive", change_id, "--yes"]
-      args << "--skip-specs" if skip_specs
-      run(*args)
-    end
-
     private
 
     # Never shells out through a shell: Open3.capture3 with an argv array, so a

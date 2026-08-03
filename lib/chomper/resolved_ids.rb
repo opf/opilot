@@ -36,10 +36,6 @@ module Chomper
       Helpers.safe_json_read(path) || {}
     end
 
-    def resolved_for?(project_id)
-      read["project_id"].to_s == project_id.to_s
-    end
-
     # Resolve and cache. Raises Chomper::FatalError listing every failure at
     # once — one round trip of fixing, rather than one error per re-run.
     def resolve!(project_id)
@@ -67,12 +63,6 @@ module Chomper
       # that safe_json_read turns into {} without saying so.
       Helpers.write_json_atomic(path, data, "resolved_ids", pretty: true)
       data
-    end
-
-    # The cached ids, resolving them first if the cache is missing or points at
-    # a different project.
-    def ensure!(project_id)
-      resolved_for?(project_id) ? read : resolve!(project_id)
     end
 
     def self.closed_status_ids(data)
