@@ -647,6 +647,56 @@ module Chomper
       PROMPT
     end
 
+    # IMPLEMENTER: build ONE work package of a change — one top-level tasks.md
+    # section — from the spec the reviewer already approved.
+    #
+    # The mirror image of #propose: there the spec was the output and source was
+    # off limits, here the spec is the INPUT and source is the deliverable. The
+    # scope that matters is horizontal rather than vertical — the sibling sections
+    # are other people's work packages, each with its own PR, so a run that
+    # helpfully implements two of them makes both unreviewable.
+    def self.implement_task(repo:, repo_path:, change_id:, change_dir:, wp_label:, section:, tasks:, item:)
+      <<~PROMPT
+        You are the IMPLEMENTER. Build work package #{wp_label} of the OpenSpec
+        change `#{change_id}`.
+
+        TARGET REPO — edit files ONLY inside this worktree:
+          #{repo}  (#{repo_path})
+
+        THE SPEC — read this first; it is the requirement, not a suggestion:
+          #{change_dir}/proposal.md   why the change exists and what it covers
+          #{change_dir}/design.md     the decisions already taken (may be absent)
+          #{change_dir}/specs/        the requirement deltas, with their scenarios
+          #{change_dir}/tasks.md      every work package of this change
+        WORK PACKAGE: #{item} (as OpenProject has it — read it for anything a
+        human added after the proposal was written; its comments may qualify or
+        override the spec, and if they conflict, the newer human wins.)
+
+        YOUR SCOPE is this one section of tasks.md and nothing else:
+
+        ## #{section}
+        #{tasks}
+
+        The other sections of tasks.md are separate work packages with their own
+        branches and their own PRs. Do not start on them, however small or
+        related they look — work that lands in the wrong PR cannot be reviewed.
+        If this section cannot be built without part of another one, implement
+        the smallest amount of it that unblocks you and say so in your summary.
+
+        #{TOOLING}
+
+        - Check the worktree first and continue from wherever things are: a
+          previous run may have left partial work in place.
+        - Write the tests the spec's scenarios describe, then the implementation.
+        - Do NOT edit anything under #{change_dir} or any other `openspec/` path.
+          The spec is your input here, and chomper ticks the checkboxes itself
+          once this work lands.
+        - Do NOT commit or push, and do NOT run tests, linters, builds, or any
+          other command — only read and edit files; tests run later in review/CI.
+          You MAY run read-only git (log, show, blame, diff) for context.
+      PROMPT
+    end
+
     def self.free_chat(state:, wp_root:, repos:, message:)
       repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
       <<~PROMPT

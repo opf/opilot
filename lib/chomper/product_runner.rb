@@ -1,4 +1,5 @@
 require "json"
+require_relative "pull"
 
 module Chomper
   # The `pd` (product development) command family: the spec-driven pipeline that
@@ -9,20 +10,21 @@ module Chomper
   # take a work-package id too, while doing something entirely different — and
   # because the identity rules differ (see #publish below).
   #
-  # `init`, `intake`, `propose` and `generate-wp` are implemented; `implement` and
-  # `archive` are the remaining stages.
+  # `init`, `intake`, `propose`, `generate-wp` and `implement` are implemented;
+  # `archive` is the remaining stage.
   class ProductRunner
     include Helpers
 
     CHANGE_ID_PATTERN = /\A[a-z0-9][a-z0-9-]*\z/
 
-    def initialize(ctx, op: nil, intake: nil, claude: nil, publish: nil, openspec: nil)
+    def initialize(ctx, op: nil, intake: nil, claude: nil, publish: nil, openspec: nil, pull: nil)
       @ctx      = ctx
       @op       = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
       @intake   = intake
       @claude   = claude || Claude.new(ctx)
       @publish  = publish
       @openspec = openspec
+      @pull     = pull
     end
 
     # Built on demand: Intake pulls in roo/nokogiri/rubyzip, and gh-agent
@@ -46,6 +48,7 @@ module Chomper
       when "intake"  then intake(*argv[1..].to_a)
       when "propose" then propose(*argv[1..].to_a)
       when "generate-wp" then generate_wp(*argv[1..].to_a)
+      when "implement" then implement(*argv[1..].to_a)
       else usage!(argv[0])
       end
     end
@@ -231,6 +234,31 @@ module Chomper
 
       report_generated(state, parent, sections, created, failed)
       { parent: parent, created: created, failed: failed }
+    end
+
+    # `pd implement <wp-id>...` — build one generated work package: implement its
+    # tasks.md section on its own branch, commit, tick the section, and open the
+    # draft PR. One work package per run, one PR per work package, because that is
+    # the unit `generate-wp` decomposed the change into and the unit a reviewer
+    # reads.
+    #
+    # Deliberately keyed on a WORK-PACKAGE id, not a change id: the work packages
+    # are what a human assigns, comments on and closes, and implementing a whole
+    # change in one pass would produce exactly the unreviewable PR the
+    # decomposition exists to avoid.
+    def implement(*args)
+      opts = parse_options(args)
+      ids  = opts[:positional]
+      usage!("implement", "at least one work-package id is required") if ids.empty?
+
+      ids.each do |wp_id|
+        implement_one(wp_id, repo_name: opts[:repo])
+      rescue Chomper::FatalError, Claude::Error => e
+        # With one id there is nothing else to do, so the failure is the result;
+        # with several, one bad id must not cost the others their run.
+        raise if ids.length == 1
+        log_script "#{Helpers.wp_label(wp_id)} — #{e.message}"
+      end
     end
 
     private
@@ -653,6 +681,187 @@ module Chomper
       wp_id
     end
 
+    # --- implementation (`pd implement`) ----------------------------------
+
+    def implement_one(wp_id, repo_name: nil)
+      found = locate_section!(wp_id, repo_name)
+      repo  = found[:repo]
+      state = change_state_for(found[:change_id], found[:store])
+
+      item = fetch_item(wp_id)
+      st   = state_for(wp_id, item["subject"].to_s.empty? ? found[:section].title : item["subject"],
+                       item["type"].to_s.empty? ? @ctx.pd_child_type : item["type"])
+      # Recorded even though `pd` resolves the repo from the store: everything
+      # downstream (`./chomper pr <id>`, gh-agent) reads target_repos.json to find
+      # which clone a work package's PR belongs to.
+      set_target_repos(st, [repo.name])
+
+      puts ""
+      puts "  #{wp_label(wp_id)} — #{st.subject}"
+      puts "  #{found[:change_id]} / #{repo.name}"
+      if Helpers.file_has_content?(st.pr_url_file(repo))
+        puts "  Already shipped: #{st.pr_url_file(repo).read.strip}"
+        return nil
+      end
+
+      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
+      # Branch first, then materialise: checking out replaces the working tree.
+      checkout_branch(st, repo)
+      found[:store].materialise!
+      write_plan_file(st, state, found[:section])
+
+      unless branch_has_commits?(st, repo)
+        log_script "Implementing #{wp_label(wp_id)} (#{found[:change_id]}) in #{repo.name}…"
+        @claude.run(
+          Prompts.implement_task(
+            repo: repo.name, repo_path: repo.worktree_container,
+            change_id: found[:change_id], change_dir: state.working_change_container,
+            wp_label: wp_label(wp_id), section: found[:section].title,
+            tasks: render_tasks(found[:section]), item: container_path(st.item_file)
+          ),
+          tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: st.session_file
+        )
+        restore_spec_tree!(found[:store], found[:change_id])
+        publish # memoize the identity commit() authors as
+        commit(st, repo)
+      end
+
+      unless branch_has_commits?(st, repo)
+        puts "  ⚠ No changes produced — the section may already be implemented, or the spec may be a no-op."
+        return nil
+      end
+
+      tick_section!(found[:store], state, found[:section].title, wp_id)
+      ship_task(st, state, repo, wp_id)
+    end
+
+    # The work package as OpenProject has it, mirrored to item.json. Best-effort:
+    # the spec is the requirement and it is already on disk, so an OpenProject
+    # hiccup must not stop the implementation — the prompt just loses whatever a
+    # human added in the comments.
+    def fetch_item(wp_id)
+      item = pull_client.fetch_single_item(wp_id)
+      return item if item
+      log_script "Could not fetch #{Helpers.wp_label(wp_id)} from OpenProject — working from the spec alone."
+      Helpers.safe_json_read(Helpers.item_dir(@ctx, wp_id) / "item.json") || {}
+    rescue StandardError => e
+      log_script "Could not fetch #{Helpers.wp_label(wp_id)} (#{e.message}) — working from the spec alone."
+      {}
+    end
+
+    # Built on demand, like #intake_client: most `pd` stages never talk to
+    # OpenProject's work-package API at all.
+    def pull_client
+      @pull ||= Pull.new(@ctx)
+    end
+
+    # Which change (and which repo's store) a work-package id belongs to. The
+    # answer lives in tasks.md — `ChangeStore#reverse_index` rebuilds it from the
+    # bindings on every call rather than caching, so a store edited by hand still
+    # resolves correctly.
+    #
+    # Searches every registry repo's store unless --repo narrows it: a work
+    # package knows nothing about which clone it came from, and asking the
+    # operator to remember would be asking them to repeat what the store knows.
+    def locate_section!(wp_id, repo_name)
+      repos = repo_name ? [resolve_repo(repo_name)] : @ctx.repos.all
+      repos.each do |repo|
+        store = ChangeStore.new(@ctx, repo)
+        entry = store.reverse_index[wp_id.to_s]
+        next unless entry
+
+        state    = change_state_for(entry[:change_id], store)
+        sections = TasksFile.parse((state.store_change_dir / "tasks.md").read)
+        section  = sections.find { |s| s.wp_id.to_s == wp_id.to_s }
+        return { repo: repo, store: store, change_id: entry[:change_id], section: section } if section
+      end
+      raise Chomper::FatalError, unknown_wp_message(wp_id, repos)
+    end
+
+    # Naming what IS bound beats "not found": the id is almost always a work
+    # package from a different project, or a change id typed where a work-package
+    # id belongs.
+    def unknown_wp_message(wp_id, repos)
+      bound = repos.flat_map do |repo|
+        store = ChangeStore.new(@ctx, repo)
+        store.reverse_index.map { |id, e| "  #{Helpers.wp_label(id)}  #{e[:change_id]} — #{e[:section]}" }
+      end
+      <<~MSG.strip
+        #{Helpers.wp_label(wp_id)} is not bound to any tasks.md section, so there is
+        no spec to implement it from. Run `./chomper pd generate-wp <change-id>` first.
+        #{bound.empty? ? "No work packages are bound yet." : "Bound work packages:\n#{bound.join("\n")}"}
+      MSG
+    end
+
+    def render_tasks(section)
+      section.items.map { |i| "- [#{i[:done] ? "x" : " "}] #{i[:text]}" }.join("\n")
+    end
+
+    # plan.md, written by the runner rather than Claude: for a `pd` work package
+    # the spec IS the plan. It exists because everything downstream of a shipped
+    # PR expects one — the PR body's gist link, and the prompts gh-agent and
+    # `./chomper pr` build (`plan:`) — so without it a pd PR would be the one kind
+    # of chomper PR that can't explain itself.
+    def write_plan_file(st, state, section)
+      body = +"# #{section.title}\n\n"
+      body << "Work package #{wp_label(st.item_id)} of the OpenSpec change " \
+              "`#{state.change_id}`.\n\n"
+      body << "## Tasks\n#{render_tasks(section)}\n\n"
+      proposal = read_or_empty(state.working_change_dir / "proposal.md")
+      body << "## Change proposal\n\n#{proposal}\n" unless proposal.empty?
+      body << "\nFull spec: `openspec/changes/#{state.change_id}/` " \
+              "(proposal.md, design.md, specs/, tasks.md) on this branch's repo.\n"
+      st.plan_file.write(body)
+    end
+
+    # The spec is this stage's INPUT, so a spec edit is discarded rather than
+    # fatal — the opposite call to #enforce_write_scope!, and for the opposite
+    # reason: there the planning run had written source it had no business
+    # touching, here failing would throw away a working implementation over a
+    # stray edit. The tree is git-excluded, so nothing would have been committed
+    # anyway; restoring it keeps the store as the single source of truth.
+    def restore_spec_tree!(store, change_id)
+      strays = store.working_changes
+      return if strays.empty?
+      puts "  ⚠ The run edited #{strays.length} spec file(s); restoring them from the store " \
+           "(chomper owns openspec/, not the implementer):"
+      strays.first(10).each { |p| puts "      #{p}" }
+      store.materialise!(preserve: false)
+      log_script "#{change_id} — discarded #{strays.length} out-of-scope spec edit(s)."
+    end
+
+    # Tick the section's checkboxes once the work is committed. The harness owns
+    # these edits, never the agent: two runs implementing sibling sections would
+    # otherwise both be rewriting the same file.
+    def tick_section!(store, state, title, wp_id)
+      tasks = state.working_change_dir / "tasks.md"
+      return unless Helpers.file_has_content?(tasks)
+      tasks.write(TasksFile.set_section_done(tasks.read, title, done: true))
+      store.persist!("Implement #{title} (#{Helpers.wp_label(wp_id)})")
+    end
+
+    # Publish the branch as a draft PR the same way the bug-fix flow does, so the
+    # result is an ordinary chomper PR: gh-agent picks it up from pr_url.txt, and
+    # `./chomper pr <id>` can refresh it.
+    def ship_task(st, state, repo, wp_id)
+      generate_pr_description(st, repo, model: Claude::MODEL_WORK)
+      url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
+      unless url
+        puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is GITHUB_CONTRIBUTOR_TOKEN set?"
+        return nil
+      end
+      record_progress(state.change_id, st.branch, "implemented:#{wp_id}")
+      puts "  ✓ Draft PR (#{repo.name}): #{url}"
+      comment_implementation_pr(wp_id, state, url)
+      url
+    end
+
+    def comment_implementation_pr(wp_id, state, url)
+      @op.post_activity(wp_id, comment: "🤖 Implementation PR for `#{state.change_id}`: #{url}")
+    rescue StandardError => e
+      log_script "Could not comment the PR link on #{Helpers.wp_label(wp_id)}: #{e.message}"
+    end
+
     def read_or_empty(path)
       path.exist? ? path.read : ""
     end
@@ -780,6 +989,11 @@ module Chomper
               change and one #{@ctx.pd_child_type} per top-level tasks.md
               section, binding each id back into the heading. Safe to re-run:
               sections that already carry an id are left alone.
+
+          implement <wp-id>... [--repo <name>]
+              Implement one generated work package from its spec: its own branch,
+              its own commit, its tasks.md section ticked, and a draft PR. The
+              change is resolved from the id, so no change id is needed.
 
         change-id is author-chosen kebab-case (e.g. add-recurring-meetings).
       USAGE
