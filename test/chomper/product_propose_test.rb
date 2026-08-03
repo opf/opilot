@@ -292,6 +292,30 @@ module Chomper
       assert_empty op.created
     end
 
+    class FakePublish
+      def login = "op-chomper"
+      def open_spec_pr(_state, _repo, body:) = "https://github.com/bot/openproject/pull/14"
+    end
+
+    def test_proposing_writes_nothing_to_openproject
+      # The spec PR is the approval gate, so a FEATURE created here would
+      # announce a planned feature before anyone agreed to it — and work
+      # packages are never deleted, so every abandoned proposal would leave a
+      # permanent empty one behind. `generate-wp` creates it, with its children.
+      write_proposal!
+      op  = FakeOP.new
+      run = runner(op: op)
+      run.instance_variable_set(:@publish, FakePublish.new)
+
+      out, = capture_io { run.send(:publish_proposal, @state, @repo) }
+
+      assert_empty op.created, "propose must not create a work package"
+      assert_empty op.comments
+      assert_nil @state.parent_wp
+      assert_match(/Proposal PR/, out)
+      assert_match(/pd generate-wp/, out, "it should point at the stage that does create one")
+    end
+
     # --- the PR body ------------------------------------------------------
 
     def test_the_pr_body_states_what_the_change_will_generate
