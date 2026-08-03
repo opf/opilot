@@ -147,6 +147,77 @@ module Chomper
       assert_raises(Chomper::FatalError) { @runner.run(["intake", "42"]) }
     end
 
+    # --- init's preflight -------------------------------------------------
+
+    def test_init_refuses_without_a_clone
+      # ChangeStore#exclude_from_clone! returns silently when .git/info is
+      # missing, so a half-provisioned clone would leave openspec/ sweepable into
+      # an unrelated commit with nothing said. This is the one preflight where
+      # quiet degradation is dangerous rather than merely late.
+      FileUtils.rm_rf((@repo.worktree_host / ".git").to_s)
+      error = assert_raises(Chomper::FatalError) { @runner.run(["init", "42"]) }
+
+      assert_match(/No git clone at/, error.message)
+      assert_match(/swept into an unrelated commit/, error.message)
+      assert_match(/Run `\.\/chomper`/, error.message)
+    end
+
+    def test_init_checks_the_clone_before_any_network_work
+      # The OpenProject client here is an Object; reaching it would raise
+      # NoMethodError instead of the clone message.
+      FileUtils.rm_rf((@repo.worktree_host / ".git").to_s)
+      error = assert_raises(Chomper::FatalError) { @runner.run(["init", "42"]) }
+      assert_match(/No git clone/, error.message)
+    end
+
+    # Reports the publishing identity `propose` will use, rather than letting a
+    # bad token surface at push time after Claude has done the expensive work.
+    class FakeIdentityPublish
+      def initialize(login: "op-chomper", scopes: %w[public_repo workflow gist])
+        @login = login
+        @scopes = scopes
+      end
+
+      def login = @login.is_a?(StandardError) ? raise(@login) : @login
+      def token_scopes = @scopes
+    end
+
+    def identity_output(publish, token: "tok")
+      saved = ENV["GITHUB_CONTRIBUTOR_TOKEN"]
+      ENV["GITHUB_CONTRIBUTOR_TOKEN"] = token
+      ctx = Context.build(@tmpdir)
+      run = ProductRunner.new(ctx, op: Object.new, intake: Object.new, publish: publish)
+      capture_io { run.send(:report_publish_identity) }.first
+    ensure
+      saved.nil? ? ENV.delete("GITHUB_CONTRIBUTOR_TOKEN") : ENV["GITHUB_CONTRIBUTOR_TOKEN"] = saved
+    end
+
+    def test_init_reports_the_publishing_identity
+      out = identity_output(FakeIdentityPublish.new)
+      assert_match(/✓ github\s+op-chomper \(scopes: public_repo, workflow, gist\)/, out)
+    end
+
+    def test_init_names_the_scopes_a_classic_token_is_missing
+      out = identity_output(FakeIdentityPublish.new(scopes: %w[public_repo]))
+      assert_match(/missing workflow, gist/, out)
+    end
+
+    def test_a_fine_grained_token_is_not_warned_about_classic_scopes
+      # No X-OAuth-Scopes header means "unknown", not "no permissions".
+      out = identity_output(FakeIdentityPublish.new(scopes: []))
+      assert_match(/✓ github\s+op-chomper/, out)
+      refute_match(/missing/, out)
+    end
+
+    def test_a_missing_or_broken_token_is_reported_but_not_fatal
+      # init and intake are useful with no GitHub token at all.
+      out = identity_output(FakeIdentityPublish.new, token: "")
+      assert_match(/GITHUB_CONTRIBUTOR_TOKEN is not set/, out)
+
+      broken = identity_output(FakeIdentityPublish.new(login: StandardError.new("401 Unauthorized")))
+      assert_match(/could not verify GITHUB_CONTRIBUTOR_TOKEN \(401 Unauthorized\)/, broken)
+    end
+
     # The pd pipeline always publishes as the contributor bot, even if a
     # maintainer token somehow reached it — the CLI guard must never be the only
     # thing between pd and a canonical push.

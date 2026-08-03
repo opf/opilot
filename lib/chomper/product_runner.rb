@@ -61,9 +61,11 @@ module Chomper
       usage!("init", "a project id is required") unless project_id
 
       repo = resolve_repo(opts[:repo])
+      require_clone!(repo)
       log_script "Resolving OpenProject ids for project #{project_id}…"
       data = ResolvedIds.new(@ctx, op: @op).resolve!(project_id)
       report_resolved(data)
+      report_publish_identity
 
       log_script "Seeding the canonical spec store for #{repo.name}…"
       store = ChangeStore.new(@ctx, repo)
@@ -262,6 +264,49 @@ module Chomper
     end
 
     private
+
+    # Every later stage needs a real clone: it is where Claude writes, where the
+    # `openspec` CLI expects the tree relative to the code, and — via
+    # `.git/info/exclude` — what keeps the spec tree out of unrelated commits.
+    # That exclude is installed silently (`ChangeStore#exclude_from_clone!`
+    # returns when `.git/info` is absent), so a half-provisioned clone would
+    # otherwise leave the tree sweepable into someone else's commit with nothing
+    # said. This is the one preflight where quiet degradation is dangerous rather
+    # than merely late.
+    def require_clone!(repo)
+      return if (repo.worktree_host / ".git").exist?
+      raise Chomper::FatalError, <<~MSG.strip
+        No git clone at #{repo.worktree_host}.
+        The spec tree lives inside this clone, and its `.git/info/exclude` entry is
+        what stops `openspec/` being swept into an unrelated commit. Run `./chomper`
+        once to provision the clones, then re-run this command.
+      MSG
+    end
+
+    # Resolve the publishing identity now rather than at `propose`'s push. Every
+    # `pd` stage publishes as the contributor bot, and propose only discovers a
+    # missing or invalid token after Claude has done the expensive work.
+    #
+    # Advisory, not fatal: `init` and `intake` are useful with no GitHub token at
+    # all, so this reports and moves on.
+    def report_publish_identity
+      if @ctx.contributor_token.to_s.empty?
+        puts "  ⚠ github   GITHUB_CONTRIBUTOR_TOKEN is not set — `pd propose` cannot open the spec PR."
+        return
+      end
+      login  = publish.login
+      scopes = publish.token_scopes
+      puts "  ✓ github   #{login}#{scopes.empty? ? "" : " (scopes: #{scopes.join(", ")})"}"
+      missing = %w[public_repo workflow gist] - scopes
+      # An empty scope list means a fine-grained token (no X-OAuth-Scopes header),
+      # where these classic scope names don't apply — don't invent a warning.
+      return if scopes.empty? || missing.empty?
+      puts "  ⚠ github   the token is missing #{missing.join(", ")} — see the README on " \
+           "why chomper needs public_repo, workflow and gist."
+    rescue StandardError => e
+      puts "  ⚠ github   could not verify GITHUB_CONTRIBUTOR_TOKEN (#{e.message}) — " \
+           "`pd propose` may fail to publish."
+    end
 
     def require_intake!(state, change_id)
       unless state.store.initialized?

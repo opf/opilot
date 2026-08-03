@@ -50,8 +50,9 @@ module Chomper
       parent  = find_type(types, @ctx.pd_parent_type, problems)
       child   = find_type(types, @ctx.pd_child_type, problems)
       statuses = fetch_statuses(problems)
+      find_statuses(statuses, problems)
 
-      raise Chomper::FatalError, failure_message(project_id, types, problems) if problems.any?
+      raise Chomper::FatalError, failure_message(project_id, types, statuses, problems) if problems.any?
 
       data = {
         "project_id"   => project_id.to_s,
@@ -82,9 +83,26 @@ module Chomper
 
     def fetch_project(project_id, problems)
       code, body = @op.project(project_id)
-      return body if code == 200
-      problems << "project #{project_id} is not readable (HTTP #{code})"
-      {}
+      unless code == 200
+        problems << "project #{project_id} is not readable (HTTP #{code})"
+        return {}
+      end
+      check_write_permission(project_id, body, problems)
+      body
+    end
+
+    # `pd generate-wp` POSTs work packages into this project, and a token that can
+    # read but not write only reveals that after a proposal has been written and a
+    # spec PR opened. OpenProject renders the `createWorkPackage*` links only for
+    # a user with :add_work_packages in the project, so their absence is a real
+    # answer rather than a guess.
+    WRITE_LINKS = %w[createWorkPackageImmediately createWorkPackage].freeze
+
+    def check_write_permission(project_id, body, problems)
+      links = body["_links"] || {}
+      return if WRITE_LINKS.any? { |name| links.key?(name) }
+      problems << "this token cannot create work packages in project #{project_id} " \
+                  "(no :add_work_packages) — `pd generate-wp` would fail"
     end
 
     def fetch_types(project_id, problems)
@@ -114,15 +132,36 @@ module Chomper
       found
     end
 
-    def failure_message(project_id, types, problems)
+    # The statuses `pd implement` transitions a work package through. Checked here
+    # rather than at implement time: a name this instance doesn't have would
+    # otherwise surface as a warning after the spec PR is up and the code is
+    # committed — the same "opaque failure two stages later" the type resolution
+    # exists to prevent. An empty name means that transition is switched off.
+    def find_statuses(statuses, problems)
+      [@ctx.pd_implementing_status, @ctx.pd_implemented_status].reject { |n| n.to_s.empty? }.uniq.each do |name|
+        next if statuses.any? { |s| s["name"].to_s.casecmp?(name) }
+        problems << "no status named #{name.inspect} on this instance " \
+                    "(`pd implement` transitions work packages through it)"
+      end
+    end
+
+    def failure_message(project_id, types, statuses, problems)
       available = types.map { |t| t["name"] }.sort.join(", ")
-      <<~MSG.strip
+      msg = <<~MSG
         Could not resolve the OpenProject ids for project #{project_id}:
         #{problems.map { |p| "  ✗ #{p}" }.join("\n")}
 
         Types available on this project: #{available.empty? ? "(none readable)" : available}
         Set CHOMPER_PD_PARENT_TYPE / CHOMPER_PD_CHILD_TYPE to match, or add the
         types to the project in OpenProject.
+      MSG
+      # Only when a status is what failed: the list is long on a real instance,
+      # and printing it every time would bury the type message.
+      return msg.strip unless problems.any? { |p| p.start_with?("no status named") }
+      msg + <<~MSG.chomp
+        \nStatuses on this instance: #{statuses.map { |s| s["name"] }.join(", ")}
+        Set CHOMPER_PD_IMPLEMENTING_STATUS / CHOMPER_PD_IMPLEMENTED_STATUS to match
+        (empty turns that transition off).
       MSG
     end
   end

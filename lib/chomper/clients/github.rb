@@ -129,6 +129,16 @@ module Chomper
         @login ||= with_retry { @octokit.user }.login
       end
 
+      # The classic-PAT scopes this token carries, from the X-OAuth-Scopes header
+      # on a /user call. Empty for a fine-grained token (which has no such
+      # header) and empty on failure — so callers must treat empty as "unknown",
+      # never as "no permissions".
+      def token_scopes
+        with_retry { @octokit.scopes }
+      rescue StandardError
+        []
+      end
+
       # Pushes a local branch to GitHub. Authenticates via a credential helper
       # so the token never appears in argv (visible via ps/proc).
       def push_branch(repo, branch:, worktree_path:)

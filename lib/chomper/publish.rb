@@ -97,6 +97,12 @@ module Chomper
       @github.login
     end
 
+    # The token's classic-PAT scopes, for `pd init`'s preflight. Empty means
+    # "unknown" (fine-grained token, or the call failed), not "none".
+    def token_scopes
+      @github.token_scopes
+    end
+
     # Push a `pd` change's spec branch and open its proposal PR **inside the
     # bot's own fork** — head and base both on `<bot>/<repo>`.
     #
