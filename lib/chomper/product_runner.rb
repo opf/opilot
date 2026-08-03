@@ -9,7 +9,8 @@ module Chomper
   # take a work-package id too, while doing something entirely different — and
   # because the identity rules differ (see #publish below).
   #
-  # M0 implements `init` and `intake`; the later stages land in M1–M4.
+  # `init`, `intake`, `propose` and `generate-wp` are implemented; `implement` and
+  # `archive` are the remaining stages.
   class ProductRunner
     include Helpers
 
@@ -44,6 +45,7 @@ module Chomper
       when "init"    then init(*argv[1..].to_a)
       when "intake"  then intake(*argv[1..].to_a)
       when "propose" then propose(*argv[1..].to_a)
+      when "generate-wp" then generate_wp(*argv[1..].to_a)
       else usage!(argv[0])
       end
     end
@@ -183,6 +185,54 @@ module Chomper
       reply
     end
 
+    # `pd generate-wp <change-id>` — turn the reviewed proposal into work
+    # packages: one parent FEATURE for the change, one child IMPLEMENTATION per
+    # top-level `tasks.md` section, with each id bound back into the heading.
+    #
+    # Running this IS the approval signal. It reads the local spec store rather
+    # than the spec branch, so merging the PR stays optional — but nothing here
+    # is undoable (chomper's HTTP client has no DELETE verb, and OpenProject
+    # keeps a work package's comments and history nowhere else), so every write
+    # is idempotent: a section that already carries an id is left alone, and the
+    # parent is created once and remembered in tracker.json.
+    def generate_wp(*args)
+      opts      = parse_options(args)
+      change_id = opts[:positional][0]
+      usage!("generate-wp", "a change id is required") unless change_id
+      validate_change_id!(change_id)
+
+      repo  = resolve_repo(opts[:repo])
+      store = ChangeStore.new(@ctx, repo)
+      state = change_state_for(change_id, store)
+      require_intake!(state, change_id)
+
+      # Canonical → working first, then edit the working copy and persist back —
+      # the propose ordering, not intake's. Writing the store first would make
+      # the working copy differ from canonical at materialise! time, and the
+      # unsaved-work safety net would set the whole tree aside on every run.
+      store.materialise!
+      tasks    = require_tasks!(state, change_id)
+      sections = TasksFile.parse(tasks.read)
+      raise Chomper::FatalError, no_sections_message(change_id) if sections.empty?
+      reject_duplicate_titles!(sections, change_id)
+      ids = require_resolved_ids!(state)
+
+      log_script "Generating work packages for #{change_id} (#{sections.length} section(s))…"
+      parent = ensure_feature_wp(state, spec_pr_url(state))
+      raise Chomper::FatalError, "could not create the parent #{@ctx.pd_parent_type} work package" unless parent
+
+      begin
+        created, failed = create_child_wps(state, tasks, sections, ids, parent)
+      ensure
+        # Persist whatever got bound, even if the loop died partway: the ids are
+        # the only link back to work packages that cannot be deleted.
+        store.persist!("Bind work packages for #{change_id}")
+      end
+
+      report_generated(state, parent, sections, created, failed)
+      { parent: parent, created: created, failed: failed }
+    end
+
     private
 
     def require_intake!(state, change_id)
@@ -194,6 +244,60 @@ module Chomper
       raise Chomper::FatalError,
             "change #{change_id} has no intake yet — run " \
             "`./chomper pd intake <project-id> #{change_id}` first"
+    end
+
+    # tasks.md is the binding between the spec tree and OpenProject, so it is
+    # also the precondition for generating anything.
+    def require_tasks!(state, change_id)
+      tasks = state.working_change_dir / "tasks.md"
+      return tasks if Helpers.file_has_content?(tasks)
+      raise Chomper::FatalError,
+            "change #{change_id} has no tasks.md yet — run `./chomper pd propose #{change_id}` first"
+    end
+
+    def no_sections_message(change_id)
+      "tasks.md for #{change_id} has no top-level `## ` sections, so there is nothing to " \
+        "generate. Fix the proposal (comment `@chomper` on its PR) and re-run."
+    end
+
+    # The binding is by heading text — TasksFile.bind_id rewrites the section it
+    # matches — so two unbound sections sharing a title would both take the first
+    # id created: one work package for two chunks of work, and the second never
+    # generated at all. Refuse rather than guess, since nothing here can delete
+    # what it created.
+    def reject_duplicate_titles!(sections, change_id)
+      dupes = sections.reject(&:wp_id).map(&:title).tally.select { |_, n| n > 1 }.keys
+      return if dupes.empty?
+      raise Chomper::FatalError, <<~MSG.strip
+        tasks.md for #{change_id} has more than one top-level section titled:
+        #{dupes.map { |t| "  #{t}" }.join("\n")}
+        Each section becomes one work package and the id is bound back into the
+        heading by title, so the titles have to be unique. Rename them and re-run.
+      MSG
+    end
+
+    # `pd init`'s cache, or a fatal error naming the fix. generate-wp is the first
+    # stage that writes to OpenProject, and it needs all three ids (project,
+    # parent type, child type) before it POSTs anything — half a tree is worse
+    # than none when the halves can't be deleted.
+    def require_resolved_ids!(state)
+      ids        = ResolvedIds.new(@ctx, op: @op).read
+      project_id = ids["project_id"] || state.tracker["project_id"]
+      missing    = []
+      missing << "the project id" unless project_id
+      missing << "the #{@ctx.pd_parent_type} type id" unless ids.dig("types", "parent", "id")
+      missing << "the #{@ctx.pd_child_type} type id" unless ids.dig("types", "child", "id")
+      return ids.merge("project_id" => project_id) if missing.empty?
+
+      raise Chomper::FatalError,
+            "cannot create work packages without #{missing.join(", ")} — run " \
+            "`./chomper pd init <project-id>` first"
+    end
+
+    # The spec PR, for the "here is the proposal" links. Absent when `propose`
+    # couldn't open it; the stage still runs, it just links nothing.
+    def spec_pr_url(state)
+      Helpers.file_has_content?(state.pr_url_file) ? state.pr_url_file.read.strip : nil
     end
 
     # Claude writes the proposal, then the runner validates it and hands any
@@ -475,7 +579,73 @@ module Chomper
       }
     end
 
+    # One IMPLEMENTATION per unbound section, in file order, writing each id back
+    # into tasks.md as soon as it exists — not in one pass at the end. A crash
+    # between the POST and the write would otherwise leave a work package nothing
+    # references and nothing can delete, and the next run would create a second.
+    #
+    # A failed POST is reported and the loop continues: the sections are
+    # independent, and a re-run picks up exactly the ones still unbound.
+    def create_child_wps(state, tasks, sections, ids, parent_wp)
+      created = []
+      failed  = []
+      sections.each do |section|
+        next if section.wp_id
+
+        code, body = @op.create_work_package(child_payload(state, section, ids, parent_wp))
+        if code == 201 && body
+          tasks.write(TasksFile.bind_id(tasks.read, section.title, body["id"]))
+          created << { "id" => body["id"], "title" => section.title }
+          puts "  ✓ #{Helpers.wp_label(body["id"])}  #{section.title}"
+        else
+          failed << section.title
+          puts "  ✗ #{section.title} — HTTP #{code}"
+        end
+      end
+      [created, failed]
+    end
+
+    # The checklist goes into the description as a checklist: `pd implement` reads
+    # its scope from tasks.md, but a human opening the work package should see the
+    # same items without having to find the spec branch.
+    def child_payload(state, section, ids, parent_wp)
+      pr    = spec_pr_url(state)
+      body  = +"Generated by chomper from the OpenSpec change `#{state.change_id}`"
+      body << " ([proposal](#{pr}))" if pr
+      body << ".\n"
+      items = section.items.map { |i| "- [#{i[:done] ? "x" : " "}] #{i[:text]}" }.join("\n")
+      body << "\n**Tasks**\n#{items}\n" unless items.empty?
+
+      {
+        "subject"     => section.title[0, 200],
+        "description" => { "format" => "markdown", "raw" => body },
+        "_links"      => {
+          "type"    => { "href" => "/api/v3/types/#{ids.dig("types", "child", "id")}" },
+          "project" => { "href" => "/api/v3/projects/#{ids["project_id"]}" },
+          "parent"  => { "href" => "/api/v3/work_packages/#{parent_wp}" }
+        }
+      }
+    end
+
+    def report_generated(state, parent_wp, sections, created, failed)
+      bound = sections.length - failed.length
+      puts ""
+      puts "  #{@ctx.pd_parent_type} #{Helpers.wp_label(parent_wp)} — #{bound}/#{sections.length} " \
+           "section(s) bound, #{created.length} created this run"
+      record_progress(state.change_id, state.branch, "generated-wp:#{created.length}")
+      if failed.any?
+        puts "  ⚠ #{failed.length} section(s) could not be created:"
+        failed.each { |t| puts "      #{t}" }
+        puts "    Re-run `./chomper pd generate-wp #{state.change_id}` — the bound ones are skipped."
+      end
+      puts ""
+      puts "  Next: ./chomper pd implement <wp-id>"
+    end
+
+    # Skipped when `propose` never managed to open the PR — a comment reading
+    # "up for review:" with nothing after it is worse than no comment.
     def comment_pr_link(wp_id, state, pr_url)
+      return wp_id if pr_url.to_s.empty?
       @op.post_activity(wp_id, comment: "🤖 Change proposal `#{state.change_id}` is up for review: #{pr_url}")
       wp_id
     rescue StandardError => e
@@ -604,6 +774,12 @@ module Chomper
               Write the OpenSpec change proposal from that intake, validate it,
               and open the spec PR that is the approval gate. Revise it by
               commenting `@chomper <feedback>` on the PR.
+
+          generate-wp <change-id> [--repo <name>]
+              Create the #{@ctx.pd_parent_type} work package for the reviewed
+              change and one #{@ctx.pd_child_type} per top-level tasks.md
+              section, binding each id back into the heading. Safe to re-run:
+              sections that already carry an id are left alone.
 
         change-id is author-chosen kebab-case (e.g. add-recurring-meetings).
       USAGE

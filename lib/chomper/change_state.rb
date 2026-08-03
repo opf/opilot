@@ -87,6 +87,26 @@ module Chomper
       # Atomic like every other cache chomper writes, and pretty because this one
       # is committed into the store and read in PR diffs.
       Helpers.write_json_atomic(tracker_file, data, "tracker", pretty: true)
+      mirror_tracker_to_working(data)
+    end
+
+    # The tracker is runner-owned and lives in the canonical store, but it is also
+    # part of the change directory the spec branch commits — so both copies have
+    # to carry it. Writing only canonical made the write survive or vanish
+    # depending on which way the NEXT mirror happened to run: `pd intake` writes
+    # the tracker and then materialises (canonical → working), so it stuck, while
+    # a stage that writes it and then persists (working → canonical) had the older
+    # working copy mirrored straight back over it. `generate-wp` does exactly
+    # that, and lost the parent work-package id every run — which is how you get a
+    # duplicate FEATURE, since nothing can delete the first one.
+    def mirror_tracker_to_working(data)
+      dir = working_change_dir
+      return unless dir.directory?
+      Helpers.write_json_atomic(dir / "tracker.json", data, "tracker", pretty: true)
+    rescue StandardError => e
+      # Canonical is the durable copy and it is already written; a clone that has
+      # gone missing must not fail the stage that wrote it.
+      warn "  ⚠ Could not mirror tracker.json into the working copy: #{e.message}"
     end
 
     def merge_tracker(fields)

@@ -203,5 +203,33 @@ module Chomper
       assert_equal 59_942, state.tracker["parent_wp"], "merge preserves existing keys"
       assert_equal "openproject", state.tracker["repo"]
     end
+
+    def test_a_tracker_write_reaches_both_copies
+      # Regression: the tracker was written to canonical only, so whether the
+      # write survived depended on which way the next mirror ran. `pd intake`
+      # materialises afterwards (canonical → working) and kept it; a stage that
+      # persists afterwards (working → canonical) had the older working copy
+      # mirrored straight back over it. generate-wp does that, and lost the parent
+      # work-package id on every run — the way to get a duplicate FEATURE, since
+      # nothing can delete the first one.
+      change_id = seed_store!
+      @store.materialise!
+      state = ChangeState.new(change_id: change_id, store: @store, state_dir: @tmpdir / "s")
+
+      state.write_tracker("parent_wp" => 59_942)
+      working = @store.working_change_dir(change_id) / "tracker.json"
+      assert_equal 59_942, JSON.parse(working.read)["parent_wp"],
+                   "the working copy carries the tracker too — the spec branch commits it"
+
+      @store.persist!("persist after a tracker write")
+      assert_equal 59_942, state.parent_wp, "and persisting must not undo the write"
+    end
+
+    def test_a_tracker_write_survives_a_missing_working_copy
+      change_id = seed_store!
+      state = ChangeState.new(change_id: change_id, store: @store, state_dir: @tmpdir / "s")
+      state.write_tracker("parent_wp" => 7) # never materialised — nothing to mirror into
+      assert_equal 7, state.parent_wp
+    end
   end
 end
