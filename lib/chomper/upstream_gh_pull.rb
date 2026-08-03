@@ -3,24 +3,28 @@ require_relative "clients"
 require_relative "gh_pr_cache"
 
 module Chomper
-  # The second GitHub source for gh-agent: scans the *upstream* PRs of every
-  # registry repo (e.g. opf/openproject) for @chomper mentions — other people's
-  # PRs only, never the bot's own (those are GhPull's territory, with push
-  # rights and command parsing; serving them here too would double-handle every
-  # comment). chomper has no write access to these PRs' branches, so the
-  # intents it yields are flagged `reply_only` — gh-agent reviews/answers but
-  # never pushes code.
+  # The second GitHub source for gh-agent: tracks the *upstream* PRs of every
+  # registry repo (e.g. opf/openproject) so an @chomper mention on one gets
+  # answered — other people's PRs only, never the bot's own (those are GhPull's
+  # territory, with push rights and command parsing; serving them here too would
+  # double-handle every comment). The trigger is a prompt addressed to chomper,
+  # the same as on its own PRs; the difference is write access, which it doesn't
+  # have here — so these intents are flagged `reply_only` and gh-agent answers
+  # (offering applicable changes as GitHub suggestions) rather than pushing code.
   #
   # Discovery uses the GitHub search API as a cheap pre-filter
   # (`repo:<upstream> is:pr is:open mentions:<bot-login> updated:>=<cutoff>`, the
   # login resolved programmatically) so we only fetch comments + spend a Claude
   # call on PRs that actually mention the chomper bot.
-  # An empty CHOMPER_ALLOWED_GH_USERS disables this scan entirely — an open
-  # @chomper trigger across huge public repos would be a spend/abuse risk.
+  # This tracking is OFF unless CHOMPER_TRACK_UPSTREAM_PRS is set, and it also
+  # needs a non-empty CHOMPER_ALLOWED_GH_USERS — reaching across whole public
+  # repos is an explicit choice, and an open @chomper trigger there would be a
+  # spend/abuse risk (see #enabled?).
   #
-  # Per-PR state lives under .chomper/pr_reviews/<owner>-<repo>/<number>/,
-  # mirroring how GhPull keeps a PR's cache (pr.json) and act-state (gh_pr.json)
-  # separate.
+  # Per-PR state lives under .chomper/pr_reviews/<owner>-<repo>/<number>/ — the
+  # directory name predates this description and is left alone, since renaming it
+  # would orphan the act-state of every PR already tracked. It mirrors how GhPull
+  # keeps a PR's cache (pr.json) and act-state (gh_pr.json) separate.
   class UpstreamGhPull
     include Helpers
     include GhPrCache
@@ -32,9 +36,12 @@ module Chomper
 
     attr_reader :scanned_count
 
-    # True when upstream scanning is active (it requires an allowlist).
+    # Two gates, both required. CHOMPER_TRACK_UPSTREAM_PRS is the operator saying
+    # "watch other people's PRs at all" — off unless set, so no ordinary agent run
+    # reaches outside chomper's own PRs. CHOMPER_ALLOWED_GH_USERS then says whose
+    # mentions count; without it an @chomper on any public PR could spend tokens.
     def enabled?
-      @ctx.allowed_gh_users.any?
+      @ctx.track_upstream_prs? && @ctx.allowed_gh_users.any?
     end
 
     # Poll every registry repo's upstream for fresh @chomper mentions and return

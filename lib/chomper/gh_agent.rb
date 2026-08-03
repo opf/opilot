@@ -37,7 +37,7 @@ module Chomper
       end
       ensure_claude!
       scan_from_at = setup
-      puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
+      puts "  gh-agent started — polling #{sources} every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       loop do
         guarded_tick("PR poll") { tick(scan_from_at) }
@@ -51,23 +51,37 @@ module Chomper
       scan_from_at = prompt_scan_from
       if @ctx.allowed_gh_users.any?
         puts "  Allowlist active — only @chomper from: #{@ctx.allowed_gh_users.map { |u| "@#{u}" }.join(", ")}"
-        puts "  Upstream PR review active — scanning #{@ctx.repos.all.map(&:upstream).join(", ")}."
       else
         puts "  No allowlist set (CHOMPER_ALLOWED_GH_USERS) — any GitHub user can trigger @chomper on chomper's own PRs."
-        puts "  Upstream PR scanning is DISABLED (it requires an allowlist)."
+      end
+      # Say which state we are in either way: "it scanned nothing" and "it isn't
+      # scanning" look identical in the log otherwise.
+      if @upstream_pull.enabled?
+        puts "  Tracking upstream PRs for @chomper mentions — #{@ctx.repos.all.map(&:upstream).join(", ")}."
+      elsif @ctx.track_upstream_prs?
+        puts "  Upstream PR tracking requested but OFF — it also needs CHOMPER_ALLOWED_GH_USERS."
+      else
+        puts "  Upstream PR tracking off — chomper's own PRs only (set CHOMPER_TRACK_UPSTREAM_PRS=1)."
       end
       scan_from_at
     end
 
-    # One poll-and-handle pass over both PR sources (no sleep).
+    # Which PR sources this run watches — upstream is opt-in, so don't claim it.
+    def sources
+      @upstream_pull.enabled? ? "chomper + upstream PRs" : "chomper's own PRs"
+    end
+
+    # One poll-and-handle pass over the active PR sources (no sleep).
     def tick(scan_from_at)
-      log_script "Polling chomper fork PRs + upstream PRs (incl. CI status)…"
+      log_script "Polling #{sources} (incl. CI status)…"
       intents = @pull.poll_intents(scan_from_at) + @upstream_pull.poll_intents(scan_from_at)
       ci      = intents.count { |i| i.kind == :ci }
       trig    = intents.length - ci
       summary = "#{trig} @chomper trigger#{trig == 1 ? "" : "s"}"
       summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}"
-      log_script "Polled #{@pull.scanned_count} chomper PR(s) + #{@upstream_pull.scanned_count} upstream PR(s) — #{summary}"
+      scanned = "#{@pull.scanned_count} chomper PR(s)"
+      scanned += " + #{@upstream_pull.scanned_count} upstream PR(s)" if @upstream_pull.enabled?
+      log_script "Polled #{scanned} — #{summary}"
       intents.each { |intent| handle_and_ack(intent) }
     end
 

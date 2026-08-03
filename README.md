@@ -168,7 +168,14 @@ once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
-runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep).
+runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep). Failing
+CI is picked up on its own, without being asked.
+
+Set `CHOMPER_TRACK_UPSTREAM_PRS=1` and chomper also tracks the product repos'
+**upstream** PRs, answering `@chomper` mentions there. It has no write access to
+those branches, so it replies in text and offers applicable changes as GitHub
+suggestions the author can apply in one click. Off by default — it is the only
+thing that makes chomper look outside its own PRs.
 
 ---
 
@@ -233,7 +240,8 @@ including the optional model and CI knobs.
 | `ANTHROPIC_API_KEY` | A real key (held by the authgw gateway, never by the claude container), or the literal `oauth` to log in with `claude auth login` instead |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — chomper's only identity |
 | `CHOMPER_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@chomper` (comma-separated). Empty = anyone |
-| `CHOMPER_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty also disables upstream-PR review |
+| `CHOMPER_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty = any GitHub user, on chomper's own PRs |
+| `CHOMPER_TRACK_UPSTREAM_PRS` | `1` to also track the product repos' upstream PRs, so an `@chomper` mention on one gets answered (read-only). Off by default; needs the allowlist too |
 
 State lives in `.chomper/` (gitignored) and is safe to delete with
 `./chomper reset`:

@@ -78,6 +78,27 @@ module Chomper
       end
     end
 
+    def test_upstream_pr_tracking_is_off_unless_explicitly_enabled
+      # The one gh-agent source that looks outside chomper's own PRs: it must
+      # never turn itself on just because an agent is running.
+      with_env("CHOMPER_TRACK_UPSTREAM_PRS" => nil) do
+        refute Context.build(@tmpdir).track_upstream_prs?
+      end
+      with_env("CHOMPER_TRACK_UPSTREAM_PRS" => "") do
+        refute Context.build(@tmpdir).track_upstream_prs?
+      end
+      %w[1 true yes on TRUE].each do |on|
+        with_env("CHOMPER_TRACK_UPSTREAM_PRS" => on) do
+          assert Context.build(@tmpdir).track_upstream_prs?, "#{on.inspect} enables it"
+        end
+      end
+      %w[0 false no off].each do |off|
+        with_env("CHOMPER_TRACK_UPSTREAM_PRS" => off) do
+          refute Context.build(@tmpdir).track_upstream_prs?, "#{off.inspect} does not"
+        end
+      end
+    end
+
     def test_a_blank_token_is_the_same_as_no_token
       # compose.yml passes the token as `TOKEN=${TOKEN:-}`, so inside the
       # container an unset token arrives as "" — which is TRUTHY, while every

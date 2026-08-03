@@ -38,10 +38,14 @@ module Chomper
       state   = @tmpdir / ".chomper"
       state.mkpath
       @registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: @tmpdir)
-      ctx_class = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file, :repos) do
+      ctx_class = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file, :repos,
+                             :track_upstream) do
         def ci_ignored_checks; []; end
+        def track_upstream_prs?; track_upstream; end
       end
-      @ctx = ctx_class.new(state, ["thykel"], "ghtok", @tmpdir / "chomp.log", @registry)
+      # Opted in, since that is what these tests are about; the opt-out is its
+      # own test below.
+      @ctx = ctx_class.new(state, ["thykel"], "ghtok", @tmpdir / "chomp.log", @registry, true)
     end
 
     def teardown
@@ -136,6 +140,16 @@ module Chomper
                 issue: [issue_c(id: 1, body: "@chomper refresh", login: "thykel", at: "2026-06-20T09:00:00Z")])
       assert_empty gh.poll_intents("2026-06-01T00:00:00Z")
       assert_empty @github.reacted, "an own PR must not be touched by the reply-only path at all"
+    end
+
+    def test_upstream_prs_are_not_tracked_unless_explicitly_opted_in
+      # No ordinary agent run should reach outside chomper's own PRs: without
+      # CHOMPER_TRACK_UPSTREAM_PRS there is not even a search.
+      @ctx.track_upstream = false
+      gh = pull(issue: [issue_c(id: 1, body: "@chomper hi", login: "thykel", at: "2026-06-20T09:00:00Z")])
+      assert_empty gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_equal 0, gh.scanned_count
+      assert_empty @github.searches, "must not search upstream repos when tracking is off"
     end
 
     def test_disabled_without_an_allowlist

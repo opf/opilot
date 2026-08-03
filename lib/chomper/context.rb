@@ -103,6 +103,23 @@ module Chomper
       !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
     end
 
+    # Track the registry repos' upstream PRs, so an `@chomper` mention on one is
+    # picked up and answered (`CHOMPER_TRACK_UPSTREAM_PRS=1`). Not a review pass:
+    # chomper acts on prompts addressed to it, exactly as on its own PRs — it just
+    # has no write access there, so it answers (and can offer applicable
+    # suggestions) instead of pushing.
+    #
+    # OFF unless explicitly asked for: it is the one gh-agent source that reaches
+    # outside chomper's own PRs, across whole public repos, so every agent run
+    # would otherwise keep searching other people's work. Opting in is a decision
+    # about a specific repo set, not a default.
+    #
+    # Still requires CHOMPER_ALLOWED_GH_USERS — the flag says "watch these PRs",
+    # the allowlist says "whose mentions count"; see UpstreamGhPull#enabled?.
+    def track_upstream_prs?
+      %w[1 true yes on].include?(ENV["CHOMPER_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
+    end
+
     # Work-package type names the `pd` (product development) pipeline maps the
     # OpenSpec model onto: a change becomes one parent WP of the first type, and
     # each top-level tasks.md section becomes a child of the second. Neither is
