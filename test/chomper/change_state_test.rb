@@ -115,6 +115,31 @@ module Chomper
       assert (@store.working_tree / "changes" / "live-change").exist?
     end
 
+    def test_materialise_sets_aside_work_that_was_never_persisted
+      # A command that dies between materialise! and persist! leaves real work in
+      # the clone; the next materialise! would delete it without trace. This is
+      # how a whole generated proposal was nearly lost once.
+      seed_store!
+      @store.materialise!
+      (@store.working_tree / "changes" / "add-recurring-meetings" / "proposal.md").write("hours of work\n")
+
+      capture_io { @store.materialise! }
+
+      backup = @store.root / ChangeStore::SUPERSEDED_DIR / "changes" / "add-recurring-meetings" / "proposal.md"
+      assert backup.exist?, "unsaved work must be recoverable, not silently deleted"
+      assert_equal "hours of work\n", backup.read
+      refute (@store.working_tree / "changes" / "add-recurring-meetings" / "proposal.md").exist?,
+             "the working copy is still mirrored from canonical"
+    end
+
+    def test_materialise_does_not_hoard_backups_when_nothing_is_unsaved
+      seed_store!
+      @store.materialise!
+      @store.materialise!
+      refute (@store.root / ChangeStore::SUPERSEDED_DIR).exist?,
+             "a clean materialise needs no backup"
+    end
+
     def test_persist_copies_the_clone_back_and_commits
       seed_store!
       @store.materialise!

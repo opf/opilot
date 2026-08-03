@@ -192,9 +192,36 @@ module Chomper
       exclude_from_clone!
       dest = working_tree
       dest.parent.mkpath
+      preserve_unpersisted!
       FileUtils.rm_rf(dest.to_s)
       FileUtils.cp_r(tree.to_s, dest.to_s) if tree.exist?
       dest
+    end
+
+    # Where a working copy goes when materialise! is about to overwrite work that
+    # was never persisted.
+    SUPERSEDED_DIR = ".superseded".freeze
+
+    # The working copy is disposable by design — but only once its contents are
+    # in the store. A command that dies between materialise! and persist! (a
+    # failed validation, a crash, a bug in the caller) leaves real work here that
+    # the NEXT materialise! would delete without trace. Set it aside instead.
+    #
+    # Only the most recent is kept: this is a recovery hatch for "the last run
+    # produced something and didn't save it", not an archive.
+    def preserve_unpersisted!
+      # Nothing to lose before the first materialise, and "canonical has files
+      # the clone doesn't" is the normal state then — not unsaved work.
+      return unless working_tree.directory?
+      return if unpersisted_paths.empty?
+      backup = root / SUPERSEDED_DIR
+      FileUtils.rm_rf(backup.to_s)
+      backup.parent.mkpath
+      FileUtils.cp_r(working_tree.to_s, backup.to_s)
+      warn "  ⚠ The working spec tree had unsaved changes; a copy is at #{backup}"
+    rescue StandardError => e
+      # Never let the safety net stop the command it is protecting.
+      warn "  ⚠ Could not preserve the unsaved working spec tree: #{e.message}"
     end
 
     # Working → canonical, then commit. Same mirror semantics, opposite
@@ -258,6 +285,17 @@ module Chomper
     end
 
     private
+
+    # Files that exist in the WORKING copy and are new or edited relative to the
+    # store. Deliberately one-directional, unlike #working_changes: a file the
+    # store has and the clone doesn't is something materialise! is about to
+    # restore, not work about to be lost.
+    def unpersisted_paths
+      paths_under(working_tree).reject do |rel|
+        canonical = tree / rel
+        canonical.file? && canonical.read == (working_tree / rel).read
+      end
+    end
 
     # Every file under `root`, as paths relative to it.
     def paths_under(root)
