@@ -28,11 +28,23 @@ module Chomper
       # agent loops always publish as it), the MAINTAINER is an account with
       # push access (script `ship`/`pr` publish as it by default: direct pushes
       # to the canonical repo, each gated on an interactive yes).
-      @contributor_token  = ENV["GITHUB_CONTRIBUTOR_TOKEN"]
-      @maintainer_token   = ENV["GITHUB_MAINTAINER_TOKEN"]
+      #
+      # Blank is normalised to nil, and that normalisation is load-bearing rather
+      # than tidiness: every consumer asks "is there a token?" as truthiness
+      # (`maintainer_token ? :maintainer : :contributor`, `contributor_token.nil?`,
+      # `contributor_token || maintainer_token`), and compose.yml passes both as
+      # `TOKEN=${TOKEN:-}` — so inside the container an unset token arrives as ""
+      # , which is TRUTHY. Unnormalised, `ship` selected the maintainer identity
+      # with no maintainer token: no fork, a push aimed at the canonical repo, and
+      # `unless author_token` sailing past its own guard.
+      @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
+      @maintainer_token   = presence(ENV["GITHUB_MAINTAINER_TOKEN"])
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @state_container    = "/state"
-      @op_url             = ENV["OPENPROJECT_URL"]
+      # Normalised once here rather than at each call site: every consumer
+      # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
+      # so a trailing slash in .env turns all of them into "//…".
+      @op_url             = ENV["OPENPROJECT_URL"]&.sub(%r{/+\z}, "")
       @token              = ENV["OPENPROJECT_TOKEN"]
       # @chomper triggers are gated only when this list is non-empty; otherwise
       # every OpenProject user may trigger the agent. These are OpenProject user
@@ -98,6 +110,36 @@ module Chomper
       !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
     end
 
+    # Work-package type names the `pd` (product development) pipeline maps the
+    # OpenSpec model onto: a change becomes one parent WP of the first type, and
+    # each top-level tasks.md section becomes a child of the second. Neither is
+    # a stock OpenProject type, so both are configurable and are resolved to ids
+    # BY NAME at `pd init` (never hardcoded) — a missing type fails fast there
+    # rather than surfacing as a confusing 422 two stages later.
+    def pd_parent_type
+      ENV.fetch("CHOMPER_PD_PARENT_TYPE", "FEATURE").strip
+    end
+
+    def pd_child_type
+      ENV.fetch("CHOMPER_PD_CHILD_TYPE", "IMPLEMENTATION").strip
+    end
+
+    # The two statuses `pd implement` moves a work package through: one when the
+    # implementation run starts, one when its draft PR is open. Named after the
+    # pipeline's own meaning rather than any instance's wording, since the
+    # defaults are stock OpenProject statuses that an instance may well have
+    # renamed or dropped. Resolved by name from `pd init`'s status cache; an
+    # empty value turns that transition off, and a name the instance doesn't
+    # have is reported and skipped — a status is bookkeeping, never worth
+    # failing an implementation over.
+    def pd_implementing_status
+      ENV.fetch("CHOMPER_PD_IMPLEMENTING_STATUS", "In progress").strip
+    end
+
+    def pd_implemented_status
+      ENV.fetch("CHOMPER_PD_IMPLEMENTED_STATUS", "Developed").strip
+    end
+
     # How many times gh-agent will chase a single PR's CI before giving up and
     # asking for a human (`CHOMPER_CI_MAX_ATTEMPTS`, default 5, floored at 1).
     def ci_max_attempts
@@ -112,6 +154,13 @@ module Chomper
     def ci_ignored_checks
       ENV.fetch("CHOMPER_CI_IGNORE_CHECKS", "SaaS tests")
          .split(",").map { |s| s.strip.downcase }.reject(&:empty?)
+    end
+
+    private
+
+    # nil for a missing OR blank value, so callers can test one thing.
+    def presence(value)
+      value.to_s.strip.empty? ? nil : value.strip
     end
   end
 end

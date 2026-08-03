@@ -35,6 +35,7 @@ module Chomper
         puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — gh-agent acts as the bot account and needs its token."
         return
       end
+      ensure_claude!
       scan_from_at = setup
       puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
@@ -88,6 +89,10 @@ module Chomper
       if intent.kind == :ci
         log_script "#{intent.repo}##{intent.pr_number} — CI failed on #{intent.head_sha.to_s[0, 7]}"
         return handle_ci(intent)
+      end
+      if intent.spec?
+        log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} on spec #{intent.spec_change_id}"
+        return handle_spec(intent)
       end
       if intent.command == :refresh && !intent.reply_only
         log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} asked for a refresh"
@@ -246,7 +251,55 @@ module Chomper
       pr_runner.refresh_one(intent.item_id, intent.repo_name)
     end
 
+    # A comment on a `pd` change proposal's PR. `pd propose` is first-shot only,
+    # so this is where a proposal actually gets iterated: Claude revises the spec
+    # artifacts, the runner re-validates and re-checks the write scope, and the
+    # revision is pushed to update the PR.
+    #
+    # The branch lives on the bot's own fork (head and base both there), so the
+    # push needs no confirmation and reaches no canonical repo.
+    def handle_spec(intent)
+      repo    = @ctx.repos[intent.repo_name] || @ctx.default_repo
+      dir     = @pull.pr_dir(intent.item_id, intent.repo_name, spec: true)
+      pr_file = dir / "pr.json"
+
+      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
+      checkout_pr_branch(repo, intent.branch)
+
+      reply = product_runner.revise_proposal(
+        intent.spec_change_id,
+        comment_section: Prompts.comment_section(
+          comment_id: intent.comment_id, author: intent.user_login.to_s,
+          comment: intent.text.to_s, in_reply_to: intent.in_reply_to
+        ),
+        pr_thread: container_path(pr_file),
+        session_file: dir / "gh_session_id",
+        repo_name: intent.repo_name
+      )
+
+      post_reply(intent, reply)
+      push_followup(intent, repo) if spec_commit_pending?(repo, intent.branch)
+    end
+
+    # Did revise_proposal leave a commit to push? It commits internally (the spec
+    # tree is git-excluded, so it needs a deliberate force-add), unlike the
+    # code path where commit_followup does it here.
+    def spec_commit_pending?(repo, branch)
+      worktree(repo).log.between("FETCH_HEAD", branch).execute.any?
+    rescue StandardError
+      false
+    end
+
     private
+
+    # Built lazily and without an Intake: revising a proposal never reads a
+    # document, and Intake would drag roo/nokogiri into every gh-agent run.
+    def product_runner
+      @product_runner ||= begin
+        require_relative "product_runner"
+        ProductRunner.new(@ctx, claude: @claude)
+      end
+    end
 
     # Built lazily: PrRunner's default OpenProject client (for the WP mirror)
     # is only needed once a refresh is actually triggered.
@@ -311,7 +364,7 @@ module Chomper
       elsif intent.reply_only
         @upstream_pull.mark_acted(intent.repo, intent.pr_number, intent.comment_at)
       else
-        @pull.mark_acted(intent.item_id, intent.repo_name, intent.comment_at)
+        @pull.mark_acted(intent.item_id, intent.repo_name, intent.comment_at, spec: intent.spec?)
       end
     end
 
@@ -319,7 +372,7 @@ module Chomper
       if intent.reply_only
         @upstream_pull.record_chomper_comment(intent.repo, intent.pr_number, comment_id)
       else
-        @pull.record_chomper_comment(intent.item_id, intent.repo_name, comment_id)
+        @pull.record_chomper_comment(intent.item_id, intent.repo_name, comment_id, spec: intent.spec?)
       end
     end
 

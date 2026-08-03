@@ -92,6 +92,28 @@ module Chomper
         full_name
       end
 
+      # Fast-forward a fork's branch to its upstream — the API behind GitHub's
+      # "Sync fork" button. Returns true when the fork is (now) level with
+      # upstream.
+      #
+      # Needed because a fork's default branch is frozen at whenever the fork was
+      # created, while chomper's clones track UPSTREAM. A PR opened inside the
+      # fork therefore diffs current-upstream against months-old-fork and shows
+      # every intervening commit as if the change had made them. Octokit has no
+      # helper for this endpoint, hence the raw POST.
+      #
+      # Non-fatal: a fork whose branch has genuinely diverged returns 409 and
+      # can't be fast-forwarded. The caller carries on — a noisy PR is worse than
+      # a clean one but better than no PR.
+      def sync_fork_branch(fork, branch:)
+        with_retry { @octokit.post("/repos/#{fork}/merge-upstream", branch: branch) }
+        true
+      rescue Octokit::Error => e
+        warn "  ⚠ Could not sync #{fork}'s #{branch} with upstream (#{e.class}) — " \
+             "the PR diff may include unrelated upstream commits."
+        false
+      end
+
       # The bot account's git identity, as [name, email], for authoring commits.
       # Uses GitHub's no-reply email (`<id>+<login>@users.noreply.github.com`) so
       # commits attribute to the bot account and the operator's address is never
@@ -105,6 +127,16 @@ module Chomper
       # to recognise an @-mention of the bot itself as a trigger.
       def login
         @login ||= with_retry { @octokit.user }.login
+      end
+
+      # The classic-PAT scopes this token carries, from the X-OAuth-Scopes header
+      # on a /user call. Empty for a fine-grained token (which has no such
+      # header) and empty on failure — so callers must treat empty as "unknown",
+      # never as "no permissions".
+      def token_scopes
+        with_retry { @octokit.scopes }
+      rescue StandardError
+        []
       end
 
       # Pushes a local branch to GitHub. Authenticates via a credential helper

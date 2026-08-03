@@ -87,6 +87,21 @@ module Chomper
           pull [<id>...]    Mirror work packages into the local cache for later chat (no plan or ship);
                             ids fetch exactly those, no ids runs the filter wizard for a bulk grab
           chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship
+
+        Product development (spec-driven pipeline; publishes as the contributor bot,
+        so it refuses to run while GITHUB_MAINTAINER_TOKEN is set):
+          pd init <project-id> [--repo <name>]
+                            Resolve the OpenProject ids (FEATURE/IMPLEMENTATION types,
+                            statuses) and seed the canonical OpenSpec store
+          pd intake <project-id> <change-id> [--doc-id <id>]...
+                            Mirror OpenProject Documents into the change's intake/,
+                            converting attachments (xlsx/docx/pptx) to readable text.
+                            Without --doc-id every document in the project is pulled in
+          pd propose <change-id>
+                            Write the OpenSpec change proposal from that intake, validate
+                            it with `openspec --strict`, and open the spec PR that is the
+                            approval gate (inside the bot's own fork). Revise it by
+                            commenting `@chomper <feedback>` on that PR
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 

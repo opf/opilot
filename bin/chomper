@@ -23,6 +23,13 @@ require "chomper/fix_runner"
 require "chomper/pr_runner"
 require "chomper/pull_runner"
 require "chomper/chat_runner"
+require "chomper/openspec"
+require "chomper/tasks_file"
+require "chomper/change_state"
+require "chomper/resolved_ids"
+# chomper/intake and chomper/product_runner are NOT required here: intake pulls
+# in roo, nokogiri and rubyzip, which only `pd intake` ever uses. CLI#pd requires
+# them on demand so every other command starts without paying that load.
 require "chomper/cli"
 
 Rainbow.enabled = $stdout.tty?

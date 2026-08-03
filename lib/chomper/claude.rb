@@ -39,6 +39,29 @@ module Chomper
       @uri = URI(@ctx.claude_url)
     end
 
+    # Is the claude container up and serving? Cheap GET against server.js's
+    # health endpoint — the same one compose's healthcheck uses.
+    def available?
+      Net::HTTP.start(@uri.host, @uri.port, open_timeout: 2, read_timeout: 2) do |http|
+        http.get("/health").is_a?(Net::HTTPSuccess)
+      end
+    rescue StandardError
+      false
+    end
+
+    # Fail fast, before a command does any real work, when the container isn't
+    # there. Without this the first prompt spends ~30s in http_stream's
+    # reconnect backoff and then surfaces a bare SocketError — long after the
+    # branch has been checked out and the spec tree materialised.
+    def ensure_available!
+      return if available?
+      raise Chomper::FatalError, <<~MSG.strip
+        The claude container is not reachable at #{@ctx.claude_url}.
+        Start it with `docker compose up -d --wait claude`, or run this through
+        ./chomper (which starts it for the commands that need it).
+      MSG
+    end
+
     # Runs Claude with the given prompt. Streams tool-use lines to tty, returns text output.
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.

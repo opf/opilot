@@ -11,6 +11,21 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
+    def test_op_url_drops_a_trailing_slash
+      # Every consumer appends its own path, so a trailing slash in .env would
+      # produce "https://host//api/v3/…" and "https://host//documents/118".
+      with_env("OPENPROJECT_URL" => "https://op.example.com/") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => "https://op.example.com///") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => "https://op.example.com") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => nil) { assert_nil Context.build(@tmpdir).op_url }
+    end
+
     def test_script_dir_set_from_argument
       assert_equal Pathname(@tmpdir), @ctx.script_dir
     end
@@ -64,6 +79,22 @@ module Chomper
         ctx = Context.build(@tmpdir)
         assert_nil ctx.contributor_token
         assert_nil ctx.maintainer_token
+      end
+    end
+
+    def test_a_blank_token_is_the_same_as_no_token
+      # compose.yml passes both as `TOKEN=${TOKEN:-}`, so inside the container an
+      # unset token arrives as "" — which is TRUTHY, while every consumer asks
+      # "is there a token?" as truthiness. Unnormalised, `ship` picked the
+      # maintainer identity with no maintainer token: no fork, and a push aimed
+      # at the canonical repo.
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "", "GITHUB_MAINTAINER_TOKEN" => "  ") do
+        ctx = Context.build(@tmpdir)
+        assert_nil ctx.contributor_token
+        assert_nil ctx.maintainer_token
+      end
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => " bot-tok ") do
+        assert_equal "bot-tok", Context.build(@tmpdir).contributor_token, "and it is trimmed"
       end
     end
 

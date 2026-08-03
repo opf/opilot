@@ -533,6 +533,170 @@ module Chomper
     # on-disk cache is mounted at `state` and the model finds the relevant files
     # itself from the user's question. `repos` is an array of { name:, path:, … }
     # for the product clones mounted at /repos/<name>.
+    # --- pd (product development) -----------------------------------------
+
+    # The write scope every propose/revise run is held to. Enforced afterwards by
+    # the runner (which resets anything outside it), but stated here too so a run
+    # normally never trips the gate.
+    def self.spec_scope(change_dir)
+      <<~TEXT.strip
+        WRITE SCOPE — you may create or edit files ONLY inside:
+          #{change_dir}
+        Do not touch application source, tests, or any other part of the repo.
+        This is a planning stage; nothing outside the change directory is yours.
+        A write outside it discards the whole run, so stay inside it.
+      TEXT
+    end
+
+    # Explore with the file tools, not the shell. Bash here is confined to
+    # read-only git, so `ls`/`find`/`cat` are denied and every attempt is a
+    # wasted turn before the model falls back on its own.
+    TOOLING = <<~TEXT.strip
+      Use Glob to list files, Grep to search, and Read to open them. Bash is
+      restricted to read-only git (log, show, blame, diff) — `ls`, `find`, `cat`
+      and every other command are denied, so don't reach for them.
+    TEXT
+
+    # WRITER: turn the intake material into an OpenSpec change proposal.
+    #
+    # The one-feature gate mirrors Prompts.plan's NEEDS_INFO sentinel: a change
+    # maps to exactly one FEATURE work package, so material that plainly spans
+    # several must stop rather than be crammed into one proposal.
+    def self.propose(change_id:, change_dir:, intake_dir:, specs_dir:, repo:, repo_path:, instructions:)
+      <<~PROMPT
+        You are the WRITER. Produce an OpenSpec change proposal for `#{change_id}`.
+
+        INTAKE (the raw human intent — read all of it first):
+          #{intake_dir}
+          #{intake_dir}/attachments/README.md lists every attachment, what it was
+          converted to, and anything that could NOT be read. Treat an unreadable
+          attachment as a known gap, not as absent.
+        EXISTING SPECS (what is already built — read what is relevant):
+          #{specs_dir}
+        CODEBASE: the #{repo} repository is checked out at #{repo_path}. Read it to
+        ground the proposal in the system that actually exists.
+
+        #{TOOLING}
+
+        #{spec_scope(change_dir)}
+
+        FIRST, judge scope. A change becomes exactly ONE work package of type
+        FEATURE — one atomic, QA-able feature. If the intake plainly covers more
+        than one such feature, write NO files at all and output exactly the
+        following, starting on the very first line, then stop:
+
+          TOO_BROAD
+          ### Suggested split
+          - <one line per feature you would propose separately>
+
+        If the scope is fine, just write the files — don't narrate the check.
+
+        Otherwise write the artifacts below, in the order given, and nothing else.
+
+        These instructions come from the `openspec` CLI itself — follow each
+        artifact's <instruction> and <template> exactly. `openspec validate
+        --strict` runs afterwards and only checks part of this, so matching the
+        template is on you, not on the validator.
+
+        #{instructions}
+
+        Two things chomper needs on top of the above:
+        - In tasks.md, each top-level `## ` section becomes ONE work package, so
+          make them independently implementable and reviewable. Aim for 3-6.
+        - Ground every claim in the intake or the code. Where the intake is silent
+          on something you had to decide, say so in design.md rather than
+          inventing a requirement.
+      PROMPT
+    end
+
+    # WRITER: fix a proposal the strict validator rejected. Runs in the same
+    # session, so the artifacts are already in context.
+    def self.propose_revise(change_id:, change_dir:, failures:, attempt:, max_attempts:)
+      <<~PROMPT
+        `openspec validate #{change_id} --strict` rejected the proposal you just
+        wrote (attempt #{attempt} of #{max_attempts}):
+
+        #{failures}
+
+        #{spec_scope(change_dir)}
+
+        Fix exactly what the validator reported and nothing else — the proposal's
+        content was not the problem, its structure was. The most common causes are
+        a requirement with no scenario, a delta missing its ADDED/MODIFIED/REMOVED
+        heading, and a malformed scenario block.
+      PROMPT
+    end
+
+    # WRITER: revise a proposal in response to review comments on its spec PR.
+    # Same write scope; the reviewer's words are the instruction.
+    def self.propose_feedback(change_id:, change_dir:, pr_thread:, comment_section:)
+      <<~PROMPT
+        You are the WRITER, revising the OpenSpec change proposal `#{change_id}`
+        in response to review feedback on its pull request.
+
+        PROPOSAL: #{change_dir}
+        PR THREAD: #{pr_thread}  #{THREAD_NOTE}
+
+        #{comment_section}
+
+        #{spec_scope(change_dir)}
+
+        Apply what the comment asks for. Preserve everything still valid — revise,
+        don't rewrite. If the comment is a question rather than a change request,
+        make no edits and answer it in your reply.
+      PROMPT
+    end
+
+    # IMPLEMENTER: build ONE work package of a change — one top-level tasks.md
+    # section — from the spec the reviewer already approved.
+    #
+    # The mirror image of #propose: there the spec was the output and source was
+    # off limits, here the spec is the INPUT and source is the deliverable. The
+    # scope that matters is horizontal rather than vertical — the sibling sections
+    # are other people's work packages, each with its own PR, so a run that
+    # helpfully implements two of them makes both unreviewable.
+    def self.implement_task(repo:, repo_path:, change_id:, change_dir:, wp_label:, section:, tasks:, item:)
+      <<~PROMPT
+        You are the IMPLEMENTER. Build work package #{wp_label} of the OpenSpec
+        change `#{change_id}`.
+
+        TARGET REPO — edit files ONLY inside this worktree:
+          #{repo}  (#{repo_path})
+
+        THE SPEC — read this first; it is the requirement, not a suggestion:
+          #{change_dir}/proposal.md   why the change exists and what it covers
+          #{change_dir}/design.md     the decisions already taken (may be absent)
+          #{change_dir}/specs/        the requirement deltas, with their scenarios
+          #{change_dir}/tasks.md      every work package of this change
+        WORK PACKAGE: #{item} (as OpenProject has it — read it for anything a
+        human added after the proposal was written; its comments may qualify or
+        override the spec, and if they conflict, the newer human wins.)
+
+        YOUR SCOPE is this one section of tasks.md and nothing else:
+
+        ## #{section}
+        #{tasks}
+
+        The other sections of tasks.md are separate work packages with their own
+        branches and their own PRs. Do not start on them, however small or
+        related they look — work that lands in the wrong PR cannot be reviewed.
+        If this section cannot be built without part of another one, implement
+        the smallest amount of it that unblocks you and say so in your summary.
+
+        #{TOOLING}
+
+        - Check the worktree first and continue from wherever things are: a
+          previous run may have left partial work in place.
+        - Write the tests the spec's scenarios describe, then the implementation.
+        - Do NOT edit anything under #{change_dir} or any other `openspec/` path.
+          The spec is your input here, and chomper ticks the checkboxes itself
+          once this work lands.
+        - Do NOT commit or push, and do NOT run tests, linters, builds, or any
+          other command — only read and edit files; tests run later in review/CI.
+          You MAY run read-only git (log, show, blame, diff) for context.
+      PROMPT
+    end
+
     def self.free_chat(state:, wp_root:, repos:, message:)
       repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
       <<~PROMPT

@@ -58,6 +58,7 @@ module Chomper
       unless @ctx.contributor_token || @ctx.maintainer_token
         raise FatalError, "No GitHub token is set — `pr` needs GITHUB_CONTRIBUTOR_TOKEN and/or GITHUB_MAINTAINER_TOKEN to read and update PRs."
       end
+      ensure_claude!
       targets.each do |target|
         target.match?(%r{\Ahttps?://}) ? refresh_url(target) : refresh_wp(target)
       end

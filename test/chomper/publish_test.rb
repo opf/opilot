@@ -6,11 +6,13 @@ module Chomper
     # Records what Publish asks the GitHub client to do, so we can assert the
     # branch goes to the fork and the PR is opened against the repo's upstream.
     class FakeGitHub
-      attr_reader :forked, :pushed, :pr_calls, :gist_calls, :body_updates
+      attr_reader :forked, :pushed, :pr_calls, :gist_calls, :body_updates, :synced
+      attr_accessor :sync_ok
       def initialize(existing: nil)
         @existing = existing; @forked = []; @pushed = []; @pr_calls = []; @gist_calls = []
-        @body_updates = []
+        @body_updates = []; @synced = []; @sync_ok = true
       end
+      def sync_fork_branch(fork, branch:); @synced << [fork, branch]; @sync_ok; end
       def login; "op-chomper"; end
       def ensure_fork(upstream); @forked << upstream; "me/#{upstream.split('/').last}"; end
       def find_open_pr(_base_repo, head:); @existing; end
@@ -253,6 +255,55 @@ module Chomper
       assert_empty @github.gist_calls, "a cached gist URL must not trigger a new upload"
       assert_includes @github.pr_calls.first[:body],
                       "📋 **Implementation plan:** https://gist.github.com/me/cached"
+    end
+
+    # --- the pd spec PR (opened inside the bot's own fork) ----------------
+
+    def spec_state(change_id = "add-x")
+      store = ChangeStore.new(@ctx, @repo)
+      dir   = (@tmpdir / "changes" / change_id).tap(&:mkpath)
+      ChangeState.new(change_id: change_id, store: store, state_dir: dir)
+    end
+
+    def test_the_spec_pr_is_opened_inside_the_fork_on_both_sides
+      state = spec_state
+      url = capture_io { @publish.open_spec_pr(state, @repo, body: "why") }.then { state.pr_url_file.read.strip }
+
+      call = @github.pr_calls.first
+      assert_equal "me/openproject", call[:repo], "the PR lives in the fork, not on opf/*"
+      assert_equal @repo.base, call[:base]
+      assert_equal "spec/add-x", call[:head]
+      assert_equal false, call[:mcm], "GitHub 422s a same-repo PR with maintainer edits on"
+      assert_equal [["me/openproject", "spec/add-x"]], @github.pushed
+      assert_equal "https://github.com/me/openproject/pull/7", url
+    end
+
+    def test_the_forks_base_is_levelled_with_upstream_before_the_pr_is_opened
+      # The spec branch is cut from the clone, which tracks UPSTREAM; the PR's
+      # base is the fork's copy of that branch, frozen at fork-creation time.
+      # Left stale, the diff carries every intervening upstream commit and the
+      # PR is unreviewable.
+      capture_io { @publish.open_spec_pr(spec_state, @repo, body: "why") }
+      assert_equal [["me/openproject", @repo.base]], @github.synced
+    end
+
+    def test_a_fork_that_cannot_be_synced_still_gets_its_pr
+      # A diverged fork can't be fast-forwarded. A noisy PR beats no PR.
+      @github.sync_ok = false
+      capture_io { @publish.open_spec_pr(spec_state, @repo, body: "why") }
+      assert_equal 1, @github.pr_calls.length
+    end
+
+    def test_an_existing_spec_pr_is_reused_rather_than_reopened
+      github = FakeGitHub.new(existing: "https://github.com/me/openproject/pull/3")
+      publish = Publish.new(@ctx, as: :contributor)
+      publish.instance_variable_set(:@github, github)
+      state = spec_state
+
+      assert_equal "https://github.com/me/openproject/pull/3",
+                   capture_io { publish.open_spec_pr(state, @repo, body: "why") }.then { state.pr_url_file.read.strip }
+      assert_empty github.pr_calls
+      assert_empty github.pushed, "an open PR means the branch is already there"
     end
 
     private

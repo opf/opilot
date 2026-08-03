@@ -175,6 +175,26 @@ module Chomper
       public :state_for, :record_chosen_repos, :checkout_branch   # private in Helpers
     end
 
+    # The clone check lives in #worktree because that is the funnel every git
+    # operation goes through — a check each command had to remember would be
+    # forgotten. `./chomper` only WARNS when a clone fails, so this state is
+    # reachable, and Git.open's own "path does not exist" names neither the repo
+    # nor the fix.
+    def test_a_missing_clone_is_reported_with_the_repo_and_the_fix
+      host = repo_host
+      error = assert_raises(Chomper::FatalError) { host.send(:worktree, host.ctx.default_repo) }
+
+      assert_match(/No git clone for openproject/, error.message)
+      assert_match(/Run `\.\/chomper`/, error.message)
+      assert_match(/repos\.json/, error.message, "the usual cause is a wrong base branch")
+    end
+
+    def test_a_directory_without_git_is_still_a_missing_clone
+      host = repo_host
+      host.ctx.default_repo.worktree_host.mkpath   # provisioned halfway, no .git
+      assert_raises(Chomper::FatalError) { host.send(:worktree, host.ctx.default_repo) }
+    end
+
     class FakeWorktree
       attr_reader :checkouts, :fetched, :configs
       def initialize; @checkouts = []; @fetched = []; @configs = []; end

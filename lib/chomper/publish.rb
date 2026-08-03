@@ -21,13 +21,19 @@ module Chomper
       contributor? ? @ctx.contributor_token : @ctx.maintainer_token
     end
 
+    # The env var that supplies this identity's token — so a caller that has to
+    # tell the operator what to set names the right one of the two.
+    def token_env_var
+      contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"
+    end
+
     # Push the WP's fix branch in `repo` and open a draft PR there, returning the
     # PR URL (or nil on failure). Idempotent: an already-open PR is recorded and
     # returned. Upstream, base branch, and worktree all come from `repo`, so a WP
     # that spans several repos opens an independent PR in each.
     def open_pr(item_id, subject, branch, repo)
       unless author_token
-        puts "  Error: #{contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"} is not set — cannot open PRs."
+        puts "  Error: #{token_env_var} is not set — cannot open PRs."
         return nil
       end
 
@@ -89,6 +95,74 @@ module Chomper
       add_adopt_note(upstream, url, pr_body, banner) if contributor?
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
+      url
+    end
+
+    # The login of the identity publishing, for PR bodies that invite a reply.
+    def login
+      @github.login
+    end
+
+    # The token's classic-PAT scopes, for `pd init`'s preflight. Empty means
+    # "unknown" (fine-grained token, or the call failed), not "none".
+    def token_scopes
+      @github.token_scopes
+    end
+
+    # Push a `pd` change's spec branch and open its proposal PR **inside the
+    # bot's own fork** — head and base both on `<bot>/<repo>`.
+    #
+    # Deliberately not a PR against upstream: the diff is spec artifacts, not
+    # code, and it exists so a human can review the decomposition before work
+    # packages are generated. Opening it upstream would put planning noise on a
+    # public repo. Since the bot owns both sides it can merge or close freely —
+    # and nothing downstream depends on the merge, because `pd generate-wp` reads
+    # the local spec store rather than the branch.
+    #
+    # The fork is not a registry upstream, so confirm_canonical_push? passes
+    # straight through; `spec/<id>` is not a protected branch name either.
+    # Idempotent: an already-open PR for this head is recorded and returned.
+    def open_spec_pr(state, repo, body:)
+      unless author_token
+        puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — cannot open the proposal PR."
+        return nil
+      end
+
+      fork   = @github.ensure_fork(repo.upstream)
+      branch = state.branch
+      head   = "#{fork.split("/").first}:#{branch}"
+
+      existing = @github.find_open_pr(fork, head: head)
+      if existing
+        state.pr_url_file.write(existing)
+        return existing
+      end
+
+      base = state.base_for(repo)
+      log_script "Publishing proposal #{state.change_id} → #{fork} (base #{base})"
+
+      # Level the fork's base with upstream FIRST. The spec branch is cut from
+      # the clone, which tracks upstream; the PR's base is the fork's copy of the
+      # same branch. Left stale, the diff shows every upstream commit since the
+      # fork was created alongside the spec files, and the PR is unreviewable.
+      @github.sync_fork_branch(fork, branch: base)
+
+      unless confirm_canonical_push?(fork, branch)
+        # Say why: without this the caller reports "couldn't open the PR — is
+        # GITHUB_CONTRIBUTOR_TOKEN set?", naming the wrong cause entirely.
+        puts "  Push declined — #{branch} was not pushed and no PR was opened."
+        return nil
+      end
+      @github.push_branch(fork, branch: branch, worktree_path: repo.worktree_host)
+
+      url = @github.create_draft_pr(
+        fork, base: base, head: branch,
+        title: "[#{state.change_id}] Change proposal",
+        # A same-repo PR 422s unless maintainer edits are off.
+        body: body, maintainer_can_modify: false
+      )
+      state.pr_url_file.write(url)
+      record_progress(state.change_id, branch, "proposal-pr")
       url
     end
 

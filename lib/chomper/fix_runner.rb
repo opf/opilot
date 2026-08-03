@@ -17,7 +17,12 @@ module Chomper
       @ctx     = ctx
       @pull    = pull
       @claude  = claude
-      @publish = publish || Publish.new(ctx, as: ctx.maintainer_token ? :maintainer : :contributor)
+      # `.to_s.empty?` rather than truthiness: Context normalises a blank token to
+      # nil, and this is the second belt on the highest-consequence branch in the
+      # file. Read wrong, it selects direct publishing with no maintainer token —
+      # no fork, and a push aimed at the canonical repo.
+      @publish = publish ||
+                 Publish.new(ctx, as: ctx.maintainer_token.to_s.empty? ? :contributor : :maintainer)
     end
 
     # Plan/approve/implement/ship one or more work packages by id. Each WP is
@@ -25,6 +30,7 @@ module Chomper
     # ids a failure on one (bad id, Claude error) is logged and the rest still
     # run; with a single id the failure is fatal since there is nothing else to do.
     def ship_ids(*wp_ids)
+      require_publish_token!
       process_ids(wp_ids, mode: :ship)
     end
 
@@ -41,7 +47,22 @@ module Chomper
 
     private
 
+    # `ship` ends in a push and a PR, and it only gets there after a full plan and
+    # implement pass — so a missing token has to fail before that Claude work, not
+    # after it (`Publish#open_pr` reported it at the very end). `pr` has always
+    # checked its token up front; this brings its sibling into line.
+    #
+    # Deliberately not in the constructor: `build` and `plan` publish nothing and
+    # must keep working with no GitHub token at all.
+    def require_publish_token!
+      return if @publish.author_token
+      raise Chomper::FatalError,
+            "No GitHub token — set #{@publish.token_env_var} in .env to ship. " \
+            "(`build` and `plan` need no token: they stop before publishing.)"
+    end
+
     def process_ids(wp_ids, mode:)
+      ensure_claude!
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""

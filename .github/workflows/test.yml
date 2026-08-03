@@ -17,8 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # git matches Dockerfile.runner: the ChangeStore tests drive a real
+      # repository (init, commit, .git/info/exclude) rather than a stub, because
+      # what they assert — that an excluded spec tree can't be swept into an
+      # unrelated commit — is git's behaviour, not ours. ruby:4.0-slim ships
+      # without it, so the suite passed locally and failed here.
       - name: Install system dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential git
 
       - name: Install gems
         run: bundle install
