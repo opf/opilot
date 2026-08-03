@@ -394,7 +394,9 @@ module Chomper
       body << "**Work packages this will generate:** #{sections.length}\n"
       sections.each { |s| body << "- #{s.title} (#{s.items.length} item#{"s" if s.items.length != 1})\n" }
       body << "\n**Intake — OpenProject documents consumed:**\n"
-      docs.each { |d| body << "- ##{d["id"]} #{d["title"]} (updated #{d["updated_at"]})\n" }
+      docs.each do |d|
+        body << "- #{Helpers.document_link(@ctx, d["id"], d["title"])} (updated #{d["updated_at"]})\n"
+      end
       if unread.any?
         body << "\n**⚠ Attachments that could not be read (#{unread.length})** — if a requirement " \
                 "lives in one of these, it is missing from this proposal:\n"

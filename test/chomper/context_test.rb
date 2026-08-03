@@ -11,6 +11,21 @@ module Chomper
       FileUtils.rm_rf(@tmpdir)
     end
 
+    def test_op_url_drops_a_trailing_slash
+      # Every consumer appends its own path, so a trailing slash in .env would
+      # produce "https://host//api/v3/…" and "https://host//documents/118".
+      with_env("OPENPROJECT_URL" => "https://op.example.com/") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => "https://op.example.com///") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => "https://op.example.com") do
+        assert_equal "https://op.example.com", Context.build(@tmpdir).op_url
+      end
+      with_env("OPENPROJECT_URL" => nil) { assert_nil Context.build(@tmpdir).op_url }
+    end
+
     def test_script_dir_set_from_argument
       assert_equal Pathname(@tmpdir), @ctx.script_dir
     end

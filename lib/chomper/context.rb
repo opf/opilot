@@ -32,7 +32,10 @@ module Chomper
       @maintainer_token   = ENV["GITHUB_MAINTAINER_TOKEN"]
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @state_container    = "/state"
-      @op_url             = ENV["OPENPROJECT_URL"]
+      # Normalised once here rather than at each call site: every consumer
+      # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
+      # so a trailing slash in .env turns all of them into "//…".
+      @op_url             = ENV["OPENPROJECT_URL"]&.sub(%r{/+\z}, "")
       @token              = ENV["OPENPROJECT_TOKEN"]
       # @chomper triggers are gated only when this list is non-empty; otherwise
       # every OpenProject user may trigger the agent. These are OpenProject user

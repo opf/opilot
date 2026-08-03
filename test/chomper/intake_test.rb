@@ -212,6 +212,10 @@ module Chomper
       readme = (@state.intake_dir / "attachments" / "README.md").read
       assert_includes readme, "Could not be read (1)"
       assert_includes readme, "legacy.xls"
+      # This file is committed to the spec branch, so GitHub renders it — a bare
+      # "#118" would autolink to an unrelated pull request.
+      assert_includes readme, "(#{@ctx.op_url}/documents/118)"
+      refute_match(/^- #118 /, readme)
       assert_includes (@state.intake_dir / "001-concept.md").read, "could not be read"
     end
 

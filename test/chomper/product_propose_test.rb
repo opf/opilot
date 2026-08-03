@@ -328,9 +328,13 @@ module Chomper
 
       assert_includes body, "**Work packages this will generate:** 2"
       assert_includes body, "- RRule parsing (1 item)"
-      assert_includes body, "- #118 Concept"
       assert_includes body, "old.doc", "an unreadable attachment must be visible to the reviewer"
       assert_includes body, "Merging is optional"
+
+      # A bare "#118" would autolink to issue/PR 118 in whatever repo the PR
+      # lives in, pointing the reviewer at something unrelated.
+      assert_includes body, "[#118 Concept](#{@ctx.op_url}/documents/118)"
+      refute_match(/^- #118/, body)
     end
   end
 end

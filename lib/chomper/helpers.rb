@@ -155,6 +155,16 @@ module Chomper
       end
     end
 
+    # A markdown link to an OpenProject document, for text that will be rendered
+    # by GitHub. Always a link, never a bare "#118": GitHub autolinks that to
+    # issue/PR 118 in whatever repo the text lands in, so a document reference
+    # silently turns into a pointer at an unrelated pull request. Inside link
+    # text the autolinker leaves it alone, and the reader gets the real document.
+    def self.document_link(ctx, id, title = nil)
+      label = title.to_s.empty? ? "Document ##{id}" : "##{id} #{title}"
+      "[#{label}](#{ctx.op_url}/documents/#{id})"
+    end
+
     # A work package id as the user types it: numeric ("59942") or semantic
     # ("PROJ-123", instances in semantic-identifier mode). Mirrors OpenProject's
     # WorkPackage::SemanticIdentifier::ID_ROUTE_CONSTRAINT.
