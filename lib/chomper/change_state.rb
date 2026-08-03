@@ -64,6 +64,14 @@ module Chomper
       "spec/#{change_id}"
     end
 
+    # The branch the spec branch is cut from, and the base a fork-internal PR
+    # targets. Named to match Helpers::ItemState#base_for so the shared
+    # checkout_branch helper works on a ChangeState unchanged; a change has no
+    # per-repo base override, so it is always the registry default.
+    def base_for(_repo = nil)
+      repo.base
+    end
+
     def archive_branch
       "archive/#{change_id}"
     end
@@ -199,6 +207,20 @@ module Chomper
       commit!(message)
     end
 
+    # Paths under the WORKING openspec/ tree that differ from the canonical
+    # store, relative to the tree root (e.g. "changes/add-x/proposal.md").
+    #
+    # This is how the path allowlist sees inside openspec/: the tree is in
+    # .git/info/exclude, so `git status` in the clone reports nothing about it
+    # and cannot answer "did this run only touch its own change directory?".
+    def working_changes
+      (paths_under(working_tree) | paths_under(tree)).reject do |rel|
+        a = working_tree / rel
+        b = tree / rel
+        a.file? && b.file? && a.read == b.read
+      end.sort
+    end
+
     # Every change id present in the store.
     def change_ids
       return [] unless changes_dir.directory?
@@ -236,6 +258,12 @@ module Chomper
     end
 
     private
+
+    # Every file under `root`, as paths relative to it.
+    def paths_under(root)
+      return [] unless root.directory?
+      Pathname.glob(root / "**" / "*").select(&:file?).map { |p| p.relative_path_from(root).to_s }
+    end
 
     def git
       @git ||= Git.open(root.to_s)

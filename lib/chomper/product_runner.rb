@@ -15,16 +15,25 @@ module Chomper
 
     CHANGE_ID_PATTERN = /\A[a-z0-9][a-z0-9-]*\z/
 
-    def initialize(ctx, op: nil, intake: nil)
-      @ctx    = ctx
-      @op     = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
-      @intake = intake || Intake.new(ctx, op: @op)
+    def initialize(ctx, op: nil, intake: nil, claude: nil, publish: nil, openspec: nil)
+      @ctx      = ctx
+      @op       = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
+      @intake   = intake || Intake.new(ctx, op: @op)
+      @claude   = claude || Claude.new(ctx)
+      @publish  = publish
+      @openspec = openspec
     end
+
+    # How many times Claude gets to fix its own output before the run fails.
+    # Two is plenty: past that the problem is the prompt or the intake, not a
+    # structural slip the model can see and correct.
+    MAX_VALIDATE_ATTEMPTS = 2
 
     def run(argv)
       case argv[0]
-      when "init"   then init(*argv[1..].to_a)
-      when "intake" then intake(*argv[1..].to_a)
+      when "init"    then init(*argv[1..].to_a)
+      when "intake"  then intake(*argv[1..].to_a)
+      when "propose" then propose(*argv[1..].to_a)
       else usage!(argv[0])
       end
     end
@@ -87,10 +96,173 @@ module Chomper
       end
 
       report_intake(result, state)
+      puts ""
+      puts "  Next: ./chomper pd propose #{change_id}"
       result
     end
 
+    # `pd propose <change-id>` — turn the intake into an OpenSpec change
+    # proposal, validate it, and open the spec PR that is the approval gate.
+    #
+    # Halts there deliberately (§5 stage 2 step 9): the PR is where a human
+    # reviews the decomposition, and revisions come from `@chomper` comments on
+    # it rather than from re-running this command.
+    def propose(*args)
+      opts      = parse_options(args)
+      change_id = opts[:positional][0]
+      usage!("propose", "a change id is required") unless change_id
+      validate_change_id!(change_id)
+
+      repo  = resolve_repo(opts[:repo])
+      store = ChangeStore.new(@ctx, repo)
+      state = state_for(change_id, store)
+      require_intake!(state, change_id)
+
+      # Branch first, then materialise: checking out replaces the working tree,
+      # and the spec tree has to land on top of whatever that leaves behind.
+      checkout_branch(state, repo)
+      store.materialise!
+
+      return if write_proposal(state, repo) == :too_broad
+      enforce_write_scope!(state)
+
+      store.persist!("Propose #{change_id}")
+      commit_spec_branch(state, repo)
+      publish_proposal(state, repo)
+    end
+
     private
+
+    def require_intake!(state, change_id)
+      unless state.store.initialized?
+        raise Chomper::FatalError,
+              "no spec store for #{state.repo.name} yet — run `./chomper pd init <project-id>` first"
+      end
+      return if state.intake_dir.directory? && state.intake_dir.children.any?
+      raise Chomper::FatalError,
+            "change #{change_id} has no intake yet — run " \
+            "`./chomper pd intake <project-id> #{change_id}` first"
+    end
+
+    # Claude writes the proposal, then the runner validates it and hands any
+    # failures back. Validation is runner-side because the openspec CLI is not in
+    # the claude container (guard-bash.js allows read-only git and nothing else),
+    # so the "agent iterates on its own output" gate becomes a re-prompt loop.
+    # Returns :too_broad when Claude refused on scope grounds.
+    def write_proposal(state, repo)
+      change_dir = state.working_change_dir
+      log_script "Proposing #{state.change_id} in #{repo.name}…"
+      text = @claude.run(
+        Prompts.propose(
+          change_id:  state.change_id,
+          change_dir: state.working_change_container,
+          intake_dir: "#{state.working_change_container}/intake",
+          specs_dir:  "#{repo.worktree_container}/openspec/specs",
+          repo:       repo.name,
+          repo_path:  repo.worktree_container
+        ),
+        tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
+      )
+
+      if text.to_s.match?(/\bTOO_BROAD\b/)
+        report_too_broad(state, text)
+        return :too_broad
+      end
+      raise Chomper::FatalError, "no proposal was written to #{change_dir}" unless proposal_present?(state)
+
+      validate_proposal!(state, repo)
+      nil
+    end
+
+    def proposal_present?(state)
+      Helpers.file_has_content?(state.working_change_dir / "proposal.md") &&
+        Helpers.file_has_content?(state.working_change_dir / "tasks.md")
+    end
+
+    def validate_proposal!(state, repo)
+      openspec = @openspec || OpenSpec.new(repo.worktree_host)
+      (0..MAX_VALIDATE_ATTEMPTS).each do |attempt|
+        result = openspec.validate(state.change_id)
+        if result.ok?
+          log_script "openspec validate #{state.change_id} --strict ✓"
+          return
+        end
+        failures = OpenSpec.failures(result)
+        if attempt == MAX_VALIDATE_ATTEMPTS
+          raise Chomper::FatalError,
+                "the proposal still fails `openspec validate --strict` after " \
+                "#{MAX_VALIDATE_ATTEMPTS} revisions:\n#{failures}"
+        end
+        log_script "openspec validate failed (attempt #{attempt + 1}/#{MAX_VALIDATE_ATTEMPTS}) — re-prompting"
+        @claude.run(
+          Prompts.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
+                                 failures: failures, attempt: attempt + 1,
+                                 max_attempts: MAX_VALIDATE_ATTEMPTS),
+          tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
+        )
+      end
+    end
+
+    # A planning stage must not be able to modify source. guard-writes.js confines
+    # Claude to /repos, which is repo-level; this is the path-level half, and it
+    # matters more here than it would with a dedicated spec repo because the run
+    # happens inside a real product clone.
+    #
+    # Two surfaces to check: anything git can see (everything outside openspec/,
+    # since the tree is git-excluded), and the tree itself, compared against the
+    # canonical store.
+    def enforce_write_scope!(state)
+      scope   = "changes/#{state.change_id}/"
+      status  = worktree(state.repo).status
+      tracked = (status.changed.keys + status.added.keys + status.deleted.keys + status.untracked.keys).uniq
+      strays  = tracked + state.store.working_changes.reject { |rel| rel.start_with?(scope) }
+      return if strays.empty?
+
+      reset_out_of_scope!(state)
+      raise Chomper::FatalError, <<~MSG.strip
+        The propose run wrote outside openspec/changes/#{state.change_id}/ and was discarded:
+        #{strays.first(20).map { |p| "  #{p}" }.join("\n")}
+        A planning stage must not modify source. Nothing was committed or pushed.
+      MSG
+    end
+
+    # Put the clone back the way it was: drop everything git tracks, then restore
+    # the spec tree from the canonical store (which the run never touched).
+    def reset_out_of_scope!(state)
+      wt = worktree(state.repo)
+      wt.reset_hard
+      wt.clean(force: true, d: true)
+      state.store.materialise!
+    rescue StandardError => e
+      log_script "Could not fully reset the clone after an out-of-scope write: #{e.message}"
+    end
+
+    # The spec tree is git-excluded so it can never be swept into an unrelated
+    # bug-fix commit; committing it here is the one deliberate exception, hence
+    # the force add.
+    def commit_spec_branch(state, repo)
+      Helpers.adopt_github_author!(publish.author_token)
+      wt = worktree(repo)
+      wt.add("openspec/changes/#{state.change_id}", force: true)
+      if wt.status.added.empty? && wt.status.changed.empty?
+        log_script "#{state.change_id} — no spec changes to commit."
+        return false
+      end
+      wt.commit("[#{state.change_id}] Propose #{state.change_id}")
+      c = wt.log(1).execute.first
+      log_script "Committed to #{repo.name}: #{c.sha[0, 7]} #{c.message.lines.first.to_s.strip}"
+      true
+    end
+
+    def report_too_broad(state, text)
+      body = text.to_s.sub(/.*\bTOO_BROAD\b\s*\n?/m, "").strip
+      puts ""
+      puts "  ⚠ #{state.change_id} covers more than one atomic feature, so no proposal was written."
+      puts body.lines.map { |l| "    #{l}" }.join unless body.empty?
+      puts ""
+      puts "  Re-run `pd intake` with a narrower --doc-id selection, or split it into"
+      puts "  several changes and propose each separately."
+    end
 
     # The `pd` pipeline ALWAYS publishes as the contributor bot. FixRunner picks
     # its identity from the configured tokens; this must not, because every `pd`
@@ -99,6 +271,109 @@ module Chomper
     # guard is never the only thing standing between `pd` and a canonical push.
     def publish
       @publish ||= Publish.new(@ctx, as: :contributor)
+    end
+
+    # Push the spec branch, open the PR that is the approval gate, and hang a
+    # FEATURE work package off it. Ordered so a failure leaves the cheapest mess:
+    # the commit is already local, the PR is idempotent, and the work package is
+    # only created once the PR exists to link from it.
+    def publish_proposal(state, repo)
+      url = publish.open_spec_pr(state, repo, body: proposal_pr_body(state))
+      unless url
+        puts "  ⚠ Proposed on #{state.branch} but couldn't open the PR — is GITHUB_CONTRIBUTOR_TOKEN set?"
+        return nil
+      end
+      record_progress(state.change_id, state.branch, "proposed")
+      puts "  ✓ Proposal PR: #{url}"
+
+      wp = ensure_feature_wp(state, url)
+      puts "  ✓ Work package: #{@ctx.op_url}/work_packages/#{wp}" if wp
+      puts ""
+      puts "  Review the PR. Comment `@chomper <feedback>` on it to revise,"
+      puts "  then: ./chomper pd generate-wp #{state.change_id}"
+      url
+    end
+
+    # The PR body: what a reviewer needs before opening the diff.
+    def proposal_pr_body(state)
+      tracker  = state.tracker
+      docs     = Array(tracker.dig("intake", "documents"))
+      unread   = Array(tracker["unconvertible"])
+      sections = TasksFile.parse(read_or_empty(state.working_change_dir / "tasks.md"))
+
+      body = +"🤖 AI-generated change proposal. Chat with #{bot_mention} on this PR to revise it.\n\n"
+      body << "**Change:** `#{state.change_id}`\n"
+      body << "**Work packages this will generate:** #{sections.length}\n"
+      sections.each { |s| body << "- #{s.title} (#{s.items.length} item#{"s" if s.items.length != 1})\n" }
+      body << "\n**Intake — OpenProject documents consumed:**\n"
+      docs.each { |d| body << "- ##{d["id"]} #{d["title"]} (updated #{d["updated_at"]})\n" }
+      if unread.any?
+        body << "\n**⚠ Attachments that could not be read (#{unread.length})** — if a requirement " \
+                "lives in one of these, it is missing from this proposal:\n"
+        unread.each { |u| body << "- `#{u["file"]}` — #{u["reason"]}\n" }
+      end
+      body << "\nMerging is optional: `pd generate-wp` reads the local spec store, not this branch.\n"
+      body
+    end
+
+    # Create the parent FEATURE once and remember it. Idempotent on `parent_wp`:
+    # the work package accumulates comments and history that exist nowhere else,
+    # so a second propose run must never mint a duplicate.
+    def ensure_feature_wp(state, pr_url)
+      existing = state.parent_wp
+      return comment_pr_link(existing, state, pr_url) if existing
+
+      ids = ResolvedIds.new(@ctx, op: @op).read
+      project_id = ids["project_id"] || state.tracker["project_id"]
+      type_id    = ids.dig("types", "parent", "id")
+      unless project_id && type_id
+        puts "  ⚠ No resolved ids yet — run `./chomper pd init <project-id>`; skipping work-package creation."
+        return nil
+      end
+
+      code, body = @op.create_work_package(feature_payload(state, project_id, type_id))
+      unless code == 201 && body
+        puts "  ⚠ Could not create the FEATURE work package (HTTP #{code})."
+        return nil
+      end
+      state.merge_tracker("parent_wp" => body["id"])
+      comment_pr_link(body["id"], state, pr_url)
+      body["id"]
+    end
+
+    def feature_payload(state, project_id, type_id)
+      summary = read_or_empty(state.working_change_dir / "proposal.md").lines.first.to_s.sub(/\A#+\s*/, "").strip
+      {
+        "subject"     => summary.empty? ? state.change_id : summary[0, 200],
+        "description" => { "format" => "markdown",
+                           "raw" => "Generated by chomper from the OpenSpec change `#{state.change_id}`." },
+        "_links"      => {
+          "type"    => { "href" => "/api/v3/types/#{type_id}" },
+          "project" => { "href" => "/api/v3/projects/#{project_id}" }
+        }
+      }
+    end
+
+    def comment_pr_link(wp_id, state, pr_url)
+      @op.post_activity(wp_id, comment: "🤖 Change proposal `#{state.change_id}` is up for review: #{pr_url}")
+      wp_id
+    rescue StandardError => e
+      log_script "Could not comment the PR link on ##{wp_id}: #{e.message}"
+      wp_id
+    end
+
+    def read_or_empty(path)
+      path.exist? ? path.read : ""
+    end
+
+    # The bot's @-handle, for the "reply here to revise" line. Resolving it costs
+    # a GitHub call, so a failure degrades to the generic word rather than
+    # blocking a PR body that is otherwise ready.
+    def bot_mention
+      login = publish.login
+      login.to_s.empty? ? "chomper" : "@#{login}"
+    rescue StandardError
+      "chomper"
     end
 
     def resolve_repo(name)
@@ -203,6 +478,11 @@ module Chomper
           intake <project-id> <change-id> [--doc-id <id>]... [--repo <name>]
               Mirror OpenProject Documents into the change's intake/ directory.
               Without --doc-id every document in the project is pulled in.
+
+          propose <change-id> [--repo <name>]
+              Write the OpenSpec change proposal from that intake, validate it,
+              and open the spec PR that is the approval gate. Revise it by
+              commenting `@chomper <feedback>` on the PR.
 
         change-id is author-chosen kebab-case (e.g. add-recurring-meetings).
       USAGE

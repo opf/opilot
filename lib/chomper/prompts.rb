@@ -533,6 +533,110 @@ module Chomper
     # on-disk cache is mounted at `state` and the model finds the relevant files
     # itself from the user's question. `repos` is an array of { name:, path:, … }
     # for the product clones mounted at /repos/<name>.
+    # --- pd (product development) -----------------------------------------
+
+    # The write scope every propose/revise run is held to. Enforced afterwards by
+    # the runner (which resets anything outside it), but stated here too so a run
+    # normally never trips the gate.
+    def self.spec_scope(change_dir)
+      <<~TEXT.strip
+        WRITE SCOPE — you may create or edit files ONLY inside:
+          #{change_dir}
+        Do not touch application source, tests, or any other part of the repo.
+        This is a planning stage; nothing outside the change directory is yours.
+      TEXT
+    end
+
+    # WRITER: turn the intake material into an OpenSpec change proposal.
+    #
+    # The one-feature gate mirrors Prompts.plan's NEEDS_INFO sentinel: a change
+    # maps to exactly one FEATURE work package, so material that plainly spans
+    # several must stop rather than be crammed into one proposal.
+    def self.propose(change_id:, change_dir:, intake_dir:, specs_dir:, repo:, repo_path:)
+      <<~PROMPT
+        You are the WRITER. Produce an OpenSpec change proposal for `#{change_id}`.
+
+        INTAKE (the raw human intent — read all of it first):
+          #{intake_dir}
+          #{intake_dir}/attachments/README.md lists every attachment, what it was
+          converted to, and anything that could NOT be read. Treat an unreadable
+          attachment as a known gap, not as absent.
+        EXISTING SPECS (what is already built — read what is relevant):
+          #{specs_dir}
+        CODEBASE: the #{repo} repository is checked out at #{repo_path}. Read it to
+        ground the proposal in the system that actually exists.
+
+        #{spec_scope(change_dir)}
+
+        FIRST, judge scope. A change becomes exactly ONE work package of type
+        FEATURE — one atomic, QA-able feature. If the intake plainly covers more
+        than one such feature, do not write a proposal: output exactly the
+        following, starting on the first line, and stop.
+
+          TOO_BROAD
+          ### Suggested split
+          - <one line per feature you would propose separately>
+
+        Otherwise write these files, and only these:
+
+          #{change_dir}/proposal.md
+              Why this change exists and what it delivers. Lead with the problem.
+          #{change_dir}/design.md
+              The technical approach, and the decisions a reviewer should check.
+          #{change_dir}/tasks.md
+              The implementation checklist. Top-level `## ` sections are the unit
+              of work — each becomes ONE work package, so make them independently
+              implementable and reviewable. Aim for 3-6; a section per checkbox is
+              too fine. Under each, `- [ ] ` items scoped to a single change.
+          #{change_dir}/specs/<capability>/spec.md
+              The requirement deltas. Use OpenSpec's ADDED / MODIFIED / REMOVED
+              headings, and give every requirement at least one scenario — the
+              strict validator rejects a requirement without one.
+
+        Ground every claim in the intake or the code. Where the intake is silent
+        on something you had to decide, say so explicitly in design.md rather than
+        inventing a requirement.
+      PROMPT
+    end
+
+    # WRITER: fix a proposal the strict validator rejected. Runs in the same
+    # session, so the artifacts are already in context.
+    def self.propose_revise(change_id:, change_dir:, failures:, attempt:, max_attempts:)
+      <<~PROMPT
+        `openspec validate #{change_id} --strict` rejected the proposal you just
+        wrote (attempt #{attempt} of #{max_attempts}):
+
+        #{failures}
+
+        #{spec_scope(change_dir)}
+
+        Fix exactly what the validator reported and nothing else — the proposal's
+        content was not the problem, its structure was. The most common causes are
+        a requirement with no scenario, a delta missing its ADDED/MODIFIED/REMOVED
+        heading, and a malformed scenario block.
+      PROMPT
+    end
+
+    # WRITER: revise a proposal in response to review comments on its spec PR.
+    # Same write scope; the reviewer's words are the instruction.
+    def self.propose_feedback(change_id:, change_dir:, pr_thread:, comment_section:)
+      <<~PROMPT
+        You are the WRITER, revising the OpenSpec change proposal `#{change_id}`
+        in response to review feedback on its pull request.
+
+        PROPOSAL: #{change_dir}
+        PR THREAD: #{pr_thread}  #{THREAD_NOTE}
+
+        #{comment_section}
+
+        #{spec_scope(change_dir)}
+
+        Apply what the comment asks for. Preserve everything still valid — revise,
+        don't rewrite. If the comment is a question rather than a change request,
+        make no edits and answer it in your reply.
+      PROMPT
+    end
+
     def self.free_chat(state:, wp_root:, repos:, message:)
       repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
       <<~PROMPT

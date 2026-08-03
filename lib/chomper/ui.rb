@@ -97,6 +97,11 @@ module Chomper
                             Mirror OpenProject Documents into the change's intake/,
                             converting attachments (xlsx/docx/pptx) to readable text.
                             Without --doc-id every document in the project is pulled in
+          pd propose <change-id>
+                            Write the OpenSpec change proposal from that intake, validate
+                            it with `openspec --strict`, and open the spec PR that is the
+                            approval gate (inside the bot's own fork). Revise it by
+                            commenting `@chomper <feedback>` on that PR
           status    Show the work packages chomper has planned or shipped
           reset     De-register the worktree and delete .chomper/ (fresh start)
 

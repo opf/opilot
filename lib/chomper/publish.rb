@@ -92,6 +92,55 @@ module Chomper
       url
     end
 
+    # The login of the identity publishing, for PR bodies that invite a reply.
+    def login
+      @github.login
+    end
+
+    # Push a `pd` change's spec branch and open its proposal PR **inside the
+    # bot's own fork** — head and base both on `<bot>/<repo>`.
+    #
+    # Deliberately not a PR against upstream: the diff is spec artifacts, not
+    # code, and it exists so a human can review the decomposition before work
+    # packages are generated. Opening it upstream would put planning noise on a
+    # public repo. Since the bot owns both sides it can merge or close freely —
+    # and nothing downstream depends on the merge, because `pd generate-wp` reads
+    # the local spec store rather than the branch.
+    #
+    # The fork is not a registry upstream, so confirm_canonical_push? passes
+    # straight through; `spec/<id>` is not a protected branch name either.
+    # Idempotent: an already-open PR for this head is recorded and returned.
+    def open_spec_pr(state, repo, body:)
+      unless author_token
+        puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — cannot open the proposal PR."
+        return nil
+      end
+
+      fork   = @github.ensure_fork(repo.upstream)
+      branch = state.branch
+      head   = "#{fork.split("/").first}:#{branch}"
+
+      existing = @github.find_open_pr(fork, head: head)
+      if existing
+        state.pr_url_file.write(existing)
+        return existing
+      end
+
+      log_script "Publishing proposal #{state.change_id} → #{fork} (base #{state.base_for(repo)})"
+      return nil unless confirm_canonical_push?(fork, branch)
+      @github.push_branch(fork, branch: branch, worktree_path: repo.worktree_host)
+
+      url = @github.create_draft_pr(
+        fork, base: state.base_for(repo), head: branch,
+        title: "[#{state.change_id}] Change proposal",
+        # A same-repo PR 422s unless maintainer edits are off.
+        body: body, maintainer_can_modify: false
+      )
+      state.pr_url_file.write(url)
+      record_progress(state.change_id, branch, "proposal-pr")
+      url
+    end
+
     private
 
     def contributor?
