@@ -152,7 +152,7 @@ The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each
 | `intake.rb` | `pd intake` — Documents → `intake/*.md` + converted attachments, `intake.hash` short-circuit |
 | `intake/converter.rb` | Attachment conversion (roo for spreadsheets, rubyzip+nokogiri for docx/pptx), `unconvertible[]`, zip-bomb guards |
 | `product_runner.rb` | The `pd` command family (`init`, `intake`, `propose`, `generate-wp`, `implement`); always publishes as `:contributor` |
-| `clients/openproject.rb` | OpenProject REST API (incl. Documents, attachment download, and WP create/update with `notify=false` + `lockVersion` retry) |
+| `clients/openproject.rb` | OpenProject REST API (incl. Documents, attachment download, and WP create/update with `notify=false` + `lockVersion` retry). `#post_activity` is the one funnel every WP comment passes through, so it demotes markdown headings to bold (`Helpers.demote_headings`) — the activity tab is a narrow column, where a few `##`s push the answer out of view. `Prompts::OP_COMMENT_FORMAT` asks Claude for that shape up front; this enforces it for text chomper posts itself (a plan.md verbatim) and for a reply that ignored the ask |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 

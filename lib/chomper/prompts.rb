@@ -44,6 +44,20 @@ module Chomper
       missing details — ask the reporter for the specific information you need.
     TEXT
 
+    # How to format anything posted into an OpenProject work-package comment. The
+    # activity tab is a narrow column beside the work package, not a document
+    # pane: markdown headings render at full heading size and a few of them push
+    # the actual answer out of view. `Clients::OpenProject#post_activity` demotes
+    # any that slip through, but text written for the space beats text repaired
+    # afterwards — a demoted heading still occupies a line that a sentence could
+    # have used.
+    OP_COMMENT_FORMAT = <<~TEXT.strip
+      FORMATTING — this is posted in OpenProject's activity tab, a narrow column:
+      no markdown headings (`#`, `##`, …). Lead with the answer, keep paragraphs
+      to a few lines, and where a section really needs a label use bold
+      (`**Label**`) inline or a short bullet list. No banner, no sign-off.
+    TEXT
+
     # Schema note for the ci.json failure detail, shared by fix_ci and pr_refresh.
     CI_FAILURES_NOTE = "(JSON — `failed[]`: each has the check `name`, its `conclusion`, an output " \
                        "`summary`, `annotations` (path/line/message from lint and test problem-" \
@@ -302,6 +316,8 @@ module Chomper
         comment with the same visibility as the question — a public question gets
         a public answer, an internal one an internal answer — so write for the
         question's audience.
+
+        #{OP_COMMENT_FORMAT}
       PROMPT
     end
 

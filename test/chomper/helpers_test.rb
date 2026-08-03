@@ -311,5 +311,54 @@ module Chomper
     ensure
       teardown_repo_host
     end
+
+  # --- demote_headings (OpenProject comments) ------------------------------
+
+  def test_demote_headings_turns_every_atx_level_into_bold
+    (1..6).each do |level|
+      assert_equal "**Title**\n", Helpers.demote_headings("#{"#" * level} Title\n")
+    end
+    assert_equal "**Title**", Helpers.demote_headings("### Title"), "no trailing newline is fine"
+    assert_equal "**Title**\n", Helpers.demote_headings("### Title ###\n"), "closing run is dropped"
+    assert_equal "**Title**\n", Helpers.demote_headings("  ### Title\n"),
+                 "up to 3 leading spaces is still a heading; the indent carried nothing"
+    assert_equal "\n", Helpers.demote_headings("###\n"), "an empty heading leaves an empty line"
+  end
+
+  def test_demote_headings_leaves_everything_that_is_not_a_heading
+    [
+      "#59942 is the ticket\n",         # no space after # — not a heading
+      "a # b\n",                        # mid-line hash
+      "    # indented four is code\n",  # 4 spaces = code block, not a heading
+      "**Already bold**\n"
+    ].each { |text| assert_equal text, Helpers.demote_headings(text) }
+  end
+
+  def test_demote_headings_skips_fenced_code_blocks
+    # A leading # in a fence is a comment or a shell prompt, not a heading.
+    text = "Steps:\n\n```bash\n# install\nbundle install\n```\n\n## After\n"
+    out  = Helpers.demote_headings(text)
+
+    assert_includes out, "# install", "the code comment survives verbatim"
+    assert_includes out, "**After**", "a heading after the fence is still demoted"
+  end
+
+  def test_demote_headings_handles_a_whole_plan
+    plan = <<~MD
+      # Fix the thing
+
+      Some context.
+
+      ## Files
+
+      - app/models/foo.rb
+    MD
+    out = Helpers.demote_headings(plan)
+
+    refute_match(/^#+ /, out, "no heading markup survives")
+    assert_includes out, "**Fix the thing**"
+    assert_includes out, "**Files**"
+    assert_includes out, "- app/models/foo.rb", "list items are untouched"
+  end
   end
 end

@@ -180,10 +180,14 @@ module Chomper
       private :patch_with_lock
 
       # Posts a comment to a work package. Returns [code, response_hash].
+      #
+      # Headings are demoted to bold on the way out (Helpers.demote_headings):
+      # the activity tab is a narrow column, and this is the one funnel every
+      # comment passes through — Claude's replies, a posted plan, the pd links.
       def post_activity(wp_id, comment:, internal: true)
         HTTP.post_json(
           "#{@base}/api/v3/work_packages/#{wp_id}/activities",
-          { "comment" => { "raw" => comment }, "internal" => internal },
+          { "comment" => { "raw" => Helpers.demote_headings(comment) }, "internal" => internal },
           token: @token
         )
       end

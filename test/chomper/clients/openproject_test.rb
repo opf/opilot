@@ -19,6 +19,20 @@ module Chomper
           .to_return(status: 200, body: '{"_embedded":{"elements":[]}}')
       end
 
+      def test_post_activity_demotes_headings_so_the_activity_tab_stays_readable
+        posted = nil
+        stub_request(:post, "#{BASE}/api/v3/work_packages/42/activities")
+          .with { |req| posted = JSON.parse(req.body); true }
+          .to_return(status: 201, body: '{"id":9}')
+
+        code, = @op.post_activity(42, comment: "## Approach\n\nDo the thing.", internal: false)
+
+        assert_equal 201, code
+        assert_equal "**Approach**\n\nDo the thing.", posted.dig("comment", "raw"),
+                     "every comment goes through here, so the demotion belongs here"
+        assert_equal false, posted["internal"], "visibility is untouched"
+      end
+
       def test_documents_filters_on_a_numeric_id_directly
         listing = stub_documents(42)
         code, = @op.documents("42")

@@ -288,6 +288,35 @@ module Chomper
       nil
     end
 
+    # Demote every ATX markdown heading in `text` to bold, for anything posted to
+    # an OpenProject work package. OpenProject renders a comment as CommonMark and
+    # its activity tab is a narrow column, so a heading is displayed at full
+    # heading size — a plan with five `##` sections spends most of its space on
+    # its own section titles and pushes the content out of view. Bold reads the
+    # same at a glance and costs one line. Applied centrally in
+    # `Clients::OpenProject#post_activity` rather than per caller, since the text
+    # comes from Claude (chat replies, lens replies) as often as from chomper
+    # (a posted plan.md), and prompt guidance alone doesn't hold.
+    #
+    # Fenced blocks are left alone: a leading `#` inside one is a code comment or
+    # a shell prompt, not a heading. Setext headings (`Title` over `====`) are
+    # left alone too — `---` is far more often a horizontal rule.
+    def self.demote_headings(text)
+      fenced = false
+      text.to_s.lines.map do |line|
+        body    = line.chomp
+        newline = line.end_with?("\n") ? "\n" : ""
+        fenced = !fenced if body.lstrip.start_with?("```", "~~~")
+        next line if fenced
+        # A hash run with no text after it is still a heading (an empty one);
+        # `#tag` with no space is not.
+        m = body.match(/\A {0,3}\#{1,6}(?:[ \t]+(.*))?\z/)
+        next line unless m
+        title = m[1].to_s.sub(/[ \t]*#+[ \t]*\z/, "").strip   # drop an optional closing run
+        (title.empty? ? "" : "**#{title}**") + newline
+      end.join
+    end
+
     # Defang the scheme of every OpenProject WP link in `text` (http→hxxp), so
     # the OpenProject GitHub integration won't pick the link up. chomper writes
     # the link so the PR can be traced back to its WP (and later adopted), but
