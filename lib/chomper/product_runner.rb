@@ -712,6 +712,9 @@ module Chomper
 
       unless branch_has_commits?(st, repo)
         log_script "Implementing #{wp_label(wp_id)} (#{found[:change_id]}) in #{repo.name}…"
+        # Inside this branch, not above it: a re-run that only publishes an
+        # already-built branch must not rewind the status it set last time.
+        transition!(wp_id, item, @ctx.pd_implementing_status)
         @claude.run(
           Prompts.implement_task(
             repo: repo.name, repo_path: repo.worktree_container,
@@ -732,7 +735,51 @@ module Chomper
       end
 
       tick_section!(found[:store], state, found[:section].title, wp_id)
-      ship_task(st, state, repo, wp_id)
+      ship_task(st, state, repo, wp_id, item)
+    end
+
+    # Move a work package to the status named in the config, best-effort.
+    #
+    # Bookkeeping, never the deliverable: an instance that renamed or dropped the
+    # status, a workflow that forbids the transition, or a plain API failure all
+    # report and return. Failing an implementation that is already committed
+    # because a status field wouldn't move would be absurd — and unlike the work
+    # itself, a status is trivial for a human to set.
+    #
+    # `item` is the mirror fetched at the start of the run, so the current status
+    # is already known: re-asserting the status a work package is already in would
+    # add a journal entry saying nothing.
+    def transition!(wp_id, item, status_name)
+      return if status_name.to_s.empty?
+      return if item["status"].to_s.casecmp?(status_name)
+
+      status = resolved_status(status_name)
+      unless status
+        puts "  ⚠ No status named #{status_name.inspect} in `pd init`'s cache — leaving the status alone."
+        puts "    Set CHOMPER_PD_IMPLEMENTING_STATUS / CHOMPER_PD_IMPLEMENTED_STATUS to match this instance."
+        return
+      end
+
+      code, = @op.update_work_package(
+        wp_id, { "_links" => { "status" => { "href" => "/api/v3/statuses/#{status["id"]}" } } }
+      )
+      if (200..299).cover?(code)
+        item["status"] = status["name"]   # so a later transition in the same run compares correctly
+        puts "  → status: #{status["name"]}"
+      else
+        puts "  ⚠ Could not set #{wp_label(wp_id)} to #{status["name"].inspect} (HTTP #{code}) — " \
+             "the workflow may not allow that transition from #{item["status"].inspect}."
+      end
+    rescue StandardError => e
+      puts "  ⚠ Could not set the status on #{wp_label(wp_id)}: #{e.message}"
+    end
+
+    # Statuses come from `pd init`'s cache, matched case-insensitively like the
+    # type names — instances style them inconsistently ("In progress", "In
+    # Progress") and an exact-match miss here would be pure friction.
+    def resolved_status(name)
+      statuses = Array(ResolvedIds.new(@ctx, op: @op).read["statuses"])
+      statuses.find { |s| s["name"].to_s.casecmp?(name.to_s) }
     end
 
     # The work package as OpenProject has it, mirrored to item.json. Best-effort:
@@ -843,16 +890,19 @@ module Chomper
     # Publish the branch as a draft PR the same way the bug-fix flow does, so the
     # result is an ordinary chomper PR: gh-agent picks it up from pr_url.txt, and
     # `./chomper pr <id>` can refresh it.
-    def ship_task(st, state, repo, wp_id)
+    def ship_task(st, state, repo, wp_id, item)
       generate_pr_description(st, repo, model: Claude::MODEL_WORK)
       url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
       unless url
+        # The status stays where it is: the work is committed but nothing is up
+        # for review, which is exactly what "In progress" says.
         puts "  ⚠ Implemented on #{st.branch} (#{repo.name}) but couldn't open the PR — is GITHUB_CONTRIBUTOR_TOKEN set?"
         return nil
       end
       record_progress(state.change_id, st.branch, "implemented:#{wp_id}")
       puts "  ✓ Draft PR (#{repo.name}): #{url}"
       comment_implementation_pr(wp_id, state, url)
+      transition!(wp_id, item, @ctx.pd_implemented_status)
       url
     end
 

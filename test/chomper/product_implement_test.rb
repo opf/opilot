@@ -76,15 +76,27 @@ module Chomper
     end
 
     class FakeOP
-      attr_reader :comments
+      attr_reader :comments, :patches
 
-      def initialize
-        @comments = []
+      def initialize(patch_code: 200)
+        @comments    = []
+        @patches     = []
+        @patch_code  = patch_code
       end
 
       def post_activity(wp_id, comment:, internal: true)
         @comments << [wp_id, comment]
         [201, {}]
+      end
+
+      def update_work_package(wp_id, payload, notify: false)
+        @patches << [wp_id, payload.dig("_links", "status", "href")]
+        [@patch_code, @patch_code == 200 ? { "id" => wp_id } : nil]
+      end
+
+      # The status ids this fake's hrefs resolve back to, for readable assertions.
+      def status_ids
+        @patches.map { |_id, href| href.to_s.split("/").last }
       end
     end
 
@@ -131,7 +143,18 @@ module Chomper
       @op      = FakeOP.new
       @publish = FakePublish.new
       @item    = { "id" => "501", "subject" => "RRule parsing", "type" => "IMPLEMENTATION",
-                   "url" => "#{@ctx.op_url}/work_packages/501", "description" => "" }
+                   "url" => "#{@ctx.op_url}/work_packages/501", "status" => "New", "description" => "" }
+      seed_statuses!
+    end
+
+    # `pd init`'s status cache — where the two configured status names resolve to
+    # ids, since ids differ per instance.
+    def seed_statuses!(statuses = [{ "id" => 1, "name" => "New", "closed" => false },
+                                   { "id" => 7, "name" => "In progress", "closed" => false },
+                                   { "id" => 9, "name" => "Developed", "closed" => false }])
+      path = ResolvedIds.new(@ctx, op: Object.new).path
+      path.dirname.mkpath
+      path.write(JSON.generate("project_id" => "42", "statuses" => statuses))
     end
 
     def teardown
@@ -290,6 +313,65 @@ module Chomper
       assert_match(/working from the spec alone/, out)
       assert_equal "RRule parsing", @publish.opened.first[:subject],
                    "the section title stands in for the missing subject"
+    end
+
+    # --- status transitions -----------------------------------------------
+
+    def test_it_moves_the_work_package_through_in_progress_and_developed
+      _, out = implement(runner, "501")
+
+      assert_equal %w[7 9], @op.status_ids,
+                   "In progress when the run starts, Developed once the PR is up"
+      assert_equal [["501", "/api/v3/statuses/7"], ["501", "/api/v3/statuses/9"]], @op.patches
+      assert_match(/→ status: In progress/, out)
+      assert_match(/→ status: Developed/, out)
+    end
+
+    def test_developed_is_not_set_when_nothing_shipped
+      # The work is committed but nothing is up for review, which is exactly what
+      # "In progress" says — so the status stays there.
+      run = runner(produces_commit: false)
+      implement(run, "501")
+
+      assert_equal %w[7], @op.status_ids
+    end
+
+    def test_the_status_a_work_package_is_already_in_is_not_re_asserted
+      # Re-asserting it would add a journal entry saying nothing.
+      @item["status"] = "In progress"
+      implement(runner, "501")
+
+      assert_equal %w[9], @op.status_ids, "only the transition that actually moves it"
+    end
+
+    def test_a_status_this_instance_does_not_have_is_reported_and_skipped
+      seed_statuses!([{ "id" => 1, "name" => "New", "closed" => false }])
+      _, out = implement(runner, "501")
+
+      assert_empty @op.patches
+      assert_match(/No status named "In progress"/, out)
+      assert_match(/CHOMPER_PD_IMPLEMENTING_STATUS/, out)
+      assert_equal 1, @publish.opened.length, "a status name must not cost the run its PR"
+    end
+
+    def test_a_transition_the_workflow_rejects_does_not_fail_the_run
+      @op = FakeOP.new(patch_code: 422)
+      run = runner
+      _, out = implement(run, "501")
+
+      assert_match(/Could not set #501 to "In progress" \(HTTP 422\)/, out)
+      assert_match(/workflow may not allow/, out)
+      assert_equal 1, run.commits.length, "the implementation still landed"
+      assert_equal 1, @publish.opened.length
+    end
+
+    def test_an_empty_status_name_turns_the_transition_off
+      saved = ENV["CHOMPER_PD_IMPLEMENTED_STATUS"]
+      ENV["CHOMPER_PD_IMPLEMENTED_STATUS"] = ""
+      implement(runner, "501")
+      assert_equal %w[7], @op.status_ids
+    ensure
+      saved.nil? ? ENV.delete("CHOMPER_PD_IMPLEMENTED_STATUS") : ENV["CHOMPER_PD_IMPLEMENTED_STATUS"] = saved
     end
 
     def test_it_needs_at_least_one_id

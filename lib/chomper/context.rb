@@ -115,6 +115,22 @@ module Chomper
       ENV.fetch("CHOMPER_PD_CHILD_TYPE", "IMPLEMENTATION").strip
     end
 
+    # The two statuses `pd implement` moves a work package through: one when the
+    # implementation run starts, one when its draft PR is open. Named after the
+    # pipeline's own meaning rather than any instance's wording, since the
+    # defaults are stock OpenProject statuses that an instance may well have
+    # renamed or dropped. Resolved by name from `pd init`'s status cache; an
+    # empty value turns that transition off, and a name the instance doesn't
+    # have is reported and skipped — a status is bookkeeping, never worth
+    # failing an implementation over.
+    def pd_implementing_status
+      ENV.fetch("CHOMPER_PD_IMPLEMENTING_STATUS", "In progress").strip
+    end
+
+    def pd_implemented_status
+      ENV.fetch("CHOMPER_PD_IMPLEMENTED_STATUS", "Developed").strip
+    end
+
     # How many times gh-agent will chase a single PR's CI before giving up and
     # asking for a human (`CHOMPER_CI_MAX_ATTEMPTS`, default 5, floored at 1).
     def ci_max_attempts
