@@ -75,16 +75,25 @@ module Chomper
       def stats; { files: { "app/x.rb" => { insertions: 2, deletions: 1 } } }; end
     end
 
+    # A clean tree, so Helpers#sync_base! is free to move HEAD to origin/<base>.
+    class FakeStatus
+      def changed; {}; end
+      def added; {}; end
+      def deleted; {}; end
+    end
+
     # Minimal stand-in for the ruby-git worktree handle the Agent uses.
     class FakeWorktree
-      attr_reader :checkouts, :commits, :configs
+      attr_reader :checkouts, :commits, :configs, :fetched
       def initialize(has_commits: false, has_changes: true)
         @has_commits = has_commits
         @has_changes = has_changes
-        @checkouts = []; @commits = []; @configs = []
+        @checkouts = []; @commits = []; @configs = []; @fetched = []
       end
       def revparse(_ref); "sha"; end                 # branch "exists" → checkout, no create
       def checkout(branch, **_opts); @checkouts << branch; end
+      def fetch(remote, **opts); @fetched << [remote, opts]; end
+      def status; FakeStatus.new; end
       def config(key, value); @configs << [key, value]; end
       def log(*_args); FakeLog.new(@has_commits); end
       def add(**_opts); end
@@ -271,6 +280,32 @@ module Chomper
 
       @agent.handle(intent(:ship))
       refute pr_url_path.exist?, "must not ship when info is missing"
+    end
+
+    # The clone is otherwise wherever the last run left it: `./chomper` fetches
+    # each base once at launch and never moves the working tree onto it, and no
+    # run checks the tree back off its fix branch. So a long-lived agent loop
+    # planned against months-old code, or against an unrelated WP's fix branch.
+    def test_planning_syncs_the_clone_to_current_upstream_first
+      wt = FakeWorktree.new
+      inject_worktree(@agent, wt)
+
+      @agent.handle(intent(:plan))
+
+      assert_includes wt.fetched, ["origin", { ref: "dev" }],
+                      "the base must be re-fetched at plan time, not trusted from launch"
+      assert_includes wt.checkouts, "origin/dev",
+                      "and the tree moved onto it before Claude reads anything"
+    end
+
+    def test_chat_syncs_the_clone_before_answering
+      wt = FakeWorktree.new
+      inject_worktree(@agent, wt)
+
+      @agent.handle(intent(:chat))
+
+      assert_includes wt.fetched, ["origin", { ref: "dev" }]
+      assert_includes wt.checkouts, "origin/dev"
     end
 
     def test_handle_ship_plans_and_ships

@@ -172,7 +172,8 @@ module Chomper
       include Helpers
       attr_reader :ctx
       def initialize(ctx); @ctx = ctx; end
-      public :state_for, :record_chosen_repos, :checkout_branch   # private in Helpers
+      # private in Helpers
+      public :state_for, :record_chosen_repos, :checkout_branch, :sync_base!, :sync_bases_for_reading
     end
 
     # The clone check lives in #worktree because that is the funnel every git
@@ -195,13 +196,27 @@ module Chomper
       assert_raises(Chomper::FatalError) { host.send(:worktree, host.ctx.default_repo) }
     end
 
+    FakeStatus = Struct.new(:changed, :added, :deleted)
+
     class FakeWorktree
       attr_reader :checkouts, :fetched, :configs
-      def initialize; @checkouts = []; @fetched = []; @configs = []; end
+      # `dirty` stands in for an implement run that died after Claude wrote files
+      # but before Helpers#commit swept them up; `fetch_error` for an unreachable
+      # origin. Both are cases sync_base! must not act on.
+      def initialize(dirty: false, fetch_error: nil)
+        @checkouts = []; @fetched = []; @configs = []
+        @dirty = dirty; @fetch_error = fetch_error
+      end
       def revparse(_ref); raise Git::FailedError.allocate; end   # branch doesn't exist yet
       def checkout(branch, **opts); @checkouts << [branch, opts]; end
-      def fetch(remote, **opts); @fetched << [remote, opts]; end
+      def fetch(remote, **opts)
+        raise @fetch_error if @fetch_error
+        @fetched << [remote, opts]
+      end
       def config(k, v); @configs << [k, v]; end
+      def status
+        @dirty ? FakeStatus.new({ "app/x.rb" => :mod }, {}, {}) : FakeStatus.new({}, {}, {})
+      end
     end
 
     def repo_host
@@ -294,7 +309,11 @@ module Chomper
       teardown_repo_host
     end
 
-    def test_checkout_branch_skips_fetch_for_the_default_base
+    def test_checkout_branch_fetches_the_default_base_too
+      # `./chomper` fetches each base once at launch, which an agent loop running
+      # for days then outruns — so a fix branch cut without a fresh fetch would
+      # start from however old that process is. This used to be skipped for the
+      # default base on the grounds that provisioning had already covered it.
       host = repo_host
       st = host.state_for("46", "Fix", "Bug")
       st.plan_file.write("REPOS: openproject\n## Plan\n")
@@ -306,8 +325,69 @@ module Chomper
 
       host.checkout_branch(st, op)
 
-      assert_empty wt.fetched, "the default base is already provisioned — no extra fetch"
+      assert_equal [["origin", { ref: "dev" }]], wt.fetched
       assert_equal "origin/dev", wt.checkouts.first[1][:start_point]
+    ensure
+      teardown_repo_host
+    end
+
+    # --- sync_base! (freshness of the tree Claude reads) ---------------------
+
+    def test_sync_base_fetches_and_moves_the_tree_onto_current_upstream
+      # The bug this closes: nothing between runs moved the working tree, so a
+      # plan or chat read the clone's original `git clone` commit — or, worse, a
+      # leftover fix branch from an unrelated WP with its changes applied.
+      host = repo_host
+      wt = FakeWorktree.new
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      assert host.sync_base!(host.ctx.repos["openproject"])
+
+      assert_equal [["origin", { ref: "dev" }]], wt.fetched
+      assert_equal [["origin/dev", {}]], wt.checkouts,
+                   "detached at the fetched ref, not a local base branch"
+    ensure
+      teardown_repo_host
+    end
+
+    def test_sync_base_leaves_a_dirty_tree_strictly_alone
+      # Uncommitted work exists nowhere else — a checkout would destroy it.
+      host = repo_host
+      wt = FakeWorktree.new(dirty: true)
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      refute host.sync_base!(host.ctx.repos["openproject"])
+
+      assert_empty wt.checkouts
+      assert_empty wt.fetched, "a dirty tree short-circuits before the fetch too"
+    ensure
+      teardown_repo_host
+    end
+
+    def test_sync_base_survives_an_unreachable_origin
+      # Answering from a stale tree beats refusing to answer, so this warns
+      # rather than taking the run down.
+      host = repo_host
+      wt = FakeWorktree.new(fetch_error: StandardError.new("network is unreachable"))
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      refute host.sync_base!(host.ctx.repos["openproject"])
+
+      assert_empty wt.checkouts
+    ensure
+      teardown_repo_host
+    end
+
+    def test_sync_bases_for_reading_covers_every_repo_it_is_given
+      host = repo_host
+      seen = {}
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = seen[k] = FakeWorktree.new })
+
+      host.sync_bases_for_reading(host.ctx.repos.all)
+
+      assert_equal %w[foo openproject], seen.keys.sort
+      assert_equal [["origin", { ref: "main" }]], seen["foo"].fetched,
+                   "each repo is synced to its own base, not the default one"
     ensure
       teardown_repo_host
     end

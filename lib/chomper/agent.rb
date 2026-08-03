@@ -124,6 +124,10 @@ module Chomper
 
     def handle_chat(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
+      # Answer against current upstream. Scoped to the WP's target repos when the
+      # plan has already named them — a chat almost always follows a plan, and
+      # syncing the whole registry to answer one question is wasted fetching.
+      sync_bases_for_reading(st.repos)
       # Pass the plan's path, not its text: a resumed session already holds the
       # plan, so re-embedding it every turn just burns tokens.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
@@ -168,6 +172,11 @@ module Chomper
       # Planning is read-only across every repo's worktree (all mounted at
       # /repos/<name>); the branch checkout waits until #ship, once Claude has
       # chosen the target repo(s) in the plan.
+      #
+      # Every repo is synced, not just the eventual targets: which repos the fix
+      # lands in is the plan's own output, so at this point there is nothing
+      # narrower to sync, and Claude reads across the registry to decide.
+      sync_bases_for_reading(@ctx.repos.all)
       item_c  = container_path(st.item_file)
       plan_c  = container_path(st.plan_file)
       related = related_ref(st)

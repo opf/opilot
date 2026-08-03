@@ -23,6 +23,10 @@ module Chomper
       safe_rm(session_file)
 
       repos = repos_for_prompt(@ctx.repos.all)
+      # Once per run, not per turn: a question about the code should be answered
+      # against current upstream rather than whatever branch the last ship or
+      # `pd` run left the clone on.
+      sync_bases_for_reading(@ctx.repos.all)
       puts "  Free chat — read-only over your local mirrors (/state) and the repo clones (/repos)."
       puts "  Empty line to exit."
 

@@ -417,10 +417,12 @@ module Chomper
     def checkout_branch(st, repo)
       wt   = worktree(repo)
       base = st.base_for(repo)
-      # A non-default base may be missing or stale in the clone (clones aren't
-      # --single-branch, so default-base siblings exist, but a newer/less-common
-      # base needs fetching). The default base is already provisioned, so skip it.
-      fetch_base(wt, repo, base) if base != repo.base
+      # Always fetch, including the default base. `./chomper` fetches it once at
+      # launch, which an agent loop then outruns: a week-old process would cut
+      # every new fix branch from week-old upstream. A non-default base may not be
+      # in the clone at all (clones aren't --single-branch, so default-base
+      # siblings exist, but a newer/less-common base needs fetching).
+      fetch_base(wt, repo, base)
       if local_branch_exists?(wt, st.branch)
         wt.checkout(st.branch)
       else
@@ -438,6 +440,57 @@ module Chomper
       wt.fetch("origin", ref: base)
     rescue StandardError => e
       raise "base branch #{base.inspect} not found on #{repo.upstream} (#{e.message})"
+    end
+
+    # Point `repo`'s clone at current upstream before a READ-ONLY phase (plan,
+    # chat). Without this, those phases read whatever the clone happens to be:
+    # `./chomper` fetches each base once at launch and never moves the working
+    # tree onto it, and no run checks the tree back off its fix branch when it
+    # finishes — so a plan could be written against the clone's original
+    # `git clone` commit, or against a leftover fix branch from an unrelated WP
+    # with that WP's unmerged changes applied. Both mislead silently: nothing in
+    # the tree tells Claude how old it is or whose branch it is on.
+    #
+    # Detached at origin/<base> on purpose — between runs the clone is a
+    # read-only mirror of upstream, and a local base branch would just be a
+    # second thing to keep in sync. #checkout_branch cuts fix branches from
+    # origin/<base> regardless, so it is unaffected by where HEAD sits.
+    #
+    # Best-effort by design, and never fatal: answering from a stale tree beats
+    # refusing to answer, so a fetch or checkout failure warns and moves on.
+    # A DIRTY tree is left strictly alone — it means an implement run died after
+    # Claude wrote files but before #commit swept them up, and a checkout would
+    # discard work that is not recorded anywhere else.
+    def sync_base!(repo)
+      wt = worktree(repo)
+      if dirty_worktree?(wt)
+        log_script "#{repo.name}: uncommitted changes in the clone — reading it as-is, not syncing."
+        return false
+      end
+      fetch_base(wt, repo, repo.base)
+      wt.checkout("origin/#{repo.base}")
+      true
+    rescue StandardError => e
+      log_script "#{repo.name}: could not sync to origin/#{repo.base} (#{e.message}) — reading the clone as-is."
+      false
+    end
+
+    # Untracked files are deliberately not counted: a `pd` spec tree lives in the
+    # clone untracked-and-git-excluded by design, and Claude's own scratch output
+    # would otherwise pin the tree to a stale commit forever.
+    def dirty_worktree?(wt)
+      st = wt.status
+      st.changed.any? || st.added.any? || st.deleted.any?
+    end
+
+    # Sync every clone Claude is about to read. One log line for the set, since
+    # #sync_base! already reports the cases worth seeing (dirty tree, fetch
+    # failure) and a per-repo "ok" on a whole-registry plan is just noise.
+    def sync_bases_for_reading(repos)
+      list = Array(repos)
+      return if list.empty?
+      log_script "Syncing #{list.length} clone#{list.length == 1 ? "" : "s"} to current upstream"
+      list.each { |repo| sync_base!(repo) }
     end
 
     # Check out an existing PR's branch in `repo` and sync it to the PR's current

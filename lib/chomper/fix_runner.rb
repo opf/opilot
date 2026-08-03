@@ -104,6 +104,14 @@ module Chomper
       replan_feedback = nil
       loop do
         just_generated = false
+        # Sync before reading, for the same reason as Agent#produce_plan: the
+        # clone is otherwise wherever the last run left it. Only when a plan is
+        # actually about to be written — a `ship` of an already-approved plan has
+        # nothing to re-read, and the [c]hat option below runs in this same
+        # process, on the tree this sync established.
+        if replan_feedback || !Helpers.file_has_content?(st.plan_file)
+          sync_bases_for_reading(@ctx.repos.all)
+        end
         # On Claude::Error the failure was already shown in red; both branches
         # fall through so the loop can recover instead of crashing the run.
         if replan_feedback
