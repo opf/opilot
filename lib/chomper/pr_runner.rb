@@ -79,7 +79,7 @@ module Chomper
       dirs = adopt_wp_prs(wp_id) if dirs.empty?
       if dirs.empty?
         log_script "#{wp_label(wp_id)} — no shipped PR found, locally or on GitHub. " \
-                   "Ship one first with `./chomper ship #{wp_id}`."
+                   "Ship one first with `./chomper wp ship #{wp_id}`."
         return
       end
       mirror_wp(wp_id)

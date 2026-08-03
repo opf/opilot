@@ -184,7 +184,7 @@ module Chomper
 
       assert_includes out, "[y]es build", "approval prompt reflects build mode"
       assert_includes out, "✓ Built task/8-buildable (openproject)"
-      assert_includes out, "ship it with `./chomper ship 8`"
+      assert_includes out, "ship it with `./chomper wp ship 8`"
       refute (@ctx.state_dir / "work_packages" / "op.example.com" / "8" / "repos" / "openproject" / "pr_url.txt").exist?,
              "build must not ship"
     end

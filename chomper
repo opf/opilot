@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 export SCRIPT_DIR
 ENV_FILE="$SCRIPT_DIR/.env"
 CMD="${1:-}"
+SUB="${2:-}"
 
 # Read / append a single KEY=value in .env. A missing key yields empty (not a
 # failure), so a bare `VAR="$(_env_get KEY)"` is safe under `set -euo pipefail`.
@@ -12,6 +13,11 @@ _env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
 _save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
 # True when CMD is one of the listed words, e.g. `_is agent op-agent`.
 _is() { [[ " $* " == *" $CMD "* ]]; }
+# Which loops a command starts: `agent` alone runs both, `agent op`/`agent gh`
+# (and the pre-group op-agent/gh-agent names) run one. The wizard then prompts for
+# exactly the allowlists the loops it is about to start will read.
+_runs_op() { _is op-agent || { _is agent && [ "$SUB" != gh ]; }; }
+_runs_gh() { _is gh-agent || { _is agent && [ "$SUB" != op ]; }; }
 # docker compose bound to chomper's compose file.
 dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 
@@ -38,10 +44,10 @@ if _need OPENPROJECT_URL; then
 fi
 
 
-# The OP allowlist only gates op-agent's @chomper comment triggers — terminal
-# modes (ship/build/plan/pr/pull/chat) are operator-driven and never read it,
-# so only agent mode should demand it during setup.
-if _is agent op-agent && _need CHOMPER_ALLOWED_OP_USER_IDS; then
+# The OP allowlist only gates the OpenProject loop's @chomper comment triggers —
+# the terminal modes (`wp …`, `pd …`, `chat`) are operator-driven and never read
+# it, so only a run that starts that loop should demand it during setup.
+if _runs_op && _need CHOMPER_ALLOWED_OP_USER_IDS; then
   echo "  Without an allowlist, ANY OpenProject user can trigger @chomper."
   echo "  Use OpenProject user ids (the number in a profile URL, /users/<id>) —"
   echo "  a non-admin API token can't read other users' emails."
@@ -103,10 +109,10 @@ if _need GITHUB_CONTRIBUTOR_TOKEN; then
   echo ""
 fi
 
-# The GH allowlist only gates gh-agent's PR triggers (the `pr` command ignores
-# it), so only the agent modes that include gh-agent should demand it — and only
-# once a token is set (gh-agent needs it).
-if _is agent gh-agent && _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_CONTRIBUTOR_TOKEN)" ]; then
+# The GH allowlist only gates the GitHub loop's PR triggers (`wp pr` ignores it),
+# so only a run that starts that loop should demand it — and only once a token is
+# set (the loop needs it).
+if _runs_gh && _need CHOMPER_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_CONTRIBUTOR_TOKEN)" ]; then
   # gh-agent lets the listed GitHub users push code to chomper's PR branches, so
   # an empty list (any user can trigger on a public PR) needs explicit confirmation.
   echo "  GitHub logins allowed to trigger @chomper on a PR (gh-agent), comma-separated."
@@ -153,13 +159,15 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # Two separate questions, because `pd` splits them: every pd subcommand works
 # inside a product clone, but only the ones that call Claude need the claude
 # container started. Starting it for `pd init`/`pd intake` would be pure latency.
-SUB="${2:-}"
+# The grouped commands (`wp`, `pd`) carry the verb in $2, so both are matched on
+# the subcommand: `wp pull` only mirrors work packages and needs neither.
 
 _needs_claude() {
-  _is agent op-agent gh-agent ship fix build plan pr chat && return 0
-  if [ "$CMD" = "pd" ]; then
-    case "$SUB" in propose|implement|archive) return 0 ;; esac
-  fi
+  _is agent op-agent gh-agent chat && return 0
+  case "$CMD" in
+    wp) case "$SUB" in ship|fix|build|plan|pr) return 0 ;; esac ;;
+    pd) case "$SUB" in propose|implement|archive) return 0 ;; esac ;;
+  esac
   return 1
 }
 

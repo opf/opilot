@@ -23,6 +23,7 @@ An OpenProject AI development orchestrator that helps you implement work package
 - [Bird's-eye view](#birds-eye-view)
 - [Interface](#interface)
 - [Reviewing & pushing](#reviewing--pushing)
+- [Configuration](#configuration)
 - [Development](#development)
 - [TODO](#todo)
 
@@ -54,12 +55,12 @@ cd openproject-chomper
 ### Script mode
 ```bash
 # Run one-time E2E fix of one or more specific WPs
-./chomper ship <id>...
+./chomper wp ship <id>...
 # OR just draft (and approve) a plan without building
-./chomper plan <id>...
+./chomper wp plan <id>...
 # OR refresh a stale shipped PR (merge base, fix CI, address comments)
-./chomper pr <id-or-pr-url>...
-# and more
+./chomper wp pr <id-or-pr-url>...
+# and more — ./chomper wp lists the group
 ```
 
 ## Bird's-eye view
@@ -140,13 +141,16 @@ comments), so it is boxed in from several directions:
 
 | Command | What it does |
 |---|---|
-| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit. Publishes via the contributor bot's fork |
-| `./chomper pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
-| `./chomper pull [<id>...]` | Mirror work packages into the local cache |
+| `./chomper wp ship <id>...` | Plan → approve → implement → draft PR, per work package. `wp plan` stops at the approved plan, `wp build` at the local commit. Publishes via the contributor bot's fork |
+| `./chomper wp pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
+| `./chomper wp pull [<id>...]` | Mirror work packages into the local cache |
 | `./chomper chat [message]` | Free read-only chat about the local mirrors |
 | `./chomper status` / `reset` | List planned/shipped work packages / wipe `.chomper/` for a fresh start |
 
-The `ship` / `build` / `plan` loop prompts `[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`
+Everything keyed on a work-package id lives under `wp` (`./chomper wp` lists the
+group); the spec-driven pipeline lives under `pd`.
+
+The `wp ship` / `wp build` / `wp plan` loop prompts `[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`
 for each drafted plan; several ids run in turn and one failure doesn't abort the rest.
 
 ### Agent mode (comment-driven)
@@ -164,7 +168,7 @@ once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
-runs the full `pr`-command refresh (forced base merge, CI fix, feedback sweep).
+runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep).
 
 ---
 
@@ -177,7 +181,7 @@ Chomper publishes as a single GitHub **identity**, the **contributor**
 * No push ever targets a canonical repo: fork PRs are the only publishing shape, so a maintainer's review and merge is always the gate, and the unattended loops physically cannot land anything upstream
 * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
 
-Refreshing an existing PR (`pr <id|url>`, `@chomper refresh`) pushes to the PR's
+Refreshing an existing PR (`wp pr <id|url>`, `@chomper refresh`) pushes to the PR's
 head branch on the bot's fork. A PR whose head lives on the canonical repo (one
 you adopted, say) is not chomper's to write to, so its refresh is discarded.
 
@@ -213,6 +217,35 @@ gh adopt 42        # or paste the PR URL
 ```
 
 It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and comments a link to the new PR on the bot's original (leaving it open so gh-agent keeps tracking it). The adopted PR's body has the work-package link re-fanged (`hxxp://` → `http://`), so **your** PR is the one OpenProject's GitHub integration references on the ticket — the bot's defanged PR never clutters the activity tab. The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
+
+---
+
+## Configuration
+
+Everything lives in `.env`, which the first run writes interactively — the table
+below is for editing it afterwards. `CLAUDE.md` documents every variable,
+including the optional model and CI knobs.
+
+| Variable | Purpose |
+|---|---|
+| `OPENPROJECT_URL` | OpenProject instance URL |
+| `OPENPROJECT_TOKEN` | API token — read work packages, comment on them |
+| `ANTHROPIC_API_KEY` | A real key (held by the authgw gateway, never by the claude container), or the literal `oauth` to log in with `claude auth login` instead |
+| `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — chomper's only identity |
+| `CHOMPER_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@chomper` (comma-separated). Empty = anyone |
+| `CHOMPER_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty also disables upstream-PR review |
+
+State lives in `.chomper/` (gitignored) and is safe to delete with
+`./chomper reset`:
+
+| Path | What's in it |
+|---|---|
+| `work_packages/<host>/<id>/` | Per-work-package mirror: `item.json`, `plan.md`, `pr.md`, `pr_url.txt`, session ids |
+| `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `op-agent` run |
+| `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR chomper didn't open |
+| `openspec/<repo>/`, `changes/<host>/<id>/` | The `pd` pipeline's canonical spec store and per-change state |
+| `repos/<name>/` | Each product repo's standalone clone, mounted into the claude container |
+| `chomp.log`, `progress.txt` | Full prompt/response log; pipe-delimited audit log |
 
 ---
 

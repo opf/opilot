@@ -63,82 +63,175 @@ module Chomper
       puts ""
     end
 
+    # The agent loops. `./chomper agent` with no subcommand runs both — that is
+    # how chomper is normally run, so the group's bare form acts instead of
+    # printing help the way `wp`/`pd` do.
+    def agent_commands
+      <<~AGENT.strip
+        ./chomper agent
+            Run both loops together: PRs first, then work packages.
+
+        ./chomper agent op
+            OpenProject only: act on @chomper comments, and on chomper being set
+            as a work package's assignee.
+
+        ./chomper agent gh
+            GitHub only: chomper's own PRs (reply, write code when asked, fix
+            failing CI) and upstream PRs that @-mention it (reply-only).
+      AGENT
+    end
+
+    # `./chomper agent --help`, or a bad subcommand.
+    def agent_usage_text
+      <<~USAGE.strip
+        Usage: ./chomper agent [op | gh]
+
+        #{indent(agent_commands, 2)}
+
+        #{indent(triggers, 2)}
+
+        Both loops poll every 20s and are gated by the allowlists in .env.
+        `op-agent` and `gh-agent` still work as aliases.
+      USAGE
+    end
+
+    def agent_usage
+      puts ""
+      puts agent_usage_text
+      puts ""
+    end
+
+    # What agent mode acts on, shown wherever agent mode is described — the
+    # commands are useless without knowing what triggers them.
+    def triggers
+      <<~TRIGGERS.strip
+        Triggers — on a work package:  @chomper ship | plan | approve | grill |
+                                       summarize, or anything else to just talk
+                   on a chomper PR:    any @chomper comment gets a reply — and
+                                       code, if asked; refresh re-runs `wp pr`
+      TRIGGERS
+    end
+
+    # The `wp` (work-package) command list. Every entry is spelled as the whole
+    # command, so a line can be copied straight to a shell. One or two lines of
+    # description each — the reasoning behind them belongs in CLAUDE.md, not on
+    # someone's terminal.
+    def wp_commands
+      <<~WP.strip
+        ./chomper wp plan <id>...
+            Plan with approval, then stop.
+
+        ./chomper wp build <id>...
+            Plan, approve, implement, commit locally. Nothing pushed, no PR.
+
+        ./chomper wp ship <id>...
+            Same, then open a draft PR from the bot's fork; picks up a branch an
+            earlier build committed. (`wp fix` is an alias.)
+
+        ./chomper wp pr <id | pr-url>...
+            Refresh a shipped PR: merge the base branch in, fix failing CI,
+            address new review comments, push (with confirmation).
+
+        ./chomper wp pull [<id>...]
+            Mirror work packages into the local cache for later chat. With no
+            ids, the filter wizard runs.
+      WP
+    end
+
+    # `./chomper wp` with no (or a bad) subcommand, and `wp --help`.
+    def wp_usage_text
+      <<~USAGE.strip
+        Usage: ./chomper wp <command>
+
+        #{indent(wp_commands, 2)}
+
+        Ids may carry a pasted "#" (#59942) and semantic ids may be lowercase.
+      USAGE
+    end
+
+    def wp_usage
+      puts ""
+      puts wp_usage_text
+      puts ""
+    end
+
+    # The `pd` command list. It lives here rather than in ProductRunner so that
+    # `--help`, a bare `./chomper pd`, and a malformed pd invocation all print
+    # the same text: the two copies had already drifted (the top-level help was
+    # missing `generate-wp` and `implement` entirely).
+    def pd_commands
+      <<~PD.strip
+        ./chomper pd init <project-id>
+            Resolve the OpenProject ids and seed the spec store. Preflight; re-runnable.
+
+        ./chomper pd intake <project-id> <change-id> [--doc-id <id>]...
+            Mirror OpenProject Documents — attachments converted — into the
+            change's intake/. Without --doc-id, every document in the project.
+
+        ./chomper pd propose <change-id>
+            Write the OpenSpec proposal from that intake and open the spec PR that
+            is the approval gate. Revise it with `@chomper <feedback>` there.
+
+        ./chomper pd generate-wp <change-id>
+            Create the #{@ctx.pd_parent_type} plus one #{@ctx.pd_child_type} per tasks.md section.
+            Running this is the approval signal; re-runnable.
+
+        ./chomper pd implement <wp-id>...
+            Build one generated work package from its spec: branch, commit, draft
+            PR. The change is resolved from the id.
+      PD
+    end
+
+    # `./chomper pd` with no (or a bad) subcommand, and `pd --help`.
+    def pd_usage_text
+      <<~USAGE.strip
+        Usage: ./chomper pd <command>
+
+        #{indent(pd_commands, 2)}
+
+        change-id is author-chosen kebab-case (e.g. add-recurring-meetings).
+        Every command takes --repo <name> to pick a repo from repos.json.
+      USAGE
+    end
+
+    def pd_usage
+      puts ""
+      puts pd_usage_text
+      puts ""
+    end
+
     def usage
       puts <<~USAGE
 
-        Usage: ./chomper [COMMAND]
+        Usage: ./chomper <command> [arguments]
 
-        Commands:
-          agent     Run op-agent and gh-agent together (one loop: PRs first, then WPs)
-          op-agent  Poll OpenProject every 20s and act on @chomper mentions
-          gh-agent  Poll chomper's PRs every 20s; reply to @chomper comments and
-                    (if asked) write code, committing it and pushing to the bot's fork
-          plan <id>...      Plan one or more work packages with approval, but stop before building
-          build <id>...     Plan, approve, and implement one or more work packages, committing the
-                            fix to the local clone — nothing is pushed and no PR is opened
-          ship <id>...      Plan, approve, implement, and ship one or more work packages as draft
-                            PRs; picks up a branch committed earlier by build (`fix` is an alias).
-                            Publishes via the contributor bot's fork — a maintainer merges
-          pr <id|url>...    Refresh a work package's shipped PR(s): merge in the latest base branch,
-                            fix failing CI, and address new review comments, then push (with confirmation).
-                            A pasted GitHub PR URL is resolved to its WP (and the WP mirrored) via the
-                            OpenProject ticket link at the top of the PR description
-          pull [<id>...]    Mirror work packages into the local cache for later chat (no plan or ship);
-                            ids fetch exactly those, no ids runs the filter wizard for a bulk grab
-          chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship
+        Agent mode — how chomper is normally run (polls every 20s):
+          ./chomper agent            watch OpenProject and GitHub, and act
 
-        Product development (spec-driven pipeline; publishes as the contributor bot):
-          pd init <project-id> [--repo <name>]
-                            Resolve the OpenProject ids (FEATURE/IMPLEMENTATION types,
-                            statuses) and seed the canonical OpenSpec store
-          pd intake <project-id> <change-id> [--doc-id <id>]...
-                            Mirror OpenProject Documents into the change's intake/,
-                            converting attachments (xlsx/docx/pptx) to readable text.
-                            Without --doc-id every document in the project is pulled in
-          pd propose <change-id>
-                            Write the OpenSpec change proposal from that intake, validate
-                            it with `openspec --strict`, and open the spec PR that is the
-                            approval gate (inside the bot's own fork). Revise it by
-                            commenting `@chomper <feedback>` on that PR
-          status    Show the work packages chomper has planned or shipped
-          reset     De-register the worktree and delete .chomper/ (fresh start)
+        #{indent(triggers, 2)}
 
-        Options:
-          --help, -h    Show this help
+        Terminal:
+          ./chomper wp <command>     work packages by id: plan, build, ship, pr, pull
+          ./chomper pd <command>     product development: the spec-driven pipeline
+          ./chomper chat [message]   read-only chat about your local mirrors
+          ./chomper status           what chomper has planned or shipped
+          ./chomper reset            delete .chomper/, clones included
 
-        @chomper comment commands (on any watched work package):
-          @chomper <text>          Ask a question — replies with the plan as context
-          @chomper plan [feedback] Generate (or revise) an implementation plan
-          @chomper approve         Implement the plan and open a draft PR
-          @chomper ship [feedback] Plan and ship in one step, skipping approval (`fix` is an alias)
-          @chomper grill [focus]   Stress-test the ticket/plan: gaps, edge cases, risks
-          @chomper summarize [focus] Recap the thread: state, decisions, open questions
-
-        @chomper PR comments (gh-agent, on a chomper-opened PR):
-          @chomper <text>          Reply to the comment; if it asks for a code change,
-                                   chomper writes it, commits, and pushes to the bot's fork
-
-        Environment:
-          OPENPROJECT_URL         OpenProject instance URL
-          OPENPROJECT_TOKEN       OpenProject API token
-          ANTHROPIC_API_KEY       A real key (recommended; held by authgw, never in claude) or the
-                                  literal "oauth" for interactive claude auth login
-          GITHUB_CONTRIBUTOR_TOKEN  Bot account token — chomper's only identity; fork publishing
-          CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper
-          CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent
-
-        State (all in .chomper/, gitignored):
-          work_packages/<host>/                    Per-instance WP state (namespaced by OpenProject host)
-          work_packages/<host>/op_agent_filters.json  Saved search filters (created on first op-agent run)
-          work_packages/<host>/<id>/               Per-WP folder: item.json, plan.md, pr.md, pr_url.txt
-          pr_reviews/<owner>-<repo>/<number>/   Upstream-PR review state (gh-agent)
-          openproject/        Isolated git worktree for fixes
-          progress.txt        Progress log
-          chat_session_id     Claude session for the current `chat` REPL (reset each run)
-          claude-auth/        claude CLI config; holds OAuth login creds when no API key is set
-          chomp.log           Full prompt + response log
+        `./chomper wp` and `./chomper pd` list their own commands, and --help works
+        after any of them. Configuration lives in .env (the first run sets it up)
+        and state in .chomper/ — both are documented in README.md.
 
       USAGE
+    end
+
+    private
+
+    # Indent a whole block for interpolation into a squiggly heredoc. The heredoc
+    # strips its own literal indentation before the value is inserted, so the
+    # block has to carry all of its own — including on the first line.
+    def indent(text, spaces)
+      pad = " " * spaces
+      text.lines.map { |l| l.strip.empty? ? l : pad + l }.join
     end
   end
 end

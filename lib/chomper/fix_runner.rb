@@ -29,7 +29,7 @@ module Chomper
     end
 
     # Like `ship`, but stops after committing the fix locally — nothing is
-    # pushed and no PR is opened; `ship <id>` later publishes the built branch.
+    # pushed and no PR is opened; `wp ship <id>` later publishes the built branch.
     def build_ids(*wp_ids)
       process_ids(wp_ids, mode: :build)
     end
@@ -41,7 +41,7 @@ module Chomper
 
     private
 
-    # `ship` ends in a push and a PR, and it only gets there after a full plan and
+    # `wp ship` ends in a push and a PR, and it only gets there after a full plan and
     # implement pass — so a missing token has to fail before that Claude work, not
     # after it (`Publish#open_pr` reported it at the very end). `pr` has always
     # checked its token up front; this brings its sibling into line.
@@ -52,7 +52,7 @@ module Chomper
       return if @publish.author_token
       raise Chomper::FatalError,
             "No GitHub token — set #{@publish.token_env_var} in .env to ship. " \
-            "(`build` and `plan` need no token: they stop before publishing.)"
+            "(`wp build` and `wp plan` need no token: they stop before publishing.)"
     end
 
     def process_ids(wp_ids, mode:)
@@ -194,7 +194,8 @@ module Chomper
           when :plan
             # Leave the approved plan.md in place (no outcome marker) so a later
             # `build`/`ship` picks it up.
-            log_script "#{wp_label(id)} — plan approved; build or ship it later with `build #{id}` / `ship #{id}`."
+            log_script "#{wp_label(id)} — plan approved; build or ship it later with " \
+                       "`wp build #{id}` / `wp ship #{id}`."
           when :build then build(st, model)
           when :ship  then ship(st, model)
           end
@@ -318,12 +319,12 @@ module Chomper
 
     # `build`: implement and commit, then stop — nothing is pushed and no PR is
     # opened. The committed branch sits in the local clone for review; a later
-    # `ship <id>` finds it via branch_has_commits? and goes straight to publish.
+    # `wp ship <id>` finds it via branch_has_commits? and goes straight to publish.
     def build(st, model = Claude::MODEL_WORK)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
-        puts "  ✓ Built #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./chomper ship #{st.item_id}`"
+        puts "  ✓ Built #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./chomper wp ship #{st.item_id}`"
       end
     end
 

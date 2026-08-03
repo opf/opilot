@@ -1,5 +1,6 @@
 require "json"
 require_relative "pull"
+require_relative "ui"   # #usage! prints from UI#pd_commands, the single help source
 
 module Chomper
   # The `pd` (product development) command family: the spec-driven pipeline that
@@ -716,7 +717,7 @@ module Chomper
       st   = state_for(wp_id, item["subject"].to_s.empty? ? found[:section].title : item["subject"],
                        item["type"].to_s.empty? ? @ctx.pd_child_type : item["type"])
       # Recorded even though `pd` resolves the repo from the store: everything
-      # downstream (`./chomper pr <id>`, gh-agent) reads target_repos.json to find
+      # downstream (`./chomper wp pr <id>`, gh-agent) reads target_repos.json to find
       # which clone a work package's PR belongs to.
       set_target_repos(st, [repo.name])
 
@@ -913,7 +914,7 @@ module Chomper
 
     # Publish the branch as a draft PR the same way the bug-fix flow does, so the
     # result is an ordinary chomper PR: gh-agent picks it up from pr_url.txt, and
-    # `./chomper pr <id>` can refresh it.
+    # `./chomper wp pr <id>` can refresh it.
     def ship_task(st, state, repo, wp_id, item)
       generate_pr_description(st, repo, model: Claude::MODEL_WORK)
       url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
@@ -1041,36 +1042,15 @@ module Chomper
       value
     end
 
+    # The command list itself lives in UI#pd_commands, the one place every help
+    # path reads from. A bare `./chomper pd` is a request for help, not a typo —
+    # reporting "unknown pd subcommand nil" at it named the wrong problem.
     def usage!(subcommand, reason = nil)
-      message = reason ? "#{reason}\n\n" : "unknown pd subcommand #{subcommand.inspect}\n\n"
-      raise Chomper::FatalError, message + <<~USAGE.strip
-        Usage: ./chomper pd <command>
-
-          init <project-id> [--repo <name>]
-              Resolve the OpenProject ids and seed the canonical spec store.
-
-          intake <project-id> <change-id> [--doc-id <id>]... [--repo <name>]
-              Mirror OpenProject Documents into the change's intake/ directory.
-              Without --doc-id every document in the project is pulled in.
-
-          propose <change-id> [--repo <name>]
-              Write the OpenSpec change proposal from that intake, validate it,
-              and open the spec PR that is the approval gate. Revise it by
-              commenting `@chomper <feedback>` on the PR.
-
-          generate-wp <change-id> [--repo <name>]
-              Create the #{@ctx.pd_parent_type} work package for the reviewed
-              change and one #{@ctx.pd_child_type} per top-level tasks.md
-              section, binding each id back into the heading. Safe to re-run:
-              sections that already carry an id are left alone.
-
-          implement <wp-id>... [--repo <name>]
-              Implement one generated work package from its spec: its own branch,
-              its own commit, its tasks.md section ticked, and a draft PR. The
-              change is resolved from the id, so no change id is needed.
-
-        change-id is author-chosen kebab-case (e.g. add-recurring-meetings).
-      USAGE
+      message = if reason then "#{reason}\n\n"
+                elsif subcommand.to_s.empty? then ""
+                else "unknown pd subcommand #{subcommand.inspect}\n\n"
+                end
+      raise Chomper::FatalError, message + UI.new(@ctx).pd_usage_text
     end
   end
 end
