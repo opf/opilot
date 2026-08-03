@@ -154,23 +154,25 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # ── Run ───────────────────────────────────────────────────────────────────
 # status/reset work from local state — no worktree, claude, or proxy needed.
 # Unknown subcommands are passed through to Ruby.
-if _is agent op-agent gh-agent ship fix build plan pr chat; then
-  # Auth: an API key (preferred) is held only by the authgw gateway and never
-  # reaches the claude container. With no key, fall back to interactive
-  # `claude auth login` — its OAuth creds live in the claude container's config
-  # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
-  # ANTHROPIC_API_KEY holds either a real key (→ the authgw gateway path) or
-  # the literal "oauth" (→ interactive `claude auth login`); a legacy blank
-  # value also means OAuth.
-  : "${ANTHROPIC_API_KEY:=$(_env_get ANTHROPIC_API_KEY)}"
-  _USE_GATEWAY=false
-  if [[ -n "$ANTHROPIC_API_KEY" && "$ANTHROPIC_API_KEY" != "oauth" ]]; then
-    export ANTHROPIC_API_KEY
-    export CHOMPER_GW_TOKEN="chomper-internal-gateway"
-    export CHOMPER_CLAUDE_BASE_URL="http://authgw:47292"
-    _USE_GATEWAY=true
-  fi
+#
+# Two separate questions, because `pd` splits them: every pd subcommand works
+# inside a product clone, but only the ones that call Claude need the claude
+# container started. Starting it for `pd init`/`pd intake` would be pure latency.
+SUB="${2:-}"
 
+_needs_claude() {
+  _is agent op-agent gh-agent ship fix build plan pr chat && return 0
+  if [ "$CMD" = "pd" ]; then
+    case "$SUB" in propose|implement|archive) return 0 ;; esac
+  fi
+  return 1
+}
+
+# The clones: needed by everything above, and by every pd subcommand — `pd init`
+# writes the clone's .git/info/exclude, and the rest read or write its openspec/.
+_needs_repos() { _needs_claude || [ "$CMD" = "pd" ]; }
+
+if _needs_repos; then
   # Git-level backstop (defense in depth on top of Clients::GitHub.protected_branch?):
   # point each throwaway clone at chomper's pre-push hook so no push from it can
   # ever reach a base/release branch, keyed on the destination ref.
@@ -200,6 +202,25 @@ if _is agent op-agent gh-agent ship fix build plan pr chat; then
     fi
     git -C "$WT" config core.hooksPath "$HOOKS_DIR"
   done < <(dc --progress quiet run --no-deps --rm runner ruby bin/repos list)
+fi
+
+if _needs_claude; then
+  # Auth: an API key (preferred) is held only by the authgw gateway and never
+  # reaches the claude container. With no key, fall back to interactive
+  # `claude auth login` — its OAuth creds live in the claude container's config
+  # dir (.chomper/claude-auth), so that path is less isolated than the gateway.
+  # ANTHROPIC_API_KEY holds either a real key (→ the authgw gateway path) or
+  # the literal "oauth" (→ interactive `claude auth login`); a legacy blank
+  # value also means OAuth.
+  : "${ANTHROPIC_API_KEY:=$(_env_get ANTHROPIC_API_KEY)}"
+  _USE_GATEWAY=false
+  if [[ -n "$ANTHROPIC_API_KEY" && "$ANTHROPIC_API_KEY" != "oauth" ]]; then
+    export ANTHROPIC_API_KEY
+    export CHOMPER_GW_TOKEN="chomper-internal-gateway"
+    export CHOMPER_CLAUDE_BASE_URL="http://authgw:47292"
+    _USE_GATEWAY=true
+  fi
+
   if [[ "$_USE_GATEWAY" == true ]]; then
     # proxy starts as claude's dependency; authgw is named explicitly so it only
     # runs in API-key mode (it requires the real key and would exit otherwise).

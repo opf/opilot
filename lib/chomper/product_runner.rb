@@ -127,6 +127,8 @@ module Chomper
       store = ChangeStore.new(@ctx, repo)
       state = state_for(change_id, store)
       require_intake!(state, change_id)
+      # Before the branch is checked out and the tree materialised, not after.
+      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
 
       # Branch first, then materialise: checking out replaces the working tree,
       # and the spec tree has to land on top of whatever that leaves behind.
