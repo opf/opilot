@@ -126,12 +126,20 @@ module Chomper
         return existing
       end
 
-      log_script "Publishing proposal #{state.change_id} → #{fork} (base #{state.base_for(repo)})"
+      base = state.base_for(repo)
+      log_script "Publishing proposal #{state.change_id} → #{fork} (base #{base})"
+
+      # Level the fork's base with upstream FIRST. The spec branch is cut from
+      # the clone, which tracks upstream; the PR's base is the fork's copy of the
+      # same branch. Left stale, the diff shows every upstream commit since the
+      # fork was created alongside the spec files, and the PR is unreviewable.
+      @github.sync_fork_branch(fork, branch: base)
+
       return nil unless confirm_canonical_push?(fork, branch)
       @github.push_branch(fork, branch: branch, worktree_path: repo.worktree_host)
 
       url = @github.create_draft_pr(
-        fork, base: state.base_for(repo), head: branch,
+        fork, base: base, head: branch,
         title: "[#{state.change_id}] Change proposal",
         # A same-repo PR 422s unless maintainer edits are off.
         body: body, maintainer_can_modify: false
