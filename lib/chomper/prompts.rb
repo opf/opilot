@@ -562,7 +562,7 @@ module Chomper
     # The one-feature gate mirrors Prompts.plan's NEEDS_INFO sentinel: a change
     # maps to exactly one FEATURE work package, so material that plainly spans
     # several must stop rather than be crammed into one proposal.
-    def self.propose(change_id:, change_dir:, intake_dir:, specs_dir:, repo:, repo_path:)
+    def self.propose(change_id:, change_dir:, intake_dir:, specs_dir:, repo:, repo_path:, instructions:)
       <<~PROMPT
         You are the WRITER. Produce an OpenSpec change proposal for `#{change_id}`.
 
@@ -591,25 +591,21 @@ module Chomper
 
         If the scope is fine, just write the files — don't narrate the check.
 
-        Otherwise write these files, and only these:
+        Otherwise write the artifacts below, in the order given, and nothing else.
 
-          #{change_dir}/proposal.md
-              Why this change exists and what it delivers. Lead with the problem.
-          #{change_dir}/design.md
-              The technical approach, and the decisions a reviewer should check.
-          #{change_dir}/tasks.md
-              The implementation checklist. Top-level `## ` sections are the unit
-              of work — each becomes ONE work package, so make them independently
-              implementable and reviewable. Aim for 3-6; a section per checkbox is
-              too fine. Under each, `- [ ] ` items scoped to a single change.
-          #{change_dir}/specs/<capability>/spec.md
-              The requirement deltas. Use OpenSpec's ADDED / MODIFIED / REMOVED
-              headings, and give every requirement at least one scenario — the
-              strict validator rejects a requirement without one.
+        These instructions come from the `openspec` CLI itself — follow each
+        artifact's <instruction> and <template> exactly. `openspec validate
+        --strict` runs afterwards and only checks part of this, so matching the
+        template is on you, not on the validator.
 
-        Ground every claim in the intake or the code. Where the intake is silent
-        on something you had to decide, say so explicitly in design.md rather than
-        inventing a requirement.
+        #{instructions}
+
+        Two things chomper needs on top of the above:
+        - In tasks.md, each top-level `## ` section becomes ONE work package, so
+          make them independently implementable and reviewable. Aim for 3-6.
+        - Ground every claim in the intake or the code. Where the intake is silent
+          on something you had to decide, say so in design.md rather than
+          inventing a requirement.
       PROMPT
     end
 

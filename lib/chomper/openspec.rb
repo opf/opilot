@@ -82,6 +82,42 @@ module Chomper
       lines.empty? ? result.message : lines.join("\n")
     end
 
+    # The artifacts a spec-driven change is made of, in dependency order
+    # (proposal `<unlocks>` specs and design; tasks comes last).
+    ARTIFACTS = %w[proposal specs design tasks].freeze
+
+    # The CLI's own authoritative instructions for writing one artifact: its
+    # task, the exact output path, the rules, and the section template.
+    #
+    # This is what keeps chomper aligned with OpenSpec instead of imitating it.
+    # `openspec init --tools none` deliberately suppresses the AGENTS.md the CLI
+    # would normally drop in a repo (the product clone already has a real one),
+    # so without this the artifact format would live only in chomper's prompt —
+    # a paraphrase that silently drifts, since `validate --strict` checks delta
+    # structure but not, say, whether the proposal declares its capabilities.
+    def instructions(artifact, change_id:)
+      run("instructions", artifact, "--change", change_id)
+    end
+
+    # Every artifact's instructions, concatenated, ready to drop into a prompt.
+    # `rewrite_paths` maps the runner's absolute paths to wherever the caller's
+    # reader sees them; unmet-dependency warnings are dropped because in a
+    # single pass nothing exists yet and "Missing: proposal" is noise, not news.
+    def instructions_for_all(change_id, &rewrite_paths)
+      ARTIFACTS.filter_map do |artifact|
+        result = instructions(artifact, change_id: change_id)
+        next unless result.ok?
+        text = strip_warnings(result.out)
+        rewrite_paths ? rewrite_paths.call(text) : text
+      end.join("\n").strip
+    end
+
+    WARNING_BLOCK = %r{^<warning>.*?^</warning>\n?}m
+
+    def strip_warnings(text)
+      text.to_s.gsub(WARNING_BLOCK, "")
+    end
+
     def show(item, json: true)
       args = ["show", item]
       args << "--json" if json

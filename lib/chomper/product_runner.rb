@@ -202,12 +202,13 @@ module Chomper
       log_script "Proposing #{state.change_id} in #{repo.name}…"
       text = @claude.run(
         Prompts.propose(
-          change_id:  state.change_id,
-          change_dir: state.working_change_container,
-          intake_dir: "#{state.working_change_container}/intake",
-          specs_dir:  "#{repo.worktree_container}/openspec/specs",
-          repo:       repo.name,
-          repo_path:  repo.worktree_container
+          change_id:    state.change_id,
+          change_dir:   state.working_change_container,
+          intake_dir:   "#{state.working_change_container}/intake",
+          specs_dir:    "#{repo.worktree_container}/openspec/specs",
+          repo:         repo.name,
+          repo_path:    repo.worktree_container,
+          instructions: artifact_instructions(state, repo)
         ),
         tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
       )
@@ -238,13 +239,38 @@ module Chomper
       head.match?(/^\s*TOO_BROAD\b/)
     end
 
+    # OpenSpec's own per-artifact instructions, with every path it emits
+    # rewritten from the runner's view of the clone to the container's — the CLI
+    # resolves absolute paths against where IT ran, and Claude sees the same
+    # files at /repos/<name>.
+    #
+    # Degrades to a note rather than failing the run: a paraphrase-free prompt
+    # is the goal, but an openspec version that changed its command surface
+    # shouldn't make `pd propose` unusable.
+    def artifact_instructions(state, repo)
+      host = repo.worktree_host.to_s
+      text = openspec_for(repo).instructions_for_all(state.change_id) do |chunk|
+        chunk.gsub(host, repo.worktree_container)
+      end
+      return text unless text.empty?
+
+      log_script "Could not read openspec's artifact instructions — falling back to the templates on disk."
+      "(The `openspec instructions` command returned nothing. Follow the templates " \
+        "in #{repo.worktree_container}/openspec/ and the OpenSpec conventions for " \
+        "proposal.md, specs/<capability>/spec.md, design.md and tasks.md.)"
+    end
+
+    def openspec_for(repo)
+      @openspec || OpenSpec.new(repo.worktree_host)
+    end
+
     def proposal_present?(state)
       Helpers.file_has_content?(state.working_change_dir / "proposal.md") &&
         Helpers.file_has_content?(state.working_change_dir / "tasks.md")
     end
 
     def validate_proposal!(state, repo)
-      openspec = @openspec || OpenSpec.new(repo.worktree_host)
+      openspec = openspec_for(repo)
       (0..MAX_VALIDATE_ATTEMPTS).each do |attempt|
         result = openspec.validate(state.change_id)
         if result.ok?

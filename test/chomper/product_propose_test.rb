@@ -21,6 +21,11 @@ module Chomper
         OpenSpec::Result.new(ok: ok, out: ok ? '{"items":[]}' : failure_json, err: "")
       end
 
+      # The real wrapper hands the CLI's own artifact instructions to the prompt.
+      def instructions_for_all(_change_id, &_rewrite)
+        "<artifact id=\"proposal\">write proposal.md</artifact>"
+      end
+
       def failure_json
         JSON.generate("items" => [{ "name" => "add-x", "passed" => false,
                                     "issues" => [{ "message" => "requirement has no scenarios" }] }])
@@ -156,6 +161,21 @@ module Chomper
       assert_nil runner(claude: claude, openspec: spec).send(:write_proposal, @state, @repo)
       assert (@state.working_change_dir / "proposal.md").exist?, "the proposal must survive"
       assert_equal 1, spec.calls, "and must still be validated"
+    end
+
+    def test_the_prompt_carries_openspecs_own_artifact_instructions
+      # Not a paraphrase: the format comes from the CLI we pin, so it tracks the
+      # tool rather than chomper's memory of a design doc. `validate --strict`
+      # checks delta structure but not, say, the proposal's Capabilities section,
+      # so a hand-written format drifts without anything noticing.
+      claude = FakeClaude.new { write_proposal!; "done" }
+      runner(claude: claude, openspec: FakeOpenSpec.new(true)).send(:write_proposal, @state, @repo)
+
+      prompt = claude.prompts.first
+      assert_includes prompt, "write proposal.md", "the CLI's instructions must reach the prompt"
+      assert_includes prompt, "come from the `openspec` CLI itself"
+      refute_includes prompt, "ADDED / MODIFIED / REMOVED",
+                      "the hand-written format block should be gone"
     end
 
     def test_the_sentinel_counts_only_when_it_leads_the_answer

@@ -126,6 +126,57 @@ module Chomper
       end
     end
 
+    # --- artifact instructions -------------------------------------------
+
+    def test_instructions_asks_the_cli_for_one_artifact_of_a_change
+      with_open3(out: "<artifact/>") { |os| os.instructions("proposal", change_id: "add-x") }
+      args = @calls.first[:args]
+      assert_equal %w[openspec instructions proposal --change add-x], args
+    end
+
+    def test_instructions_for_all_covers_every_artifact_in_dependency_order
+      text = with_open3(out: "<artifact>x</artifact>") do |os|
+        os.instructions_for_all("add-x")
+      end
+      requested = @calls.map { |c| c[:args][2] } # ["openspec", "instructions", <artifact>, …]
+      assert_equal %w[proposal specs design tasks], requested,
+                   "proposal unlocks specs and design, so it has to come first"
+      assert_equal 4, text.scan("<artifact>").length
+    end
+
+    def test_instructions_for_all_rewrites_paths_for_the_reader
+      # The CLI resolves absolute paths against where IT ran (the runner); the
+      # agent reading them sees the same files at /repos/<name>.
+      out = "<output>\nWrite to: /host/clone/openspec/changes/add-x/proposal.md\n</output>"
+      text = with_open3(out: out) do |os|
+        os.instructions_for_all("add-x") { |c| c.gsub("/host/clone", "/repos/openproject") }
+      end
+      assert_includes text, "/repos/openproject/openspec/changes/add-x/proposal.md"
+      refute_includes text, "/host/clone"
+    end
+
+    def test_unmet_dependency_warnings_are_dropped
+      # Nothing exists yet in a single pass, so "Missing: proposal" is noise.
+      out = <<~TEXT
+        <artifact id="specs">
+        <warning>
+        This artifact has unmet dependencies.
+        Missing: proposal
+        </warning>
+        <instruction>Write the deltas.</instruction>
+        </artifact>
+      TEXT
+      text = with_open3(out: out) { |os| os.instructions_for_all("add-x") }
+      refute_includes text, "unmet dependencies"
+      refute_includes text, "<warning>"
+      assert_includes text, "Write the deltas.", "the actual instruction survives"
+    end
+
+    def test_instructions_for_all_skips_artifacts_the_cli_could_not_produce
+      text = with_open3(out: "nope", success: false) { |os| os.instructions_for_all("add-x") }
+      assert_empty text, "a failed lookup yields nothing rather than garbage in the prompt"
+    end
+
     def test_a_missing_cli_is_reported_as_a_failed_result_not_an_exception
       swap_capture3(->(*_a, **_o) { raise Errno::ENOENT, "openspec" }) do
         result = Chomper::OpenSpec.new(@tmpdir).validate("c")
