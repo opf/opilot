@@ -135,7 +135,12 @@ module Chomper
       # fork was created alongside the spec files, and the PR is unreviewable.
       @github.sync_fork_branch(fork, branch: base)
 
-      return nil unless confirm_canonical_push?(fork, branch)
+      unless confirm_canonical_push?(fork, branch)
+        # Say why: without this the caller reports "couldn't open the PR — is
+        # GITHUB_CONTRIBUTOR_TOKEN set?", naming the wrong cause entirely.
+        puts "  Push declined — #{branch} was not pushed and no PR was opened."
+        return nil
+      end
       @github.push_branch(fork, branch: branch, worktree_path: repo.worktree_host)
 
       url = @github.create_draft_pr(

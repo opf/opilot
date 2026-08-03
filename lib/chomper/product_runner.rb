@@ -85,7 +85,7 @@ module Chomper
         raise Chomper::FatalError, "no spec store for #{repo.name} yet — run `./chomper pd init #{project_id}` first"
       end
 
-      state = state_for(change_id, store)
+      state = change_state_for(change_id, store)
 
       scope = opts[:doc_ids].any? ? "#{opts[:doc_ids].length} document(s)" : "every document"
       log_script "Intake — project #{project_id}, #{scope} → change #{change_id}"
@@ -98,7 +98,11 @@ module Chomper
       # mirror the stale working copy straight back over everything just written
       # and lose the whole intake. Nothing is committed here — the store commits
       # on the next persist!, with the change that consumed this intake.
-      store.materialise!
+      #
+      # preserve: false because of that same ordering — the working copy holds
+      # the OLDER tree by design here, not unsaved work, so the safety net would
+      # fire and copy the whole tree aside on every healthy re-intake.
+      store.materialise!(preserve: false)
 
       unless result.changed?
         puts "  No change since the last intake (#{result.hash[0, 19]}…) — nothing written."
@@ -125,7 +129,7 @@ module Chomper
 
       repo  = resolve_repo(opts[:repo])
       store = ChangeStore.new(@ctx, repo)
-      state = state_for(change_id, store)
+      state = change_state_for(change_id, store)
       require_intake!(state, change_id)
       # Before the branch is checked out and the tree materialised, not after.
       @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
@@ -156,7 +160,7 @@ module Chomper
     def revise_proposal(change_id, comment_section:, pr_thread:, session_file:, repo_name: nil)
       repo  = resolve_repo(repo_name)
       store = ChangeStore.new(@ctx, repo)
-      state = state_for(change_id, store)
+      state = change_state_for(change_id, store)
       store.materialise!
 
       reply = @claude.run(
@@ -302,10 +306,18 @@ module Chomper
     # since the tree is git-excluded), and the tree itself, compared against the
     # canonical store.
     def enforce_write_scope!(state)
-      scope   = "changes/#{state.change_id}/"
+      # Two path spaces: git reports clone-relative ("openspec/changes/x/…"),
+      # the store reports tree-relative ("changes/x/…"). Both need the scope
+      # filter. Leaving it off the git side looked harmless while the tree was
+      # untracked — but propose force-adds the change dir when it commits, so
+      # from the second run on the change's OWN files come back as tracked
+      # changes, and every revision was being discarded as out of scope.
+      scope       = "changes/#{state.change_id}/"
+      clone_scope = "openspec/#{scope}"
       status  = worktree(state.repo).status
       tracked = (status.changed.keys + status.added.keys + status.deleted.keys + status.untracked.keys).uniq
-      strays  = tracked + state.store.working_changes.reject { |rel| rel.start_with?(scope) }
+      strays  = tracked.reject { |path| path.start_with?(clone_scope) } +
+                state.store.working_changes(outside: scope)
       return if strays.empty?
 
       reset_out_of_scope!(state)
@@ -334,7 +346,12 @@ module Chomper
       Helpers.adopt_github_author!(publish.author_token)
       wt = worktree(repo)
       wt.add("openspec/changes/#{state.change_id}", force: true)
-      if wt.status.added.empty? && wt.status.changed.empty?
+      # One status call, not two: ruby-git rebuilds it from four subprocesses
+      # each time, over OpenProject's whole index. And `deleted` counts — a
+      # revision that only removes an artifact ("drop design.md") was otherwise
+      # reported as "no spec changes" and silently dropped.
+      st = wt.status
+      if st.added.empty? && st.changed.empty? && st.deleted.empty?
         log_script "#{state.change_id} — no spec changes to commit."
         return false
       end
@@ -487,7 +504,7 @@ module Chomper
               "unknown repo #{name.inspect} — repos.json has: #{@ctx.repos.all.map(&:name).join(", ")}")
     end
 
-    def state_for(change_id, store)
+    def change_state_for(change_id, store)
       dir = Helpers.change_dir(@ctx, change_id)
       dir.mkpath
       ChangeState.new(change_id: change_id, store: store, state_dir: dir)

@@ -125,9 +125,12 @@ module Chomper
 
       capture_io { @store.materialise! }
 
-      backup = @store.root / ChangeStore::SUPERSEDED_DIR / "changes" / "add-recurring-meetings" / "proposal.md"
+      backup = @store.superseded_dir / "changes" / "add-recurring-meetings" / "proposal.md"
       assert backup.exist?, "unsaved work must be recoverable, not silently deleted"
       assert_equal "hours of work\n", backup.read
+      # Outside the store root: commit! does add(all: true) there, so a backup
+      # kept inside would be committed into the history it exists to protect.
+      refute @store.superseded_dir.to_s.start_with?(@store.root.to_s)
       refute (@store.working_tree / "changes" / "add-recurring-meetings" / "proposal.md").exist?,
              "the working copy is still mirrored from canonical"
     end
@@ -136,8 +139,7 @@ module Chomper
       seed_store!
       @store.materialise!
       @store.materialise!
-      refute (@store.root / ChangeStore::SUPERSEDED_DIR).exist?,
-             "a clean materialise needs no backup"
+      refute @store.superseded_dir.exist?, "a clean materialise needs no backup"
     end
 
     def test_persist_copies_the_clone_back_and_commits

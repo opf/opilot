@@ -322,14 +322,21 @@ module Chomper
 
     # A change's tracker.json lives in the canonical store, whose path depends on
     # the repo — so this searches the stores rather than assuming one.
+    # Memoised: the mapping is immutable once the change exists, and gh-agent
+    # polls every 20s — re-statting every registry store on each tick is pure
+    # waste. ChangeStore owns the layout; spelling it out here as a path literal
+    # would break silently (falling back to the default repo, and revising in
+    # the wrong clone) the moment the store moved.
     def tracker_repo(change_id)
-      @ctx.repos.all.each do |repo|
-        tracker = @ctx.state_dir / "openspec" / repo.name / "openspec" / "changes" / change_id / "tracker.json"
+      @tracker_repos ||= {}
+      return @tracker_repos[change_id] if @tracker_repos.key?(change_id)
+
+      @tracker_repos[change_id] = @ctx.repos.all.filter_map do |repo|
+        tracker = ChangeStore.new(@ctx, repo).change_dir(change_id) / "tracker.json"
         next unless tracker.exist?
         name = (Helpers.safe_json_read(tracker) || {})["repo"]
-        return name if name && @ctx.repos[name]
-      end
-      nil
+        name if name && @ctx.repos[name]
+      end.first
     end
 
     # The title to show Claude. A shipped PR has a work-package mirror beside it;

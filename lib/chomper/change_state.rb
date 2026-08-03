@@ -188,19 +188,28 @@ module Chomper
     # is the one that has to guarantee the tree can't be swept into an unrelated
     # commit. A re-clone, a manual .git/info/exclude edit, or a store seeded on
     # another machine would otherwise leave the window open.
-    def materialise!
+    # `preserve:` is false when the CALLER just wrote the store itself — `pd
+    # intake` writes canonical and then materialises, so the working copy
+    # legitimately holds the older tree and is not unsaved work. Without this the
+    # safety net fires, and copies the whole tree aside, on every healthy re-intake.
+    def materialise!(preserve: true)
       exclude_from_clone!
       dest = working_tree
       dest.parent.mkpath
-      preserve_unpersisted!
+      preserve_unpersisted! if preserve
       FileUtils.rm_rf(dest.to_s)
       FileUtils.cp_r(tree.to_s, dest.to_s) if tree.exist?
       dest
     end
 
     # Where a working copy goes when materialise! is about to overwrite work that
-    # was never persisted.
-    SUPERSEDED_DIR = ".superseded".freeze
+    # was never persisted. Deliberately OUTSIDE the store root: commit! does
+    # `add(all: true)` there, so a backup kept inside would be committed into the
+    # store's history on the next persist! and never removed — the safety net
+    # permanently inflating the durable copy it exists to protect.
+    def superseded_dir
+      @ctx.state_dir / "superseded" / @repo.name
+    end
 
     # The working copy is disposable by design — but only once its contents are
     # in the store. A command that dies between materialise! and persist! (a
@@ -214,7 +223,7 @@ module Chomper
       # the clone doesn't" is the normal state then — not unsaved work.
       return unless working_tree.directory?
       return if unpersisted_paths.empty?
-      backup = root / SUPERSEDED_DIR
+      backup = superseded_dir
       FileUtils.rm_rf(backup.to_s)
       backup.parent.mkpath
       FileUtils.cp_r(working_tree.to_s, backup.to_s)
@@ -240,12 +249,14 @@ module Chomper
     # This is how the path allowlist sees inside openspec/: the tree is in
     # .git/info/exclude, so `git status` in the clone reports nothing about it
     # and cannot answer "did this run only touch its own change directory?".
-    def working_changes
-      (paths_under(working_tree) | paths_under(tree)).reject do |rel|
-        a = working_tree / rel
-        b = tree / rel
-        a.file? && b.file? && a.read == b.read
-      end.sort
+    # `outside:` narrows to paths NOT under that prefix, and narrows BEFORE the
+    # contents are compared — the caller asking "did anything escape this change
+    # directory?" would otherwise read every converted attachment in the store
+    # only to discard it by prefix afterwards.
+    def working_changes(outside: nil)
+      candidates = paths_under(working_tree) | paths_under(tree)
+      candidates = candidates.reject { |rel| rel.start_with?(outside) } if outside
+      candidates.reject { |rel| same_content?(rel) }.sort
     end
 
     # Every change id present in the store.
@@ -291,10 +302,15 @@ module Chomper
     # store has and the clone doesn't is something materialise! is about to
     # restore, not work about to be lost.
     def unpersisted_paths
-      paths_under(working_tree).reject do |rel|
-        canonical = tree / rel
-        canonical.file? && canonical.read == (working_tree / rel).read
-      end
+      paths_under(working_tree).reject { |rel| same_content?(rel) }
+    end
+
+    # The one "are these the same file?" rule, shared by both directional
+    # comparisons above so they can't drift apart.
+    def same_content?(rel)
+      a = working_tree / rel
+      b = tree / rel
+      a.file? && b.file? && a.read == b.read
     end
 
     # Every file under `root`, as paths relative to it.

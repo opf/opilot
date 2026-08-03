@@ -222,6 +222,34 @@ module Chomper
       assert_equal "puts 1\n", (@repo.worktree_host / "app.rb").read, "the clone must be reset"
     end
 
+    def test_a_revision_of_already_committed_spec_files_is_not_treated_as_a_stray
+      # Regression: propose force-adds the change dir when it commits, so from
+      # the second run on the change's OWN files are tracked. The git side of the
+      # scope check wasn't filtered by scope, so every revision came back as
+      # out-of-scope, got reset, and gh-agent posted "sorry — I hit an error"
+      # instead of the revision. This broke the whole PR-iteration loop.
+      write_proposal!
+      @git.add("openspec/changes/add-x", force: true)
+      @git.commit("[add-x] Propose add-x")
+
+      (@state.working_change_dir / "proposal.md").write("# Recurring meetings\nRevised.\n")
+      runner.send(:enforce_write_scope!, @state) # must not raise
+
+      assert_equal "# Recurring meetings\nRevised.\n", (@state.working_change_dir / "proposal.md").read,
+                   "the revision must survive the scope check"
+    end
+
+    def test_source_edits_are_still_caught_once_the_spec_files_are_tracked
+      # The narrower filter must not blind the check to what it exists for.
+      write_proposal!
+      @git.add("openspec/changes/add-x", force: true)
+      @git.commit("[add-x] Propose add-x")
+      (@repo.worktree_host / "app.rb").write("puts 666\n")
+
+      error = assert_raises(Chomper::FatalError) { runner.send(:enforce_write_scope!, @state) }
+      assert_includes error.message, "app.rb"
+    end
+
     def test_writing_into_another_change_discards_the_run
       # Inside openspec/ git sees nothing (the tree is excluded), so this is
       # caught by diffing the working tree against the canonical store.
