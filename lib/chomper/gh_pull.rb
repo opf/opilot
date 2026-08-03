@@ -2,6 +2,10 @@ require "json"
 require "time"
 require_relative "clients"
 require_relative "gh_pr_cache"
+# The one piece of the `pd` pipeline that loads on every run: identifying a spec
+# PR needs the store's layout (see #tracker_repo). Cheap — change_state pulls in
+# only openspec and tasks_file, not the runner or the intake converter.
+require_relative "pd/change_state"
 
 module Chomper
   # A comment on a chomper PR that mentions @chomper, normalised so GhAgent can
@@ -324,7 +328,7 @@ module Chomper
     # the repo — so this searches the stores rather than assuming one.
     # Memoised: the mapping is immutable once the change exists, and gh-agent
     # polls every 20s — re-statting every registry store on each tick is pure
-    # waste. ChangeStore owns the layout; spelling it out here as a path literal
+    # waste. PD::ChangeStore owns the layout; spelling it out here as a path literal
     # would break silently (falling back to the default repo, and revising in
     # the wrong clone) the moment the store moved.
     def tracker_repo(change_id)
@@ -332,7 +336,7 @@ module Chomper
       return @tracker_repos[change_id] if @tracker_repos.key?(change_id)
 
       @tracker_repos[change_id] = @ctx.repos.all.filter_map do |repo|
-        tracker = ChangeStore.new(@ctx, repo).change_dir(change_id) / "tracker.json"
+        tracker = PD::ChangeStore.new(@ctx, repo).change_dir(change_id) / "tracker.json"
         next unless tracker.exist?
         name = (Helpers.safe_json_read(tracker) || {})["repo"]
         name if name && @ctx.repos[name]

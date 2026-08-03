@@ -22,12 +22,10 @@ require "chomper/combined_agent"
 require "chomper/fix_runner"
 require "chomper/pr_runner"
 require "chomper/chat_runner"
-require "chomper/openspec"
-require "chomper/tasks_file"
-require "chomper/change_state"
-require "chomper/resolved_ids"
-require "chomper/intake"
-require "chomper/product_runner"
+# The `pd` pipeline is lazily required in production (see bin/chomper); the suite
+# loads all of it, intake converter included, since it tests every stage.
+require "chomper/pd"
+require "chomper/pd/intake"
 require "chomper/cli"
 
 WebMock.disable_net_connect!

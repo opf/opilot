@@ -155,7 +155,7 @@ module Chomper
       puts ""
     end
 
-    # The `pd` command list. It lives here rather than in ProductRunner so that
+    # The `pd` command list. It lives here rather than in PD::Runner so that
     # `--help`, a bare `./chomper pd`, and a malformed pd invocation all print
     # the same text: the two copies had already drifted (the top-level help was
     # missing `generate-wp` and `implement` entirely).

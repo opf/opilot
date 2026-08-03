@@ -134,7 +134,7 @@ module Chomper
 
     def test_each_group_help_renders_its_one_command_list
       # Each list is written once (UI#wp_commands / UI#pd_commands) — the pd copy
-      # used to be duplicated in ProductRunner and had drifted out of date.
+      # used to be duplicated in PD::Runner and had drifted out of date.
       ui = UI.new(ctx_double)
       { ui.wp_commands => -> { CLI.new(ctx_double).run(["wp"]) },
         ui.pd_commands => -> { CLI.new(ctx_double).run(["pd"]) } }.each do |commands, show|

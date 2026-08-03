@@ -85,7 +85,7 @@ module Chomper
     def test_the_repo_comes_from_the_tracker_not_the_prs_base
       # The PR's base repo is the bot's FORK, which matches no registry entry —
       # the change's tracker.json is what records which product repo it belongs to.
-      store = ChangeStore.new(@ctx, @ctx.default_repo)
+      store = PD::ChangeStore.new(@ctx, @ctx.default_repo)
       dir   = store.change_dir("add-recurring-meetings")
       dir.mkpath
       (dir / "tracker.json").write(JSON.generate("repo" => "openproject"))

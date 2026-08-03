@@ -306,12 +306,12 @@ module Chomper
 
     private
 
-    # Built lazily and without an Intake: revising a proposal never reads a
+    # Built lazily and without a PD::Intake: revising a proposal never reads a
     # document, and Intake would drag roo/nokogiri into every gh-agent run.
     def product_runner
       @product_runner ||= begin
-        require_relative "product_runner"
-        ProductRunner.new(@ctx, claude: @claude)
+        require_relative "pd"
+        PD::Runner.new(@ctx, claude: @claude)
       end
     end
 

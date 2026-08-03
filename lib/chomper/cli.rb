@@ -134,18 +134,18 @@ module Chomper
       !!(Clients::GitHub.repo_from_url(target) && Clients::GitHub.pr_number_from_url(target))
     end
 
-    # `pd` is the product-development (spec-driven) pipeline; ProductRunner owns
-    # its subcommand dispatch and its own flags (--repo, --doc-id).
+    # `pd` is the product-development (spec-driven) pipeline; PD::Runner owns its
+    # subcommand dispatch and its own flags (--repo, --doc-id).
     def pd(args)
       # A bare `./chomper pd` is a request for help, so answer it before
       # load_config! can fail at it for an unrelated reason.
       return @ui.pd_usage if args.empty?
       # Required here rather than at boot: no other command touches the pipeline.
       # The intake converter (roo, nokogiri, rubyzip) is deliberately NOT pulled
-      # in — ProductRunner#intake_client requires it on first use, so the stages
+      # in — PD::Runner#intake_client requires it on first use, so the stages
       # that never read a document don't pay for it.
-      require "chomper/product_runner"
-      session("pd", args.first(1)) { ProductRunner.new(@ctx).run(args) }
+      require "chomper/pd"
+      session("pd", args.first(1)) { PD::Runner.new(@ctx).run(args) }
     end
 
     # One "Usage:" shape for every command, so a bad invocation reads the same

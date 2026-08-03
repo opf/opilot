@@ -207,9 +207,9 @@ module Chomper
     # --- the pd spec PR (opened inside the bot's own fork) ----------------
 
     def spec_state(change_id = "add-x")
-      store = ChangeStore.new(@ctx, @repo)
+      store = PD::ChangeStore.new(@ctx, @repo)
       dir   = (@tmpdir / "changes" / change_id).tap(&:mkpath)
-      ChangeState.new(change_id: change_id, store: store, state_dir: dir)
+      PD::ChangeState.new(change_id: change_id, store: store, state_dir: dir)
     end
 
     def test_the_spec_pr_is_opened_inside_the_fork_on_both_sides
