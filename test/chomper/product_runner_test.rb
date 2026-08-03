@@ -157,8 +157,7 @@ module Chomper
       FileUtils.rm_rf((@repo.worktree_host / ".git").to_s)
       error = assert_raises(Chomper::FatalError) { @runner.run(["init", "42"]) }
 
-      assert_match(/No git clone at/, error.message)
-      assert_match(/swept into an unrelated commit/, error.message)
+      assert_match(/No git clone for openproject/, error.message)
       assert_match(/Run `\.\/chomper`/, error.message)
     end
 

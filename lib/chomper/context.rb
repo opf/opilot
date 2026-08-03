@@ -28,8 +28,17 @@ module Chomper
       # agent loops always publish as it), the MAINTAINER is an account with
       # push access (script `ship`/`pr` publish as it by default: direct pushes
       # to the canonical repo, each gated on an interactive yes).
-      @contributor_token  = ENV["GITHUB_CONTRIBUTOR_TOKEN"]
-      @maintainer_token   = ENV["GITHUB_MAINTAINER_TOKEN"]
+      #
+      # Blank is normalised to nil, and that normalisation is load-bearing rather
+      # than tidiness: every consumer asks "is there a token?" as truthiness
+      # (`maintainer_token ? :maintainer : :contributor`, `contributor_token.nil?`,
+      # `contributor_token || maintainer_token`), and compose.yml passes both as
+      # `TOKEN=${TOKEN:-}` — so inside the container an unset token arrives as ""
+      # , which is TRUTHY. Unnormalised, `ship` selected the maintainer identity
+      # with no maintainer token: no fork, a push aimed at the canonical repo, and
+      # `unless author_token` sailing past its own guard.
+      @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
+      @maintainer_token   = presence(ENV["GITHUB_MAINTAINER_TOKEN"])
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
@@ -145,6 +154,13 @@ module Chomper
     def ci_ignored_checks
       ENV.fetch("CHOMPER_CI_IGNORE_CHECKS", "SaaS tests")
          .split(",").map { |s| s.strip.downcase }.reject(&:empty?)
+    end
+
+    private
+
+    # nil for a missing OR blank value, so callers can test one thing.
+    def presence(value)
+      value.to_s.strip.empty? ? nil : value.strip
     end
   end
 end

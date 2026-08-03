@@ -349,8 +349,39 @@ module Chomper
 
     # Git handle on a repo's isolated worktree, memoized per repo so a WP that
     # spans several repos opens each one once.
+    #
+    # The clone check lives here rather than in each command because this is the
+    # funnel every git operation goes through — a check any caller could forget
+    # is a check that will be forgotten.
     def worktree(repo)
-      (@worktrees ||= {})[repo.name] ||= Git.open(repo.worktree_host.to_s)
+      (@worktrees ||= {})[repo.name] ||= begin
+        require_clone!(repo)
+        Git.open(repo.worktree_host.to_s)
+      end
+    end
+
+    # Fail with Claude#ensure_available!'s "start the container" message before a
+    # command that will call Claude does any work — interactive prompts, WP
+    # fetches, a filter wizard — rather than mid-run with a connection error.
+    # `respond_to?` because every runner's tests inject a fake Claude.
+    def ensure_claude!
+      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
+    end
+
+    # `./chomper` provisions the clones, but a clone whose `git clone` failed (a
+    # wrong `base` in repos.json, a network blip) only WARNS and is skipped — so
+    # this state is reachable, and every later stage needs the clone: it is where
+    # Claude writes, and its `.git/info/exclude` is what keeps a `pd` spec tree
+    # out of unrelated commits (installed silently, so its absence says nothing).
+    # Raised instead of letting Git.open surface `path does not exist`, which
+    # names neither the repo nor the fix.
+    def require_clone!(repo)
+      return if (repo.worktree_host / ".git").exist?
+      raise Chomper::FatalError, <<~MSG.strip
+        No git clone for #{repo.name} at #{repo.worktree_host}.
+        Run `./chomper` once to provision the clones (it warns and skips a repo whose
+        clone failed — check that repo's "base" branch in repos.json), then re-run.
+      MSG
     end
 
     # Check out the WP's fix branch in `repo`, creating it from origin/<base> on

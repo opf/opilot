@@ -21,13 +21,19 @@ module Chomper
       contributor? ? @ctx.contributor_token : @ctx.maintainer_token
     end
 
+    # The env var that supplies this identity's token — so a caller that has to
+    # tell the operator what to set names the right one of the two.
+    def token_env_var
+      contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"
+    end
+
     # Push the WP's fix branch in `repo` and open a draft PR there, returning the
     # PR URL (or nil on failure). Idempotent: an already-open PR is recorded and
     # returned. Upstream, base branch, and worktree all come from `repo`, so a WP
     # that spans several repos opens an independent PR in each.
     def open_pr(item_id, subject, branch, repo)
       unless author_token
-        puts "  Error: #{contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"} is not set — cannot open PRs."
+        puts "  Error: #{token_env_var} is not set — cannot open PRs."
         return nil
       end
 

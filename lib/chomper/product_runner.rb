@@ -139,7 +139,7 @@ module Chomper
       state = change_state_for(change_id, store)
       require_intake!(state, change_id)
       # Before the branch is checked out and the tree materialised, not after.
-      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
+      ensure_claude!
 
       # Branch first, then materialise: checking out replaces the working tree,
       # and the spec tree has to land on top of whatever that leaves behind.
@@ -264,24 +264,6 @@ module Chomper
     end
 
     private
-
-    # Every later stage needs a real clone: it is where Claude writes, where the
-    # `openspec` CLI expects the tree relative to the code, and — via
-    # `.git/info/exclude` — what keeps the spec tree out of unrelated commits.
-    # That exclude is installed silently (`ChangeStore#exclude_from_clone!`
-    # returns when `.git/info` is absent), so a half-provisioned clone would
-    # otherwise leave the tree sweepable into someone else's commit with nothing
-    # said. This is the one preflight where quiet degradation is dangerous rather
-    # than merely late.
-    def require_clone!(repo)
-      return if (repo.worktree_host / ".git").exist?
-      raise Chomper::FatalError, <<~MSG.strip
-        No git clone at #{repo.worktree_host}.
-        The spec tree lives inside this clone, and its `.git/info/exclude` entry is
-        what stops `openspec/` being swept into an unrelated commit. Run `./chomper`
-        once to provision the clones, then re-run this command.
-      MSG
-    end
 
     # Resolve the publishing identity now rather than at `propose`'s push. Every
     # `pd` stage publishes as the contributor bot, and propose only discovers a
@@ -749,7 +731,7 @@ module Chomper
         return nil
       end
 
-      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
+      ensure_claude!
       # Branch first, then materialise: checking out replaces the working tree.
       checkout_branch(st, repo)
       found[:store].materialise!

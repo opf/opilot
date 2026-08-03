@@ -31,6 +31,7 @@ module Chomper
     end
 
     def run
+      ensure_claude!
       filters = setup
       puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 

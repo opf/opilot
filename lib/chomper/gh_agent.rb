@@ -35,6 +35,7 @@ module Chomper
         puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — gh-agent acts as the bot account and needs its token."
         return
       end
+      ensure_claude!
       scan_from_at = setup
       puts "  gh-agent started — polling chomper + upstream PRs every #{POLL_INTERVAL}s. Ctrl-C to stop."
 

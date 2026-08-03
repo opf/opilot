@@ -18,6 +18,7 @@ module Chomper
     def run(initial_message = nil)
       # One fresh session per invocation: thread context across turns within this
       # run, but never resume a stale conversation from a previous one.
+      ensure_claude!
       session_file = @ctx.state_dir / "chat_session_id"
       safe_rm(session_file)
 

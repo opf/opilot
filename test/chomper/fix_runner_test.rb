@@ -71,7 +71,9 @@ module Chomper
         Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
         "/state",
         Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry,
-        nil, nil
+        # A contributor token, because `ship` now refuses without one — as it must,
+        # since it ends in a push. The token-less cases are tested explicitly below.
+        "contributor-tok", nil
       )
     end
 
@@ -111,6 +113,44 @@ module Chomper
       assert_includes out, "\a", "the approval prompt should ring the bell"
       assert_includes out, "\e]9;chomper: plan for #42 ready for review\e\\",
                       "the approval prompt should post an OSC 9 notification naming the WP"
+    end
+
+    # --- the publishing identity ------------------------------------------
+
+    def test_ship_refuses_before_any_claude_work_without_a_token
+      # Publish#open_pr reported this at the very END, after a full plan and
+      # implement run. `pr` has always checked up front; ship now does too.
+      @ctx.contributor_token = nil
+      err = assert_raises(Chomper::FatalError) { capture_io { runner.ship_ids("42") } }
+      assert_match(/set GITHUB_CONTRIBUTOR_TOKEN in \.env to ship/, err.message)
+      assert_match(/build.*plan.*need no token/, err.message)
+    end
+
+    def test_build_and_plan_still_work_without_a_token
+      # They stop before publishing, so requiring one would be gratuitous.
+      @ctx.contributor_token = nil
+      data = write_item(7, "Local only")
+      # Skipped at the approval prompt: what matters is that neither command
+      # refused before getting there.
+      %i[build_ids plan_ids].each do |mode|
+        run = NoGitRunner.new(@ctx, pull: FakePull.new(single: data), claude: FakePlanClaude.new)
+        capture_io { with_stdin("s\n") { run.public_send(mode, "7") } }
+      end
+    end
+
+    def test_a_blank_maintainer_token_does_not_select_the_maintainer_identity
+      # Regression: compose.yml passes GITHUB_MAINTAINER_TOKEN="" when it is
+      # unset, and "" is truthy — so ship published as the MAINTAINER with no
+      # maintainer token: no fork, and a confirm-push prompt aimed at the
+      # canonical repo. Context normalises blank to nil; this pins the effect.
+      @ctx.maintainer_token = ""
+      publish = FixRunner.new(@ctx, pull: FakePull.new, claude: nil).instance_variable_get(:@publish)
+      assert_equal :contributor, publish.instance_variable_get(:@as)
+
+      @ctx.maintainer_token = "maint-tok"
+      publish = FixRunner.new(@ctx, pull: FakePull.new, claude: nil).instance_variable_get(:@publish)
+      assert_equal :maintainer, publish.instance_variable_get(:@as),
+                   "a real maintainer token still selects direct publishing"
     end
 
     def test_ship_fails_when_wp_cannot_be_fetched

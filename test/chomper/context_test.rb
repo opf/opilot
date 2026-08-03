@@ -82,6 +82,22 @@ module Chomper
       end
     end
 
+    def test_a_blank_token_is_the_same_as_no_token
+      # compose.yml passes both as `TOKEN=${TOKEN:-}`, so inside the container an
+      # unset token arrives as "" — which is TRUTHY, while every consumer asks
+      # "is there a token?" as truthiness. Unnormalised, `ship` picked the
+      # maintainer identity with no maintainer token: no fork, and a push aimed
+      # at the canonical repo.
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "", "GITHUB_MAINTAINER_TOKEN" => "  ") do
+        ctx = Context.build(@tmpdir)
+        assert_nil ctx.contributor_token
+        assert_nil ctx.maintainer_token
+      end
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => " bot-tok ") do
+        assert_equal "bot-tok", Context.build(@tmpdir).contributor_token, "and it is trimmed"
+      end
+    end
+
     def test_assign_trigger_is_on_by_default_and_opt_out
       with_env("CHOMPER_ASSIGN_TRIGGER" => nil) { assert Context.build(@tmpdir).assign_trigger? }
       with_env("CHOMPER_ASSIGN_TRIGGER" => "1") { assert Context.build(@tmpdir).assign_trigger? }
