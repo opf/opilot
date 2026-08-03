@@ -530,13 +530,10 @@ module Chomper
       puts "  several changes and propose each separately."
     end
 
-    # The `pd` pipeline ALWAYS publishes as the contributor bot. FixRunner picks
-    # its identity from the configured tokens; this must not, because every `pd`
-    # push targets the bot's own fork. The CLI already refuses to dispatch `pd`
-    # at all when a maintainer token is set — this is the second belt, so the
-    # guard is never the only thing standing between `pd` and a canonical push.
+    # Like every other mode, `pd` publishes as the contributor bot: spec
+    # branches and spec-derived work go to the bot's own fork.
     def publish
-      @publish ||= Publish.new(@ctx, as: :contributor)
+      @publish ||= Publish.new(@ctx)
     end
 
     # Push the spec branch, open the PR that is the approval gate, and hang a

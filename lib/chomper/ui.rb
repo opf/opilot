@@ -78,8 +78,7 @@ module Chomper
                             fix to the local clone — nothing is pushed and no PR is opened
           ship <id>...      Plan, approve, implement, and ship one or more work packages as draft
                             PRs; picks up a branch committed earlier by build (`fix` is an alias).
-                            Publishes via the contributor bot's fork; with GITHUB_MAINTAINER_TOKEN
-                            set, publishes directly as the maintainer (each push confirmed)
+                            Publishes via the contributor bot's fork — a maintainer merges
           pr <id|url>...    Refresh a work package's shipped PR(s): merge in the latest base branch,
                             fix failing CI, and address new review comments, then push (with confirmation).
                             A pasted GitHub PR URL is resolved to its WP (and the WP mirrored) via the
@@ -88,8 +87,7 @@ module Chomper
                             ids fetch exactly those, no ids runs the filter wizard for a bulk grab
           chat [message]    Free read-only chat about your local mirrors (items + PRs); no fetch or ship
 
-        Product development (spec-driven pipeline; publishes as the contributor bot,
-        so it refuses to run while GITHUB_MAINTAINER_TOKEN is set):
+        Product development (spec-driven pipeline; publishes as the contributor bot):
           pd init <project-id> [--repo <name>]
                             Resolve the OpenProject ids (FEATURE/IMPLEMENTATION types,
                             statuses) and seed the canonical OpenSpec store
@@ -125,8 +123,7 @@ module Chomper
           OPENPROJECT_TOKEN       OpenProject API token
           ANTHROPIC_API_KEY       A real key (recommended; held by authgw, never in claude) or the
                                   literal "oauth" for interactive claude auth login
-          GITHUB_CONTRIBUTOR_TOKEN  Bot account token — fork publishing; used by the agent modes
-          GITHUB_MAINTAINER_TOKEN   Push-access token — direct publishing for ship/pr (each push confirmed)
+          GITHUB_CONTRIBUTOR_TOKEN  Bot account token — chomper's only identity; fork publishing
           CHOMPER_ALLOWED_OP_USER_IDS  Comma-separated OpenProject user ids allowed to trigger @chomper
           CHOMPER_ALLOWED_GH_USERS Comma-separated GitHub logins allowed to trigger gh-agent
 

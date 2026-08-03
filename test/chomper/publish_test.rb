@@ -1,5 +1,4 @@
 require_relative "../test_helper"
-require "stringio"
 
 module Chomper
   class PublishTest < Minitest::Test
@@ -7,14 +6,14 @@ module Chomper
     # branch goes to the fork and the PR is opened against the repo's upstream.
     class FakeGitHub
       attr_reader :forked, :pushed, :pr_calls, :gist_calls, :body_updates, :synced
-      attr_accessor :sync_ok
+      attr_accessor :sync_ok, :fork_result
       def initialize(existing: nil)
         @existing = existing; @forked = []; @pushed = []; @pr_calls = []; @gist_calls = []
         @body_updates = []; @synced = []; @sync_ok = true
       end
       def sync_fork_branch(fork, branch:); @synced << [fork, branch]; @sync_ok; end
       def login; "op-chomper"; end
-      def ensure_fork(upstream); @forked << upstream; "me/#{upstream.split('/').last}"; end
+      def ensure_fork(upstream); @forked << upstream; @fork_result || "me/#{upstream.split('/').last}"; end
       def find_open_pr(_base_repo, head:); @existing; end
       def push_branch(repo, branch:, worktree_path:); @pushed << [repo, branch]; end
       def create_gist(description:, filename:, content:, public: false)
@@ -32,7 +31,7 @@ module Chomper
       def revparse(_ref); "sha"; end          # branch "exists"
     end
 
-    CtxStruct = Struct.new(:contributor_token, :maintainer_token, :state_dir, :log_file, :progress_file, :repos) do
+    CtxStruct = Struct.new(:contributor_token, :state_dir, :log_file, :progress_file, :repos) do
       def default_repo; repos.default; end
       def op_host; "test.host"; end            # WP mirror namespace
       def op_url; "https://test.host"; end     # instance URL (for WP-link matching)
@@ -44,18 +43,18 @@ module Chomper
       state.mkpath
       registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: "/op")
       @repo = registry.default
-      @ctx = CtxStruct.new("bot-tok", "maint-tok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", registry)
+      @ctx = CtxStruct.new("bot-tok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", registry)
 
       @dir = state / "work_packages" / "test.host" / "42"
       (@dir / "repos" / @repo.name).mkpath
       (@dir / "repos" / @repo.name / "pr.md").write("# Ticket\nhttps://test.host/work_packages/42\n\nPR body here")
 
-      @publish = build_publish   # contributor (fork) by default
+      @publish = build_publish
       @github  = @publish.instance_variable_get(:@github)
     end
 
-    def build_publish(as: :contributor)
-      publish = Publish.new(@ctx, as: as)
+    def build_publish
+      publish = Publish.new(@ctx)
       publish.instance_variable_set(:@github, FakeGitHub.new)
       publish.instance_variable_set(:@worktrees, { @repo.name => FakeWorktree.new })
       publish
@@ -102,15 +101,7 @@ module Chomper
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
     end
 
-    def test_maintainer_pr_gets_no_adopt_note
-      @publish = build_publish(as: :maintainer)
-      @github  = @publish.instance_variable_get(:@github)
-      with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
-
-      assert_empty @github.body_updates, "a same-repo PR has no fork-CI limitation to note"
-    end
-
-    def test_contributor_pr_body_defangs_the_wp_link
+    def test_pr_body_defangs_the_wp_link
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       body = @github.pr_calls.first[:body]
@@ -118,17 +109,6 @@ module Chomper
                       "the WP link's scheme is defanged so OpenProject won't auto-reference the WP"
       refute_includes body, "https://test.host/work_packages/42",
                       "the live (linkable) scheme must not survive in a contributor PR"
-    end
-
-    def test_maintainer_pr_body_keeps_the_wp_link_intact
-      @publish = build_publish(as: :maintainer)
-      @github  = @publish.instance_variable_get(:@github)
-      with_stdin("y\n") { capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
-
-      body = @github.pr_calls.first[:body]
-      assert_includes body, "https://test.host/work_packages/42",
-                      "a maintainer PR is real, so its link references the WP immediately"
-      refute_includes body, "hxxp"
     end
 
     def test_base_branch_comes_from_the_repo
@@ -154,59 +134,26 @@ module Chomper
                    "the PR targets the per-WP base override, not the repo default"
     end
 
-    def test_maintainer_pushes_to_upstream_and_opens_same_repo_pr
-      @publish = build_publish(as: :maintainer)
-      @github  = @publish.instance_variable_get(:@github)
-      url = nil
-      out, = with_stdin("y\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
-
-      assert_includes out, "Push bug/42-fix-the-bug to opf/openproject?",
-                      "a canonical push must be gated on an interactive yes"
-      assert_empty @github.forked, "the maintainer identity must not fork"
-      assert_equal [["opf/openproject", "bug/42-fix-the-bug"]], @github.pushed,
-                   "the maintainer pushes the branch straight to upstream"
-      call = @github.pr_calls.first
-      assert_equal "opf/openproject", call[:repo]
-      assert_equal "opf:bug/42-fix-the-bug", call[:head], "same-repo head is upstream_owner:branch"
-      assert_equal false, call[:mcm], "same-repo PRs must disable maintainer edits (GitHub 422s otherwise)"
-    end
-
-    def test_maintainer_declined_push_opens_no_pr
-      @publish = build_publish(as: :maintainer)
-      @github  = @publish.instance_variable_get(:@github)
+    # The backstop on the one publishing shape chomper has: if the fork lookup
+    # ever resolves to the canonical repo itself (a bot account that turns out to
+    # own the upstream), the push is refused instead of landing on opf/*.
+    def test_a_canonical_push_target_is_refused_and_opens_no_pr
+      @github.fork_result = "opf/openproject"
       url = :unset
-      out, = with_stdin("s\n") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
+      out, = capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       assert_nil url
-      assert_empty @github.pushed, "a declined canonical push must not reach the remote"
+      assert_empty @github.pushed, "chomper must never push to a canonical repo"
       assert_empty @github.pr_calls, "no push → no PR"
       refute pr_url_file.exist?
-      assert_includes out, "Push declined"
+      assert_includes out, "Refusing to push"
     end
 
-    def test_maintainer_with_non_interactive_stdin_declines_the_push
-      @publish = build_publish(as: :maintainer)
-      @github  = @publish.instance_variable_get(:@github)
-      url = :unset
-      with_stdin("") { capture_io { url = @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) } }
-
-      assert_nil url, "an unattended canonical push must never happen unconfirmed"
-      assert_empty @github.pushed
-    end
-
-    def test_missing_identity_token_opens_no_pr
+    def test_missing_token_opens_no_pr
       @ctx.contributor_token = nil
       out, = capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
       assert_includes out, "GITHUB_CONTRIBUTOR_TOKEN is not set"
       assert_empty @github.pushed
-    end
-
-    def with_stdin(text)
-      old = $stdin
-      $stdin = StringIO.new(text)
-      yield
-    ensure
-      $stdin = old
     end
 
     def test_existing_pr_is_reported_without_pushing
@@ -296,7 +243,7 @@ module Chomper
 
     def test_an_existing_spec_pr_is_reused_rather_than_reopened
       github = FakeGitHub.new(existing: "https://github.com/me/openproject/pull/3")
-      publish = Publish.new(@ctx, as: :contributor)
+      publish = Publish.new(@ctx)
       publish.instance_variable_set(:@github, github)
       state = spec_state
 

@@ -262,23 +262,17 @@ module Chomper
     end
 
     # The one push-safety rule: no push ever lands on a canonical repo (a
-    # registry upstream) without an explicit interactive yes — nothing bypasses
-    # it, and a non-interactive stdin (unattended run) declines rather than
-    # pushing unconfirmed. Pushes anywhere else (the contributor bot's fork)
-    # pass straight through.
-    def confirm_canonical_push?(target_repo, branch)
-      return true unless canonical_repo?(target_repo)
-      ping_terminal("chomper: confirm push of #{branch} to #{target_repo}")
-      loop do
-        print "  Push #{branch} to #{target_repo}? [y]es push / [s]kip: "
-        response = $stdin.gets
-        return false if response.nil?   # no interactive stdin — never push unconfirmed
-        case response.chomp.downcase
-        when "y", "yes"             then return true
-        when "s", "skip", "n", "no" then return false
-        else puts "  Please enter y or s."
-        end
-      end
+    # registry upstream). chomper publishes only from the contributor bot's own
+    # fork, so a canonical target is always a mistake — the head of a PR a
+    # maintainer adopted, or a fork lookup that resolved to the upstream itself
+    # — and is refused outright rather than prompted for. Pushes anywhere else
+    # (the bot's fork) pass straight through. Returns true when the push must
+    # NOT happen, so callers read `return if refuse_canonical_push?(…)`.
+    def refuse_canonical_push?(target_repo, branch)
+      return false unless canonical_repo?(target_repo)
+      log_script "Refusing to push #{branch} to #{target_repo} — chomper only pushes to the " \
+                 "contributor bot's fork; a canonical repo is a maintainer's to write to."
+      true
     end
 
     # Is this "owner/repo" one of the registry upstreams, i.e. a canonical repo?

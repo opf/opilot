@@ -8,7 +8,7 @@ module Chomper
 
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
-                :log_file, :claude_url, :contributor_token, :maintainer_token,
+                :log_file, :claude_url, :contributor_token,
                 :state_container, :op_url, :token
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
@@ -22,23 +22,16 @@ module Chomper
       @state_dir          = @script_dir / ".chomper"
       @progress_file      = @state_dir / "progress.txt"
       @log_file           = @state_dir / "chomp.log"
-      # Two GitHub identities, and the command determines which one acts:
-      # the CONTRIBUTOR is the dedicated bot account (no access to the canonical
-      # repos — it forks, pushes to its fork, opens cross-repo draft PRs; the
-      # agent loops always publish as it), the MAINTAINER is an account with
-      # push access (script `ship`/`pr` publish as it by default: direct pushes
-      # to the canonical repo, each gated on an interactive yes).
+      # chomper's one GitHub identity: the CONTRIBUTOR, a dedicated bot account
+      # with no access to the canonical repos. It forks, pushes to its fork, and
+      # opens cross-repo draft PRs — every mode publishes this way, so a
+      # maintainer's merge is always the gate.
       #
       # Blank is normalised to nil, and that normalisation is load-bearing rather
-      # than tidiness: every consumer asks "is there a token?" as truthiness
-      # (`maintainer_token ? :maintainer : :contributor`, `contributor_token.nil?`,
-      # `contributor_token || maintainer_token`), and compose.yml passes both as
-      # `TOKEN=${TOKEN:-}` — so inside the container an unset token arrives as ""
-      # , which is TRUTHY. Unnormalised, `ship` selected the maintainer identity
-      # with no maintainer token: no fork, a push aimed at the canonical repo, and
-      # `unless author_token` sailing past its own guard.
+      # than tidiness: consumers ask "is there a token?" as truthiness, and
+      # compose.yml passes the token as `TOKEN=${TOKEN:-}` — so inside the
+      # container an unset token arrives as "", which is TRUTHY.
       @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
-      @maintainer_token   = presence(ENV["GITHUB_MAINTAINER_TOKEN"])
       @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer

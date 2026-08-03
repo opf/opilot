@@ -4,27 +4,25 @@ module Chomper
   class Publish
     include Helpers
 
-    # `as` is the publishing identity. :contributor (the default) is the bot
-    # account: it forks the upstream, pushes there, and opens a cross-repo draft
-    # PR — the agent loops always publish this way. :maintainer is an account
-    # with push access: the branch goes straight to the canonical repo and a
-    # same-repo draft PR is opened, every push gated on an interactive yes.
-    def initialize(ctx, as: :contributor)
+    # chomper has one publishing identity: the CONTRIBUTOR bot. It forks the
+    # upstream, pushes the branch to its own fork, and opens a cross-repo draft
+    # PR — nothing chomper produces is ever pushed to a canonical repo, so a
+    # maintainer's review and merge is always the gate.
+    def initialize(ctx)
       @ctx    = ctx
-      @as     = as
       @github = Clients::GitHub.new(author_token)
     end
 
-    # The token of the identity this publisher acts as — also the author
-    # identity adopted for commits, so a PR's commits match its opener.
+    # The bot's token — also the author identity adopted for commits, so a PR's
+    # commits match its opener.
     def author_token
-      contributor? ? @ctx.contributor_token : @ctx.maintainer_token
+      @ctx.contributor_token
     end
 
-    # The env var that supplies this identity's token — so a caller that has to
-    # tell the operator what to set names the right one of the two.
+    # The env var that supplies it, so a caller that has to tell the operator
+    # what to set names it in one place.
     def token_env_var
-      contributor? ? "GITHUB_CONTRIBUTOR_TOKEN" : "GITHUB_MAINTAINER_TOKEN"
+      "GITHUB_CONTRIBUTOR_TOKEN"
     end
 
     # Push the WP's fix branch in `repo` and open a draft PR there, returning the
@@ -52,13 +50,10 @@ module Chomper
         return nil
       end
 
-      # As the contributor the branch goes to the bot's fork and the PR is
-      # opened against upstream with a cross-repo head ("fork_owner:branch"),
-      # keeping the token off the canonical repo. As the maintainer the branch
-      # is pushed straight to upstream and a same-repo PR is opened — the token
-      # needs push access there, and maintainer-edits must be disabled (GitHub
-      # 422s on a same-repo PR). Either way the head is "owner:branch".
-      target_repo = contributor? ? @github.ensure_fork(upstream) : upstream
+      # The branch goes to the bot's fork and the PR is opened against upstream
+      # with a cross-repo head ("fork_owner:branch"), keeping the token off the
+      # canonical repo.
+      target_repo = @github.ensure_fork(upstream)
       head        = "#{target_repo.split('/').first}:#{branch}"
 
       existing = @github.find_open_pr(upstream, head: head)
@@ -67,7 +62,7 @@ module Chomper
         return existing
       end
 
-      log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}, as #{@as}) — #{subject}"
+      log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}, via #{target_repo}) — #{subject}"
 
       # Keep the PR body compact; attach the full plan as a (secret) gist and
       # link it under the banner for anyone who wants to read deeper.
@@ -76,23 +71,24 @@ module Chomper
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
       pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
 
-      # A contributor PR lives on upstream but isn't a maintainer's PR yet —
-      # defang its WP link (http→hxxp) so the OpenProject GitHub integration
-      # doesn't auto-reference the WP and clutter its activity tab (`gh adopt`
-      # re-fangs it when a maintainer promotes it). Maintainer PRs are real, so
-      # their link is left intact and links immediately.
-      pr_body = neutralize_wp_links(pr_body) if contributor?
+      # The PR lives on upstream but isn't a maintainer's PR yet — defang its WP
+      # link (http→hxxp) so the OpenProject GitHub integration doesn't
+      # auto-reference the WP and clutter its activity tab (`gh adopt` re-fangs
+      # it when a maintainer promotes it).
+      pr_body = neutralize_wp_links(pr_body)
 
-      unless confirm_canonical_push?(target_repo, branch)
-        puts "  Push declined — #{branch} was not pushed and no PR was opened."
+      # Backstop: the target is the bot's fork, so this never fires — unless
+      # ensure_fork resolved to the upstream itself, which must not be pushed to.
+      if refuse_canonical_push?(target_repo, branch)
+        puts "  #{branch} was not pushed and no PR was opened."
         return nil
       end
       @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
       title = pr_title(item_id, subject)
       url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
-                                    maintainer_can_modify: contributor?)
-      add_adopt_note(upstream, url, pr_body, banner) if contributor?
+                                    maintainer_can_modify: true)
+      add_adopt_note(upstream, url, pr_body, banner)
       pr_url_file.write(url)
       record_progress(item_id, branch, "published:#{repo.name}")
       url
@@ -119,7 +115,7 @@ module Chomper
     # and nothing downstream depends on the merge, because `pd generate-wp` reads
     # the local spec store rather than the branch.
     #
-    # The fork is not a registry upstream, so confirm_canonical_push? passes
+    # The fork is not a registry upstream, so refuse_canonical_push? passes it
     # straight through; `spec/<id>` is not a protected branch name either.
     # Idempotent: an already-open PR for this head is recorded and returned.
     def open_spec_pr(state, repo, body:)
@@ -147,10 +143,10 @@ module Chomper
       # fork was created alongside the spec files, and the PR is unreviewable.
       @github.sync_fork_branch(fork, branch: base)
 
-      unless confirm_canonical_push?(fork, branch)
+      if refuse_canonical_push?(fork, branch)
         # Say why: without this the caller reports "couldn't open the PR — is
         # GITHUB_CONTRIBUTOR_TOKEN set?", naming the wrong cause entirely.
-        puts "  Push declined — #{branch} was not pushed and no PR was opened."
+        puts "  #{branch} was not pushed and no PR was opened."
         return nil
       end
       @github.push_branch(fork, branch: branch, worktree_path: repo.worktree_host)
@@ -168,14 +164,10 @@ module Chomper
 
     private
 
-    def contributor?
-      @as == :contributor
-    end
-
     # Where the `gh adopt` alias (one-time setup) is documented.
     ADOPT_DOC_URL = "https://github.com/opf/openproject-chomper#adopting-a-chomper-pr"
 
-    # A contributor PR is opened cross-repo against upstream from the bot's fork,
+    # Every chomper PR is opened cross-repo against upstream from the bot's fork,
     # which can't run secret-gated CI, so tell maintainers up front how to
     # re-publish it under their own account. The PR lives in the upstream repo, so
     # a bare number resolves against the maintainer's canonical checkout. The

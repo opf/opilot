@@ -88,8 +88,8 @@ if _need GITHUB_CONTRIBUTOR_TOKEN; then
   # creates/updates any workflow file without it. 'gist' lets chomper attach
   # each WP's full plan as a secret gist linked from the PR (skipped if absent).
   echo "  CONTRIBUTOR token — the dedicated BOT account chomper publishes as (not you)."
-  echo "  Used by the agent modes (always) and by 'ship' when no maintainer token"
-  echo "  is set. Create a SEPARATE"
+  echo "  Used by every mode that publishes: chomper only ever opens fork PRs."
+  echo "  Create a SEPARATE"
   echo "  GitHub account that is NOT a collaborator on the product repo (a personal/user"
   echo "  account — org accounts can't grant maintainer edits), then make a classic"
   echo "  token for IT with the 'public_repo', 'workflow' and 'gist' scopes:"
@@ -102,11 +102,6 @@ if _need GITHUB_CONTRIBUTOR_TOKEN; then
   _save GITHUB_CONTRIBUTOR_TOKEN "$GITHUB_CONTRIBUTOR_TOKEN_ENTRY"
   echo ""
 fi
-
-# The MAINTAINER identity (GITHUB_MAINTAINER_TOKEN — an account with push
-# access; switches `ship`/`pr` to direct publishing, every canonical push
-# confirmed interactively) is deliberately NOT part of the wizard: it's an
-# advanced opt-in, set by adding the key to .env by hand.
 
 # The GH allowlist only gates gh-agent's PR triggers (the `pr` command ignores
 # it), so only the agent modes that include gh-agent should demand it — and only

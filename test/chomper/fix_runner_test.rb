@@ -63,7 +63,7 @@ module Chomper
       @ctx = Struct.new(
         :script_dir, :state_dir, :op_url, :token, :state_container,
         :log_file, :progress_file, :repos,
-        :contributor_token, :maintainer_token
+        :contributor_token
       ) do
         def default_repo; repos.default; end
         def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
@@ -73,7 +73,7 @@ module Chomper
         Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry,
         # A contributor token, because `ship` now refuses without one — as it must,
         # since it ends in a push. The token-less cases are tested explicitly below.
-        "contributor-tok", nil
+        "contributor-tok"
       )
     end
 
@@ -138,19 +138,12 @@ module Chomper
       end
     end
 
-    def test_a_blank_maintainer_token_does_not_select_the_maintainer_identity
-      # Regression: compose.yml passes GITHUB_MAINTAINER_TOKEN="" when it is
-      # unset, and "" is truthy — so ship published as the MAINTAINER with no
-      # maintainer token: no fork, and a confirm-push prompt aimed at the
-      # canonical repo. Context normalises blank to nil; this pins the effect.
-      @ctx.maintainer_token = ""
+    def test_ship_publishes_as_the_contributor_bot
+      # There is one publishing identity, and `ship` uses it like every other
+      # mode: the fix branch goes to the bot's fork, never to a canonical repo.
       publish = FixRunner.new(@ctx, pull: FakePull.new, claude: nil).instance_variable_get(:@publish)
-      assert_equal :contributor, publish.instance_variable_get(:@as)
-
-      @ctx.maintainer_token = "maint-tok"
-      publish = FixRunner.new(@ctx, pull: FakePull.new, claude: nil).instance_variable_get(:@publish)
-      assert_equal :maintainer, publish.instance_variable_get(:@as),
-                   "a real maintainer token still selects direct publishing"
+      assert_equal "contributor-tok", publish.author_token
+      assert_equal "GITHUB_CONTRIBUTOR_TOKEN", publish.token_env_var
     end
 
     def test_ship_fails_when_wp_cannot_be_fetched

@@ -53,23 +53,8 @@ module Chomper
     private
 
     # `pd` is the product-development (spec-driven) pipeline. Every subcommand
-    # goes through here, which is also the single place the direct-publish guard
-    # is enforced.
-    #
-    # The whole pipeline assumes the CONTRIBUTOR identity: a fork the bot owns
-    # and may push to, and product PRs opened from it. With a maintainer token
-    # set, chomper is in direct-publish mode — Publish skips the fork and pushes
-    # straight to the canonical repo — so a `pd` run would try to push spec
-    # branches and spec-derived work to opf/*. Refuse before load_config! does
-    # any network work rather than discovering it at push time.
+    # goes through here.
     def pd(argv)
-      if @ctx.maintainer_token
-        raise Chomper::FatalError, <<~MSG.strip
-          pd commands are unavailable while GITHUB_MAINTAINER_TOKEN is set (direct-publish
-          mode). The product-development pipeline publishes as the contributor bot.
-          Unset it in .env and re-run.
-        MSG
-      end
       # Required here rather than at boot: the intake converter drags in roo,
       # nokogiri and rubyzip, and no other command touches them.
       require "chomper/intake"

@@ -31,9 +31,7 @@ An OpenProject AI development orchestrator that helps you implement work package
 ## Requirements
 
 - **Docker**
-- GitHub auth token
-  - Core `opf` org PRs: OpenProject member token
-  - Outside contributor PRs: Any GitHub user (we currently use [op-chomper](https://github.com/op-chomper))
+- GitHub auth token for a **bot account** that is not a collaborator on the product repos — chomper only ever opens fork PRs (we currently use [op-chomper](https://github.com/op-chomper))
 - OpenProject API token (read-only for script mode, comment-writable for agent mode)
 
 ---
@@ -142,7 +140,7 @@ comments), so it is boxed in from several directions:
 
 | Command | What it does |
 |---|---|
-| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit. Publishes via the contributor bot's fork; with `GITHUB_MAINTAINER_TOKEN` set, directly as the maintainer (each push confirmed) |
+| `./chomper ship <id>...` | Plan → approve → implement → draft PR, per work package. `plan` stops at the approved plan, `build` at the local commit. Publishes via the contributor bot's fork |
 | `./chomper pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
 | `./chomper pull [<id>...]` | Mirror work packages into the local cache |
 | `./chomper chat [message]` | Free read-only chat about the local mirrors |
@@ -172,23 +170,16 @@ runs the full `pr`-command refresh (forced base merge, CI fix, feedback sweep).
 
 ## Reviewing & pushing
 
-Chomper publishes as one of two GitHub **identities** — the command determines
-which one acts, the identity determines the publishing shape, and an existing
-PR determines its own push target:
+Chomper publishes as a single GitHub **identity**, the **contributor**
+(`GITHUB_CONTRIBUTOR_TOKEN`), in every mode:
 
-* **Contributor** (`GITHUB_CONTRIBUTOR_TOKEN`)
-  * A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
-  * The **only** identity Agent mode uses: the loops run unattended, and the bot physically cannot push to the canonical repo
-  * Also used by `ship` when no maintainer token is configured
-  * Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
-* **Maintainer** (`GITHUB_MAINTAINER_TOKEN`)
-  * Your own account, with push access to the canonical repo
-  * Used by script mode (`ship` / `pr`) whenever it is configured: pushes the fix branch straight to the canonical repo and opens a same-repo draft PR
-  * Every push to a canonical repo is confirmed interactively — no flag or env var bypasses that
-  * Optional: without it, `ship` publishes via the contributor bot's fork instead.
+* A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
+* No push ever targets a canonical repo: fork PRs are the only publishing shape, so a maintainer's review and merge is always the gate, and the unattended loops physically cannot land anything upstream
+* Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
 
-Refreshing an existing PR (`pr <id|url>`, `@chomper refresh`) needs no choice:
-the push goes to the PR's head repo with whichever identity owns it.
+Refreshing an existing PR (`pr <id|url>`, `@chomper refresh`) pushes to the PR's
+head branch on the bot's fork. A PR whose head lives on the canonical repo (one
+you adopted, say) is not chomper's to write to, so its refresh is discarded.
 
 ### Adopting a chomper PR
 

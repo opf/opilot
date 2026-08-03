@@ -217,54 +217,19 @@ module Chomper
       assert_match(/could not verify GITHUB_CONTRIBUTOR_TOKEN \(401 Unauthorized\)/, broken)
     end
 
-    # The pd pipeline always publishes as the contributor bot, even if a
-    # maintainer token somehow reached it — the CLI guard must never be the only
-    # thing between pd and a canonical push.
-    def test_publish_identity_is_contributor_regardless_of_tokens
-      saved = ENV["GITHUB_MAINTAINER_TOKEN"]
-      ENV["GITHUB_MAINTAINER_TOKEN"] = "maintainer-token"
+    # Like every other mode, pd publishes as the contributor bot — the only
+    # identity chomper has.
+    def test_publish_identity_is_the_contributor_bot
+      saved = ENV["GITHUB_CONTRIBUTOR_TOKEN"]
+      ENV["GITHUB_CONTRIBUTOR_TOKEN"] = "bot-token"
       begin
         ctx = Context.build(@tmpdir)
         publish = ProductRunner.new(ctx, op: Object.new, intake: Object.new).send(:publish)
-        assert_equal :contributor, publish.instance_variable_get(:@as)
+        assert_equal "bot-token", publish.author_token
+        assert_equal "GITHUB_CONTRIBUTOR_TOKEN", publish.token_env_var
       ensure
-        saved.nil? ? ENV.delete("GITHUB_MAINTAINER_TOKEN") : ENV["GITHUB_MAINTAINER_TOKEN"] = saved
+        saved.nil? ? ENV.delete("GITHUB_CONTRIBUTOR_TOKEN") : ENV["GITHUB_CONTRIBUTOR_TOKEN"] = saved
       end
-    end
-  end
-
-  class CLIProductGuardTest < Minitest::Test
-    def setup
-      @tmpdir = Pathname(Dir.mktmpdir)
-      @saved  = ENV["GITHUB_MAINTAINER_TOKEN"]
-    end
-
-    def teardown
-      @saved.nil? ? ENV.delete("GITHUB_MAINTAINER_TOKEN") : ENV["GITHUB_MAINTAINER_TOKEN"] = @saved
-      FileUtils.rm_rf(@tmpdir)
-    end
-
-    # Direct-publish mode pushes straight to the canonical repo. Every pd stage
-    # assumes the contributor fork instead, so the whole namespace refuses to
-    # start rather than discovering the mismatch at push time.
-    def test_pd_refuses_to_run_in_direct_publish_mode
-      ENV["GITHUB_MAINTAINER_TOKEN"] = "maintainer-token"
-      cli = CLI.new(Context.build(@tmpdir))
-
-      %w[init intake propose generate-wp implement archive].each do |sub|
-        error = assert_raises(Chomper::FatalError) { cli.run(["pd", sub, "42", "add-x"]) }
-        assert_match(/GITHUB_MAINTAINER_TOKEN/, error.message)
-        assert_match(/contributor bot/, error.message)
-      end
-    end
-
-    def test_the_guard_fires_before_any_config_or_network_work
-      ENV["GITHUB_MAINTAINER_TOKEN"] = "maintainer-token"
-      ctx = Context.build(@tmpdir)
-      # load_config! would raise its own "Config not found" without a URL/token;
-      # seeing the maintainer message proves the guard ran first.
-      error = assert_raises(Chomper::FatalError) { CLI.new(ctx).run(["pd", "init", "42"]) }
-      refute_match(/Config not found/, error.message)
     end
   end
 end

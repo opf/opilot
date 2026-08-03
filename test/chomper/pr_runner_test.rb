@@ -120,13 +120,13 @@ module Chomper
       registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
       @repo = registry.default
       @ctx = Struct.new(
-        :state_dir, :state_container, :contributor_token, :maintainer_token, :op_url,
+        :state_dir, :state_container, :contributor_token, :op_url,
         :log_file, :progress_file, :repos, :ignored_checks
       ) do
         def op_host; "test.host"; end
         def ci_ignored_checks; ignored_checks; end
       end.new(
-        state_dir, "/state", "gh-token", nil, "https://test.host", Pathname(@tmpdir) / "chomp.log",
+        state_dir, "/state", "gh-token", "https://test.host", Pathname(@tmpdir) / "chomp.log",
         Pathname(@tmpdir) / "progress.txt", registry, ["saas tests"]
       )
       # The interactive push prompt treats an empty line as "yes"; pin stdin to
@@ -208,7 +208,6 @@ module Chomper
 
     def test_requires_a_github_token
       @ctx.contributor_token = nil
-      @ctx.maintainer_token  = nil
       assert_raises(FatalError) { @runner.run("42") }
     end
 
@@ -533,44 +532,31 @@ module Chomper
       assert_equal 1, @github.pushed.length, "fork-mode pushes go straight through, as gh-agent's do"
     end
 
-    def test_non_interactive_refresh_of_a_canonical_head_declines_without_a_tty
-      # A PR whose head branch lives on the canonical repo (shipped as the
-      # maintainer): a gh-agent-triggered refresh must not push it unconfirmed.
-      @ctx.maintainer_token = "maint-tok"
+    def test_non_interactive_refresh_of_a_canonical_head_is_discarded
+      # A PR whose head branch lives on the canonical repo (one a maintainer
+      # adopted and re-published) is not chomper's to write to.
       seed_pr_cache(head_repo: "opf/openproject")
-      runner = PrRunner.new(@ctx, claude: @claude, github: @github, maintainer_github: @github,
+      runner = PrRunner.new(@ctx, claude: @claude, github: @github,
                             gh_pull: @pull, op_pull: @op_pull, interactive: false)
       inject_worktree(runner, @worktree)
       @worktree.behind = true
 
       out, = with_stdin("") { capture_io { runner.refresh_one("42", "openproject") } }
 
-      assert_empty @github.pushed, "a canonical-repo push must never happen unconfirmed"
-      assert_includes @worktree.resets, "origsha", "the declined refresh is discarded"
+      assert_empty @github.pushed, "a canonical-repo push must never happen"
+      assert_includes @worktree.resets, "origsha", "the refresh is discarded"
       assert_includes out, "discarded"
     end
 
-    def test_canonical_head_push_is_gated_on_an_interactive_yes
-      @ctx.maintainer_token = "maint-tok"
+    def test_canonical_head_is_discarded_even_on_an_interactive_yes
       seed_pr_cache(head_repo: "opf/openproject")
-      runner = PrRunner.new(@ctx, claude: @claude, github: @github, maintainer_github: @github,
-                            gh_pull: @pull, op_pull: @op_pull)
-      inject_worktree(runner, @worktree)
       @worktree.behind = true
-      out, = with_stdin("y\n") { capture_io { runner.run("42") } }
+      out, = with_stdin("y\n") { capture_io { @runner.run("42") } }
 
-      assert_includes out, "[y]es push", "a canonical-repo push must not silently auto-push"
-      assert_equal 1, @github.pushed.length
-    end
-
-    def test_canonical_head_without_a_maintainer_token_is_discarded
-      seed_pr_cache(head_repo: "opf/openproject")   # ctx has no maintainer token
-      @worktree.behind = true
-      out, = capture_io { @runner.run("42") }
-
-      assert_empty @github.pushed
+      assert_empty @github.pushed, "no interactive answer can send a push to a canonical repo"
+      refute_includes out, "[y]es push", "a canonical head is refused before the push prompt"
       assert_includes @worktree.resets, "origsha"
-      assert_includes out, "GITHUB_MAINTAINER_TOKEN is not set"
+      assert_includes out, "which chomper never pushes to"
     end
 
     def test_discard_resets_the_branch_and_acks_nothing

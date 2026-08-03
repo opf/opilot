@@ -69,29 +69,21 @@ module Chomper
       with_env("OPENPROJECT_URL" => nil) { assert_equal "unknown-host", Context.build(@tmpdir).op_host }
     end
 
-    def test_github_identity_tokens_come_from_their_env_vars
-      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "bot-tok", "GITHUB_MAINTAINER_TOKEN" => "maint-tok") do
-        ctx = Context.build(@tmpdir)
-        assert_equal "bot-tok",   ctx.contributor_token
-        assert_equal "maint-tok", ctx.maintainer_token
+    def test_the_contributor_token_comes_from_its_env_var
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "bot-tok") do
+        assert_equal "bot-tok", Context.build(@tmpdir).contributor_token
       end
-      with_env("GITHUB_CONTRIBUTOR_TOKEN" => nil, "GITHUB_MAINTAINER_TOKEN" => nil) do
-        ctx = Context.build(@tmpdir)
-        assert_nil ctx.contributor_token
-        assert_nil ctx.maintainer_token
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => nil) do
+        assert_nil Context.build(@tmpdir).contributor_token
       end
     end
 
     def test_a_blank_token_is_the_same_as_no_token
-      # compose.yml passes both as `TOKEN=${TOKEN:-}`, so inside the container an
-      # unset token arrives as "" — which is TRUTHY, while every consumer asks
-      # "is there a token?" as truthiness. Unnormalised, `ship` picked the
-      # maintainer identity with no maintainer token: no fork, and a push aimed
-      # at the canonical repo.
-      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "", "GITHUB_MAINTAINER_TOKEN" => "  ") do
-        ctx = Context.build(@tmpdir)
-        assert_nil ctx.contributor_token
-        assert_nil ctx.maintainer_token
+      # compose.yml passes the token as `TOKEN=${TOKEN:-}`, so inside the
+      # container an unset token arrives as "" — which is TRUTHY, while every
+      # consumer asks "is there a token?" as truthiness.
+      with_env("GITHUB_CONTRIBUTOR_TOKEN" => "  ") do
+        assert_nil Context.build(@tmpdir).contributor_token
       end
       with_env("GITHUB_CONTRIBUTOR_TOKEN" => " bot-tok ") do
         assert_equal "bot-tok", Context.build(@tmpdir).contributor_token, "and it is trimmed"

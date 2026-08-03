@@ -406,12 +406,12 @@ module Chomper
     # draft PR. For the bot's own PRs there is no confirmation: the branch lives
     # on the bot's fork and a maintainer still gates the merge, so nothing
     # reaches the canonical repo without human review. A head that IS a
-    # canonical repo (e.g. a PR the maintainer shipped directly) stays gated on
-    # an interactive yes — and the bot token couldn't push there anyway.
+    # canonical repo (e.g. a PR a maintainer adopted and re-published) is
+    # refused — and the bot token couldn't push there anyway.
     def push_followup(intent, repo)
       target = head_repo(intent)
-      unless confirm_canonical_push?(target, intent.branch)
-        log_script "Push to #{target} declined — PR ##{intent.pr_number} not updated (the commit stays in the clone)."
+      if refuse_canonical_push?(target, intent.branch)
+        log_script "PR ##{intent.pr_number} not updated (the commit stays in the clone)."
         return
       end
       @github.push_branch(target, branch: intent.branch, worktree_path: repo.worktree_host)

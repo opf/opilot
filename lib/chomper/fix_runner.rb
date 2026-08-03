@@ -9,20 +9,14 @@ module Chomper
   class FixRunner
     include Helpers
 
-    # The publishing identity is derived from the configured tokens: with a
-    # maintainer token, ship publishes as the MAINTAINER (direct push to the
-    # canonical repo, each push confirmed interactively); without one it
-    # publishes as the CONTRIBUTOR bot (fork + cross-repo PR).
+    # `ship` publishes as the CONTRIBUTOR bot, like every other mode: the fix
+    # branch goes to the bot's fork and a cross-repo draft PR is opened against
+    # upstream, so a maintainer merges it or nothing lands.
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: nil)
       @ctx     = ctx
       @pull    = pull
       @claude  = claude
-      # `.to_s.empty?` rather than truthiness: Context normalises a blank token to
-      # nil, and this is the second belt on the highest-consequence branch in the
-      # file. Read wrong, it selects direct publishing with no maintainer token —
-      # no fork, and a push aimed at the canonical repo.
-      @publish = publish ||
-                 Publish.new(ctx, as: ctx.maintainer_token.to_s.empty? ? :contributor : :maintainer)
+      @publish = publish || Publish.new(ctx)
     end
 
     # Plan/approve/implement/ship one or more work packages by id. Each WP is

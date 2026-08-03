@@ -1,5 +1,4 @@
 require_relative "../test_helper"
-require "stringio"
 
 module Chomper
   class GhAgentTest < Minitest::Test
@@ -98,15 +97,15 @@ module Chomper
       @repo = registry.default   # by_upstream("o/r") falls back to the default repo
       @ctx = Struct.new(
         :state_dir, :state_container,
-        :contributor_token, :maintainer_token, :allowed_gh_users, :log_file, :progress_file, :repos
+        :contributor_token, :allowed_gh_users, :log_file, :progress_file, :repos
       ) do
         def op_host; "test.host"; end   # WP mirror namespace
       end.new(
         state_dir, "/state",
-        # nil tokens: keeps Helpers.adopt_github_author! (called in commit_followup)
+        # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
         # a no-op so the suite never makes a real GitHub call; handle() uses the
         # injected @github, not a ctx token.
-        nil, nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
+        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
       )
       (@ctx.state_dir / "work_packages" / "test.host" / "42").mkpath
 
@@ -331,40 +330,17 @@ module Chomper
                    "the trigger comment is acked so it doesn't replay"
     end
 
-    def test_canonical_head_push_is_gated_on_an_interactive_yes
-      # A PR whose head branch lives on a canonical repo (e.g. one the
-      # maintainer shipped directly) — the push gate must fire.
+    def test_canonical_head_push_is_refused
+      # A PR whose head branch lives on a canonical repo (one a maintainer
+      # adopted and re-published) is not chomper's to write to.
       intent = gh_intent
       intent.head_repo = @repo.upstream
-      out, = with_stdin("s\n") { capture_io { @agent.handle(intent) } }
+      out, = capture_io { @agent.handle(intent) }
 
-      assert_includes out, "Push bug/42-fix-the-bug"
       assert_equal 1, @worktree.commits.length, "the commit itself still lands in the clone"
-      assert_empty @github.pushed, "a declined canonical push must not reach the remote"
-      assert_includes out, "declined"
-
-      with_stdin("y\n") { capture_io { @agent.handle(intent) } }
-      assert_equal 1, @github.pushed.length, "an approved canonical push goes through"
-    end
-
-    def with_stdin(text)
-      old = $stdin
-      $stdin = StringIO.new(text)
-      yield
-    ensure
-      $stdin = old
-    end
-
-    def test_fork_mode_push_to_a_canonical_head_repo_is_still_gated
-      # A PR shipped in direct mode has its head branch on the canonical repo; a
-      # later fork-mode run (incl. agent mode's forced fork) must not wave its
-      # follow-up pushes through — non-interactive stdin declines.
-      intent = gh_intent
-      intent.head_repo = @repo.upstream   # the registry upstream, not a fork
-      out, = with_stdin("") { capture_io { @agent.handle(intent) } }
-
-      assert_empty @github.pushed, "an unconfirmed push to the canonical repo must never happen"
-      assert_includes out, "declined"
+      assert_empty @github.pushed, "a canonical push must never reach the remote"
+      assert_includes out, "Refusing to push"
+      assert_includes out, "not updated"
     end
 
     def test_question_without_changes_replies_but_does_not_commit_or_push

@@ -30,7 +30,6 @@ services:
       # Non-root needs a writable HOME for bundler/git config scratch.
       - HOME=/tmp
       - GITHUB_CONTRIBUTOR_TOKEN=${GITHUB_CONTRIBUTOR_TOKEN:-}
-      - GITHUB_MAINTAINER_TOKEN=${GITHUB_MAINTAINER_TOKEN:-}
       - CLAUDE_URL=http://claude:47291
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL
