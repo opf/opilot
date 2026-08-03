@@ -18,10 +18,20 @@ module Chomper
     def initialize(ctx, op: nil, intake: nil, claude: nil, publish: nil, openspec: nil)
       @ctx      = ctx
       @op       = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
-      @intake   = intake || Intake.new(ctx, op: @op)
+      @intake   = intake
       @claude   = claude || Claude.new(ctx)
       @publish  = publish
       @openspec = openspec
+    end
+
+    # Built on demand: Intake pulls in roo/nokogiri/rubyzip, and gh-agent
+    # constructs a ProductRunner purely to revise a proposal — a path that never
+    # reads a document.
+    def intake_client
+      @intake ||= begin
+        require_relative "intake"
+        Intake.new(@ctx, op: @op)
+      end
     end
 
     # How many times Claude gets to fix its own output before the run fails.
@@ -79,7 +89,7 @@ module Chomper
 
       scope = opts[:doc_ids].any? ? "#{opts[:doc_ids].length} document(s)" : "every document"
       log_script "Intake — project #{project_id}, #{scope} → change #{change_id}"
-      result = @intake.fetch(state, project_id: project_id, doc_ids: opts[:doc_ids])
+      result = intake_client.fetch(state, project_id: project_id, doc_ids: opts[:doc_ids])
       record_intake(state, project_id, opts[:doc_ids], result) if result.changed?
 
       # Canonical → working on the way OUT, not on the way in. Intake is written
@@ -131,6 +141,42 @@ module Chomper
       publish_proposal(state, repo)
     end
 
+    # Revise a change's proposal in response to a review comment on its spec PR.
+    #
+    # Called by gh-agent, not from the CLI: `pd propose` is first-shot only, and
+    # iteration belongs on the PR where the diff and the line-level comments are.
+    # Everything the propose path guards is re-applied here — the same validator
+    # loop and the same write scope — because a revision can go out of bounds
+    # exactly as easily as a first draft.
+    #
+    # Returns Claude's raw text so the caller can post the reply; the commit is
+    # left in the clone for the caller to push.
+    def revise_proposal(change_id, comment_section:, pr_thread:, session_file:, repo_name: nil)
+      repo  = resolve_repo(repo_name)
+      store = ChangeStore.new(@ctx, repo)
+      state = state_for(change_id, store)
+      store.materialise!
+
+      reply = @claude.run(
+        Prompts.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
+                                 pr_thread: pr_thread, comment_section: comment_section),
+        tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: session_file
+      )
+
+      # A question rather than a change request leaves the tree untouched: reply
+      # and stop, rather than validating and committing nothing.
+      if store.working_changes.empty?
+        log_script "#{change_id} — answered without editing the proposal."
+        return reply
+      end
+
+      validate_proposal!(state, repo)
+      enforce_write_scope!(state)
+      store.persist!("Revise #{change_id} from PR feedback")
+      commit_spec_branch(state, repo, subject: "Revise #{change_id} from review feedback")
+      reply
+    end
+
     private
 
     def require_intake!(state, change_id)
@@ -164,14 +210,30 @@ module Chomper
         tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
       )
 
-      if text.to_s.match?(/\bTOO_BROAD\b/)
+      # What Claude DID beats what it said about what it did. It routinely
+      # narrates its reasoning ("this is one feature, so I wrote a proposal
+      # rather than TOO_BROAD"), and a bare search for the sentinel anywhere in
+      # that prose reads the explanation as the verdict — discarding a complete,
+      # already-written proposal.
+      if proposal_present?(state)
+        validate_proposal!(state, repo)
+        return nil
+      end
+
+      if too_broad?(text)
         report_too_broad(state, text)
         return :too_broad
       end
-      raise Chomper::FatalError, "no proposal was written to #{change_dir}" unless proposal_present?(state)
+      raise Chomper::FatalError, "no proposal was written to #{change_dir}"
+    end
 
-      validate_proposal!(state, repo)
-      nil
+    # The scope refusal is only a refusal when it is the ANSWER: the prompt asks
+    # for it on the first line, so anything further in is Claude talking about
+    # the sentinel rather than emitting it. A short preamble is tolerated the way
+    # FixRunner tolerates one before NEEDS_INFO.
+    def too_broad?(text)
+      head = text.to_s.lstrip.lines.first(3).join
+      head.match?(/^\s*TOO_BROAD\b/)
     end
 
     def proposal_present?(state)
@@ -240,7 +302,7 @@ module Chomper
     # The spec tree is git-excluded so it can never be swept into an unrelated
     # bug-fix commit; committing it here is the one deliberate exception, hence
     # the force add.
-    def commit_spec_branch(state, repo)
+    def commit_spec_branch(state, repo, subject: "Propose #{state.change_id}")
       Helpers.adopt_github_author!(publish.author_token)
       wt = worktree(repo)
       wt.add("openspec/changes/#{state.change_id}", force: true)
@@ -248,7 +310,7 @@ module Chomper
         log_script "#{state.change_id} — no spec changes to commit."
         return false
       end
-      wt.commit("[#{state.change_id}] Propose #{state.change_id}")
+      wt.commit("[#{state.change_id}] #{subject}")
       c = wt.log(1).execute.first
       log_script "Committed to #{repo.name}: #{c.sha[0, 7]} #{c.message.lines.first.to_s.strip}"
       true

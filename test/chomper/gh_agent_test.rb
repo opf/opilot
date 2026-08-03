@@ -46,8 +46,8 @@ module Chomper
     class FakePull
       attr_reader :acted, :recorded, :ci_acted
       def initialize; @acted = []; @recorded = []; @ci_acted = []; end
-      def mark_acted(id, repo_name, at); @acted << [id, repo_name, at]; end
-      def record_chomper_comment(id, repo_name, cid); @recorded << [id, repo_name, cid]; end
+      def mark_acted(id, repo_name, at, spec: false); @acted << [id, repo_name, at]; end
+      def record_chomper_comment(id, repo_name, cid, spec: false); @recorded << [id, repo_name, cid]; end
       def mark_ci_acted(id, repo_name, sha); @ci_acted << [id, repo_name, sha]; end
     end
 

@@ -544,8 +544,18 @@ module Chomper
           #{change_dir}
         Do not touch application source, tests, or any other part of the repo.
         This is a planning stage; nothing outside the change directory is yours.
+        A write outside it discards the whole run, so stay inside it.
       TEXT
     end
+
+    # Explore with the file tools, not the shell. Bash here is confined to
+    # read-only git, so `ls`/`find`/`cat` are denied and every attempt is a
+    # wasted turn before the model falls back on its own.
+    TOOLING = <<~TEXT.strip
+      Use Glob to list files, Grep to search, and Read to open them. Bash is
+      restricted to read-only git (log, show, blame, diff) — `ls`, `find`, `cat`
+      and every other command are denied, so don't reach for them.
+    TEXT
 
     # WRITER: turn the intake material into an OpenSpec change proposal.
     #
@@ -566,16 +576,20 @@ module Chomper
         CODEBASE: the #{repo} repository is checked out at #{repo_path}. Read it to
         ground the proposal in the system that actually exists.
 
+        #{TOOLING}
+
         #{spec_scope(change_dir)}
 
         FIRST, judge scope. A change becomes exactly ONE work package of type
         FEATURE — one atomic, QA-able feature. If the intake plainly covers more
-        than one such feature, do not write a proposal: output exactly the
-        following, starting on the first line, and stop.
+        than one such feature, write NO files at all and output exactly the
+        following, starting on the very first line, then stop:
 
           TOO_BROAD
           ### Suggested split
           - <one line per feature you would propose separately>
+
+        If the scope is fine, just write the files — don't narrate the check.
 
         Otherwise write these files, and only these:
 

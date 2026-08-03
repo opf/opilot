@@ -143,6 +143,46 @@ module Chomper
       assert_equal ProductRunner::MAX_VALIDATE_ATTEMPTS + 1, spec.calls
     end
 
+    # --- the scope refusal ------------------------------------------------
+
+    def test_a_written_proposal_beats_prose_mentioning_the_sentinel
+      # Regression: Claude narrates its reasoning ("this is one feature, so I
+      # wrote a proposal rather than TOO_BROAD"), and searching the whole output
+      # for the sentinel read that explanation as the verdict — discarding four
+      # files it had just written.
+      claude = FakeClaude.new { write_proposal!; "I judged the scope fine, so I wrote a proposal rather than TOO_BROAD." }
+      spec   = FakeOpenSpec.new(true)
+
+      assert_nil runner(claude: claude, openspec: spec).send(:write_proposal, @state, @repo)
+      assert (@state.working_change_dir / "proposal.md").exist?, "the proposal must survive"
+      assert_equal 1, spec.calls, "and must still be validated"
+    end
+
+    def test_the_sentinel_counts_only_when_it_leads_the_answer
+      run = runner
+      assert run.send(:too_broad?, "TOO_BROAD\n### Suggested split\n- a\n- b\n")
+      assert run.send(:too_broad?, "I can't do this.\nTOO_BROAD\n- a\n"), "a short preamble is tolerated"
+      refute run.send(:too_broad?, "...long explanation...\n" * 8 + "rather than TOO_BROAD.\n")
+      refute run.send(:too_broad?, "This is not too broad, so here is the proposal.")
+      refute run.send(:too_broad?, "")
+    end
+
+    def test_a_genuine_refusal_writes_nothing_and_reports_the_split
+      claude = FakeClaude.new { "TOO_BROAD\n### Suggested split\n- reading mode\n- export to PDF\n" }
+      out, = capture_io do
+        assert_equal :too_broad, runner(claude: claude).send(:write_proposal, @state, @repo)
+      end
+      assert_match(/more than one atomic feature/, out)
+      assert_match(/reading mode/, out)
+    end
+
+    def test_a_run_that_writes_nothing_and_says_nothing_is_an_error
+      error = assert_raises(Chomper::FatalError) do
+        runner(claude: FakeClaude.new { "I had a look around." }).send(:write_proposal, @state, @repo)
+      end
+      assert_match(/no proposal was written/, error.message)
+    end
+
     # --- the write scope --------------------------------------------------
 
     def test_a_run_confined_to_its_change_directory_passes
