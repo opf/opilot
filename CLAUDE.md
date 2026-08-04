@@ -1,111 +1,170 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that plans fixes for OpenProject work packages, implements them in isolated git clones, and opens draft PRs.
+`openproject-chomper` is an AI agent that plans fixes for OpenProject work
+packages, implements them in isolated git clones, and opens draft PRs.
 
-A fix can land in **one or more product repos**. The repos are defined in `repos.json` (a committed registry: a top-level `summary` plus a `repos` array, each with `name`, `upstream` owner/repo, `base` branch, optional `shared_repo_path` local checkout to seed the clone from — else it clones fresh — and a `description`). Claude is shown the registry during planning and declares the target repo(s) on the first line of the plan as `REPOS: <name>[@<base>][, <name>…]`; `Helpers#record_chosen_repos` parses and stores the names in `work_packages/<op_host>/<id>/target_repos.json`. A repo entry may carry an optional `@<base>` (e.g. `openproject@release/17.6`) when the user asks to target a non-default base branch — those overrides are stored in `work_packages/<op_host>/<id>/target_base.json` (`{ "<repo>": "<base>" }`) and the fix branch is both **created from** and the PR **opened against** that branch (`ItemState#base_for`); omitted, each repo uses its `repos.json` default `base`. Each repo is a self-contained clone at `.chomper/repos/<name>`, mounted into the claude container at `/repos/<name>`; the runner ships an independent branch + PR to each repo that actually changed (`Chomper::Registry`/`Chomper::Repo` in `lib/chomper/repo.rb`). `repos.json` is the single source of truth for the repo set; each repo's `shared_repo_path` is nil there by default (no machine-specific path in the committed config). The one env knob is `OP_REPO_PATH`: when set, it seeds *only* the openproject clone from that local checkout (`--reference-if-able … --dissociate`, a faster clone), applied in `Registry.override_openproject_seed!` and consumed only by `bin/repos`/provisioning. A wrong/absent path harmlessly falls back to a fresh clone.
+A fix can land in **one or more product repos**, defined in `repos.json` (`name`,
+`upstream`, `base`, optional `shared_repo_path`, `description`, plus a top-level
+`summary`). Claude sees the registry while planning and declares the targets on the
+plan's first line — `REPOS: <name>[@<base>][, <name>…]` — which
+`Helpers#record_chosen_repos` stores in `target_repos.json`, with any `@<base>`
+override (e.g. `openproject@release/17.6`) in `target_base.json`. The fix branch is
+both cut from and PR'd against that base (`ItemState#base_for`).
 
-Modes: the agent loops are `./chomper agent` (both), `./chomper agent op`, and
-`./chomper agent gh` — the pre-group `op-agent`/`gh-agent` names still work and
-are how the loops are referred to below.
+Each repo is a standalone clone at `.chomper/repos/<name>`, mounted into the claude
+container at `/repos/<name>`; the runner ships an independent branch + PR to each
+repo that actually changed (`Chomper::Registry`/`Chomper::Repo`). `OP_REPO_PATH`
+seeds *only* the openproject clone from a local checkout (a wrong path falls back to
+a fresh clone).
 
-- **op-agent** — continuous polling loop driven by `@chomper` comments on work packages. Setting the chomper OP user as a WP's **assignee** is a second trigger: it synthesizes the same `:ship` intent as a `@chomper ship` comment (`Pull#intent_from_assignment`) — fires **once per WP, ever** (`assignee_acted_at` in `item.json`; unassign→reassign doesn't re-fire, later re-work goes through comments), from **any** assigner (not allowlist-gated — assignment needs OpenProject edit-WP permission; disable with `CHOMPER_ASSIGN_TRIGGER=0`); a same-tick `@chomper` comment wins, a WP that already shipped a PR is marked acted without firing, the reply is unaddressed/internal, and there's no pickup signal until the final PR-links note (no comment to 👀-react to). One edge: the gate is the WP's `updatedAt` vs the scan floor (the list payload doesn't carry the assignment's own timestamp), so a WP assigned long ago but bumped inside the window fires once. When op-agent plans (or chats about) a WP it also pulls in that WP's related work packages (explicit relations plus parent/children), caching each as its own `item.json` and writing a `related.json` index that the plan/chat/fix prompts reference (Claude reads a related WP's full detail only if relevant). The terminal `wp ship`/`wp build`/`wp plan` flows share this — related WPs are pulled in at plan/re-plan time
-- **gh-agent** — continuous polling loop over GitHub PRs, driven by `@chomper` comments, from **two sources** each tick:
-  - **chomper's own PRs** (`GhPull`, those with an `work_packages/<op_host>/<id>/repos/<name>/pr_url.txt`) — "always reply, code if asked": every comment gets a PR reply, and Claude edits the PR's branch only when the comment asks for a concrete change. A code change is committed to the clone and pushed to the bot's fork (with the bot token) to update the draft PR. The one command word is **`@chomper refresh`**: instead of a conversational reply, the PR gets the full `pr`-command treatment (`PrRunner#refresh_one`) — a **forced** base-branch merge (an explicit refresh request merges even when the quiet-branch heuristic — no commits for a day — would skip it), a CI fix regardless of act-state/attempt cap (the allowlisted commenter is the trigger), and a sweep of fresh feedback (the trigger comment included, so the commenter gets the summary reply). The PrRunner is built `interactive: false`, so the push follows gh-agent's rules instead of the terminal `[y]es/[d]iscard` prompt: pushes to the bot's fork go straight through, while a push targeting a canonical repo (e.g. the head of a PR a maintainer adopted) is refused (`refuse_canonical_push?`) and the refresh discarded. (gh-agent acts exclusively as the contributor bot.) **Also auto-fixes failed CI** (always on): when a PR's checks have *completed* with ≥1 failure, chomper fetches the failure detail (check-run annotations + output summaries + the failed Actions jobs' log tails, cached to `ci.json`), fixes the defect in the worktree with `Prompts.fix_ci`, and commits+pushes — same publish path as a comment fix. The trigger is the PR's **head SHA** (not a comment): `gh_pr.json` tracks `ci_acted_sha` (act once per commit) and `ci_attempts` (capped by `CHOMPER_CI_MAX_ATTEMPTS`, default 5; after the cap it posts a one-time "needs a human" note and sets `ci_gave_up`). It acts as soon as the **first** check fails (a fast yamllint failure isn't held up waiting on slow jobs — a pushed fix re-runs everything anyway), waits only while nothing has failed yet but checks are still running, never acts in the same tick as a comment trigger for that PR, ignores unfixable checks (`CHOMPER_CI_IGNORE_CHECKS`, default `SaaS tests`), and needs no user allowlist (the trigger is CI on chomper's own branch). A green verdict is only cached (`ci_quiet_sha`) once the commit has **settled** (`CI_SETTLE_SECONDS`) — checks register over time, so a commit polled seconds after a push can look green before its slow/failing checks register, and caching then would hide them. Check-run reads are fully paginated (Octokit's `auto_paginate` is off by default, which would otherwise truncate a big CI matrix to the first page).
-  - **tracked upstream PRs** — those that @-mention chomper (`UpstreamGhPull`, any open PR on a registry repo's `upstream` **except the bot's own** — those are the first source's territory, and this scanner's separate act-state would otherwise re-handle their comments a second time, reply-only) — discovered via the GitHub search API (`repo:<upstream> is:pr is:open mentions:<bot-login> -author:<bot-login> updated:>=<cutoff>`, where `<bot-login>` is resolved programmatically from `@github.login`, e.g. `op-chomper`) so a Claude call is spent only on PRs that actually mention the bot; `own_pr?` (PR author = bot login) is the runtime backstop. The trigger is a prompt addressed to chomper, exactly as on its own PRs — this is not a review pass over other people's work, chomper just answers what it was asked. What differs is write access, which it doesn't have here, so these intents are `reply_only`: it fetches the PR head read-only, **answers in text, and never commits or pushes** (`Prompts.pr_review`, read-only tools — the method name predates this framing). It can still propose *applicable* code, though: for a change to lines already in the diff the review emits a `SUGGESTIONS:` block (`Prompts::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a GitHub review of inline ```suggestion comments (`Clients::GitHub#create_review`, anchored to the head SHA, `event: COMMENT`) — the PR author applies each with one click and it lands as their own commit, so no push access is needed; a bad line range 422s the review and it falls back to the prose reply. Changes a suggestion can't express (new files, out-of-diff edits) stay described in the reply. When a mention will actually be handled it also **reads the PR's CI** (`UpstreamGhPull#write_review_ci` → `GhPrCache#fetch_ci_content`, keyed by head SHA): a failing run caches `ci.json` (failed checks + annotations + failed-job log tails) which `handle_review` feeds into the prompt (guarded by head SHA so a stale failure isn't shown), so a "@chomper why is CI red?" gets an explained answer — read-only, chomper describes the fix but can't push it. A green/pending/absent run leaves `ci.json` off and the review runs on the diff + thread alone; already-tracked PRs pick this up on their next mention. Per-PR state lives under `.chomper/pr_reviews/<owner>-<repo>/<number>/` (the directory name also predates the framing; renaming it would orphan the act-state of every PR already tracked). **Off unless `CHOMPER_TRACK_UPSTREAM_PRS` is set, and it also needs `CHOMPER_ALLOWED_GH_USERS`** — this is the one source that reaches outside chomper's own PRs, so no ordinary agent run should be searching whole public repos, and an open `@chomper` trigger there would be a spend/abuse risk. The startup banner names which of the three states the run is in, since "scanned nothing" and "not scanning" look identical in the log.
+## Modes
 
-  Both sources watch the conversation thread and inline review comments, are gated by the GitHub-login allowlist, and merging always stays gated on a maintainer. At startup it asks how far back to scan (same prompt as `op-agent`). The shared PR-content caching/mention-matching lives in `GhPrCache`.
-- **wp ship** — terminal-driven work packages by id: `./chomper wp ship <id>...` (alias `wp fix`) fetches one or more WPs by id (ignoring filters) and runs a plan/approve loop (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`) for each in turn (one failure doesn't abort the rest), shipping each approved plan as a draft PR. Publishing is always as the **contributor** bot (fork + cross-repo PR) — chomper has one identity and no push ever targets a canonical repo
-- **wp build** — `./chomper wp build <id>...` is `wp ship` minus publishing: it implements and commits the approved plan on the fix branch in the local clone(s), then stops — nothing is pushed and no PR is opened. A later `wp ship <id>` finds the committed branch (`branch_has_commits?`) and goes straight to publish
-- **wp plan** — `./chomper wp plan <id>...` is the plan-only counterpart of `wp ship`: same per-id plan/approve loop, but stops once each plan is approved instead of implementing
-- **wp pr** — `./chomper wp pr <id|pr-url>...` refreshes a WP's shipped PR(s) on demand (`PrRunner` in `lib/chomper/pr_runner.rb`). Targets are WP ids and/or pasted GitHub PR URLs: a URL is first matched against chomper's own state (any `pr_url.txt`, compared on parsed repo+number so URL formatting differences don't matter); an untracked PR is *adopted* via the OpenProject work-package link in the top 15 lines of its description (`Ticket: https://<op-host>/work_packages/<id>` — only links to the configured instance count), creating the normal `<id>/repos/<name>/pr_url.txt` state; a PR whose base repo isn't in `repos.json`, or with no ticket link, is reported and skipped. A WP id with no local PR state is *discovered* on GitHub before giving up: each registry repo's upstream is searched for open PRs authored by the bot that mention the id, and a hit is adopted only after verifying on the live PR that the author is the bot login and the ticket link resolves to that WP (the author check is the trust boundary — `pr` pushes to the PR's head branch, which is only chomper's to touch on its own PRs). Before any refresh the WP mirror (`item.json`) is re-fetched the same way `wp pull` does (`Pull#fetch_single_item`, best-effort — an OpenProject hiccup falls back to the cached copy). For each open PR the WP shipped, it syncs the branch to the PR head, merges in the PR's actual base branch — but only when the branch has had no commits for over a day (judged on the head commit's date, not the PR's `updated_at`: a fresh comment must not block the merge, while a just-pushed branch doesn't get merge commits churned in) — (a conflicted merge is handed to Claude to resolve; unresolved conflicts abort with the merge reset), fixes failing CI (regardless of act-state or the attempt cap — the operator is the trigger; a failure older than GitHub's ~1-month log retention — judged by the newest failed check's `completed_at` — has no detail left to fix from, so it skips the Claude CI pass and falls back to the base merge + push, which re-runs CI; when the branch is already in sync there is nothing to push, and the operator is told to re-run the checks from the GitHub UI), and addresses PR comments newer than chomper's last action (no `@chomper` mention or `CHOMPER_ALLOWED_GH_USERS` gate, unlike gh-agent — the point is sweeping up feedback that never pinged chomper). Changes are committed (a clean merge as a merge commit; Claude's edits as a follow-up commit with a generated subject) and pushed to the PR's head branch on the bot's fork after a terminal `[y]es push / [d]iscard` confirmation (a PR whose head is a canonical repo — one a maintainer adopted — isn't chomper's to write to, so its refresh is discarded) (discard resets the branch and acknowledges nothing). Claude's summary is posted as a 🤖 PR comment and the per-PR comment cutoff advances so gh-agent doesn't re-handle the same feedback. The same machinery serves gh-agent's `@chomper refresh` PR command via `PrRunner#refresh_one` (one PR, base merge forced, non-interactive push rules — see gh-agent above)
-- **wp pull** — `./chomper wp pull [<id>...]` mirrors work packages into the local cache so they can later be discussed via `chat`, without planning or shipping. With ids it fetches exactly those WPs (`Pull#fetch_single_item`, ignoring filters); with no ids it runs the same project-scope filter wizard as `op-agent` (`load_or_prompt_agent_filters`) and bulk-mirrors every match (`Pull#mirror`, which shares `op-agent`'s paginated, scan-window-bounded fetch via `each_filtered_wp` but skips intent parsing). `PullRunner` (`lib/chomper/pull_runner.rb`) is a thin wrapper; needs only an OpenProject token (no GitHub token or allowlist — it just refreshes local `item.json`s)
-- **chat** — `./chomper chat [message]` is a free, read-only terminal conversation over chomper's **local mirrors** — not scoped to any one WP and never fetching, planning, or shipping. The whole `.chomper/` cache is already mounted read-only into the claude container at `/state`, so `Prompts.free_chat` just orients Claude at that layout (`work_packages/<op_host>/<id>/` item.json/plan.md/related.json, `<id>/repos/<name>/pr.json` for shipped PR threads, `pr_reviews/…/pr.json` for upstream ones) plus the repo clones at `/repos/<name>`, and Claude Greps/Reads whatever the question needs (read-only Bash for git history). `ChatRunner` (`lib/chomper/chat_runner.rb`) is a small REPL mirroring the `wp ship`/`wp build`/`wp plan` `[c]hat`: a fresh per-run session (`.chomper/chat_session_id`, cleared at start), empty line exits, and an inline `chat <message>` seeds the first turn. Needs no allowlist or GitHub/OpenProject token (it only reads local files)
+Agent loops: `./chomper agent` (both), `agent op`, `agent gh` — the older
+`op-agent`/`gh-agent` names still work and are used below.
 
-- **pd** — `./chomper pd <subcommand>` is the **product-development** pipeline, a spec-driven flow that is separate from the bug-fix modes above: OpenProject **Documents** → an [OpenSpec](https://github.com/Fission-AI/OpenSpec) change proposal reviewed as a PR → generated work packages → one implementation run per WP → archive. It has its own namespace because the bug-fix verbs (`plan`/`build`/`ship`/`pr`) also take a work-package id while meaning something else entirely. Like every other mode it publishes as the contributor bot, into the bot's own fork (`PD::Runner#publish`). Currently implemented (M0–M3):
-  - `pd init <project-id> [--repo <name>]` — resolves the OpenProject ids **by name** (`ResolvedIds`): the project, the parent/child work-package types (`CHOMPER_PD_PARENT_TYPE`/`CHOMPER_PD_CHILD_TYPE`, default `FEATURE`/`IMPLEMENTATION` — neither is a stock type), and every status with its `isClosed` flag (so "is this child closed?" needs no status-name mapping). Fails fast listing everything missing plus the types the project actually offers. Then seeds the canonical spec store.
+### op-agent
 
-    It is the pipeline's **preflight**, so it checks everything a later stage would otherwise discover expensively — each check placed where the failure would otherwise land far from its cause:
-    - **The transition statuses** (`CHOMPER_PD_IMPLEMENTING_STATUS`/`CHOMPER_PD_IMPLEMENTED_STATUS`) must exist on the instance, matched case-insensitively like the type names; an empty name means that transition is off and nothing is required. Without this a typo surfaces as a warning during `pd implement` — after the spec PR is up and the code is committed. The status list is printed only when a status is what failed (it is long on a real instance and would bury the type message).
-    - **Write permission**: `pd generate-wp` POSTs work packages, and OpenProject renders the project's `createWorkPackage`/`createWorkPackageImmediately` links only for a user with `:add_work_packages` — so their absence is a real answer, not a guess, and a read-only token fails before a proposal exists.
-    - **The clone** (`#require_clone!`, before any network call): every later stage needs it, and `PD::ChangeStore#exclude_from_clone!` returns *silently* when `.git/info` is absent — so a half-provisioned clone would leave `openspec/` sweepable into an unrelated commit with nothing said. The one preflight where quiet degradation is dangerous rather than merely late, hence fatal.
-    - **The publishing identity** (`#report_publish_identity`): resolves `GITHUB_CONTRIBUTOR_TOKEN` to a login and reports its classic scopes, rather than letting a bad token surface at `propose`'s push after Claude has done the expensive work. Advisory, not fatal — `init` and `intake` are useful with no GitHub token at all. An empty scope list means a fine-grained token (no `X-OAuth-Scopes` header), which is "unknown", not "no permissions", so no scope warning is invented for it.
-  - `pd intake <project-id> <change-id> [--doc-id <id>]...` — mirrors OpenProject Documents into `openspec/changes/<change-id>/intake/`, one ordinal markdown file per document with `id`/`title`/`updated_at` frontmatter. Project-wide by default; `--doc-id` (repeatable) narrows it and is **validated against the named project**, so a typo can't pull an unrelated project's document in. `<project-id>` may be the numeric id or the project identifier (`my-project`): the Documents API's `project` filter coerces its values to integers, so an identifier would match nothing *silently*, and a document's `_links.project` href carries the numeric id too — `Clients::OpenProject#project_numeric_id` resolves it once (memoized) and both the sweep and the `--doc-id` ownership check use the resolved id. Re-running short-circuits when nothing moved: `intake.hash` covers the sorted `(id, updated_at)` pairs **and the `--doc-id` selection**, since narrowing or widening the selection changes the material even when no document was touched.
+Polls work packages, driven by `@chomper` comments.
 
-  - `pd propose <change-id> [--repo <name>]` — turns that intake into an OpenSpec change proposal (`proposal.md`, `design.md`, `tasks.md`, `specs/<capability>/spec.md` deltas) and opens the **spec PR that is the approval gate**, then halts. Claude writes into the working copy with `TOOLS_IMPL`; the runner then runs `openspec validate <id> --strict --json` and feeds any failures back for up to `MAX_VALIDATE_ATTEMPTS` (2) revisions in the same session — the CLI isn't in the claude container, so "the agent iterates on its own output" is a runner-driven re-prompt loop. A scope gate mirrors `Prompts.plan`'s `NEEDS_INFO`: intake spanning more than one atomic feature comes back as `TOO_BROAD` with a suggested split instead of a crammed proposal, since one change becomes exactly one FEATURE.
+Assigning the chomper user is a second trigger, synthesizing the same `:ship`
+intent (`Pull#intent_from_assignment`). It fires **once per WP, ever**
+(`assignee_acted_at` — unassign→reassign doesn't re-fire; later re-work goes through
+comments) from **any** assigner (not allowlist-gated: assignment already needs
+edit-WP permission; disable with `CHOMPER_ASSIGN_TRIGGER=0`). A same-tick comment
+wins, an already-shipped WP is marked acted without firing, and the reply is
+unaddressed/internal with no 👀 pickup signal. The de-dup gate is the WP's
+`updatedAt` vs the scan floor (the list payload carries no assignment timestamp), so
+a WP assigned long ago but bumped inside the window fires once.
 
-    **The write scope is enforced, not just requested** (`#enforce_write_scope!`): a planning stage must not be able to modify source, and `guard-writes.js` only confines Claude to `/repos`. Two surfaces are checked — everything git can see (i.e. all of the clone except the excluded `openspec/`), and the spec tree itself, diffed against the canonical store (`PD::ChangeStore#working_changes`, since git reports nothing about an excluded tree). Anything outside `openspec/changes/<change-id>/` resets the clone (`reset_hard` + `clean` + re-materialise) and fails the run before anything is committed or pushed.
+Planning or chatting also pulls in the WP's **related** WPs (relations plus
+parent/children), each cached as its own `item.json` with a `related.json` index the
+prompts reference. `wp ship`/`build`/`plan` share this.
 
-    Publishing is `Publish#open_spec_pr`: push `spec/<change-id>` to the bot's fork and open a **draft PR inside that fork** (head and base both `<bot>/<repo>`, `maintainer_can_modify: false` since GitHub 422s on a same-repo PR otherwise). It first levels the fork's base with upstream (`Clients::GitHub#sync_fork_branch` → the `merge-upstream` endpoint behind GitHub's "Sync fork" button; Octokit has no helper, hence the raw POST) — the spec branch is cut from the clone, which tracks **upstream**, while the PR's base is the **fork's** copy of that branch, frozen at fork-creation time; left stale the diff carries every intervening upstream commit alongside the spec files and the PR is unreviewable. A fork that has genuinely diverged can't be fast-forwarded, so the sync is non-fatal: it warns and opens the PR anyway. Deliberately not a PR against upstream — the diff is planning artifacts, and opening it on `opf/*` would be noise; the bot owns both sides so it can merge or close freely. Nothing downstream needs the merge, because `pd generate-wp` reads the local store. The PR body states the work packages the change will generate, the documents consumed, and any `unconvertible[]` attachments. **`propose` writes nothing to OpenProject** — the parent FEATURE is created by `generate-wp` (M2), not here: the spec PR *is* the approval gate, so creating a work package at propose time would announce a planned feature before anyone agreed to it, and work packages are never deleted (the HTTP client has no DELETE verb at all), so every abandoned or rejected proposal would leave a permanent empty FEATURE behind. It is premature besides — whether the change really is one atomic feature is exactly what the reviewer is checking. `PD::Runner#ensure_feature_wp` is idempotent on `tracker.json`'s `parent_wp` and waits for the stage that creates the children to hang off it.
+### gh-agent
 
-  - `pd generate-wp <change-id> [--repo <name>]` — turns the reviewed proposal into work packages: one parent FEATURE for the change (`#ensure_feature_wp`, idempotent on `tracker.json`'s `parent_wp`, subject taken from `proposal.md`'s first heading, with the spec PR link posted as a comment) and one child IMPLEMENTATION per top-level `tasks.md` section, each carrying that section's checklist in its description. **Running this is the approval signal** — it reads the local spec store, so merging the spec PR stays optional. Every write is idempotent because none of them can be undone (chomper's HTTP client has no DELETE verb, and a work package's comments and history live nowhere else): each new id is bound back into its heading as `## Title (#1204)` (`PD::TasksFile.bind_id`) **immediately after the POST that created it**, not in one pass at the end, so a crash mid-run can't orphan a work package the next run would duplicate; a section that already carries an id is skipped, and the bindings are persisted in an `ensure` block. A failed POST is reported and the loop continues — the remaining sections are independent, and a re-run picks up exactly the ones still unbound. Three things are refused *before* the first POST, since half a tree is worse than none when the halves can't be deleted: no `tasks.md` (run `propose` first), no top-level sections, and an incomplete `pd init` cache (the message names which of project / parent-type / child-type id is missing). **Duplicate section titles are also refused**: the binding is written back by heading text, so two unbound sections sharing a title would both take the first id — one work package for two chunks of work, and the second never generated. The reverse direction is `PD::ChangeStore#reverse_index`, rebuilt from `tasks.md` on every call, which is how `pd implement <wp-id>` (M3) will find its change.
+Polls two sources each tick. Both watch the thread and inline review comments, are
+gated by the GitHub-login allowlist, and never merge. Shared caching and
+mention-matching live in `GhPrCache`.
 
-  - `pd implement <wp-id>... [--repo <name>]` — builds one generated work package from its spec: its own branch (`implementation/<id>-<slug>`, from `Helpers.branch_slug` with the WP's type, exactly like a bug fix), its own commit, its `tasks.md` section ticked, and a draft PR. **Keyed on a work-package id, not a change id** — the work packages are what a human assigns, comments on and closes, and implementing a whole change in one pass would produce the unreviewable PR the decomposition exists to avoid. The change and repo are resolved *from* the id via `PD::ChangeStore#reverse_index` across every registry store (`--repo` narrows it), so the operator never repeats what the store already knows; an unbound id lists what *is* bound instead of just failing. The prompt (`Prompts.implement_task`) carries the spec paths, the WP's `item.json` (a human comment added after the proposal qualifies or overrides it) and **only this section's checklist** — a sibling section is another work package's PR. **The write scope is the mirror image of `propose`'s**: there the spec was the output and source was off limits; here the spec is the input, so a stray edit under `openspec/` is *restored from the store* and the run continues (`#restore_spec_tree!`) rather than failing — the tree is git-excluded so nothing would have been committed anyway, and discarding a working implementation over a stray spec edit would be the wrong trade. Checkboxes are ticked by the harness (`PD::TasksFile.set_section_done`) and **only after a commit exists** — a run that produced nothing leaves them unticked and opens no PR, which is the honest record. Publishing goes through the same `Publish#open_pr` the bug-fix flow uses, so the result is an ordinary chomper PR: `gh-agent` picks it up from `pr_url.txt` and `./chomper wp pr <id>` can refresh it. The work package is **transitioned twice** (`#transition!`): to `CHOMPER_PD_IMPLEMENTING_STATUS` (default `In progress`) when the Claude run starts — inside the `branch_has_commits?` guard, so a re-run that only publishes an already-built branch doesn't rewind it — and to `CHOMPER_PD_IMPLEMENTED_STATUS` (default `Developed`) once the draft PR is open. A run that produced no code, or couldn't open the PR, leaves it at `In progress`, which is exactly what that status says. Both are best-effort and never fail a run that has already committed: a status the instance doesn't have is reported with the env var to set, a transition the workflow forbids is reported with the HTTP code, and a status the work package is already in is skipped rather than re-asserted (it would add a journal entry saying nothing). That is also why the runner writes `plan.md` (section + tasks + the proposal) and `target_repos.json` itself — every downstream prompt and lookup expects them, so without them a pd PR would be the one chomper PR that can't explain itself.
+**Chomper's own PRs** (`GhPull`, those with a `repos/<name>/pr_url.txt`) — always
+reply, code if asked, pushing to the fork. The one command word is **`@chomper
+refresh`**: the full `pr`-command treatment (`PrRunner#refresh_one`) with the base
+merge forced and the CI fix run regardless of act-state or cap. Built
+`interactive: false`, so fork pushes go straight through while a canonical-repo
+target is refused and the refresh discarded.
 
-  `change-id` is author-supplied kebab-case (`[a-z0-9][a-z0-9-]*`), validated rather than sanitised — it is the directory name everything downstream binds to, so silently rewriting it would break the binding the operator thinks they made.
+It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 failure,
+the detail (annotations, output summaries, failed-job log tails) is cached to
+`ci.json`, fixed with `Prompts.fix_ci`, committed and pushed. The trigger is the
+**head SHA**: `gh_pr.json` tracks `ci_acted_sha` (once per commit) and `ci_attempts`
+(`CHOMPER_CI_MAX_ATTEMPTS`, default 5; past the cap it posts a one-time "needs a
+human" note and sets `ci_gave_up`). It acts on the *first* failure rather than
+waiting out slow jobs, never acts in the same tick as a comment trigger, ignores
+`CHOMPER_CI_IGNORE_CHECKS`, and needs no allowlist. A green verdict is cached
+(`ci_quiet_sha`) only once the commit has **settled** (`CI_SETTLE_SECONDS`) — checks
+register over time, so a just-pushed commit can look green before its failing jobs
+appear. Check-run reads are fully paginated (`auto_paginate` is off by default,
+which would truncate a big CI matrix).
 
-  **The spec tree exists in three copies**, and every `pd` command moves between them (`PD::ChangeStore` in `lib/chomper/pd/change_state.rb`): the **canonical** store at `.chomper/openspec/<repo>/` (a runner-owned `git init` repo — the durable copy, carrying its own commit identity since it is never pushed), the **working** copy at `<clone>/openspec/` (the only place `guard-writes.js` lets Claude write, and where the `openspec` CLI expects the tree relative to the code), and the **review** copy on a `spec/<change-id>` branch pushed to the bot's fork. A command materialises canonical → working on entry and persists working → canonical on exit; both mirror rather than merge, because an archive run *moves* a change directory and a merge would resurrect it. `materialise!` also re-asserts `openspec/` in the clone's `.git/info/exclude` on **every** call — `Helpers#commit` does `add(all: true)`, so an unexcluded tree would be swept wholesale into an unrelated bug-fix commit; the propose flow commits it deliberately with `git add -f`. `tracker.json` is written to **both** copies by `PD::ChangeState#write_tracker` even though only the runner ever writes it: the mirrors are wholesale (`rm_rf` + `cp_r`), so a canonical-only write survived or vanished depending on which way the next mirror happened to run — `intake` materialises afterwards and kept it, while a stage that persists afterwards had the older working copy mirrored straight back over it. `generate-wp` does exactly that, and lost `parent_wp` on every run, which is the way to get a duplicate FEATURE.
+**Tracked upstream PRs** (`UpstreamGhPull`) — open PRs on a registry `upstream` that
+@-mention chomper, except the bot's own (`own_pr?`). Found via the search API so a
+Claude call is spent only on real mentions. The trigger is a prompt addressed to
+chomper, not a review pass over other people's work; what differs is write access,
+so these intents are `reply_only` — read-only fetch, answered in text
+(`Prompts.pr_review`), never pushed. Applicable code still lands: for lines already
+in the diff the review emits a `SUGGESTIONS:` block
+(`Prompts::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
+of inline `suggestion` comments (anchored to the head SHA, `event: COMMENT`) — the author
+applies each with one click; a bad line range 422s and falls back to prose. A
+failing CI run is read too (keyed by head SHA), so "why is CI red?" gets an
+explained answer. State lives in `pr_reviews/<owner>-<repo>/<number>/` (the name
+predates this framing; renaming it orphans every tracked PR's act-state).
 
-  **Attachments are converted in the runner, at intake time** (`lib/chomper/pd/intake/converter.rb`). The claude container has no converter and `guard-bash.js` allows only read-only git, so Claude's `Read` tool is the sole way in — fine for text, images and PDFs, useless on `.xlsx`/`.docx`/`.pptx`, which are ZIP-of-XML. Spreadsheets go through `roo` to one **CSV per sheet** (capped at 500 rows, with the truncation written into the file itself); `.docx`/`.pptx` are extracted by hand with rubyzip + nokogiri (both already pulled in by roo, and no maintained Ruby gem reads `.pptx` at all) — pptx includes speaker notes, which often carry the actual reasoning. PDFs, images and text pass through. Legacy OLE formats (`.xls`/`.doc`/`.ppt`) and unknown types land in **`unconvertible[]`**, recorded in `tracker.json` and in an `intake/attachments/README.md` index, because a requirement hiding in a file nobody could read is *missing* from the intake and that must be visible, not silent. This is the one place chomper parses attacker-influenceable binary input inside the trusted container, so it enforces a size cap, a zip entry-count cap, an inflated-size cap and `Zip.validate_entry_sizes`, and isolates every failure per attachment.
+**Off unless `CHOMPER_TRACK_UPSTREAM_PRS` is set, and it also needs
+`CHOMPER_ALLOWED_GH_USERS`** — the only source reaching outside chomper's own PRs.
+The startup banner names which of the three states the run is in, since "scanned
+nothing" and "not scanning" look identical in the log.
 
-  **`openspec` runs in the runner, never in the claude container** (`lib/chomper/pd/openspec.rb`) — widening `guard-bash.js` for a non-git binary would undo the container's whole posture. `openspec init` is always run with `--tools none`, which writes only `openspec/`: without it the CLI would drop an `AGENTS.md` into the product clone, over the real one OpenProject already has (and which `CLAUDE.md` symlinks to). Validation uses `--strict --json`, so failures come back structured for the re-prompt loop rather than scraped from prose.
+### Terminal modes
 
-  **The artifact format comes from the CLI, not from a paraphrase.** `--tools none` suppresses the very mechanism OpenSpec normally uses to teach an agent its conventions, so the format would otherwise live only in chomper's prompt — and `validate --strict` is a weaker check than the format (it enforces delta structure and scenarios, but not, say, whether `proposal.md` declares its `## Capabilities`), so a hand-written version drifts with nothing noticing. It did: the first real run produced a proposal with none of the template's four required headings and still passed validation. So `PD::Runner#artifact_instructions` calls `openspec instructions <artifact> --change <id>` for each of `proposal`/`specs`/`design`/`tasks` (dependency order — proposal `<unlocks>` the rest) and drops the result straight into `Prompts.propose`. Each block carries the CLI's own `<task>`, `<instruction>`, `<template>` and output path — including the parts the paraphrase had missed: the `## Capabilities` contract that tells the specs phase which spec files to create, `RENAMED Requirements`, MODIFIED needing full content, REMOVED needing `**Reason**`/`**Migration**`, and `skip_specs: true` for a change with no spec-level behaviour. Two rewrites are applied: absolute paths (the CLI resolves them against the runner) become `/repos/<name>` container paths, and unmet-dependency `<warning>` blocks are stripped since nothing exists yet in a single pass. A CLI that stops answering degrades to a note rather than failing the run.
+- **`wp ship <id>...`** (alias `wp fix`) — fetch by id (ignoring filters), run a
+  plan/approve loop (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`) per id, ship each
+  approved plan as a draft PR. One failure doesn't abort the rest.
+- **`wp build <id>...`** — stop after the local commit. A later `ship` finds the
+  branch (`branch_has_commits?`) and goes straight to publish.
+- **`wp plan <id>...`** — stop at the approved plan.
+- **`wp pr <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
+  against local state, else *adopted* via the OpenProject ticket link in the
+  description's top 15 lines; a WP id with no state is *discovered* by searching each
+  upstream for open bot-authored PRs mentioning the id, adopted only after verifying
+  author = bot login and the ticket link (the author check is the trust boundary —
+  `pr` pushes to the PR's head branch). Per PR: sync to the head; merge the base
+  **only when the branch has had no commits for over a day** (judged on the head
+  commit's date, so a fresh comment doesn't block a merge and a just-pushed branch
+  doesn't churn merge commits); fix failing CI regardless of act-state or cap (a
+  failure past GitHub's ~1-month log retention has no detail left, so it falls back
+  to base-merge + push); address comments newer than chomper's last action (no
+  mention or allowlist gate — the point is sweeping feedback that never pinged
+  chomper). Pushed to the fork after a `[y]es push / [d]iscard` prompt. The summary
+  is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
+- **`wp pull [<id>...]`** — mirror WPs into the local cache for later `chat`. With
+  ids, exactly those; without, the op-agent filter wizard plus a bulk mirror.
+- **`chat [message]`** — free read-only conversation over the local mirrors, never
+  fetching, planning, or shipping. `.chomper/` is mounted read-only at `/state`, so
+  `Prompts.free_chat` orients Claude at the layout and it Greps/Reads from there.
+  Fresh per-run session; needs no tokens or allowlist.
+
+### pd (product development)
+
+`./chomper pd <subcommand>` is a spec-driven pipeline, separate from the bug-fix
+modes: OpenProject Documents → an [OpenSpec](https://github.com/Fission-AI/OpenSpec)
+change proposal reviewed as a PR → generated work packages → one implementation run
+per WP → archive. It has its own namespace because the bug-fix verbs also take a
+work-package id while meaning something else entirely. Like every mode it publishes
+as the contributor bot. Implemented: M0–M3.
+
+The stages (`init`, `intake`, `propose`, `generate-wp`, `implement`), the
+three-copy spec store, attachment conversion, and the `openspec` CLI wrapper are
+documented in **[`lib/chomper/pd/CLAUDE.md`](lib/chomper/pd/CLAUDE.md)** — read that
+before touching anything under `lib/chomper/pd/`.
 
 ## Commands
 
 ```bash
-# Run both agent loops (polls every 20s) — the normal way to run chomper
+# Run both agent loops (polls every 20s) — the normal way to run chomper.
+# `agent op` / `agent gh` run one; the old op-agent / gh-agent names still work.
 ./chomper agent
 
-# Just the OpenProject loop (@chomper comments + assignment triggers), or just
-# the GitHub PR loop (replies, code when asked, CI fixes). The pre-group names
-# `op-agent` / `gh-agent` still work.
-./chomper agent op
-./chomper agent gh
-
-# Plan and ship one or more work packages by id (terminal approval; `wp fix` is
-# an alias). Publishes via the contributor bot's fork — a maintainer merges
+# Plan and ship work packages by id (terminal approval; `wp fix` is an alias)
 ./chomper wp ship <id>...
+./chomper wp build <id>...   # stop after the local commit — no push, no PR
+./chomper wp plan <id>...    # stop at the approved plan
 
-# Like wp ship, but stop after committing the fix locally — no push, no PR
-./chomper wp build <id>...
-
-# Plan one or more work packages by id, stopping before shipping
-./chomper wp plan <id>...
-
-# Refresh shipped PRs by work-package id or pasted PR URL: merge in the latest
-# base branch, fix failing CI, address new review comments, then push (with
-# confirmation). A URL is resolved to its WP via the OpenProject ticket link
-# at the top of the PR description, and the WP is mirrored first
+# Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
 ./chomper wp pr <id|pr-url>...
 
-# Mirror work packages into the local cache for later chat (no plan or ship);
-# ids fetch exactly those, no ids runs the filter wizard for a bulk grab
+# Mirror WPs into the local cache (no plan/ship); no ids → filter wizard
 ./chomper wp pull [<id>...]
 
-# Free read-only chat about the local mirrors (no fetch, plan, or ship)
+# Free read-only chat about the local mirrors
 ./chomper chat [message]
 
-# Product development (spec-driven). Publishes as the contributor bot, like
-# every other mode.
+# Product development (spec-driven)
 ./chomper pd init <project-id> [--repo <name>]
 ./chomper pd intake <project-id> <change-id> [--doc-id <id>]...
 ./chomper pd propose <change-id>
 ./chomper pd generate-wp <change-id>
 ./chomper pd implement <wp-id>...
 
-# Other CLI modes
 ./chomper status    # list planned/shipped work packages
 ./chomper reset     # delete .chomper/ (clones included)
 
-# Run all tests
+# Tests
 docker compose run --no-deps --rm runner bundle exec rake
-
-# Run a single test file
 docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/agent_test.rb
 
 # Rebuild runner image (required after editing Gemfile)
@@ -117,154 +176,200 @@ docker compose build runner
 
 Four Docker containers orchestrated by `compose.yml`:
 
-- **Runner** (Ruby 4.0): the agent. Polls OpenProject, dispatches intents, calls Claude, pushes branches, opens PRs.
-- **Claude** (Node 20 + Claude Code CLI): wraps `claude -p` via `server.js` HTTP server on port 47291 (internal network only, never published to the host). Accepts prompts with tool grants and session IDs; streams NDJSON back. Runs with `/repos` as its working directory (`working_dir` on the claude service) with every repo's worktree mounted at `/repos/<name>`, so Claude Code still auto-loads `/repos/openproject/CLAUDE.md` (OpenProject symlinks it to `AGENTS.md`) as project memory when it reads files there. It gets a **read-only** Bash grant — it can browse git history (`git log/show/blame/diff`) for context but cannot commit, push, reach a remote, or run any non-git command; tests and linters run later in the real dev env / CI. Two `PreToolUse` hooks (loaded via `--settings /app/claude-settings.json`): `guard-writes.js` blocks file writes outside `/repos`, and `guard-bash.js` allows only read-only git (allowlisted subcommands, no shell metacharacters or output-redirecting options). The runner does all real git (branch, commit, push); the egress proxy blocks exfiltration regardless. Authenticates to Anthropic one of two ways, selected by `ANTHROPIC_API_KEY`: a real key (default) routes via `ANTHROPIC_BASE_URL` → the authgw gateway, carrying only a fixed handshake token so the key is never in this container; the literal value `oauth` (or a legacy blank) selects stored `claude auth login` OAuth creds (in the claude-auth mount) talking to Anthropic through the proxy.
-- **Authgw** (Node 20, `authgw.js`): holds the real `ANTHROPIC_API_KEY`. Validates the fixed gateway token (`CHOMPER_GW_TOKEN`, a non-secret handshake value set in `compose.yml`), injects `x-api-key`, and forwards (streaming) to a hardcoded `api.anthropic.com`. Not an open proxy, so it egresses directly; only inference traffic is redirected here, everything else still goes via the proxy. Keeps the key out of the untrusted claude container.
-- **Proxy** (tinyproxy): egress allowlist for the claude container — only hosts matching `tinyproxy-filter` (Anthropic endpoints, Rails docs) are reachable; everything else is denied.
+- **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
+  Claude, pushes branches, opens PRs. Does all real git.
+- **Claude** (Node 20 + Claude Code CLI) — wraps `claude -p` via `server.js` on port
+  47291 (internal network only, never published). Working directory is `/repos` with
+  every worktree at `/repos/<name>`, so Claude Code auto-loads
+  `/repos/openproject/CLAUDE.md` as project memory. Its Bash grant is **read-only
+  git** — history for context, but no commit, push, or non-git command. Two
+  `PreToolUse` hooks (`--settings /app/claude-settings.json`): `guard-writes.js`
+  blocks writes outside `/repos`, `guard-bash.js` allows only read-only git.
+  `ANTHROPIC_API_KEY` selects auth: a real key routes via `ANTHROPIC_BASE_URL` →
+  authgw with only a fixed handshake token in this container; the literal `oauth`
+  (or a legacy blank) uses stored `claude auth login` creds.
+- **Authgw** (Node 20, `authgw.js`) — holds the real key, validates the fixed
+  gateway token (`CHOMPER_GW_TOKEN`, non-secret), injects `x-api-key`, forwards to a
+  hardcoded `api.anthropic.com`. Not an open proxy, so it egresses directly.
+- **Proxy** (tinyproxy) — egress allowlist for the claude container
+  (`tinyproxy-filter`); everything else denied.
 
-The bash script `./chomper` handles first-run setup (`.env` wizard, cloning each repo) then invokes the runner container.
-
-`compose.yml` mounts are keyed on `SCRIPT_DIR`, which `./chomper` exports as an absolute host path so the repo (and the clones under `.chomper/repos/`) mount at their real paths (the agent computes host paths that must resolve identically inside the container). It defaults to the current project when unset, so bare `docker compose run …` commands (e.g. tests) work from the repo root with no env prefix. Each repo is a **standalone clone** under `.chomper/repos/<name>` (so a single static `.chomper/repos:/repos` mount covers them all — no per-repo source mounts). `./chomper` provisions them in a loop driven by `ruby bin/repos list`: it `git clone`s each repo, using `--reference-if-able <shared_repo_path> --dissociate` when a local checkout is configured so the clone is fast yet stays standalone (the openproject clone reuses your local object store without depending on it afterwards).
+`./chomper` handles first-run setup (`.env` wizard, cloning each repo) then invokes
+the runner. `compose.yml` mounts key on `SCRIPT_DIR`, exported as an absolute host
+path so clones mount at their real paths (the agent computes host paths that must
+resolve identically inside the container); it defaults to the current project, so
+bare `docker compose run …` works from the repo root.
 
 ### Core Ruby modules (`lib/chomper/`)
 
 | File | Role |
 |------|------|
-| `cli.rb` | Argument parsing and dispatch for `./chomper <command>` — the one place a command's args are validated, the config loaded, and the log header stamped (`#session`, uniform `=== <command> [targets] <timestamp> ===`). `--help`/`-h` is honoured in any position (except inside `chat`'s free-text tail), and every bad invocation prints the same `Usage: ./chomper <name> <args>` shape (`#usage!`) |
-| `ui.rb` | Help text, `status`, and `reset` — the single home for every command description. One list per group (`#agent_commands`/`#wp_commands`/`#pd_commands`, plus `#triggers`): the group's own help renders it in full, the top-level `--help` is a one-screen map that just names the groups, and `PD::Runner#usage!` renders `#pd_usage_text` rather than keeping a second copy |
-| `context.rb` | Singleton config — env vars, paths, allowed emails, the repo registry (`#repos`) |
-| `repo.rb` | `Repo` value object + `Registry` — loads `repos.json`, resolves each repo's clone host/container paths, `by_upstream` lookups |
-| `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent` structs |
-| `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:ship` intents |
-| `gh_pull.rb` | Polls chomper's own open PRs; a PR seen merged/closed is stamped `pr_done` and dropped from polling for good (no more API calls — the `pr` command clears the stamp on a reopened PR); parses `@chomper` PR comments into `GhIntent` structs (gated by the GitHub-login allowlist); also yields per-head-SHA `:ci` intents for failed CI |
-| `upstream_gh_pull.rb` | Tracks every registry repo's `upstream` for open PRs that @-mention chomper (GitHub search pre-filter); yields `reply_only` `GhIntent`s. `#enabled?` gates it on `CHOMPER_TRACK_UPSTREAM_PRS` **and** an allowlist |
-| `gh_pr_cache.rb` | `GhPrCache` — PR-content caching (`pr.json` keyed by `updated_at`), `@chomper` mention matching, fresh-comment filtering, and CI-failure caching (`ci.json` keyed by head SHA + `ci_status` classifier) shared by the pollers |
-| `gh_agent.rb` | `gh-agent` event loop — polls the active sources; for own PRs replies + writes code + pushes to the fork (incl. `:ci` auto-fix); for tracked upstream PRs answers read-only (never pushes). `#sources` keeps the banner and the poll log honest about whether upstream tracking is on |
-| `fix_runner.rb` | Terminal `wp ship`/`wp build`/`wp plan` — fetch WPs by id, run the plan/approve loop, then ship approved plans as draft PRs (`wp ship`, alias `wp fix`), stop after the local commit (`wp build`), or stop at the approved plan (`wp plan`) |
-| `pr_runner.rb` | Terminal `wp pr` — refresh a WP's shipped PRs: merge the base branch in, fix failing CI, address unanswered review comments, push after confirmation |
-| `claude.rb` | HTTP client to the Claude container; manages per-WP session IDs |
+| `cli.rb` | Arg parsing and dispatch — the one place args are validated, config loaded, the log header stamped. `--help` works in any position (except `chat`'s free-text tail) |
+| `ui.rb` | Help text, `status`, `reset` — the single home for every command description; `PD::Runner#usage!` renders `#pd_usage_text` rather than duplicating it |
+| `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
+| `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
+| `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent`s |
+| `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:ship` |
+| `gh_pull.rb` | Polls chomper's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
+| `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning chomper; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
+| `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
+| `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
+| `fix_runner.rb` | Terminal `wp ship`/`build`/`plan` |
+| `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@chomper refresh` via `#refresh_one` |
+| `claude.rb` | HTTP client to the claude container; per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place |
-| `publish.rb` | Pushes branch to the user's fork via git credential helper; opens cross-repo draft PRs against upstream via Octokit |
-| `clients/openproject.rb` | OpenProject REST API (incl. Documents, attachment download, and WP create/update with `notify=false` + `lockVersion` retry). `#post_activity` is the one funnel every WP comment passes through, so it demotes markdown headings to bold (`Helpers.demote_headings`) — the activity tab is a narrow column, where a few `##`s push the answer out of view. `Prompts::OP_COMMENT_FORMAT` asks Claude for that shape up front; this enforces it for text chomper posts itself (a plan.md verbatim) and for a reply that ignored the ask |
+| `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
+| `clients/openproject.rb` | OpenProject REST API. `#post_activity` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
 ### The `pd` pipeline (`lib/chomper/pd/`, namespace `Chomper::PD`)
 
-The product-development pipeline lives in its own namespace and its own
-directory: it shares nothing with the bug-fix flow but the core above (`Context`,
-`Helpers`, `Claude`, `Prompts`, `Publish`, `Clients`), and the two use the same
-words for different things — a `pd` id is a *change* id or a generated WP id, not
-a WP a human filed.
-
-`lib/chomper/pd.rb` is that boundary made load-bearing: nothing under `pd/` is
-required at boot, so `CLI#pd` requires it on demand (see `bin/chomper`), and
-`pd/intake` is lazier still — `PD::Runner#intake_client` requires it on first
-use, keeping roo/nokogiri/rubyzip out of every run that never reads a document.
-The one exception is `PD::ChangeStore`, which `gh_pull.rb` requires directly
-because identifying a spec PR needs the store's layout on every agent tick.
-
-| File | Role |
-|------|------|
-| `pd/runner.rb` | `PD::Runner` — the `pd` command family (`init`, `intake`, `propose`, `generate-wp`, `implement`); always publishes as `:contributor` |
-| `pd/change_state.rb` | `PD::ChangeState` (per-change paths, branch, `tracker.json`) + `PD::ChangeStore` (the canonical spec store, materialise/persist, `.git/info/exclude`, the WP→change reverse index) |
-| `pd/resolved_ids.rb` | Stage-0 id resolution by name — project, parent/child types, statuses with `isClosed`; fails fast listing what's missing |
-| `pd/openspec.rb` | `PD::OpenSpec` — Open3 wrapper around the `openspec` CLI (runner-only); `validate --strict --json`, `instructions <artifact>` (the artifact contracts `Prompts.propose` embeds), and `init --tools none` |
-| `pd/tasks_file.rb` | Parse/rewrite a change's `tasks.md` — top-level sections, inline `(#id)` bindings, checkbox ticking; blanks fenced code blocks so an example `##` can't mint a work package |
-| `pd/intake.rb` | `pd intake` — Documents → `intake/*.md` + converted attachments, `intake.hash` short-circuit |
-| `pd/intake/converter.rb` | Attachment conversion (roo for spreadsheets, rubyzip+nokogiri for docx/pptx), `unconvertible[]`, zip-bomb guards |
+Its own namespace and its own doc — see
+**[`lib/chomper/pd/CLAUDE.md`](lib/chomper/pd/CLAUDE.md)** for the file table and
+every stage. It shares nothing with the bug-fix flow but the core above, and
+`lib/chomper/pd.rb` keeps that boundary load-bearing: nothing under `pd/` is
+required at boot (`CLI#pd` requires it on demand), and `pd/intake` is lazier still,
+keeping roo/nokogiri/rubyzip out of runs that never read a document. The one
+exception is `PD::ChangeStore`, required by `gh_pull.rb` because identifying a spec
+PR needs the store's layout on every tick.
 
 ### Per-work-package state machine
 
-1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by `last_acted_comment_at`, returns Intents. A WP assigned to the chomper user with no fresh comment trigger yields a synthetic `:ship` Intent (`source: :assignment`, de-duped by `assignee_acted_at`).
-2. **Plan** — Claude (Read-only tools) produces `plan.md`. NEEDS_INFO aborts with a comment. Every clone is first synced to current upstream (`Helpers#sync_bases_for_reading` → `#sync_base!`: fetch `origin/<base>`, detach the tree onto it) — `./chomper` fetches each base once at launch and never moves the working tree onto it, and no run checks the tree back off its fix branch afterwards, so without this a long-lived agent loop planned against the clone's original `git clone` commit, or against an unrelated WP's leftover fix branch with its unmerged changes applied. Nothing in the tree would tell Claude either. The whole registry is synced at plan time (which repos the fix lands in is the plan's own output); `:chat` syncs just the WP's target repos, and `chat`/`wp plan`/`wp ship` sync on the same rule. A **dirty** tree is left strictly alone (an implement run died before `#commit` swept its files up), and a fetch failure warns rather than failing — a stale answer beats no answer.
-3. **Implement** — Claude (Read/Write/Edit + read-only Bash) works across each chosen repo's clone on a fix branch (`bug/<id>-<slug>`) in one resumed session, then the runner commits `[<label>] <subject>` (matching the PR title) per repo where the label is `#59942` for numeric ids and bare `STC-162` for semantic ids (`Helpers.wp_label`).
-4. **Publish** — chomper has **one GitHub identity**, the **contributor** (`GITHUB_CONTRIBUTOR_TOKEN`, a dedicated bot account with no access to the canonical repos), and every mode publishes as it (`Publish.new(ctx)`). Commits are authored by it too (`Helpers.adopt_github_author!(token)`). The branch is pushed to the bot's fork (`Clients::GitHub#ensure_fork`), a draft PR opened against that repo's upstream and `base` branch (e.g. `dev` for openproject, `main` for the satellites) with a cross-repo head (`fork_owner:branch`) and `maintainer_can_modify: true`, and a reply posted to the WP with the PR link(s). The PR body's OpenProject WP link is defanged (`http`→`hxxp`, `Helpers#neutralize_wp_links`), so OpenProject's GitHub integration doesn't auto-reference the WP and clutter its activity tab with a fork PR no maintainer has adopted yet; `PrRunner#op_ticket_id` accepts the `hxxp` scheme so chomper still reads the link back (for adoption/discovery), and `gh adopt` re-fangs it so the maintainer's real PR links cleanly. Right after creation the PR body is patched with an **adopt note** — `gh adopt <number>`, linking the README's "Adopting a chomper PR" alias setup — telling maintainers how to re-publish the PR under their own account, since fork PRs can't run secret-gated CI (`Publish#add_adopt_note`; the number only exists post-create, hence the follow-up `update_pr_body` edit; best-effort). Both that note and the AI-generated disclaimer above it are fenced between `Publish::BANNER_OPEN`/`BANNER_CLOSE` (`<!-- chomper:banner -->` … `<!-- /chomper:banner -->`), because neither is true of an adopted PR: `gh adopt` deletes exactly that range and prepends `Adapted from #<bot-pr>`. The fence is a **published interface** — the alias lives in the README (and in maintainers' shells), so changing either marker string orphans every PR opened before the change and adoption then silently keeps the disclaimer. Matching the banner's prose instead would have broken on the first wording tweak. The implementation-plan gist link is deliberately placed *outside* the fence: it describes the change rather than its authorship, so it survives adoption. `Publish#open_pr` takes the target `Repo` and drives upstream/base/worktree from it. The one push-safety rule is **target-based**: any push whose target is a registry upstream (`Helpers#canonical_repo?`) is **refused outright** (`Helpers#refuse_canonical_push?`, shared by `Publish#open_pr`/`#open_spec_pr`, gh-agent's `push_followup`, and the `pr` refresh) — the fork is the only place chomper writes, so a canonical target is always a mistake (a PR a maintainer adopted and re-published, or a fork lookup that resolved to the upstream itself) rather than a mode; the commit stays in the clone and, for a `pr` refresh, the branch is reset. There is deliberately no confirmation prompt to answer "yes" to. The `protected_branch?` guard (`dev`/`main`/`master`/`release*`) is the backstop under that.
+1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by
+   `last_acted_comment_at`. An assigned WP with no fresh comment yields a synthetic
+   `:ship` (`source: :assignment`, de-duped by `assignee_acted_at`).
+2. **Plan** — Claude (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
+   comment. Every clone is first synced to current upstream
+   (`sync_bases_for_reading` → `#sync_base!`) because `./chomper` fetches each base
+   once at launch and no run checks the tree back off its fix branch — without this a
+   long-lived loop plans against the original clone commit or another WP's leftover
+   branch, with nothing in the tree saying so. The whole registry is synced at plan
+   time (which repos the fix lands in is the plan's own output); `:chat` syncs just
+   the target repos. A **dirty** tree is left strictly alone, and a fetch failure
+   warns rather than fails.
+3. **Implement** — Claude (Read/Write/Edit + read-only Bash) works across each chosen
+   clone on `bug/<id>-<slug>` in one resumed session; the runner commits
+   `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
+   ids, bare `STC-162` for semantic ones).
+4. **Publish** — chomper has **one GitHub identity**, the contributor
+   (`GITHUB_CONTRIBUTOR_TOKEN`, a bot with no access to the canonical repos); every
+   mode publishes as it and commits are authored by it. The branch goes to the bot's
+   fork, a draft PR is opened against the repo's upstream and `base` with a
+   cross-repo head and `maintainer_can_modify: true`, and the PR link(s) are posted
+   back to the WP.
 
-   **Preflight, shared across commands.** A check belongs where the failure would otherwise land far from its cause, and the same three now apply on both sides of the pd/non-pd split: `ship` refuses without the token its identity needs (`FixRunner#require_publish_token!`) — `Publish#open_pr` reported that only at the very end, after a full plan and implement run, while `pr` had always checked up front; `build`/`plan` still need no token since they stop before publishing. `Helpers#require_clone!` is called from **`Helpers#worktree`**, the funnel every git operation goes through, because a check each command had to remember would be forgotten — `./chomper` only *warns* when a `git clone` fails, so a missing clone is reachable and `Git.open`'s "path does not exist" names neither the repo nor the fix. And `Helpers#ensure_claude!` fails with the "start the container" message at every entry point that will call Claude (both agents, `ship`/`build`/`plan`, `pr`, `chat`, `pd propose`/`implement`) rather than mid-run with a connection error — it was pd-only before.
+   The body's WP link is **defanged** (`http`→`hxxp`) so OpenProject's GitHub
+   integration doesn't clutter the activity tab with a fork PR nobody has adopted;
+   `PrRunner#op_ticket_id` accepts `hxxp` so chomper reads it back, and `gh adopt`
+   re-fangs it. The body opens with a bot-only preamble — the AI-prototype disclaimer
+   plus an **adopt note** (`gh adopt <number>`) telling maintainers how to re-publish
+   under their own account, since fork PRs can't run secret-gated CI
+   (`#add_adopt_note`; the number only exists post-create, hence the follow-up body
+   edit). Both are fenced between `Publish::BANNER_OPEN`/`BANNER_CLOSE`
+   (`<!-- chomper:banner -->` … `<!-- /chomper:banner -->`), because neither is true
+   of an adopted PR: `gh adopt` deletes exactly that range and prepends
+   `Adapted from #<bot-pr>`. **The fence is a published interface** — the alias lives
+   in the README and in maintainers' shells, so changing a marker orphans every PR
+   opened before the change. The plan gist link sits *outside* the fence and survives
+   adoption.
 
-`:ship` intent (`@chomper ship`, plus the aliases `fix`, `prototype`, `build`, `pr`, `implement` — one intent under every word someone might reach for, since an unrecognised word falls through to `:chat` and answers where a PR was wanted) combines plan + implement in one pass; `:plan` waits for a human `@chomper approve`. Chat lenses (`@chomper grill`, `@chomper summarize`) are preset instructions over the ordinary `:chat` intent (`Prompts::LENSES` via `Prompts.lens`) — trailing text becomes a focus hint; no separate machinery.
+   The one push-safety rule is **target-based**: any push targeting a registry
+   upstream (`#canonical_repo?`) is **refused outright** (`#refuse_canonical_push?`,
+   shared by `open_pr`/`open_spec_pr`, gh-agent's `push_followup`, and the `pr`
+   refresh) — the fork is the only place chomper writes, so a canonical target is
+   always a mistake rather than a mode. The commit stays in the clone and, for a `pr`
+   refresh, the branch is reset. There is deliberately no confirmation prompt to
+   answer "yes" to. `protected_branch?` (`dev`/`main`/`master`/`release*`) is the
+   backstop under it.
+
+**Preflight, shared across commands.** `ship` refuses without its publishing token
+up front rather than after a full plan and implement run (`build`/`plan` need none).
+`Helpers#require_clone!` is called from **`Helpers#worktree`**, the funnel every git
+operation goes through, because a per-command check gets forgotten — `./chomper`
+only *warns* when a clone fails, and `Git.open`'s error names neither the repo nor
+the fix. `#ensure_claude!` fails with "start the container" at every entry point that
+will call Claude, not mid-run with a connection error.
+
+`:ship` (`@chomper ship`, plus the aliases `fix`, `prototype`, `build`, `pr`,
+`implement` — an unrecognised word falls through to `:chat` and answers where a PR
+was wanted) combines plan + implement in one pass; `:plan` waits for a human
+`@chomper approve`. Chat lenses (`grill`, `summarize`) are preset instructions over
+the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
 ### State on disk (`.chomper/` — gitignored)
 
-Per-instance state is namespaced so pointing chomper at a different
-`OPENPROJECT_URL` can't collide (WP #42 on instance A ≠ #42 on instance B):
-work packages live under `work_packages/<op_host>/` (`<op_host>` is the host —
-plus a non-default port — parsed from `OPENPROJECT_URL` by `Context#op_host`),
-and the saved search filters sit beside them. Upstream-PR review state is keyed
-by `<owner>-<repo>/<number>` (globally unique on github.com), so it's a flat
-`pr_reviews/` with no host segment.
+Per-instance state is namespaced so a different `OPENPROJECT_URL` can't collide (WP
+#42 on instance A ≠ #42 on B): work packages and saved filters live under
+`work_packages/<op_host>/`. Upstream-PR state is keyed by `<owner>-<repo>/<number>`,
+globally unique, so `pr_reviews/` is flat.
 
 ```
 .chomper/
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── chat_session_id          # Claude session for the current `chat` REPL (reset each run)
-├── work_packages/<op_host>/                # per-OpenProject-instance WP state
-│   ├── op_agent_filters.json   # saved op-agent search filters (project ids are instance-specific)
-│   ├── resolved-ids.json       # `pd init` cache: project id, parent/child type ids (resolved by name), statuses + isClosed
+├── work_packages/<op_host>/
+│   ├── op_agent_filters.json   # saved op-agent search filters
+│   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
 │   └── <wp_id>/
-│       ├── item.json            # WP metadata + poll cache + acted_at timestamps (incl. assignee_acted_at — assignment trigger consumed)
-│       ├── related.json         # index of related WPs pulled in at plan time (relations + parent/children): id, relation, subject, status, item_path
+│       ├── item.json            # WP metadata + poll cache + acted_at timestamps
+│       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
-│       ├── target_repos.json    # the repo names Claude chose for this WP (from the plan's REPOS line)
-│       ├── target_base.json     # optional per-repo base-branch overrides ({repo: base}) from REPOS <name>@<base>; absent → default base
-│       ├── gist_url.txt         # secret gist of plan.md (one per WP), linked from every repo's PR; created once, then cached
-│       ├── session_id           # Claude session for continuity across turns (plan + implement)
-│       └── repos/<repo_name>/   # one subdir per repo this WP ships to
+│       ├── target_repos.json    # repo names from the plan's REPOS line
+│       ├── target_base.json     # optional per-repo base overrides ({repo: base})
+│       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR
+│       ├── session_id           # Claude session (plan + implement)
+│       └── repos/<repo_name>/
 │           ├── pr.md            # PR description (per-repo diff)
 │           ├── pr_url.txt       # published PR URL
-│           ├── pr.json          # gh-agent cache of PR content (comments + reviews), keyed by PR updated_at
-│           ├── ci.json          # gh-agent cache of CI failure detail (failed checks + annotations + log tails), keyed by head SHA
-│           ├── gh_pr.json       # gh-agent act-state: last_acted_comment_at + reply ids; CI: ci_acted_sha, ci_quiet_sha (green, immutable per SHA), ci_attempts, ci_gave_up; pr_done (PR seen merged/closed — dir dropped from polling; `pr` clears it on reopen)
-│           └── gh_session_id    # gh-agent's Claude session (separate from session_id)
-├── pr_reviews/<owner>-<repo>/<number>/   # gh-agent review state for an upstream PR chomper didn't open
-│   ├── pr.json              # cached PR content (comments + reviews)
-│   ├── ci.json              # cached CI failure detail (failed checks + annotations + log tails), keyed by head SHA — read-only context for CI questions
-│   ├── gh_pr.json           # act-state: last_acted_comment_at + chomper's own reply ids
-│   └── gh_session_id        # the review session
-├── changes/<op_host>/<change_id>/   # `pd` per-change local state (the cache half; tracker.json lives in the store)
-│   ├── session_id           # Claude session for the change (propose + revise)
-│   ├── pr_url.txt           # the spec PR on the bot's fork
-│   ├── gh_pr.json           # gh-agent act-state for the spec PR
-│   └── gh_session_id        # gh-agent's Claude session for the spec PR
-├── openspec/<repo_name>/    # CANONICAL spec store — a runner-owned git repo, the durable copy
-│   └── openspec/            #   config.yaml, specs/, changes/<change-id>/{proposal,design,tasks}.md
-│                            #   + tracker.json (parent_wp, intake hash/selection, unconvertible[])
-│                            #   + intake/ (documents as markdown, converted attachments)
-├── repos/<repo_name>/       # this repo's isolated standalone clone (mounted at /repos/<name>)
-│   └── openspec/            #   WORKING copy, materialised per `pd` command; git-excluded in the clone
-└── claude-auth/             # claude CLI config (holds OAuth login creds when no API key is set)
+│           ├── pr.json          # PR-content cache, keyed by updated_at
+│           ├── ci.json          # CI failure detail, keyed by head SHA
+│           ├── gh_pr.json       # act-state: last_acted_comment_at, reply ids, ci_acted_sha,
+│           │                    #   ci_quiet_sha, ci_attempts, ci_gave_up, pr_done
+│           └── gh_session_id    # gh-agent's Claude session
+├── pr_reviews/<owner>-<repo>/<number>/   # tracked upstream PR (chomper didn't open it)
+│   └── pr.json / ci.json / gh_pr.json / gh_session_id
+├── changes/ , openspec/     # `pd` state — see lib/chomper/pd/CLAUDE.md
+├── repos/<repo_name>/       # this repo's standalone clone (mounted at /repos/<name>)
+└── claude-auth/             # claude CLI config (OAuth creds when no API key is set)
 ```
 
 ### Claude container communication
 
 Runner POSTs to `http://claude:47291` with headers:
-- `X-Claude-Tools`: `"Read,Grep,Glob,Bash"` (planning/chat) or `"Read,Grep,Glob,Write,Edit,Bash"` (implementation). Bash is read-only git, gated by `guard-bash.js`. `server.js` rejects any other grant — the allowlist there must stay in sync with `TOOLS_READ`/`TOOLS_IMPL` in `claude.rb`.
-- `X-Claude-Model`: model passed to `--model`, pinned by `claude.rb`. One model per WP, shared by every session-bound phase (`MODEL_WORK`), plus `MODEL_FAST` for stateless one-shot passes (e.g. crafting a gh-agent commit subject). Validated by format in `server.js` (not an allowlist — model choice grants no privilege), so model strings don't need syncing there.
-- `X-Claude-Session`: session ID (omit on first call; save from response for next turn)
 
-`server.js` spawns `claude -p` with `--output-format stream-json --verbose --model <model>`, streams NDJSON back, and persists the session ID. The spawn sets no `cwd`, so it inherits the container's `/repos` working directory (set via `working_dir` in `compose.yml`), with each repo at `/repos/<name>` — Claude Code loads `/repos/openproject/CLAUDE.md` as project memory when it reads files there.
+- `X-Claude-Tools` — `"Read,Grep,Glob,Bash"` (planning/chat) or
+  `"Read,Grep,Glob,Write,Edit,Bash"` (implementation). `server.js` rejects any other
+  grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
+- `X-Claude-Model` — one model per WP for every session-bound phase (`MODEL_WORK`),
+  plus `MODEL_FAST` for stateless one-shots. Validated by format, not an allowlist —
+  model choice grants no privilege.
+- `X-Claude-Session` — session ID (omit on first call; save from the response).
+
+`server.js` spawns `claude -p` with `--output-format stream-json --verbose --model
+<model>`, streams NDJSON back, and persists the session ID. It sets no `cwd`, so it
+inherits `/repos`.
 
 ### Required environment variables (`.env`)
 
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token. Read access to work packages suffices for `wp`/`chat`; agent mode also needs write access to post comments, and `pd` additionally needs `:add_work_packages` (`pd init` preflights exactly that — see above) |
-| `CLAUDE_URL` | Optional; where the runner reaches the claude container (default `http://claude:47291`, set explicitly in `compose.yml`). Only worth changing if the claude service is moved |
-| `OP_REPO_PATH` | Optional. Local openproject checkout to seed the openproject clone from (faster clone); absent → clones fresh. openproject-only — other repos are configured in `repos.json` |
-| `GITHUB_CONTRIBUTOR_TOKEN` | Token for the **contributor identity** — a dedicated bot account (not the operator) that is **not a collaborator on the canonical repo**. chomper forks as the bot, pushes branches there, and opens cross-repo PRs against upstream — chomper's only identity, used by every mode that publishes. Prompted by the setup wizard; use a classic token with the `public_repo`, `workflow` and `gist` scopes (the account's lack of canonical-repo access is what enforces isolation — `workflow` is needed because the lagging fork makes a fix branch re-introduce upstream's `.github/workflows/*` files, which GitHub rejects from a classic PAT without that scope; `gist` lets chomper attach each WP's full plan as a secret gist linked from the PR, and the link is simply skipped if the scope is absent). Must be a personal/user account. Fine-grained tokens can't open fork→upstream PRs |
-| `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent (the number in a profile URL, `/users/<id>` — not emails, since a non-admin API token can't read other users' emails; the id is taken from each comment's `_links.user.href`). Prompted by the setup wizard; required for the public community instance, empty (= unrestricted) needs explicit confirmation elsewhere |
-| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means any GitHub user can trigger on chomper's own PRs — the setup wizard demands explicit confirmation to run that way, since an open trigger on a public PR would let anyone push code to the bot's branch. Also required (but no longer sufficient) for upstream-PR tracking |
-| `CHOMPER_TRACK_UPSTREAM_PRS` | Optional; set `1`/`true` to have `gh-agent` also track the registry repos' **upstream** PRs, so an `@chomper` mention on one gets answered (read-only — it replies and can offer GitHub suggestions, never pushes). **Off by default**: it is the only source that reaches outside chomper's own PRs, and searching whole public repos on every agent run is a spend decision the operator should make deliberately, per repo set. Also needs `CHOMPER_ALLOWED_GH_USERS` — the flag says which PRs to watch, the allowlist whose mentions count |
-| `ANTHROPIC_API_KEY` | A real key (recommended) is held only by the authgw gateway (injected into requests), never in the claude container. The literal value `oauth` selects interactive `claude auth login` instead (OAuth creds stored in the claude container — less isolated; a legacy blank value means the same). The wizard saves `oauth` on a blank entry, so the choice is explicit in `.env` |
-| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) used for all planning and implementation |
-| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) used for stateless one-shot passes (e.g. the gh-agent commit subject) |
-| `CHOMPER_ASSIGN_TRIGGER` | Optional; set `0`/`false` to disable the assignment trigger (on by default). When on, setting the chomper OP user as a WP's assignee acts like `@chomper ship` — once per WP, from any assigner (not gated by `CHOMPER_ALLOWED_OP_USER_IDS`; assignment already requires OpenProject edit-WP permission). Turn off on instances where WP edit rights are broad |
-| `CHOMPER_PD_PARENT_TYPE` | Optional; the work-package type name a `pd` change becomes (default `FEATURE`). Resolved to an id **by name** at `pd init` — not a stock OpenProject type, and ids differ per instance, so a missing one fails fast there instead of as an opaque 422 two stages later |
-| `CHOMPER_PD_CHILD_TYPE` | Optional; the type name each top-level `tasks.md` section becomes (default `IMPLEMENTATION`), resolved the same way |
-| `CHOMPER_PD_IMPLEMENTING_STATUS` | Optional; the status `pd implement` sets when it starts work on a work package (default `In progress`). Resolved by name, case-insensitively, from `pd init`'s status cache; set empty to skip that transition. A name this instance doesn't have is reported and skipped — never fatal |
-| `CHOMPER_PD_IMPLEMENTED_STATUS` | Optional; the status `pd implement` sets once the draft PR is open (default `Developed`). Same resolution and same best-effort handling. A run that shipped nothing leaves the work package at the implementing status |
-| `CHOMPER_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` will chase one PR's CI before giving up and posting a "needs a human" note (default `5`, floored at 1) |
-| `CHOMPER_CI_IGNORE_CHECKS` | Optional; comma-separated, case-insensitive check-run names `gh-agent` ignores when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails and chomper can't fix it). Set empty to ignore none |
+| `OPENPROJECT_TOKEN` | API token. Read access suffices for `wp`/`chat`; agent mode needs write (to comment), `pd` needs `:add_work_packages` |
+| `CLAUDE_URL` | Optional; where the runner reaches the claude container (default `http://claude:47291`) |
+| `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
+| `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
+| `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
+| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on chomper's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
+| `CHOMPER_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@chomper` mentions (read-only answers). **Off by default** — the only source reaching outside chomper's own PRs. Also needs `CHOMPER_ALLOWED_GH_USERS` |
+| `ANTHROPIC_API_KEY` | A real key (recommended) lives only in authgw. The literal `oauth` selects `claude auth login` instead (creds in the claude container — less isolated); a legacy blank means the same |
+| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) |
+| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) |
+| `CHOMPER_ASSIGN_TRIGGER` | Optional (`0`/`false`); disable the assignment trigger. Turn off where WP edit rights are broad |
+| `CHOMPER_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
+| `CHOMPER_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
+| `CHOMPER_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |
+| `CHOMPER_PD_IMPLEMENTED_STATUS` | Optional; status set once the draft PR is open (default `Developed`) |
+| `CHOMPER_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
+| `CHOMPER_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
