@@ -2,17 +2,14 @@
 
 > ⚠️ **Proof of concept — use at your own risk!**
 
-An OpenProject AI development orchestrator that helps you implement work packages, end to end.
 
-**Agent mode**
-* Assists you inside both WP Activity tabs and GitHub PRs.
-* Just tag `@chomper` to ask questions, plan together, and even generate PRs.
-* **Operates a dedicated [OpenProject](https://community.openproject.org/users/100163) & [GitHub user](https://github.com/op-chomper).**
+## What is this?
 
-**Script mode**
-* Works entirely within your terminal.
-* Run `./chomper <command>`
-* **Can be scoped to your own OpenProject & GitHub user.**
+An Experimental OpenProject AI product development orchestrator
+
+* Discuss work package & codebase by tagging `@Chomper` in work package comments or PRs
+* Trigger prototype PRs with `@Chomper build` (then adopt them as your own via `gh adopt` command)
+* Convert raw product notes into final implementation via the [spec-driven development pipeline](https://excalidraw.com/#room=2fc303c2b4b46f7b6d25,S-irRTZgfKS02ziIfw9D4g)
 
 ---
 
@@ -31,9 +28,9 @@ An OpenProject AI development orchestrator that helps you implement work package
 
 ## Requirements
 
-- **Docker**, plus host `git` (the wrapper clones the product repos and uses your git identity) and `gh` for the [adopt](#adopting-a-chomper-pr) alias
-- GitHub auth token for a **bot account** that is not a collaborator on the product repos — chomper only ever opens fork PRs (we currently use [op-chomper](https://github.com/op-chomper))
-- OpenProject API token — read access is enough for `wp` and `chat`; agent mode also needs comment rights, and `pd` needs add-work-packages (it creates work packages)
+- **Docker**
+- GitHub auth token tied to a permission-less contributor account (we currently use [op-chomper](https://github.com/op-chomper))
+- Project-scoped OpenProject API token (read/write for the product development pipeline, or just read-only for the rest)
 
 ---
 
