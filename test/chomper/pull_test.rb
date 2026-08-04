@@ -126,8 +126,23 @@ module Chomper
       assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper ship be careful")
     end
 
-    def test_parse_command_fix_is_a_legacy_alias_of_ship
-      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper fix be careful")
+    def test_parse_command_ship_aliases
+      %w[fix prototype build pr implement].each do |word|
+        assert_equal [:ship, "be careful"],
+                     @pull.send(:parse_command, "@chomper #{word} be careful"),
+                     "expected `@chomper #{word}` to ship"
+      end
+    end
+
+    def test_parse_command_ship_alias_without_feedback
+      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper prototype")
+    end
+
+    # A word that merely starts with an alias is not the alias (\b, not a prefix
+    # match) — "building" is a sentence, not a command.
+    def test_parse_command_ship_alias_needs_a_word_boundary
+      assert_equal [:chat, "building on the last comment"],
+                   @pull.send(:parse_command, "@chomper building on the last comment")
     end
 
     def test_parse_command_approve

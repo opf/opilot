@@ -155,7 +155,8 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 Simply run `./chomper agent`
 
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
-`@chomper ship` plans and ships in one step (`fix` is a legacy alias),
+`@chomper ship` plans and ships in one step (aliases: `fix`, `prototype`,
+`build`, `pr`, `implement`),
 `@chomper plan` drafts a plan for review, `@chomper approve` ships the drafted
 plan. `@chomper grill` stress-tests the ticket or plan (gaps, edge cases,
 risks), `@chomper summarize` recaps a long thread — and anything else just

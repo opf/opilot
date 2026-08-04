@@ -441,8 +441,12 @@ module Chomper
       text = strip_mention(raw)
       case text
       when /\A@chomper\s+plan\b\s*(.*)/im     then [:plan,    $1.strip]
-      when /\A@chomper\s+ship\b\s*(.*)/im     then [:ship,    $1.strip]
-      when /\A@chomper\s+fix\b\s*(.*)/im      then [:ship,    $1.strip]   # legacy alias of ship
+      # One intent, several names: `ship` is the canonical word, `fix` the legacy
+      # one, and the rest are what people actually reach for when they mean
+      # "just do it" — each would otherwise fall through to :chat and get an
+      # answer where a PR was wanted.
+      when /\A@chomper\s+(?:ship|fix|prototype|build|pr|implement)\b\s*(.*)/im
+        [:ship, $1.strip]
       when /\A@chomper\s+approve\b/i          then [:approve, nil]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
       # trailing text folded in as a focus hint (see Prompts::LENSES).

@@ -107,6 +107,8 @@ module Chomper
       <<~TRIGGERS.strip
         Triggers — on a work package:  @chomper ship | plan | approve | grill |
                                        summarize, or anything else to just talk
+                                       (ship aliases: fix, prototype, build, pr,
+                                       implement)
                    on a chomper PR:    any @chomper comment gets a reply — and
                                        code, if asked; refresh re-runs `wp pr`
       TRIGGERS

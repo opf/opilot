@@ -304,7 +304,8 @@ module Chomper
         #{THIN_REPORT_GATE}
 
         AVAILABLE COMMANDS (mention these when relevant):
-        - @chomper ship [feedback]  — plan and ship in one step (use this for most tasks)
+        - @chomper ship [feedback]  — plan and ship in one step (use this for most tasks;
+                                      fix / prototype / build / pr / implement all mean the same)
         - @chomper plan [feedback]  — for complex tasks: draft a plan for review before touching any code
         - @chomper approve          — implement and ship a plan that was drafted with @chomper plan
         - @chomper grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions
