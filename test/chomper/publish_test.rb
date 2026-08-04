@@ -96,9 +96,31 @@ module Chomper
       assert_includes update[:body],
                       "`gh adopt 7` ([setup guide](https://github.com/opf/openproject-chomper#adopting-a-chomper-pr))",
                       "the note links the setup doc and names this PR's concrete number"
-      assert update[:body].lines[1].include?("gh adopt"),
-             "the note sits at the top, right under the banner"
+      # It reads as the banner's second bullet, directly under the first — not
+      # buried after the description.
+      assert_match(/^\* Chat with @\S+ .*\n\* To ship the PR, first run `gh adopt 7`/,
+                   update[:body], "the note is the banner's second bullet")
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
+    end
+
+    # The fence is what `gh adopt` deletes, so both the disclaimer and the adopt
+    # note must fall inside it — a note left outside would survive adoption and
+    # tell a maintainer to adopt their own PR.
+    def test_bot_preamble_is_fenced_for_gh_adopt
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      body = @github.body_updates.first[:body]
+      fenced = body[/#{Regexp.escape(Publish::BANNER_OPEN)}\n(.*?)\n#{Regexp.escape(Publish::BANNER_CLOSE)}/m, 1]
+      refute_nil fenced, "the preamble is wrapped in the fence the adopt alias deletes"
+      assert_includes fenced, "AI-generated prototype"
+      assert_includes fenced, "gh adopt 7"
+      assert body.start_with?(Publish::BANNER_OPEN), "the fence opens the body"
+
+      # What `gh adopt` is left with once it deletes the range.
+      rest = body.sub(/#{Regexp.escape(Publish::BANNER_OPEN)}.*?#{Regexp.escape(Publish::BANNER_CLOSE)}\n/m, "")
+      refute_includes rest, "AI-generated prototype", "the disclaimer does not survive adoption"
+      refute_includes rest, "gh adopt", "the adopt note does not survive adoption"
+      assert_includes rest, "PR body here", "the description does"
     end
 
     def test_pr_body_defangs_the_wp_link

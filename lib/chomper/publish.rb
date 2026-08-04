@@ -66,10 +66,20 @@ module Chomper
 
       # Keep the PR body compact; attach the full plan as a (secret) gist and
       # link it under the banner for anyone who wants to read deeper.
-      banner    = "🤖 AI-generated PR. Chat with @#{@github.login} for any further adjustments."
+      # The bot-specific preamble (disclaimer + adopt note) is fenced in HTML
+      # comments so `gh adopt` can lift exactly that block out and say "Adapted
+      # from #<n>" instead — a maintainer's own PR is not AI-generated and can't
+      # be adopted twice. Matching on the banner's prose would break the moment
+      # its wording changed; the markers are a contract. The plan link sits
+      # OUTSIDE the fence: it documents the change, so it survives adoption.
+      # A line of framing, then one bullet per thing a reader can do — the adopt
+      # note lands as the second bullet (#add_adopt_note, post-create). Cramming
+      # both into one sentence read as fine print on a wide GitHub body.
+      banner    = "🤖 This is an AI-generated prototype.\n\n" \
+                  "* Chat with @#{@github.login} for any further adjustments."
       gist_url  = plan_gist_url(st)
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
-      pr_body   = "#{banner}\n\n#{plan_line}#{pr_desc_file.read}"
+      pr_body   = "#{BANNER_OPEN}\n#{banner}\n#{BANNER_CLOSE}\n\n#{plan_line}#{pr_desc_file.read}"
 
       # The PR lives on upstream but isn't a maintainer's PR yet — defang its WP
       # link (http→hxxp) so the OpenProject GitHub integration doesn't
@@ -167,17 +177,27 @@ module Chomper
     # Where the `gh adopt` alias (one-time setup) is documented.
     ADOPT_DOC_URL = "https://github.com/opf/openproject-chomper#adopting-a-chomper-pr"
 
+    # Fence around the bot-only preamble of a PR body. The `gh adopt` alias in
+    # the README deletes this range verbatim, so these two lines are a published
+    # interface: changing either string orphans every PR opened before the change
+    # (an old PR's fence no longer matches the new alias, and vice versa), and
+    # adoption then silently keeps the AI disclaimer on a maintainer's PR.
+    BANNER_OPEN  = "<!-- chomper:banner -->"
+    BANNER_CLOSE = "<!-- /chomper:banner -->"
+
     # Every chomper PR is opened cross-repo against upstream from the bot's fork,
     # which can't run secret-gated CI, so tell maintainers up front how to
     # re-publish it under their own account. The PR lives in the upstream repo, so
     # a bare number resolves against the maintainer's canonical checkout. The
     # number only exists after creation — hence the follow-up body edit.
+    # Appended as the banner's second bullet, so it stays inside the fence
+    # `gh adopt` deletes (an adopted PR must not tell its owner to adopt it).
     # Best-effort: a failed update just leaves the note off.
     def add_adopt_note(upstream, url, pr_body, banner)
       number = Clients::GitHub.pr_number_from_url(url)
       return unless number
-      note = "🔁 Maintainers: Run `gh adopt #{number}` ([setup guide](#{ADOPT_DOC_URL})) to re-publish " \
-             "this PR under your own account (so secret-gated CI can run)."
+      note = "* To ship the PR, first run `gh adopt #{number}` ([setup guide](#{ADOPT_DOC_URL})) " \
+             "to make it yours."
       @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
       log_script "Could not add the adopt note to #{url}: #{e.message}"
