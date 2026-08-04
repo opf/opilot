@@ -5,7 +5,7 @@
 
 ## What is this?
 
-An Experimental OpenProject AI product development orchestrator
+An experimental OpenProject AI product development orchestrator
 
 * Discuss work package & codebase by tagging `@Chomper` in work package comments or PRs
 * Trigger prototype PRs with `@Chomper build` (then adopt them as your own via `gh adopt` command)
