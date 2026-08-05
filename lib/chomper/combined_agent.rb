@@ -2,19 +2,14 @@ require_relative "agent"
 require_relative "gh_agent"
 
 module Chomper
-  # The `agent` command: run the OpenProject loop (Agent) and the GitHub-PR loop
-  # (GhAgent) together in one single-threaded process. Each tick polls GitHub
-  # first, then OpenProject, handling intents one at a time.
+  # The `agent` command: the OpenProject loop (Agent) and the GitHub-PR loop
+  # (GhAgent) in one single-threaded process, each tick polling GitHub then
+  # OpenProject, one intent at a time.
   #
-  # Single-threaded on purpose: both loops drive the *same* repo clones
-  # (.chomper/repos/<name>), so their work must be serialized anyway — running
-  # them in parallel would just need a lock around every checkout. Interleaving
-  # one tick of each per cycle gives "watch both sources from one command"
-  # without the concurrency hazards.
-  #
-  # When GITHUB_CONTRIBUTOR_TOKEN is unset the GitHub side is skipped and this
-  # degrades to an OpenProject-only loop (same as `op-agent`), rather than
-  # erroring out — the agent loops act only as the contributor bot.
+  # Single-threaded on purpose: both loops drive the *same* clones, so their work
+  # has to be serialized anyway — parallelism would only add a lock around every
+  # checkout. Without GITHUB_CONTRIBUTOR_TOKEN the GitHub side is skipped and this
+  # degrades to an OpenProject-only loop rather than erroring out.
   class CombinedAgent
     include Helpers
 

@@ -115,19 +115,13 @@ module Chomper
       @github.token_scopes
     end
 
-    # Push a `pd` change's spec branch and open its proposal PR **inside the
-    # bot's own fork** — head and base both on `<bot>/<repo>`.
+    # Push a `pd` change's spec branch and open its proposal PR **inside the bot's
+    # own fork** — head and base both `<bot>/<repo>`.
     #
-    # Deliberately not a PR against upstream: the diff is spec artifacts, not
-    # code, and it exists so a human can review the decomposition before work
-    # packages are generated. Opening it upstream would put planning noise on a
-    # public repo. Since the bot owns both sides it can merge or close freely —
-    # and nothing downstream depends on the merge, because `pd generate-wp` reads
-    # the local spec store rather than the branch.
-    #
-    # The fork is not a registry upstream, so refuse_canonical_push? passes it
-    # straight through; `spec/<id>` is not a protected branch name either.
-    # Idempotent: an already-open PR for this head is recorded and returned.
+    # Deliberately not against upstream: the diff is planning artifacts, so it
+    # would be noise on a public repo, and the bot owning both sides can merge or
+    # close freely. Nothing downstream needs the merge — `generate-wp` reads the
+    # local store. Idempotent: an already-open PR for this head is returned.
     def open_spec_pr(state, repo, body:)
       unless author_token
         puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — cannot open the proposal PR."

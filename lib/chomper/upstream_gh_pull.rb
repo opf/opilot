@@ -3,28 +3,20 @@ require_relative "clients"
 require_relative "gh_pr_cache"
 
 module Chomper
-  # The second GitHub source for gh-agent: tracks the *upstream* PRs of every
-  # registry repo (e.g. opf/openproject) so an @chomper mention on one gets
-  # answered — other people's PRs only, never the bot's own (those are GhPull's
-  # territory, with push rights and command parsing; serving them here too would
-  # double-handle every comment). The trigger is a prompt addressed to chomper,
-  # the same as on its own PRs; the difference is write access, which it doesn't
-  # have here — so these intents are flagged `reply_only` and gh-agent answers
-  # (offering applicable changes as GitHub suggestions) rather than pushing code.
+  # gh-agent's second source: @chomper mentions on the registry repos' *upstream*
+  # PRs. Other people's PRs only — the bot's own are GhPull's territory, and
+  # serving them here too would double-handle every comment (separate act-state).
+  # No write access here, so intents are `reply_only`: answer, or offer GitHub
+  # suggestions, never push.
   #
-  # Discovery uses the GitHub search API as a cheap pre-filter
-  # (`repo:<upstream> is:pr is:open mentions:<bot-login> updated:>=<cutoff>`, the
-  # login resolved programmatically) so we only fetch comments + spend a Claude
-  # call on PRs that actually mention the chomper bot.
-  # This tracking is OFF unless CHOMPER_TRACK_UPSTREAM_PRS is set, and it also
-  # needs a non-empty CHOMPER_ALLOWED_GH_USERS — reaching across whole public
-  # repos is an explicit choice, and an open @chomper trigger there would be a
-  # spend/abuse risk (see #enabled?).
+  # The search API is a cheap pre-filter, so comments and a Claude call are only
+  # spent on PRs that really mention the bot. OFF unless
+  # CHOMPER_TRACK_UPSTREAM_PRS is set AND CHOMPER_ALLOWED_GH_USERS is non-empty
+  # (see #enabled?) — this is the one source reaching outside chomper's own PRs.
   #
-  # Per-PR state lives under .chomper/pr_reviews/<owner>-<repo>/<number>/ — the
-  # directory name predates this description and is left alone, since renaming it
-  # would orphan the act-state of every PR already tracked. It mirrors how GhPull
-  # keeps a PR's cache (pr.json) and act-state (gh_pr.json) separate.
+  # Per-PR state: .chomper/pr_reviews/<owner>-<repo>/<number>/, cache and
+  # act-state split as in GhPull. The directory name predates the "not a review"
+  # framing; renaming it would orphan every tracked PR's act-state.
   class UpstreamGhPull
     include Helpers
     include GhPrCache

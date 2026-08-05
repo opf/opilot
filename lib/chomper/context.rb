@@ -116,19 +116,14 @@ module Chomper
       name.empty? ? "Developers" : name
     end
 
-    # Track the registry repos' upstream PRs, so an `@chomper` mention on one is
-    # picked up and answered (`CHOMPER_TRACK_UPSTREAM_PRS=1`). Not a review pass:
-    # chomper acts on prompts addressed to it, exactly as on its own PRs — it just
-    # has no write access there, so it answers (and can offer applicable
-    # suggestions) instead of pushing.
+    # Track the registry repos' upstream PRs, so an `@chomper` mention on one gets
+    # answered — read-only there, so chomper replies (or offers suggestions)
+    # instead of pushing.
     #
-    # OFF unless explicitly asked for: it is the one gh-agent source that reaches
-    # outside chomper's own PRs, across whole public repos, so every agent run
-    # would otherwise keep searching other people's work. Opting in is a decision
-    # about a specific repo set, not a default.
-    #
-    # Still requires CHOMPER_ALLOWED_GH_USERS — the flag says "watch these PRs",
-    # the allowlist says "whose mentions count"; see UpstreamGhPull#enabled?.
+    # OFF unless explicitly asked for: the one gh-agent source that reaches outside
+    # chomper's own PRs, across whole public repos, so opting in is a decision about
+    # a specific repo set. Still requires CHOMPER_ALLOWED_GH_USERS — this flag says
+    # which PRs to watch, the allowlist whose mentions count (UpstreamGhPull#enabled?).
     def track_upstream_prs?
       %w[1 true yes on].include?(ENV["CHOMPER_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
     end

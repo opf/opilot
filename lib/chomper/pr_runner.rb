@@ -6,25 +6,18 @@ require_relative "gh_pull"
 require_relative "gh_pr_cache"
 
 module Chomper
-  # The terminal `pr` command: refresh one or more work packages' shipped PRs on
-  # demand. For each open PR a WP shipped (one per <id>/repos/<name>/), it merges
-  # the latest base branch into the PR branch (Claude resolves any conflicts),
-  # fixes what CI is failing on, and addresses review feedback that arrived since
-  # chomper last acted — then commits and pushes the result to the PR's head repo
-  # after a terminal confirmation.
+  # The terminal `pr` command: for each open PR a WP shipped (one per
+  # <id>/repos/<name>/), merge in the latest base branch (Claude resolves
+  # conflicts), fix failing CI, address feedback newer than chomper's last action,
+  # then commit and push after a terminal confirmation.
   #
-  # This is gh-agent's own-PR machinery driven by the operator instead of a
-  # polling trigger: no @chomper mention is needed, no allowlist applies (the
-  # operator running the command is the authorization), and CI fixing works
-  # regardless of act-state or the attempt cap. The draft-PR +
-  # human-gated-merge safety is unchanged — pushes go to the PR's head branch
-  # only, and the terminal confirmation adds a gate gh-agent doesn't have.
+  # This is gh-agent's own-PR machinery driven by the operator rather than a
+  # polling trigger, so no mention or allowlist applies (running the command *is*
+  # the authorization) and CI fixing ignores act-state and the attempt cap.
   #
-  # gh-agent reuses this via #refresh_one for an allowlisted "@chomper refresh"
-  # PR comment, constructed with `interactive: false`: the push then follows
-  # gh-agent's rules instead of the terminal prompt — pushes to the bot's fork
-  # go straight through (a maintainer still gates the merge), and a canonical
-  # head is refused outright, as everywhere else.
+  # gh-agent reuses it via #refresh_one for "@chomper refresh", built with
+  # `interactive: false`: the push then follows gh-agent's rules instead of the
+  # prompt — fork pushes go through, a canonical head is refused.
   class PrRunner
     include Helpers
     include GhPrCache

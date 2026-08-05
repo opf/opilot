@@ -56,6 +56,28 @@ module Chomper
       assert_equal "Core",   item["category"]
     end
 
+    # The Developers field is what hands work to chomper, so the mirror carries it
+    # (from the link titles — no extra call beyond the schema lookup).
+    def test_build_full_item_mirrors_the_developers_field
+      ctx = Struct.new(:op_url, :token, :developer_field_name).new("https://example.com", nil, "Developers")
+      pull = Pull.new(ctx)
+      stub_request(:get, "https://example.com/api/v3/work_packages/schemas/7-1")
+        .to_return(status: 200, body: JSON.generate({ "customField12" => { "name" => "Developers" } }))
+      wp = WP.merge("_links" => {
+        "schema"        => { "href" => "/api/v3/work_packages/schemas/7-1" },
+        "customField12" => [{ "href" => "/api/v3/users/1", "title" => "Chomper" },
+                            { "href" => "/api/v3/users/2", "title" => "Alice" }]
+      })
+
+      assert_equal ["Chomper", "Alice"], pull.send(:build_full_item, wp, [])["developers"]
+    end
+
+    # A WP with no schema link costs no request at all — WebMock would raise if it
+    # tried, so this also pins that the mirror doesn't fetch schemas speculatively.
+    def test_build_full_item_developers_is_empty_without_the_field
+      assert_equal [], @pull.send(:build_full_item, WP, [])["developers"]
+    end
+
     def test_build_full_item_has_no_state_field
       item = @pull.send(:build_full_item, WP, [])
       refute item.key?("state")
@@ -561,11 +583,6 @@ module Chomper
     # One schema covers a whole project+type; re-asking per work package would
     # double the poll's API calls on a big scan.
     def test_schema_is_fetched_once_per_href
-      # Request counts are cumulative across this file's tests, so start clean and
-      # re-stub what the poll needs.
-      WebMock.reset!
-      stub_request(:get, "https://example.com/api/v3/users/me")
-        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
       seed_item(1, "2024-01-02T00:00:00Z", [])
       seed_item(2, "2024-01-02T00:00:00Z", [])
       schema = stub_schema

@@ -11,20 +11,15 @@ module Chomper
     # inside it because it is only ever reached through an intake run.
     class Intake
       # Turns a document attachment into something Claude can actually read.
+      # Claude's Read tool is the only way into the container (bash is read-only
+      # git, egress is blocked), and it makes nothing of ZIP-of-XML
+      # .xlsx/.docx/.pptx — so conversion happens here, in the runner.
       #
-      # The claude container is node:20-slim with bash and git only, guard-bash.js
-      # permits read-only git and nothing else, and egress is blocked — so Claude's
-      # Read tool is the sole way in. That covers text, images and PDFs, but
-      # .xlsx/.docx/.pptx are ZIP-of-XML containers that arrive as binary garbage.
-      # Widening the container's Bash grant for a converter would undo its whole
-      # posture, so conversion happens HERE, in the runner, at intake time.
-      #
-      # SECURITY: this is the one place chomper parses attacker-influenceable
-      # binary input inside the trusted container (the runner holds both API
-      # tokens). Anyone who can edit an OpenProject document can attach a file.
-      # Hence the caps below and the per-attachment rescue — a hostile or corrupt
-      # attachment must degrade to an `unconvertible` entry, never take the run
-      # down or exhaust the host.
+      # SECURITY: the one place chomper parses attacker-influenceable binary input
+      # inside the trusted container (which holds both API tokens), since anyone
+      # who can edit a document can attach a file. Hence the caps below and the
+      # per-attachment rescue: a hostile or corrupt attachment must degrade to an
+      # `unconvertible` entry, never take the run down or exhaust the host.
       module Converter
         module_function
 

@@ -30,6 +30,22 @@ require "chomper/cli"
 
 WebMock.disable_net_connect!
 
+# webmock/minitest hooks its per-test reset into an ALIASED `teardown`, so any
+# test class that defines its own `teardown` without calling `super` silently
+# disables it — and nearly all of ours do. Stub registrations and request counts
+# then leak across tests in the same file, which makes `assert_requested times:`
+# meaningless (it counts every earlier test's calls too) and lets a test pass on
+# a stub some unrelated test happened to register. Hook the reset into
+# `after_teardown` instead, which minitest always calls regardless of what a
+# subclass does with `teardown`.
+module WebMockAlwaysReset
+  def after_teardown
+    super
+    WebMock.reset!
+  end
+end
+Minitest::Test.prepend(WebMockAlwaysReset)
+
 # Disable real retry backoff so the suite doesn't sleep through retries.
 Chomper::Clients::HTTP.base_interval = 0
 Chomper::Clients::GitHub.base_interval = 0

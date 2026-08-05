@@ -584,20 +584,15 @@ module Chomper
       # --- work-package creation (called by `pd generate-wp`, M2) ------------
 
       # Create the parent FEATURE once and remember it. Idempotent on `parent_wp`:
-      # the work package accumulates comments and history that exist nowhere else,
-      # so a re-run must never mint a duplicate.
+      # a work package accumulates comments and history that exist nowhere else, so
+      # a re-run must never mint a duplicate.
       #
-      # Deliberately NOT called from `propose`. The spec PR is the approval gate,
-      # so creating a FEATURE there announces a planned feature before anyone has
-      # agreed to it — and work packages are never deleted (chomper's HTTP client
-      # has no DELETE verb at all), so every abandoned or rejected proposal would
-      # leave a permanent empty FEATURE behind. It is also premature: whether the
-      # change really is ONE atomic feature is exactly what the reviewer is
-      # checking, and a review that says "split this" invalidates it.
-      #
-      # `generate-wp` is the right moment: the operator running it is the approval
-      # signal (it reads the local store, so merging the PR is optional), and the
-      # parent is then created together with the children that hang off it.
+      # Deliberately NOT called from `propose`: the spec PR is the approval gate,
+      # work packages can never be deleted (no DELETE verb anywhere in the client),
+      # so every rejected proposal would leave a permanent empty FEATURE — and
+      # whether the change really is ONE feature is what the reviewer is deciding.
+      # Running `generate-wp` is the approval signal, and creates the parent
+      # together with the children that hang off it.
       def ensure_feature_wp(state, pr_url)
         existing = state.parent_wp
         return comment_pr_link(existing, state, pr_url) if existing

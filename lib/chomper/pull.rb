@@ -434,14 +434,24 @@ module Chomper
     # as an array of links, so any of them naming chomper counts.
     def developer_is_chomper?(wp)
       return false if own_user_id.empty?
-      key = developer_field_key(wp)
-      return false unless key
+      developer_links(wp).any? { |l| l["href"].to_s[%r{/users/(\d+)\z}, 1] == own_user_id }
+    end
 
+    # The display names in that field, for the WP mirror. Empty when the field is
+    # absent or unset.
+    def developer_names(wp)
+      developer_links(wp).filter_map { |l| l["title"] }
+    end
+
+    # The field's link(s), normalised to an array: a single-value field renders as
+    # one link object, a multi-value one as an array (`resource` vs `resources` in
+    # OpenProject's representer) — and "Developers" is typically the latter.
+    # Array() on a Hash would splat it into key/value pairs, hence the branch.
+    def developer_links(wp)
+      key = developer_field_key(wp)
+      return [] unless key
       value = wp.dig("_links", key)
-      links = value.is_a?(Hash) ? [value] : Array(value)
-      links.any? do |link|
-        link.is_a?(Hash) && link["href"].to_s[%r{/users/(\d+)\z}, 1] == own_user_id
-      end
+      (value.is_a?(Hash) ? [value] : Array(value)).select { |l| l.is_a?(Hash) }
     end
 
     # Resolve the configured field name (default "Developers") to the key it takes
@@ -597,6 +607,11 @@ module Chomper
         "priority"    => wp.dig("_embedded", "priority", "name"),
         "assignee"    => wp.dig("_embedded", "assignee", "name") || "unassigned",
         "responsible" => wp.dig("_embedded", "responsible", "name") || "unassigned",
+        # The field that hands work to chomper (see #developer_is_chomper?) — worth
+        # mirroring so a prompt can see who else is on the ticket. Link titles
+        # carry the display names, so this needs no extra call beyond the schema
+        # lookup the trigger already does.
+        "developers"  => developer_names(wp),
         "author"      => wp.dig("_embedded", "author", "name"),
         "version"     => wp.dig("_embedded", "version", "name"),
         "category"    => wp.dig("_embedded", "category", "name"),

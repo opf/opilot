@@ -1,5 +1,7 @@
 require "json"
-require "cgi"
+# Ruby 4.0 dropped the full CGI library; cgi/escape is the part that survived and
+# is all we use (CGI.escapeHTML, for the mention in an OP comment).
+require "cgi/escape"
 require_relative "clients"
 
 module Chomper

@@ -326,7 +326,7 @@ globally unique, so `pr_reviews/` is flat.
 │   ├── op_agent_filters.json   # saved op-agent search filters
 │   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
 │   └── <wp_id>/
-│       ├── item.json            # WP metadata + poll cache + acted_at timestamps
+│       ├── item.json            # WP metadata (incl. developers[]) + poll cache + acted_at
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── target_repos.json    # repo names from the plan's REPOS line

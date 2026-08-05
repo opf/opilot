@@ -203,15 +203,14 @@ module Chomper
       # Canonical → working. Mirrors rather than merges: an archive run MOVES a
       # change directory, so a merge would resurrect what it moved away.
       #
-      # Re-asserts the exclude on every call, not just at setup!: this is the
-      # operation that puts an untracked tree inside a live product clone, so it
-      # is the one that has to guarantee the tree can't be swept into an unrelated
-      # commit. A re-clone, a manual .git/info/exclude edit, or a store seeded on
-      # another machine would otherwise leave the window open.
-      # `preserve:` is false when the CALLER just wrote the store itself — `pd
-      # intake` writes canonical and then materialises, so the working copy
-      # legitimately holds the older tree and is not unsaved work. Without this the
-      # safety net fires, and copies the whole tree aside, on every healthy re-intake.
+      # Re-asserts the exclude on EVERY call, not just at setup!: this is what puts
+      # an untracked tree inside a live product clone, so it is what must guarantee
+      # the tree can't be swept into an unrelated commit — a re-clone or a store
+      # seeded on another machine would otherwise leave the window open.
+      #
+      # `preserve:` is false when the caller just wrote the store itself (`pd
+      # intake` writes canonical, then materialises), so the older working copy is
+      # not unsaved work; otherwise the safety net copies it aside every re-intake.
       def materialise!(preserve: true)
         exclude_from_clone!
         dest = working_tree

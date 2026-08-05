@@ -288,19 +288,15 @@ module Chomper
       nil
     end
 
-    # Demote every ATX markdown heading in `text` to bold, for anything posted to
-    # an OpenProject work package. OpenProject renders a comment as CommonMark and
-    # its activity tab is a narrow column, so a heading is displayed at full
-    # heading size — a plan with five `##` sections spends most of its space on
-    # its own section titles and pushes the content out of view. Bold reads the
-    # same at a glance and costs one line. Applied centrally in
-    # `Clients::OpenProject#post_activity` rather than per caller, since the text
-    # comes from Claude (chat replies, lens replies) as often as from chomper
-    # (a posted plan.md), and prompt guidance alone doesn't hold.
+    # Demote every ATX markdown heading to bold, for anything posted to a work
+    # package: the activity tab is a narrow column, so a plan with five `##`
+    # sections spends most of its width on its own titles. Bold reads the same and
+    # costs one line. Applied centrally in `#post_activity` rather than per caller,
+    # since the text comes from Claude as often as from chomper and prompt guidance
+    # alone doesn't hold.
     #
-    # Fenced blocks are left alone: a leading `#` inside one is a code comment or
-    # a shell prompt, not a heading. Setext headings (`Title` over `====`) are
-    # left alone too — `---` is far more often a horizontal rule.
+    # Fenced blocks are left alone (a leading `#` there is a code comment or a
+    # shell prompt), and so are setext headings — `---` is usually a rule.
     def self.demote_headings(text)
       fenced = false
       text.to_s.lines.map do |line|
@@ -317,18 +313,13 @@ module Chomper
       end.join
     end
 
-    # Defang the scheme of every OpenProject WP link in `text` (http→hxxp), so
-    # the OpenProject GitHub integration won't pick the link up. chomper writes
-    # the link so the PR can be traced back to its WP (and later adopted), but
-    # the integration ALSO scans PR bodies for it and would auto-reference the
-    # WP — cluttering its activity tab with a fork PR no maintainer has taken
-    # over yet. `hxxp://` fails the integration's `https?://…/(?:work_packages|wp)/<id>`
-    # matcher while leaving the id plainly readable; chomper re-fangs it when
-    # reading the link back (`op_ticket_id` accepts the `hxxp` scheme), and
-    # `gh adopt` restores `http` so the maintainer's real PR links cleanly.
-    # Host-scoped (links to other hosts are untouched) and idempotent (an
-    # already-defanged link has no `http` scheme left to match). No-op when the
-    # host is unknown.
+    # Defang every OpenProject WP link (http→hxxp). The link is there so a PR can
+    # be traced back to its WP and later adopted, but OpenProject's GitHub
+    # integration also scans PR bodies for it and would auto-reference the WP,
+    # cluttering its activity tab with a fork PR nobody has taken over. `hxxp://`
+    # fails the integration's `https?://…/(?:work_packages|wp)/<id>` matcher while
+    # leaving the id readable; `op_ticket_id` reads it back and `gh adopt` re-fangs
+    # it. Host-scoped, idempotent, and a no-op when the host is unknown.
     def neutralize_wp_links(text)
       host = op_link_host
       return text if host.to_s.empty?
@@ -443,24 +434,20 @@ module Chomper
     end
 
     # Point `repo`'s clone at current upstream before a READ-ONLY phase (plan,
-    # chat). Without this, those phases read whatever the clone happens to be:
-    # `./chomper` fetches each base once at launch and never moves the working
-    # tree onto it, and no run checks the tree back off its fix branch when it
-    # finishes — so a plan could be written against the clone's original
-    # `git clone` commit, or against a leftover fix branch from an unrelated WP
-    # with that WP's unmerged changes applied. Both mislead silently: nothing in
-    # the tree tells Claude how old it is or whose branch it is on.
+    # chat). Nothing else does: `./chomper` fetches each base once at launch
+    # without moving the tree, and no run checks the tree back off its fix branch
+    # — so a plan would otherwise be written against the original `git clone`
+    # commit, or against another WP's leftover branch with its changes applied,
+    # and nothing in the tree would tell Claude either.
     #
-    # Detached at origin/<base> on purpose — between runs the clone is a
-    # read-only mirror of upstream, and a local base branch would just be a
-    # second thing to keep in sync. #checkout_branch cuts fix branches from
-    # origin/<base> regardless, so it is unaffected by where HEAD sits.
+    # Detached at origin/<base>: between runs the clone is a read-only mirror, and
+    # a local base branch would be a second thing to keep in sync.
+    # #checkout_branch cuts fix branches from origin/<base> regardless of HEAD.
     #
-    # Best-effort by design, and never fatal: answering from a stale tree beats
-    # refusing to answer, so a fetch or checkout failure warns and moves on.
-    # A DIRTY tree is left strictly alone — it means an implement run died after
-    # Claude wrote files but before #commit swept them up, and a checkout would
-    # discard work that is not recorded anywhere else.
+    # Never fatal — a stale answer beats no answer, so failures warn and move on.
+    # A DIRTY tree is left strictly alone: it means an implement run died after
+    # Claude wrote files but before #commit, and a checkout would discard work
+    # recorded nowhere else.
     def sync_base!(repo)
       wt = worktree(repo)
       if dirty_worktree?(wt)

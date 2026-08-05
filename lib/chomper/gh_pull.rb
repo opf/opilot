@@ -8,29 +8,19 @@ require_relative "gh_pr_cache"
 require_relative "pd/change_state"
 
 module Chomper
-  # A comment on a chomper PR that mentions @chomper, normalised so GhAgent can
-  # act on it. `kind` is :issue (the PR conversation thread) or :review (inline
-  # on a diff line); review comments carry `comment_id`, and `in_reply_to` points
-  # at the parent comment when the trigger is a reply in a review thread (e.g. you
-  # answering a Copilot finding) so Claude can be pointed at the right feedback.
-  # `repo` is the base repo the PR targets (where comments are posted); `head_repo`
-  # is where the PR's branch actually lives (the user's fork) — what gh-agent
-  # fetches from and pushes to. `reply_only` is true for an upstream PR chomper did
-  # NOT open (it can review/answer but cannot push code there).
+  # A trigger on a PR, normalised so GhAgent can act on it.
   #
-  # `kind` is also :ci for a CI-failure trigger (gh-agent's auto-fix path on
-  # chomper's own PRs): there is no comment, so `text`/`comment_id` are nil and
-  # `head_sha` carries the commit whose checks failed — the key the act-state is
-  # deduped on, since CI isn't comment-timestamp driven.
-  #
-  # `command` is :refresh when the comment is "@chomper refresh" on one of
-  # chomper's own PRs — the full `pr`-command treatment (base merge + CI fix +
-  # feedback sweep) instead of a conversational reply. Nil for everything else;
-  # never set on a reply_only intent (chomper can't push to an upstream branch).
-  # `spec_change_id` is set when the PR is a `pd` change proposal living in the
-  # bot's own fork: `item_id` is then the change id rather than a work-package
-  # id, and the act-state lives under changes/<host>/<change-id>/ rather than
-  # work_packages/. gh-agent routes those to the proposal-revision path.
+  # `kind` — :issue (conversation thread), :review (inline on a diff line, carries
+  #   `comment_id`, and `in_reply_to` when the trigger is a reply within a thread),
+  #   or :ci (no comment at all: `text`/`comment_id` are nil and `head_sha` carries
+  #   the commit whose checks failed, which is what the act-state dedupes on).
+  # `repo` / `head_repo` — the base repo comments are posted to, vs where the
+  #   branch lives (the bot's fork): what gh-agent fetches from and pushes to.
+  # `reply_only` — an upstream PR chomper did NOT open: answer, never push.
+  # `command` — :refresh for "@chomper refresh" (the full `pr` treatment instead
+  #   of a reply). Never set on a reply_only intent.
+  # `spec_change_id` — the PR is a `pd` proposal, so `item_id` is a change id and
+  #   the act-state lives under changes/<host>/<change-id>/, not work_packages/.
   GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
                         :kind, :command, :comment_id, :in_reply_to, :text, :user_login, :comment_at,
                         :reply_only, :head_sha, :spec_change_id,

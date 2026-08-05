@@ -93,18 +93,14 @@ module Chomper
       end
 
       # Fast-forward a fork's branch to its upstream — the API behind GitHub's
-      # "Sync fork" button. Returns true when the fork is (now) level with
-      # upstream.
+      # "Sync fork" button (no Octokit helper, hence the raw POST). Returns true
+      # when the fork is (now) level.
       #
-      # Needed because a fork's default branch is frozen at whenever the fork was
-      # created, while chomper's clones track UPSTREAM. A PR opened inside the
-      # fork therefore diffs current-upstream against months-old-fork and shows
-      # every intervening commit as if the change had made them. Octokit has no
-      # helper for this endpoint, hence the raw POST.
-      #
-      # Non-fatal: a fork whose branch has genuinely diverged returns 409 and
-      # can't be fast-forwarded. The caller carries on — a noisy PR is worse than
-      # a clean one but better than no PR.
+      # A fork's branch is frozen at fork-creation time while chomper's clones
+      # track upstream, so without this a PR opened inside the fork shows every
+      # intervening upstream commit as if the change had made them. Non-fatal: a
+      # genuinely diverged branch 409s and the caller carries on, since a noisy PR
+      # beats no PR.
       def sync_fork_branch(fork, branch:)
         with_retry { @octokit.post("/repos/#{fork}/merge-upstream", branch: branch) }
         true

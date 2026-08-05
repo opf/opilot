@@ -346,7 +346,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ### Feature ideas
-* Cleaner overtake mechanism -- make sure the command replaces the original AI annotation blocks with the reference to new PR
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias

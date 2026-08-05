@@ -2,20 +2,14 @@ require "json"
 
 module Chomper
   module PD
-    # Stage 0 of the `pd` pipeline: resolve the OpenProject ids the rest of the
-    # pipeline writes against, once, and cache them.
+    # Stage 0 of the `pd` pipeline: resolve the OpenProject ids the later stages
+    # write against, once, and cache them (delete the file and re-run `pd init`).
     #
-    # Everything here is resolved BY NAME. `FEATURE` and `IMPLEMENTATION` are not
-    # stock OpenProject types, and ids differ per instance, so hardcoding either
-    # would break on the next instance and fail as an opaque 422 from a POST two
-    # stages later. Resolution fails fast instead, listing exactly what is
-    # missing and what the project does offer.
-    #
-    # Statuses are cached with their `isClosed` flag rather than mapped to names:
-    # auto-archive only ever asks "is this child closed?", which the flag answers
-    # without anyone having to name the instance's workflow states.
-    #
-    # Treated as a cache (§7 of the design): delete the file and re-run `pd init`.
+    # All BY NAME: `FEATURE`/`IMPLEMENTATION` aren't stock types and ids differ per
+    # instance, so a hardcoded id would surface as an opaque 422 from a POST two
+    # stages later. This fails fast instead, listing what's missing and what the
+    # project does offer. Statuses carry their `isClosed` flag rather than names,
+    # since the only question asked of them is "is this child closed?".
     class ResolvedIds
       include Helpers
 
@@ -106,7 +100,9 @@ module Chomper
       end
 
       def fetch_statuses(problems)
-        code, body = @op.statuses
+        # #statuses raises on a non-200 (get_json!), so the code is never inspected
+        # here — the rescue below is what reports a failure.
+        _code, body = @op.statuses
         (body&.dig("_embedded", "elements") || []).map do |s|
           { "id" => s["id"], "name" => s["name"].to_s, "closed" => !!s["isClosed"] }
         end
