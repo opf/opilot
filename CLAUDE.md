@@ -30,15 +30,28 @@ Agent loops: `./chomper agent` (both), `agent op`, `agent gh` — the older
 
 Polls work packages, driven by `@chomper` comments.
 
-Assigning the chomper user is a second trigger, synthesizing the same `:ship`
-intent (`Pull#intent_from_assignment`). It fires **once per WP, ever**
-(`assignee_acted_at` — unassign→reassign doesn't re-fire; later re-work goes through
-comments) from **any** assigner (not allowlist-gated: assignment already needs
-edit-WP permission; disable with `CHOMPER_ASSIGN_TRIGGER=0`). A same-tick comment
-wins, an already-shipped WP is marked acted without firing, and the reply is
-unaddressed/internal with no 👀 pickup signal. The de-dup gate is the WP's
-`updatedAt` vs the scan floor (the list payload carries no assignment timestamp), so
-a WP assigned long ago but bumped inside the window fires once.
+Naming chomper in a WP's **Developers** field is a second trigger, synthesizing the same
+`:ship` intent (`Pull#intent_from_developer`). It fires **once per WP, ever**
+(`developer_acted_at` — clearing and re-setting the field doesn't re-fire; later
+re-work goes through comments) from **anyone** (not allowlist-gated: setting the
+field already needs edit-WP permission; disable with `CHOMPER_DEVELOPER_TRIGGER=0`).
+A same-tick comment wins, an already-shipped WP is marked acted without firing, and
+the reply is unaddressed/internal with no 👀 pickup signal. The de-dup gate is the
+WP's `updatedAt` vs the scan floor (the list payload carries no per-field
+timestamp), so a WP handed over long ago but bumped inside the window fires once.
+
+"Developers" is a **user custom field**, not a stock one, so its `customFieldN` key
+differs per instance and can't be hardcoded: `#developer_field_key` reads the WP's
+`_links.schema` and matches the schema's field *names* against
+`CHOMPER_DEVELOPER_FIELD` (default `Developers`, case-insensitive), memoized per
+schema href so a poll costs at most one extra call per project+type. Matching by
+name also means a stock field works — `CHOMPER_DEVELOPER_FIELD=Assignee` restores
+the old assignee behaviour with no code change. Being multi-value, the field
+renders as an array of links, and any entry naming chomper counts; the link must be a **user**
+(`/users/<id>`), since a group or placeholder user could share the bot's numeric id.
+An instance without the field logs one note and leaves the trigger off. The
+pre-Developers marker `assignee_acted_at` is still honoured on read, so switching the
+field doesn't re-fire on every WP that already had its one shot.
 
 Planning or chatting also pulls in the WP's **related** WPs (relations plus
 parent/children), each cached as its own `item.json` with a `related.json` index the
@@ -237,8 +250,8 @@ PR needs the store's layout on every tick.
 ### Per-work-package state machine
 
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by
-   `last_acted_comment_at`. An assigned WP with no fresh comment yields a synthetic
-   `:ship` (`source: :assignment`, de-duped by `assignee_acted_at`).
+   `last_acted_comment_at`. A WP whose Developers include chomper, with no fresh comment, yields a synthetic
+   `:ship` (`source: :developer`, de-duped by `developer_acted_at`).
 2. **Plan** — Claude (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment. Every clone is first synced to current upstream
    (`sync_bases_for_reading` → `#sync_base!`) because `./chomper` fetches each base
@@ -366,7 +379,8 @@ inherits `/repos`.
 | `ANTHROPIC_API_KEY` | A real key (recommended) lives only in authgw. The literal `oauth` selects `claude auth login` instead (creds in the claude container — less isolated); a legacy blank means the same |
 | `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) |
 | `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) |
-| `CHOMPER_ASSIGN_TRIGGER` | Optional (`0`/`false`); disable the assignment trigger. Turn off where WP edit rights are broad |
+| `CHOMPER_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `CHOMPER_ASSIGN_TRIGGER` is still honoured as a fallback |
+| `CHOMPER_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
 | `CHOMPER_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
 | `CHOMPER_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
 | `CHOMPER_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |

@@ -94,13 +94,26 @@ module Chomper
       raise FatalError, "Invalid repos.json — #{e.message}"
     end
 
-    # Act on chomper being set as a WP's assignee as if the assigner commented
-    # `@chomper ship` (default on; set CHOMPER_ASSIGN_TRIGGER=0 to disable).
-    # Assignment needs OpenProject's edit-work-package permission, but is not
-    # gated by the comment allowlist — turn this off on instances where WP edit
-    # rights are broad.
-    def assign_trigger?
-      !%w[0 false no off].include?(ENV["CHOMPER_ASSIGN_TRIGGER"].to_s.strip.downcase)
+    # Act on chomper being named in a WP's Developers field as if that person commented
+    # `@chomper ship` (default on; set CHOMPER_DEVELOPER_TRIGGER=0 to disable —
+    # the older CHOMPER_ASSIGN_TRIGGER still works, since it was this same
+    # switch). Setting the field needs OpenProject's edit-work-package
+    # permission, but is not gated by the comment allowlist — turn this off on
+    # instances where WP edit rights are broad.
+    def developer_trigger?
+      raw = ENV.fetch("CHOMPER_DEVELOPER_TRIGGER") { ENV["CHOMPER_ASSIGN_TRIGGER"] }
+      !%w[0 false no off].include?(raw.to_s.strip.downcase)
+    end
+
+    # The work-package field that fires the trigger, matched against the schema's
+    # field *names* (case-insensitively) rather than a hardcoded `customFieldN`:
+    # "Developers" is a custom field, so its numeric id differs per instance and
+    # naming it here would be unportable. Matching by name also means a stock
+    # field works — `CHOMPER_DEVELOPER_FIELD=Assignee` restores the pre-Developers
+    # behaviour without a code change.
+    def developer_field_name
+      name = ENV["CHOMPER_DEVELOPER_FIELD"].to_s.strip
+      name.empty? ? "Developers" : name
     end
 
     # Track the registry repos' upstream PRs, so an `@chomper` mention on one is

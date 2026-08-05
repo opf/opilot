@@ -293,11 +293,13 @@ module Chomper
       (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
     end
 
-    def build_pull(allowed_op_user_ids = [], assign_trigger: true)
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids, :assign_trigger) do
+    def build_pull(allowed_op_user_ids = [], developer_trigger: true, developer_field_name: "Developers")
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids,
+                       :developer_trigger, :developer_field_name) do
         def op_host; "example.com"; end
-        def assign_trigger?; assign_trigger; end
-      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids, assign_trigger)
+        def developer_trigger?; developer_trigger; end
+      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids,
+              developer_trigger, developer_field_name)
       Pull.new(ctx)
     end
 
@@ -505,66 +507,171 @@ module Chomper
       refute @pull.send(:chomper_mentioned?, "just a normal comment")
     end
 
-    # ── assignment trigger ────────────────────────────────────────────────────
+    # ── Developer trigger ─────────────────────────────────────────────────────
 
-    def wp_assigned(id, updated_at, href: "/api/v3/users/1")
-      wp(id, updated_at).merge("_links" => { "assignee" => { "href" => href } })
+    SCHEMA_HREF = "/api/v3/work_packages/schemas/7-1".freeze
+
+    # A WP whose Developer field (customField12 on this fake instance) names a
+    # user. `value:` overrides the whole link — an array for a multi-value field,
+    # nil for an empty one.
+    def wp_developed(id, updated_at, href: "/api/v3/users/1", value: :unset)
+      link = value == :unset ? { "href" => href } : value
+      wp(id, updated_at).merge(
+        "_links" => { "schema" => { "href" => SCHEMA_HREF }, "customField12" => link }
+      )
+    end
+
+    # The schema is the only thing that maps the name "Developers" to customField12.
+    def stub_schema(fields = { "customField12" => { "type" => "User", "name" => "Developers" } })
+      stub_request(:get, "https://example.com#{SCHEMA_HREF}")
+        .to_return(status: 200, body: JSON.generate({ "_type" => "Schema" }.merge(fields)))
     end
 
     def item_path(id)
       Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s / "item.json"
     end
 
-    def test_assignment_emits_ship_intent_bypassing_allowlist
-      # The allowlist gates comment triggers only — assignment needs edit rights.
+    def test_developer_emits_ship_intent_bypassing_allowlist
+      # The allowlist gates comment triggers only — setting Developer needs edit rights.
       @pull = build_pull(["99"])
       seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
-      assert_equal "1",         intents[0].item_id
-      assert_equal :ship,       intents[0].command
-      assert_equal "",          intents[0].text
-      assert_equal :assignment, intents[0].source
+      assert_equal "1",        intents[0].item_id
+      assert_equal :ship,      intents[0].command
+      assert_equal "",         intents[0].text
+      assert_equal :developer, intents[0].source
       assert_nil intents[0].comment_at
       assert_nil intents[0].user
     end
 
-    def test_assignment_does_not_refire_after_acted
+    # The field's customFieldN id differs per instance, so the schema — not a
+    # hardcoded key — is what identifies it.
+    def test_developer_field_is_resolved_by_name_from_the_schema
       seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_assignment_acted("1")
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+      stub_schema("customField12" => { "type" => "User", "name" => "Product owner" })
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
 
       assert_equal [], @pull.poll_intents(FILTERS)
     end
 
-    def test_assignment_ignores_other_users_and_groups
+    # One schema covers a whole project+type; re-asking per work package would
+    # double the poll's API calls on a big scan.
+    def test_schema_is_fetched_once_per_href
+      # Request counts are cumulative across this file's tests, so start clean and
+      # re-stub what the poll needs.
+      WebMock.reset!
+      stub_request(:get, "https://example.com/api/v3/users/me")
+        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      seed_item(2, "2024-01-02T00:00:00Z", [])
+      schema = stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp_developed(1, "2024-01-02T00:00:00Z"), wp_developed(2, "2024-01-02T00:00:00Z")], total: 2))
+
+      assert_equal 2, @pull.poll_intents(FILTERS).length
+      assert_requested schema, times: 1
+    end
+
+    # A user custom field can be multi-value, in which case the link is an array.
+    def test_developer_matches_inside_a_multi_value_field
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp_developed(1, "2024-01-02T00:00:00Z",
+                      value: [{ "href" => "/api/v3/users/2" }, { "href" => "/api/v3/users/1" }])], total: 1))
+
+      assert_equal 1, @pull.poll_intents(FILTERS).length
+    end
+
+    def test_developer_does_not_refire_after_acted
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      @pull.mark_developer_acted("1")
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    # The pre-Developer marker still counts as consumed, so switching the trigger
+    # field doesn't re-fire on every WP that already had its one shot.
+    def test_legacy_assignee_marker_still_counts_as_acted
+      dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "1"
+      dir.mkpath
+      (dir / "item.json").write(JSON.generate(
+        { "updated_at" => "2024-01-02T00:00:00Z", "comments" => [],
+          "assignee_acted_at" => "2024-01-01T00:00:00Z" }))
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    def test_developer_ignores_other_users_and_groups
       # User 2 is not chomper; a *group* with chomper's numeric id must not match.
       seed_item(1, "2024-01-02T00:00:00Z", [])
       seed_item(2, "2024-01-02T00:00:00Z", [])
+      stub_schema
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp_assigned(1, "2024-01-02T00:00:00Z", href: "/api/v3/users/2"),
-         wp_assigned(2, "2024-01-02T00:00:00Z", href: "/api/v3/groups/1")], total: 2))
+        [wp_developed(1, "2024-01-02T00:00:00Z", href: "/api/v3/users/2"),
+         wp_developed(2, "2024-01-02T00:00:00Z", href: "/api/v3/groups/1")], total: 2))
 
       assert_equal [], @pull.poll_intents(FILTERS)
     end
 
-    def test_assignment_disabled_by_kill_switch
-      @pull = build_pull(assign_trigger: false)
+    def test_developer_ignores_an_empty_field
       seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp_developed(1, "2024-01-02T00:00:00Z", value: nil)], total: 1))
 
       assert_equal [], @pull.poll_intents(FILTERS)
     end
 
-    def test_comment_trigger_wins_over_assignment_in_same_tick
+    def test_developer_disabled_by_kill_switch
+      @pull = build_pull(developer_trigger: false)
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+    end
+
+    # Naming a stock field is a supported way back to the old behaviour.
+    def test_field_name_is_configurable
+      @pull = build_pull(developer_field_name: "Assignee")
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_schema("assignee" => { "type" => "User", "name" => "Assignee" })
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
+        [wp(1, "2024-01-02T00:00:00Z").merge("_links" => {
+          "schema" => { "href" => SCHEMA_HREF }, "assignee" => { "href" => "/api/v3/users/1" }
+        })], total: 1))
+
+      assert_equal 1, @pull.poll_intents(FILTERS).length
+    end
+
+    # An instance without the field must degrade quietly, not crash the poll —
+    # and say so once, not once per work package (the nil result is memoized).
+    def test_missing_field_leaves_the_trigger_off_and_says_so_once
+      seed_item(1, "2024-01-02T00:00:00Z", [])
+      stub_schema({})
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      out, = capture_io { assert_equal [], @pull.poll_intents(FILTERS) }
+      assert_match(/no "Developers" field/, out)
+      second, = capture_io { assert_equal [], @pull.poll_intents(FILTERS) }
+      assert_empty second.strip, "the missing field is reported once, not per work package"
+    end
+
+    def test_comment_trigger_wins_over_developer_in_same_tick
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
           "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan watch the edges" }
       ])
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
@@ -572,26 +679,27 @@ module Chomper
       assert_nil intents[0].source
     end
 
-    def test_assignment_on_shipped_wp_is_marked_acted_without_intent
+    def test_developer_on_shipped_wp_is_marked_acted_without_intent
       seed_item(1, "2024-01-02T00:00:00Z", [])
       pr_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "repos" / "openproject"
       pr_dir.mkpath
       (pr_dir / "pr_url.txt").write("https://github.com/opf/openproject/pull/1")
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_assigned(1, "2024-01-02T00:00:00Z")], total: 1))
+      stub_schema
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
 
       assert_equal [], @pull.poll_intents(FILTERS)
-      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
+      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
     end
 
-    def test_mark_assignment_acted_persists
+    def test_mark_developer_acted_persists
       seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_assignment_acted("1")
-      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
+      @pull.mark_developer_acted("1")
+      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
     end
 
-    def test_assignment_marker_survives_item_refresh
+    def test_developer_marker_survives_item_refresh
       seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_assignment_acted("1")
+      @pull.mark_developer_acted("1")
       # Simulate a re-fetch that rewrites item.json (updated_at changes).
       stub_request(:get, "https://example.com/api/v3/work_packages/1/activities")
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
@@ -599,7 +707,7 @@ module Chomper
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
       stale_wp = wp(1, "2024-03-01T00:00:00Z")
       @pull.send(:fetch_work_package_item, stale_wp)
-      refute_nil JSON.parse(item_path(1).read)["assignee_acted_at"]
+      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
     end
 
     # mirror caches every matched WP (no intent parsing) and reports counts.

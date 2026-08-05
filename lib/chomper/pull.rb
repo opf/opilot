@@ -30,7 +30,7 @@ module Chomper
     def poll_intents(filters)
       intents = []
       each_filtered_wp(filters, label: "Polling") do |wp, _cached, comments|
-        intent = intent_from_comments(wp, comments) || intent_from_assignment(wp)
+        intent = intent_from_comments(wp, comments) || intent_from_developer(wp)
         intents << intent if intent
       end
       intents
@@ -107,15 +107,15 @@ module Chomper
       mark_chomper_acted(item_id, comment_at)
     end
 
-    # Record that chomper's assignment on this WP has been acted on — the
-    # assignment trigger fires once per WP, ever (unassign→reassign does not
-    # re-fire; later re-work goes through @chomper comments). Called by the
+    # Record that chomper being named a Developer on this WP has been acted on —
+    # the trigger fires once per WP, ever (clearing and re-setting the field does
+    # not re-fire; later re-work goes through @chomper comments). Called by the
     # agent after a handle, like #mark_acted.
-    def mark_assignment_acted(wp_id)
+    def mark_developer_acted(wp_id)
       item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
       return unless item_path.exist?
       data = JSON.parse(item_path.read)
-      data["assignee_acted_at"] = Time.now.utc.iso8601
+      data["developer_acted_at"] = Time.now.utc.iso8601
       item_path.write(JSON.generate(data))
     end
 
@@ -392,22 +392,22 @@ module Chomper
       )
     end
 
-    # Setting chomper as a WP's assignee means "just ship it": synthesize the
+    # Naming chomper in a WP's Developers field means "just ship it": synthesize the
     # same :ship intent a `@chomper ship` comment produces (plan + implement +
-    # draft PR, no approval gate). Deliberately not allowlist-gated — assigning requires
-    # OpenProject's edit-work-package permission — and fires at most once per WP,
-    # ever (assignee_acted_at in item.json). A WP that already shipped a PR is
-    # marked acted without firing, so a comment-shipped WP assigned later does
-    # no double work.
-    def intent_from_assignment(wp)
-      return nil unless @ctx.assign_trigger?
-      return nil unless assigned_to_chomper?(wp)
+    # draft PR, no approval gate). Deliberately not allowlist-gated — setting the
+    # field requires OpenProject's edit-work-package permission — and fires at
+    # most once per WP, ever (developer_acted_at in item.json). A WP that already
+    # shipped a PR is marked acted without firing, so a comment-shipped WP
+    # handed over later does no double work.
+    def intent_from_developer(wp)
+      return nil unless @ctx.developer_trigger?
+      return nil unless developer_is_chomper?(wp)
 
       wp_id = wp_display_id(wp)
       saved = Helpers.safe_json_read(Helpers.item_dir(@ctx, wp_id) / "item.json") || {}
-      return nil if saved["assignee_acted_at"]
+      return nil if developer_acted?(saved)
       if shipped?(wp_id)
-        mark_assignment_acted(wp_id)
+        mark_developer_acted(wp_id)
         return nil
       end
 
@@ -417,16 +417,64 @@ module Chomper
         type:    wp.dig("_embedded", "type", "name").to_s,
         command: :ship,
         text:    "",
-        source:  :assignment
+        source:  :developer
       )
     end
 
-    # The assignee link must be a *user* matching chomper's own id — an assignee
-    # can also be a group or placeholder user, whose numeric id could collide
-    # with the bot's user id under a different resource type.
-    def assigned_to_chomper?(wp)
-      id = wp.dig("_links", "assignee", "href").to_s[%r{/users/(\d+)\z}, 1]
-      !id.nil? && !own_user_id.empty? && id == own_user_id
+    # `assignee_acted_at` is the pre-Developers marker. It is still honoured on
+    # read so that switching the trigger field doesn't re-fire on every WP that
+    # already consumed its one shot under the old field.
+    def developer_acted?(saved)
+      !saved["developer_acted_at"].nil? || !saved["assignee_acted_at"].nil?
+    end
+
+    # A Developers link must be a *user* matching chomper's own id: the field
+    # can also hold a group or placeholder user, whose numeric id could collide
+    # with the bot's under a different resource type. A multi-value field renders
+    # as an array of links, so any of them naming chomper counts.
+    def developer_is_chomper?(wp)
+      return false if own_user_id.empty?
+      key = developer_field_key(wp)
+      return false unless key
+
+      value = wp.dig("_links", key)
+      links = value.is_a?(Hash) ? [value] : Array(value)
+      links.any? do |link|
+        link.is_a?(Hash) && link["href"].to_s[%r{/users/(\d+)\z}, 1] == own_user_id
+      end
+    end
+
+    # Resolve the configured field name (default "Developers") to the key it takes
+    # in a WP payload — `customFieldN` for a custom field, or the plain name for a
+    # stock one. Only the schema knows that mapping, and a custom field's id
+    # differs per instance, so it cannot be hardcoded.
+    #
+    # Memoized per schema href (one schema covers a whole project+type), so a poll
+    # over many work packages costs at most one extra call per distinct type, and
+    # a nil result is cached too — an instance without the field must not re-ask
+    # (or re-warn) on every WP of that type.
+    def developer_field_key(wp)
+      href = wp.dig("_links", "schema", "href").to_s
+      return nil if href.empty?
+      @developer_field_keys ||= {}
+      return @developer_field_keys[href] if @developer_field_keys.key?(href)
+      @developer_field_keys[href] = resolve_developer_field_key(href)
+    end
+
+    def resolve_developer_field_key(href)
+      code, schema = @api.work_package_schema(href)
+      wanted = @ctx.developer_field_name
+      if code != 200 || schema.nil?
+        puts "  Warning: could not read the work-package schema at #{href} (HTTP #{code}) — " \
+             "the #{wanted} trigger is off for these work packages"
+        return nil
+      end
+
+      key = schema.find do |name, field|
+        field.is_a?(Hash) && field["name"].to_s.casecmp?(wanted) && !name.start_with?("_")
+      end&.first
+      puts "  Note: no \"#{wanted}\" field on #{href} — the trigger is off there" if key.nil?
+      key
     end
 
     # Any repo's pr_url.txt with content — the WP already shipped a PR.
@@ -509,7 +557,7 @@ module Chomper
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
-        %w[last_acted_comment_at last_chomper_comment_id assignee_acted_at].each do |key|
+        %w[last_acted_comment_at last_chomper_comment_id developer_acted_at assignee_acted_at].each do |key|
           full[key] = prev[key] if prev.key?(key)
         end
       end

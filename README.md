@@ -161,8 +161,10 @@ On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
 plan. `@chomper grill` stress-tests the ticket or plan (gaps, edge cases,
 risks), `@chomper summarize` recaps a long thread — and anything else just
 chats.
-Setting the chomper user as a WP's **assignee** also triggers the `ship` flow —
-once per WP, from any assigner (disable with `CHOMPER_ASSIGN_TRIGGER=0`).
+Naming the chomper user in a WP's **Developers** field also triggers the `ship`
+flow —
+once per WP, from anyone (disable with `CHOMPER_DEVELOPER_TRIGGER=0`; point it at
+a different field with `CHOMPER_DEVELOPER_FIELD`).
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`

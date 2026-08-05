@@ -7,9 +7,9 @@ module Chomper
   # `user` / `user_href` identify the commenter, so replies can address them.
   # `internal` is the trigger comment's visibility, so the reply can mirror it
   # (an internal @chomper prompt gets an internal answer, a public one a public).
-  # `source` is nil for comment triggers and :assignment for a WP assigned to
-  # chomper (see Pull#intent_from_assignment) — assignment intents carry no
-  # comment fields, so replies are unaddressed and acked via the assignment marker.
+  # `source` is nil for comment triggers and :developer for a WP whose Developers
+  # field names chomper (see Pull#intent_from_developer) — those intents carry no
+  # comment fields, so replies are unaddressed and acked via the once-per-WP marker.
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
                       :user, :user_href, :internal, :source, keyword_init: true)
 
@@ -79,12 +79,12 @@ module Chomper
     end
 
     # Route act-state to the trigger's source: a comment trigger is keyed by its
-    # timestamp, an assignment trigger by the once-per-WP assignment marker
-    # (reusing mark_acted with the intent's nil comment_at would null out
+    # timestamp, a Developers trigger by the once-per-WP marker (reusing
+    # mark_acted with the intent's nil comment_at would null out
     # last_acted_comment_at and reopen old comment triggers).
     def ack(intent)
-      if intent.source == :assignment
-        @pull.mark_assignment_acted(intent.item_id)
+      if intent.source == :developer
+        @pull.mark_developer_acted(intent.item_id)
       else
         @pull.mark_acted(intent.item_id, intent.comment_at)
       end

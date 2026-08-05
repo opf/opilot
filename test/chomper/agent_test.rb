@@ -42,11 +42,11 @@ module Chomper
     end
 
     class FakePull
-      attr_reader :acted, :assignment_acted
+      attr_reader :acted, :developer_acted
       attr_accessor :related
-      def initialize; @acted = []; @assignment_acted = []; @related = []; end
+      def initialize; @acted = []; @developer_acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
-      def mark_assignment_acted(id); @assignment_acted << id; end
+      def mark_developer_acted(id); @developer_acted << id; end
       def record_chomper_comment(*, **); end
       def related_work_packages(_id); @related; end
     end
@@ -388,30 +388,30 @@ module Chomper
       refute pr_url_path.exist?
     end
 
-    # ── assignment trigger ────────────────────────────────────────────────────
+    # ── Developer trigger ────────────────────────────────────────────────────
 
-    def assignment_intent
-      intent(:ship, source: :assignment, comment_at: nil, text: "")
+    def developer_intent
+      intent(:ship, source: :developer, comment_at: nil, text: "")
     end
 
-    def test_assignment_intent_plans_ships_and_acks_the_marker
-      @agent.send(:handle_and_ack, assignment_intent)
+    def test_developer_intent_plans_ships_and_acks_the_marker
+      @agent.send(:handle_and_ack, developer_intent)
 
       assert plan_path.exist?
       assert pr_url_path.exist?
-      assert_equal ["42"], @pull.assignment_acted
+      assert_equal ["42"], @pull.developer_acted
       assert_empty @pull.acted, "must not touch last_acted_comment_at — that would reopen old comment triggers"
       refute(@notes.any? { |n| n.include?("<mention") }, "no commenter to address")
-      assert(@note_visibility.all?, "assignment replies default to internal")
+      assert(@note_visibility.all?, "Developer-trigger replies default to internal")
     end
 
-    def test_assignment_intent_acks_the_marker_on_error
+    def test_developer_intent_acks_the_marker_on_error
       agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
       inject_worktree(agent, FakeWorktree.new)
 
-      agent.send(:handle_and_ack, assignment_intent)
+      agent.send(:handle_and_ack, developer_intent)
 
-      assert_equal ["42"], @pull.assignment_acted
+      assert_equal ["42"], @pull.developer_acted
       assert_empty @pull.acted
     end
 

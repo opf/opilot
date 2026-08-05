@@ -24,6 +24,15 @@ module Chomper
         HTTP.get_json(url, token: @token)
       end
 
+      # A work package's schema, fetched by the href its `_links.schema` carries
+      # (`/api/v3/work_packages/schemas/<project>-<type>`). The schema is what
+      # names each `customFieldN`, so it is the only way to find a field the user
+      # knows as "Developers". One schema covers every WP of a project+type, so
+      # callers should cache by href rather than by work package.
+      def work_package_schema(href)
+        HTTP.get_json("#{@base}#{href}", token: @token)
+      end
+
       def project_types(project_id)
         HTTP.get_json("#{@base}/api/v3/projects/#{project_id}/types", token: @token)
       end

@@ -73,7 +73,7 @@ module Chomper
 
         ./chomper agent op
             OpenProject only: act on @chomper comments, and on chomper being set
-            as a work package's assignee.
+            as one of a work package's Developers.
 
         ./chomper agent gh
             GitHub only: chomper's own PRs (reply, write code when asked, fix

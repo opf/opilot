@@ -111,11 +111,29 @@ module Chomper
       end
     end
 
-    def test_assign_trigger_is_on_by_default_and_opt_out
-      with_env("CHOMPER_ASSIGN_TRIGGER" => nil) { assert Context.build(@tmpdir).assign_trigger? }
-      with_env("CHOMPER_ASSIGN_TRIGGER" => "1") { assert Context.build(@tmpdir).assign_trigger? }
-      with_env("CHOMPER_ASSIGN_TRIGGER" => "0") { refute Context.build(@tmpdir).assign_trigger? }
-      with_env("CHOMPER_ASSIGN_TRIGGER" => "false") { refute Context.build(@tmpdir).assign_trigger? }
+    def test_developer_trigger_is_on_by_default_and_opt_out
+      env = { "CHOMPER_DEVELOPER_TRIGGER" => nil, "CHOMPER_ASSIGN_TRIGGER" => nil }
+      with_env(env) { assert Context.build(@tmpdir).developer_trigger? }
+      with_env(env.merge("CHOMPER_DEVELOPER_TRIGGER" => "1")) { assert Context.build(@tmpdir).developer_trigger? }
+      with_env(env.merge("CHOMPER_DEVELOPER_TRIGGER" => "0")) { refute Context.build(@tmpdir).developer_trigger? }
+      with_env(env.merge("CHOMPER_DEVELOPER_TRIGGER" => "false")) { refute Context.build(@tmpdir).developer_trigger? }
+    end
+
+    # The switch predates the Developer field; an .env that still names it must
+    # keep working, and the new name wins when both are set.
+    def test_legacy_assign_trigger_env_still_disables_the_trigger
+      with_env("CHOMPER_DEVELOPER_TRIGGER" => nil, "CHOMPER_ASSIGN_TRIGGER" => "0") do
+        refute Context.build(@tmpdir).developer_trigger?
+      end
+      with_env("CHOMPER_DEVELOPER_TRIGGER" => "1", "CHOMPER_ASSIGN_TRIGGER" => "0") do
+        assert Context.build(@tmpdir).developer_trigger?
+      end
+    end
+
+    def test_developer_field_name_defaults_to_developer
+      with_env("CHOMPER_DEVELOPER_FIELD" => nil) { assert_equal "Developers", Context.build(@tmpdir).developer_field_name }
+      with_env("CHOMPER_DEVELOPER_FIELD" => "  ") { assert_equal "Developers", Context.build(@tmpdir).developer_field_name }
+      with_env("CHOMPER_DEVELOPER_FIELD" => " Assignee ") { assert_equal "Assignee", Context.build(@tmpdir).developer_field_name }
     end
 
     def test_ci_max_attempts_defaults_to_five_and_is_floored_at_one
