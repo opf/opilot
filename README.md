@@ -346,6 +346,8 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ### Feature ideas
+* Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
+* Make prototyping implement multiple solutions at once, when applicable
 * Add a command to generate implementation options and cap it to N characters
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
