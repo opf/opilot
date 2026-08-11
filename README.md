@@ -5,11 +5,14 @@
 
 ## What is this?
 
-An experimental OpenProject AI product development orchestrator
+Your friendly neighborhood AI software development assistant. 
 
-* Discuss work package & codebase by tagging `@Chomper` in work package comments or PRs
-* Trigger prototype PRs with `@Chomper build` (then adopt them as your own via `gh adopt` command)
-* Convert raw product notes into final implementation via the [spec-driven development pipeline](https://excalidraw.com/#room=2fc303c2b4b46f7b6d25,S-irRTZgfKS02ziIfw9D4g)
+1. **Product ideation**: Collect ideas in a document/WP, then tag `@Chomper` to generate a feature spec.
+1. **WP preparation**: Generate a work package tree from an approved feature spec
+1. **WP refinement**: Refine work package via `@Chomper grill` & free-form chatting
+1. **Prototyping**: Generate code prototypes via `@Chomper build`. Refine the code by chatting with [Chomper Bot](https://github.com/op-chomper) within the PR. 
+1. **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
+1. **General PR assistance**: Tag `@Chomper` in any upstream PR with questions.
 
 ---
 
