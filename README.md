@@ -7,6 +7,8 @@
 
 Your friendly neighborhood AI software development assistant. 
 
+Use it to automate any portion of your development workflow: from patching simple bugs to delivering entire features end-to-end.
+
 1. **Product ideation**: Collect ideas in a document/WP, then tag `@Chomper` to generate a feature spec.
 1. **WP preparation**: Generate a work package tree from an approved feature spec
 1. **WP refinement**: Refine work package via `@Chomper grill` & free-form chatting
