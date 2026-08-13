@@ -564,7 +564,7 @@ module Chomper
         unread   = Array(tracker["unconvertible"])
         sections = TasksFile.parse(read_or_empty(state.working_change_dir / "tasks.md"))
 
-        body = +"🤖 AI-generated change proposal. Chat with #{bot_mention} on this PR to revise it.\n\n"
+        body = +"🤖 AI-generated change proposal. To change it, write a comment to #{bot_mention} on this PR.\n\n"
         body << "**Change:** `#{state.change_id}`\n"
         body << "**Work packages this will generate:** #{sections.length}\n"
         sections.each { |s| body << "- #{s.title} (#{s.items.length} item#{"s" if s.items.length != 1})\n" }
@@ -573,8 +573,8 @@ module Chomper
           body << "- #{Helpers.document_link(@ctx, d["id"], d["title"])} (updated #{d["updated_at"]})\n"
         end
         if unread.any?
-          body << "\n**⚠ Attachments that could not be read (#{unread.length})** — if a requirement " \
-                  "lives in one of these, it is missing from this proposal:\n"
+          body << "\n**⚠ Attachments that could not be read (#{unread.length})** — if one of these " \
+                  "contains a requirement, this proposal does not include it:\n"
           unread.each { |u| body << "- `#{u["file"]}` — #{u["reason"]}\n" }
         end
         body << "\nMerging is optional: `pd generate-wp` reads the local spec store, not this branch.\n"

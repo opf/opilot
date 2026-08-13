@@ -145,15 +145,15 @@ module Chomper
       st = state_for(intent.item_id, intent.subject, intent.type)
       return unless produce_plan(st, intent.text) == :ok
       post_note(st.item_id, addressed(
-        "here's the plan:\n\n#{st.plan_file.read.strip}\n\n" \
-        "Reply `@chomper approve` to implement it, `@chomper plan <feedback>` to revise, " \
-        "or `@chomper grill` to stress-test it first."))
+        "here is the plan:\n\n#{st.plan_file.read.strip}\n\n" \
+        "Reply `@chomper approve` to implement it, `@chomper plan <feedback>` to change it, " \
+        "or `@chomper grill` to examine it for gaps first."))
     end
 
     def handle_approve(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       unless Helpers.file_has_content?(st.plan_file)
-        post_note(st.item_id, addressed("there's no plan yet — comment `@chomper plan` first, or `@chomper ship` to plan and ship in one go."))
+        post_note(st.item_id, addressed("there is no plan yet. Comment `@chomper plan` first, or `@chomper ship` to plan and ship in one step."))
         return
       end
       ship(st)
@@ -206,7 +206,7 @@ module Chomper
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
         safe_rm(st.plan_file)
         log_script "Plan NEEDS_INFO for #{wp_label(st.item_id)} — requesting clarification."
-        post_note(st.item_id, addressed("I need more information before I can plan a fix:\n\n#{questions}"))
+        post_note(st.item_id, addressed("I need more information before I can plan this change:\n\n#{questions}"))
         return :needs_info
       end
 
@@ -220,7 +220,7 @@ module Chomper
       # Already shipped to every target repo? Re-report the existing PR links.
       if st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
         links = st.repos.map { |r| st.pr_url_file(r).read.strip }.join("\n")
-        post_note(st.item_id, addressed("this is already shipped —\n\n#{links}"))
+        post_note(st.item_id, addressed("this work package is already shipped:\n\n#{links}"))
         return
       end
 
@@ -230,7 +230,7 @@ module Chomper
       # carries its exploration in; --allowedTools just adds the write tools),
       # unless every target repo already holds commits from an earlier pass.
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
-        log_script "Implementing fix for #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
+        log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
         @claude.run(Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                                       resumed: session_resumable?(st)),
                     tools: Claude::TOOLS_IMPL, session_file: st.session_file)
@@ -240,7 +240,7 @@ module Chomper
       changed = st.repos.select { |r| branch_has_commits?(st, r) }
       if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced, nothing to ship."
-        post_note(st.item_id, addressed("I couldn't produce any changes for this — the plan may be a no-op or already applied."))
+        post_note(st.item_id, addressed("I made no changes. The plan possibly changes nothing, or it is already applied."))
         return
       end
 
@@ -259,10 +259,10 @@ module Chomper
 
       if opened.any?
         links = opened.map { |repo, url| "- [#{st.subject} → `#{repo.name}`](#{url})" }.join("\n")
-        suffix = failed.any? ? "\n\n(couldn't open a PR in: #{failed.map(&:name).join(", ")} — is GITHUB_CONTRIBUTOR_TOKEN set?)" : ""
+        suffix = failed.any? ? "\n\n(I could not open a PR in: #{failed.map(&:name).join(", ")}. Make sure GITHUB_CONTRIBUTOR_TOKEN is set.)" : ""
         post_note(st.item_id, addressed("Here is your AI-generated prototype#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
       else
-        post_note(st.item_id, addressed("I implemented and committed on `#{st.branch}`, but couldn't open the PR (is GITHUB_CONTRIBUTOR_TOKEN set?)."))
+        post_note(st.item_id, addressed("I implemented the change and committed it on `#{st.branch}`. I could not open the PR. Make sure GITHUB_CONTRIBUTOR_TOKEN is set."))
       end
     end
 

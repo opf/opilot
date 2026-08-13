@@ -382,7 +382,8 @@ module Chomper
       capture_io { agent.handle_and_ack(gh_intent) }
 
       assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted, "acked despite the error → no replay"
-      assert(@github.issue_posts.any? { |p| p[2].include?("hit an error") }, "the failure should be reported on the PR")
+      assert(@github.issue_posts.any? { |p| p[2].include?("could not handle that comment") },
+             "the failure should be reported on the PR")
     end
   end
 end

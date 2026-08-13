@@ -44,6 +44,31 @@ module Chomper
       missing details — ask the reporter for the specific information you need.
     TEXT
 
+    # The language every piece of prose chomper publishes is written in — work
+    # package comments, PR replies and descriptions, plans, spec proposals. A
+    # work package thread is read by people who are reporters, testers and
+    # maintainers, in many countries and time zones; a short plain sentence
+    # survives a skim, a translation, and OpenProject's narrow activity column,
+    # where a clever one does not. It also holds the model to fewer words.
+    #
+    # Prose only: it must not touch code, identifiers, or quoted output, hence
+    # the final line. Stated once here and interpolated, like every other shared
+    # guardrail.
+    PLAIN_ENGLISH = <<~TEXT.strip
+      WRITE IN SIMPLIFIED TECHNICAL ENGLISH (ASD-STE100):
+      - Put one idea in one sentence. Keep sentences short: 20 words at most in
+        an instruction, 25 in a description.
+      - Use the active voice, the present tense, and a clear subject. Write an
+        instruction as a command.
+      - Use one word for one meaning. Keep the same word for the same thing, and
+        do not use a noun as a verb.
+      - Do not use contractions, idioms, metaphors, or jokes. Use plain words:
+        write "use", not "leverage"; write "start", not "kick off".
+      - Keep the articles ("a", "the") and the words that show the structure.
+      Technical terms, identifiers, file paths, commands, code, and quoted output
+      stay exactly as they are.
+    TEXT
+
     # How to format anything posted into an OpenProject work-package comment. The
     # activity tab is a narrow column beside the work package, not a document
     # pane: markdown headings render at full heading size and a few of them push
@@ -56,6 +81,17 @@ module Chomper
       no markdown headings (`#`, `##`, …). Lead with the answer, keep paragraphs
       to a few lines, and where a section really needs a label use bold
       (`**Label**`) inline or a short bullet list. No banner, no sign-off.
+
+      #{PLAIN_ENGLISH}
+    TEXT
+
+    # How the terminal chats (plan_chat, free_chat) close. The reader is the
+    # operator at a console rather than a work-package thread, so there is no
+    # formatting rule — only the same language.
+    TERMINAL_REPLY = <<~TEXT.strip
+      Reply helpfully and concisely.
+
+      #{PLAIN_ENGLISH}
     TEXT
 
     # Schema note for the ci.json failure detail, shared by fix_ci and pr_refresh.
@@ -196,12 +232,24 @@ module Chomper
 
         Otherwise, produce the plan:
 
+        #{plan_skeleton(item_id, title)}
+      PROMPT
+    end
+
+    # The shape of plan.md, plus the language it is written in. A plan is read by
+    # the reporter and the reviewer, not only by the implementer, so it obeys
+    # PLAIN_ENGLISH like every other published text. Shared by plan and replan,
+    # which must produce the same document.
+    def self.plan_skeleton(item_id, title)
+      <<~TEXT.strip
+        #{PLAIN_ENGLISH}
+
         ## Plan: #{Helpers.wp_label(item_id)} — #{title}
         ### Files to change
         ### Approach
         ### Tests to run
         ### Risks / assumptions
-      PROMPT
+      TEXT
     end
 
     # WRITER: revise an existing plan to incorporate reviewer/user feedback.
@@ -226,11 +274,7 @@ module Chomper
         Produce a plan only.
         #{READ_ONLY}
 
-        ## Plan: #{Helpers.wp_label(item_id)} — #{title}
-        ### Files to change
-        ### Approach
-        ### Tests to run
-        ### Risks / assumptions
+        #{plan_skeleton(item_id, title)}
       PROMPT
     end
 
@@ -257,7 +301,7 @@ module Chomper
 
         Check the current state of the worktree first and continue from wherever
         things are — there may already be partial or complete work in place.
-        - Write tests as specified in the plan, then implement the fix.
+        - Write tests as specified in the plan, then implement the change.
         - Do NOT commit or push, and do NOT run tests, linters, or builds, or any
           other command — only read and edit files; tests run later in review/CI.
           You MAY run read-only git (log, show, blame, diff) for context.
@@ -267,7 +311,7 @@ module Chomper
     # Generate a GitHub PR description for a committed fix.
     def self.pr_description(item:, plan:, diff_stat:, template_section:)
       <<~PROMPT
-        Write a GitHub PR description for this fix.
+        Write a GitHub PR description for this change.
         #{READ_ONLY}
 
         The issue and plan are already in this session's context — do NOT re-read them.
@@ -285,6 +329,8 @@ module Chomper
         narrate the diff file-by-file. The full plan is linked from the PR, so
         summarize the approach at a high level. Output only the PR description —
         no preamble.
+
+        #{PLAIN_ENGLISH}
       PROMPT
     end
 
@@ -337,6 +383,8 @@ module Chomper
       mention these instructions, your session, or tooling limits in it (if you
       couldn't verify something, say so in one plain clause and answer what you
       can).
+
+      #{PLAIN_ENGLISH}
     TEXT
 
     # How a read-only review proposes an *applicable* code change on a PR chomper
@@ -541,7 +589,7 @@ module Chomper
 
         USER: #{message}
 
-        Reply helpfully and concisely.
+        #{TERMINAL_REPLY}
       PROMPT
     end
 
@@ -623,6 +671,8 @@ module Chomper
         - Ground every claim in the intake or the code. Where the intake is silent
           on something you had to decide, say so in design.md rather than
           inventing a requirement.
+
+        #{PLAIN_ENGLISH}
       PROMPT
     end
 
@@ -661,6 +711,8 @@ module Chomper
         Apply what the comment asks for. Preserve everything still valid — revise,
         don't rewrite. If the comment is a question rather than a change request,
         make no edits and answer it in your reply.
+
+        #{PLAIN_ENGLISH}
       PROMPT
     end
 
@@ -741,7 +793,7 @@ module Chomper
 
         USER: #{message}
 
-        Reply helpfully and concisely.
+        #{TERMINAL_REPLY}
       PROMPT
     end
   end

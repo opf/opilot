@@ -95,7 +95,7 @@ module Chomper
       mark_acted(intent)
     rescue => e
       log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.class}: #{e.message}"
-      post_reply(intent, "sorry — I hit an error handling that comment:\n\n#{e.message}") rescue nil
+      post_reply(intent, "I could not handle that comment. The error is:\n\n#{e.message}") rescue nil
       mark_acted(intent)
     end
 
@@ -151,7 +151,7 @@ module Chomper
       return if comments.empty? || intent.head_sha.to_s.empty?
       @github.create_review(
         intent.repo, intent.pr_number, commit_id: intent.head_sha,
-        body: "🤖 Suggested changes — click **Apply suggestion** on each to commit it to your branch.",
+        body: "🤖 Suggested changes. Click **Apply suggestion** on each one to commit it to your branch.",
         comments: comments
       )
       log_script "Posted #{comments.length} suggestion(s) on #{intent.repo}##{intent.pr_number}"

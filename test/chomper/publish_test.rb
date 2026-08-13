@@ -98,7 +98,7 @@ module Chomper
                       "the note links the setup doc and names this PR's concrete number"
       # It reads as the banner's second bullet, directly under the first — not
       # buried after the description.
-      assert_match(/^\* Chat with @\S+ .*\n\* To ship the PR, first run `gh adopt 7`/,
+      assert_match(/^\* To ask for a change, write a comment to @\S+ .*\n\* To ship the PR, first make it yours: run `gh adopt 7`/,
                    update[:body], "the note is the banner's second bullet")
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
     end

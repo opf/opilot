@@ -296,8 +296,8 @@ module Chomper
       return if state["ci_gave_up"]
       @github.add_issue_comment(
         repo, number,
-        "🤖 CI is still failing after #{@ctx.ci_max_attempts} automatic fix attempt(s) — " \
-        "this one needs a human. I'll stop retrying CI for this PR."
+        "🤖 CI still fails after #{@ctx.ci_max_attempts} automatic fix attempt(s). " \
+        "This PR needs a human. I stop the automatic CI fixes for this PR."
       )
       state["ci_gave_up"] = true
       Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")

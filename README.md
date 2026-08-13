@@ -331,7 +331,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 * (?) Permission to read OP user emails
 
 ### AI Architecture
-* "Only report to me in ASD-STE100 Simplified Technical English."
 * Plug in our OpenRouter key
 * Add intent classification interface:
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command

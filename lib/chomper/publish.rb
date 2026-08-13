@@ -76,7 +76,7 @@ module Chomper
       # note lands as the second bullet (#add_adopt_note, post-create). Cramming
       # both into one sentence read as fine print on a wide GitHub body.
       banner    = "🤖 This is an AI-generated prototype.\n\n" \
-                  "* Chat with @#{@github.login} for any further adjustments."
+                  "* To ask for a change, write a comment to @#{@github.login} on this PR."
       gist_url  = plan_gist_url(st)
       plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
       pr_body   = "#{BANNER_OPEN}\n#{banner}\n#{BANNER_CLOSE}\n\n#{plan_line}#{pr_desc_file.read}"
@@ -190,8 +190,8 @@ module Chomper
     def add_adopt_note(upstream, url, pr_body, banner)
       number = Clients::GitHub.pr_number_from_url(url)
       return unless number
-      note = "* To ship the PR, first run `gh adopt #{number}` ([setup guide](#{ADOPT_DOC_URL})) " \
-             "to make it yours."
+      note = "* To ship the PR, first make it yours: run `gh adopt #{number}` " \
+             "([setup guide](#{ADOPT_DOC_URL}))."
       @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e
       log_script "Could not add the adopt note to #{url}: #{e.message}"
