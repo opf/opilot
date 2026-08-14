@@ -339,6 +339,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ## TODO
 
 ### Security & Hosting
+* Switch from Docker to Podman for root-less process model
 * (?) Permission to read OP user emails
 
 ### AI Architecture
