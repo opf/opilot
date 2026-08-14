@@ -69,42 +69,37 @@ cd openproject-chomper
 ## Bird's-eye view
 
 ```
-              ┌─────────────────┐
-              │    ./chomper    │
-              │ (shell wrapper) │
-              └─────────────────┘
-                       │
-                       │ docker compose run
-                       │
-┌─ Docker ─────────────┼──────────────────────────────────────────────┐
-│                      ▼                                              │
-│    ┌─────────── runner container ───────────┐                       │
-│    │                                        │                       │
-│    │ Ruby 4.0 script                        │                       │     ┌──────────┐
-│    │  * Pulls WP content from OP API        ├───────────────────────┤────▶│  OP API  │
-│    │  * Manages metadata in .chomper/       │                       │     └──────────┘
-│    │      * WP metadata mirror              │                       │
-│    │      * Plan files                      │                       │
-│    │      * Draft PR data                   │                       │     ┌────────────┐
-│    │  * Pushes branches and opens PRs       ├───────────────────────┤────▶│ GitHub API │
-│    │  * Delegates conversations to the LLM  │                       │     └────────────┘
-│    └────────────────────────────────────────┘                       │
-│                      ▲                                              │
-│                      │ json                                         │
-│                      ▼                                              │
-│   ┌──────────── harness container ───────────┐   ┌─── proxy ───┐    │
-│   │ Node.js server (:47291)                  │   │ tinyproxy   │    │   ┌────────────────────────┐
-│   │   POST / → `pi --mode json`              │──▶│ (:8888)     ├────┼──▶│ Rails docs (allowlist) │
-│   │                                          │   │ egress      │    │   └────────────────────────┘
-│   │ volumes:                                 │   │ allowlist   │    │
-│   │   .chomper/          → /state      (ro)  │   └─────────────┘    │
-│   │   .chomper/repos     → /repos      (rw)  │   ┌── authgw ───┐    │   ┌────────────────────────┐
-│   │   .chomper/pi-agent  → /pi-agent   (rw)  │   │ replaces    │    │   │ openrouter.ai          │
-│   │   .chomper/pi-sess.. → /sessions   (rw)  │──▶│ the gateway ├────┼──▶│ (inference, any model) │
-│   │ no real API key — inference via authgw,  │   │ token with  │    │   └────────────────────────┘
-│   │ everything else via proxy; internal-only │   │ the real key│    │
-│   └──────────────────────────────────────────┘   └─────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
+           ┌─────────────────┐
+           │ ./chomper       │
+           │ (shell wrapper) │
+           └────────┬────────┘
+                    │
+                    │ docker compose run
+                    │
+┌── Docker ─────────┼─────────────────────────────────────────────────────────────────────────┐
+│                   ▼                                                                         │
+│ ┌─ runner container ────────────────┐            ┌─ harness container ────────────────────┐ │
+│ │                                   │            │                                        │ │
+│ │ Ruby 4.0 script                   │            │ Node.js server (:47291)                │ │
+│ │  * Pulls WP content from OP API   │◀── json ──▶│   POST / -> `pi --mode json`           │ │
+│ │  * Manages metadata in .chomper/  │            │ volumes: .chomper/                     │ │
+│ │      * WP metadata mirror         │            │                                        │ │
+│ │      * Plan files                 │            │                                        │ │
+│ │      * Draft PR data              │            └─────────┬─────────────────────┬────────┘ │
+│ │  * Pushes branches, opens PRs     │                      │                     │          │             
+│ │  * Delegates chat to the LLM      │                      │                     │          │
+│ └───────┬──────────────────┬────────┘                      ▼                     ▼          │
+│         │                  │                     ┌─ proxy ───────────┐ ┌─ authgw ─────────┐ │
+│         │                  │                     │ tinyproxy (:8888) │ │ replaces gateway │ │
+│         │                  │                     │ egress allowlist  │ │ token = real key │ │
+│         │                  │                     └─────────┬─────────┘ └─────────┬────────┘ │
+│         │                  │                               │                     │          │
+└─────────┼──────────────────┼───────────────────────────────┼─────────────────────┼──────────┘
+          ▼                  ▼                               ▼                     ▼
+    ┌──────────┐      ┌────────────┐                  ┌─────────────┐      ┌───────────────┐
+    │ OP API   │      │ GitHub API │                  │ Rails docs  │      │ openrouter.ai │
+    └──────────┘      └────────────┘                  │ (allowlist) │      │ (any model)   │
+                                                      └─────────────┘      └───────────────┘
 ```
 
 ### Security model
