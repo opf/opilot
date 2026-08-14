@@ -339,31 +339,15 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ## TODO
 
 ### Security & Hosting
-* Separate Claude API credit account
 * (?) Permission to read OP user emails
 
 ### AI Architecture
-* ~~Plug in our OpenRouter key~~ — done: the harness container runs [pi] against
-  OpenRouter (see docs/pi-harness-plan.md)
 * Add intent classification interface:
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command
 * Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
 * Set up token limits & cleanly handle threshold breaches
-* Migrate `server.js` from pi's CLI (`pi --mode json`) to its SDK
-  (`createAgentSession`) — the shim would own the guard logic directly instead
-  of a `tool_call` hook, with no command line to keep safe (deferred in the pi
-  migration; see "Not in this change" in docs/pi-harness-plan.md)
-* ~~Replace Claude Code with a generic AI "file edit engine" layer~~ — done:
-  the LLM container now runs [pi], configured via `pi-models.json`
-* Replace Claude! — the harness is model-agnostic now (any OpenRouter model is
-  one `CHOMPER_MODEL` away), but we still default to Claude models through
-  OpenRouter deliberately, so a fault is the harness's and not a new model's;
-  this is the next step
-  * We can likely save a lot on costs by switching to Codex.
-  * Or, lean away from US by switching to Mistral.
-  * Or, **ideally**, plug in an open model.
-
-[pi]: https://github.com/badlogic/pi-mono
+* Switch away from Anthropic models
+  * Ideally, this would be our own hosted LLM.
 * Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
@@ -372,7 +356,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 
 ### Feature ideas
 * Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
-* Make prototyping implement multiple solutions at once, when applicable
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias
