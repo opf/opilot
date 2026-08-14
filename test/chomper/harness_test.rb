@@ -2,12 +2,12 @@ require_relative "../test_helper"
 require "tmpdir"
 
 module Chomper
-  class ClaudeTest < Minitest::Test
+  class HarnessTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
       ctx = Struct.new(:harness_url, :log_file)
               .new("http://harness.test:47291", Pathname(@tmpdir) / "chomp.log")
-      @claude = Claude.new(ctx)
+      @harness = Harness.new(ctx)
       @session_file = Pathname(@tmpdir) / "session_id"
     end
 
@@ -24,48 +24,48 @@ module Chomper
       { type: "assistant", message: { content: [{ type: "text", text: text }] } }
     end
 
-    def stub_claude(body)
+    def stub_harness(body)
       stub_request(:post, "http://harness.test:47291").to_return(status: 200, body: body)
     end
 
     def test_run_returns_streamed_text_on_success
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         assistant_text("the plan"),
         { type: "result", subtype: "success", is_error: false, result: "the plan" },
         { type: "session_id", session_id: "abc-123" }
       ))
 
       text = nil
-      capture_io { text = @claude.run("prompt", session_file: @session_file) }
+      capture_io { text = @harness.run("prompt", session_file: @session_file) }
 
       assert_equal "the plan", text
       assert_equal "abc-123", @session_file.read
     end
 
     def test_run_raises_on_error_result
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         assistant_text("Let me look around."),
         { type: "result", subtype: "success", is_error: true,
-          result: "Claude requested permissions to use Bash, but you haven't granted it" }
+          result: "the model tried to use a tool the harness hasn't granted it" }
       ))
 
       err = nil
       out, = capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
       end
 
-      assert_match(/requested permissions to use Bash/, err.message)
+      assert_match(/tool the harness hasn't granted it/, err.message)
       assert_includes out, "✗"
     end
 
     def test_run_raises_on_error_subtype_and_still_saves_session
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         { type: "result", subtype: "error_max_turns", is_error: false, result: "" },
         { type: "session_id", session_id: "def-456" }
       ))
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt", session_file: @session_file) }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", session_file: @session_file) }
         assert_equal "error_max_turns", err.message
       end
 
@@ -77,21 +77,21 @@ module Chomper
         .to_return(status: 403, body: "unknown tool grant\n")
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
         assert_match(/HTTP 403/, err.message)
         assert_match(/unknown tool grant/, err.message)
       end
     end
 
     def test_run_enriches_execution_error_with_stderr_tail
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
         { type: "exit", code: 1, signal: nil, timed_out: false,
           stderr: "API Error: 529 Overloaded" }
       ))
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
         assert_match(/error_during_execution/, err.message)
         assert_match(/exit 1/, err.message)
         assert_match(/API Error: 529 Overloaded/, err.message)
@@ -99,37 +99,37 @@ module Chomper
     end
 
     def test_run_treats_nonzero_exit_with_no_result_as_error
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         { type: "exit", code: 1, signal: nil, timed_out: false, stderr: "boom" }
       ))
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
         assert_match(/exited 1 with no result/, err.message)
         assert_match(/boom/, err.message)
       end
     end
 
     def test_run_reports_timeout_kill
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         { type: "exit", code: nil, signal: "SIGTERM", timed_out: true, stderr: "" }
       ))
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
         assert_match(/timed out/, err.message)
       end
     end
 
     def test_run_ignores_exit_event_on_success
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         assistant_text("the plan"),
         { type: "result", subtype: "success", is_error: false, result: "the plan" },
         { type: "exit", code: 0, signal: nil, timed_out: false, stderr: "some noise" }
       ))
 
       text = nil
-      capture_io { text = @claude.run("prompt") }
+      capture_io { text = @harness.run("prompt") }
       assert_equal "the plan", text
     end
 
@@ -139,7 +139,7 @@ module Chomper
       # pre-flight CLI failure — verified against pi 0.84.2 to print a plain
       # stderr line and exit 1 with NO JSON output at all (no session/result
       # event), so server.js's translate() emits no result frame either; only
-      # the exit event (code, stderr) reaches claude.rb here. Second call
+      # the exit event (code, stderr) reaches harness.rb here. Second call
       # (fresh, no session) succeeds. WebMock replays responses in order.
       stub_request(:post, "http://harness.test:47291").to_return(
         { status: 200, body: ndjson(
@@ -152,7 +152,7 @@ module Chomper
       )
 
       text = nil
-      out, = capture_io { text = @claude.run("prompt", session_file: @session_file) }
+      out, = capture_io { text = @harness.run("prompt", session_file: @session_file) }
 
       assert_equal "fresh answer", text
       assert_equal "new-session", @session_file.read, "the recovered session id is saved"
@@ -161,27 +161,27 @@ module Chomper
 
     def test_run_does_not_retry_fresh_on_unrelated_error
       @session_file.write("live-session")
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
         { type: "exit", code: 1, signal: nil, timed_out: false, stderr: "API Error: 529 Overloaded" }
       ))
 
       capture_io do
-        err = assert_raises(Claude::Error) { @claude.run("prompt", session_file: @session_file) }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", session_file: @session_file) }
         assert_match(/Overloaded/, err.message)
       end
       # Stubbed exactly one response; a spurious retry would raise a WebMock error.
     end
 
     def test_capture_does_not_write_outfile_on_error
-      stub_claude(ndjson(
+      stub_harness(ndjson(
         assistant_text("partial preamble"),
         { type: "result", subtype: "error_during_execution", is_error: true, result: "boom" }
       ))
       outfile = Pathname(@tmpdir) / "plan.md"
 
       capture_io do
-        assert_raises(Claude::Error) { @claude.capture("prompt", outfile: outfile) }
+        assert_raises(Harness::Error) { @harness.capture("prompt", outfile: outfile) }
       end
 
       refute outfile.exist?, "a failed run must not leave partial text as the plan"

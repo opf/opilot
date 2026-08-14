@@ -111,7 +111,7 @@ module Chomper
       end
 
       def test_failures_falls_back_to_raw_output_when_the_shape_is_unexpected
-        # A CLI change must degrade to "show Claude the output", never to silence.
+        # A CLI change must degrade to "show the LLM the output", never to silence.
         with_open3(out: "totally different", err: "boom", success: false) do |os|
           assert_equal "boom", Chomper::PD::OpenSpec.failures(os.validate("c"))
         end

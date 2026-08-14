@@ -95,7 +95,7 @@ module Chomper
         assert (intake / "001-doc.md").exist?, "the intake document must survive the command"
         assert (store.change_dir("add-x") / "tracker.json").exist?
         assert (store.working_change_dir("add-x") / "intake" / "001-doc.md").exist?,
-               "and reach the clone, where Claude reads it"
+               "and reach the clone, where the LLM reads it"
       end
 
       def test_intake_records_the_identity_it_short_circuits_on_next_time
@@ -171,7 +171,7 @@ module Chomper
       end
 
       # Reports the publishing identity `propose` will use, rather than letting a
-      # bad token surface at push time after Claude has done the expensive work.
+      # bad token surface at push time after the LLM has done the expensive work.
       class FakeIdentityPublish
         def initialize(login: "op-chomper", scopes: %w[public_repo workflow gist])
           @login = login

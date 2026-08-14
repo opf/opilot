@@ -32,7 +32,7 @@ module Chomper
 
     # Cache the PR's content the way Pull caches a WP: reuse the saved pr.json
     # while updated_at is unchanged, otherwise re-fetch every comment + review
-    # stream and rewrite it. The cache is what the agent hands Claude for full PR
+    # stream and rewrite it. The cache is what the agent hands the LLM for full PR
     # context (Copilot's review included).
     def fetch_pr_content(dir, repo, number, pr)
       cache_path = dir / "pr.json"

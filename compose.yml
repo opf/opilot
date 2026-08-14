@@ -43,7 +43,7 @@ services:
       # `- VAR=${VAR:-}`): Compose resolves the bare form from .env too, but an
       # explicit `${VAR:-}` would hand the container an empty string, and an
       # empty string beats the default in every `ENV.fetch(name, default)`
-      # reader (Context, Claude). Unset must mean absent, not blank.
+      # reader (Context, Harness). Unset must mean absent, not blank.
       - CHOMPER_MODEL
       - CHOMPER_TRIAGE_MODEL
       - CHOMPER_ASSIGN_TRIGGER
@@ -84,10 +84,10 @@ services:
     # a bare `docker compose run`.
     user: "${CHOMPER_UID:-1000}:${CHOMPER_GID:-1000}"
     # Run the CLI in /repos (the parent of every repo's worktree) so pi sees
-    # them all at /repos/<name>. --no-context-files (server.js) stops pi
-    # auto-loading /repos/openproject/CLAUDE.md the way Claude Code did — the
-    # prompts tell it to read each target repo's CLAUDE.md/AGENTS.md instead
-    # (see docs/pi-harness-plan.md, "context files").
+    # them all at /repos/<name>. --no-context-files (server.js) stops pi from
+    # auto-loading a repo's CLAUDE.md/AGENTS.md on its own — the prompts tell
+    # it to read each target repo's directly instead (see the --no-context-files
+    # comment in server.js for why).
     working_dir: /repos
     volumes:
       # pi's config dir (settings.json/models.json seeded by server.js,

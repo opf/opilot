@@ -10,8 +10,8 @@ module Chomper
     # Reopened by intake.rb, which defines the class proper — Converter is nested
     # inside it because it is only ever reached through an intake run.
     class Intake
-      # Turns a document attachment into something Claude can actually read.
-      # Claude's Read tool is the only way into the container (bash is read-only
+      # Turns a document attachment into something the LLM can actually read.
+      # the LLM's `read` tool is the only way into the container (bash is read-only
       # git, egress is blocked), and it makes nothing of ZIP-of-XML
       # .xlsx/.docx/.pptx — so conversion happens here, in the runner.
       #
@@ -90,7 +90,7 @@ module Chomper
         # --- spreadsheets ----------------------------------------------------
 
         # One CSV per sheet rather than one markdown blob: greppable, compact, and
-        # Claude can read a single sheet instead of pulling thousands of rows into
+        # the LLM can read a single sheet instead of pulling thousands of rows into
         # context. roo handles the parts that are genuinely easy to get wrong —
         # sharedStrings indirection, inline vs shared strings, cell-type coercion,
         # and Excel's serial-date encoding.

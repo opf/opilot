@@ -2,15 +2,15 @@ module Chomper
   # The `chat` command: a free, read-only terminal conversation over chomper's
   # local mirrors. Unlike the op-agent chat (posted to OpenProject) or the
   # fix/plan `[c]hat` (scoped to one WP's plan), it isn't tied to any work
-  # package — the whole .chomper cache is mounted read-only at /state and Claude
+  # package — the whole .chomper cache is mounted read-only at /state and the LLM
   # finds the relevant files itself from the question. No fetch, no plan, no
   # ship: just talk. Mirrors FixRunner#run_chat's REPL shape.
   class ChatRunner
     include Helpers
 
-    def initialize(ctx, claude: Claude.new(ctx))
+    def initialize(ctx, harness: Harness.new(ctx))
       @ctx    = ctx
-      @claude = claude
+      @harness = harness
     end
 
     # Drive the REPL. `initial_message` (the inline text after `./chomper chat`)
@@ -18,7 +18,7 @@ module Chomper
     def run(initial_message = nil)
       # One fresh session per invocation: thread context across turns within this
       # run, but never resume a stale conversation from a previous one.
-      ensure_claude!
+      ensure_harness!
       session_file = @ctx.state_dir / "chat_session_id"
       safe_rm(session_file)
 
@@ -40,7 +40,7 @@ module Chomper
 
         wp_root = container_path(Helpers.items_dir(@ctx))   # /state/work_packages/<host>
         prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending)
-        @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: session_file)
+        @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: session_file)
         ping_terminal("chomper: chat reply ready")
         puts ""
         pending = ""

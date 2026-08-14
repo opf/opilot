@@ -13,7 +13,7 @@ module Chomper
     FakeCheck     = Struct.new(:id, :name, :status, :conclusion, :completed_at, :output, keyword_init: true)
     FakeOutput    = Struct.new(:title, :summary, :text, :annotations_count, keyword_init: true)
 
-    class FakeClaude
+    class FakeHarness
       attr_reader :runs
       def initialize(reply: "Fixed the failing spec.", subject: "Guard the nil case")
         @reply = reply; @subject = subject; @runs = []
@@ -142,11 +142,11 @@ module Chomper
       (@pr_dir / "pr_url.txt").write("https://github.com/opf/openproject/pull/7")
       seed_pr_cache
 
-      @claude  = FakeClaude.new
+      @harness  = FakeHarness.new
       @pull    = FakePull.new
       @op_pull = FakeOpPull.new(item: { "id" => "42" })
       @github  = FakeGitHub.new(pr: open_pr)
-      @runner  = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull, op_pull: @op_pull)
+      @runner  = PrRunner.new(@ctx, harness: @harness, github: @github, gh_pull: @pull, op_pull: @op_pull)
       @worktree = FakeWorktree.new
       inject_worktree(@runner, @worktree)
     end
@@ -229,7 +229,7 @@ module Chomper
     def test_fresh_pr_is_a_noop
       out, = capture_io { @runner.run("42") }
       assert_includes out, "already fresh"
-      assert_empty @claude.runs, "nothing to do → no Claude spend"
+      assert_empty @harness.runs, "nothing to do → no LLM spend"
       assert_empty @github.pushed
       assert_empty @github.issue_posts
       assert_equal [["42", "openproject"]], @pull.cleared,
@@ -265,7 +265,7 @@ module Chomper
       capture_io { @runner.run("42") }
 
       assert_empty @worktree.merges
-      assert_includes @claude.runs.first[:prompt], "CI FAILURES",
+      assert_includes @harness.runs.first[:prompt], "CI FAILURES",
                       "CI fixing is age-independent — only the base merge is gated on staleness"
       assert_equal 1, @github.pushed.length
     end
@@ -275,10 +275,10 @@ module Chomper
       capture_io { @runner.run("42") }
 
       assert_equal ["Merge dev into bug/42-fix"], @worktree.merges
-      assert_empty @claude.runs, "a clean base merge needs no Claude pass"
+      assert_empty @harness.runs, "a clean base merge needs no LLM pass"
       assert_equal [["op-chomper/openproject", "bug/42-fix", @repo.worktree_host]], @github.pushed,
                    "the merge is pushed to the PR's head repo (the fork)"
-      assert_empty @github.issue_posts, "no Claude pass → no PR comment"
+      assert_empty @github.issue_posts, "no LLM pass → no PR comment"
     end
 
     def test_ci_failure_runs_claude_commits_and_pushes
@@ -286,9 +286,9 @@ module Chomper
       @worktree.has_changes = true
       capture_io { @runner.run("42") }
 
-      run = @claude.runs.first
+      run = @harness.runs.first
       assert_includes run[:prompt], "CI FAILURES", "the CI task block is in the prompt"
-      assert_equal Claude::TOOLS_IMPL, run[:tools]
+      assert_equal Harness::TOOLS_IMPL, run[:tools]
       assert_equal @pr_dir / "gh_session_id", run[:session_file], "shares gh-agent's per-PR session"
       assert Helpers.file_has_content?(@pr_dir / "ci.json"), "the failure detail is cached for the prompt"
       assert_equal ["[#42] Guard the nil case"], @worktree.commits
@@ -304,7 +304,7 @@ module Chomper
       out, = capture_io { @runner.run("42") }
 
       assert_includes out, "log retention"
-      assert_empty @claude.runs, "no detail left to act on → no Claude CI pass"
+      assert_empty @harness.runs, "no detail left to act on → no LLM CI pass"
       refute (@pr_dir / "ci.json").exist?, "expired detail is not even fetched"
       assert_equal ["Merge dev into bug/42-fix"], @worktree.merges
       assert_equal 1, @github.pushed.length, "the base sync is pushed so CI re-runs"
@@ -315,7 +315,7 @@ module Chomper
       out, = capture_io { @runner.run("42") }
 
       assert_includes out, "nothing to push; re-run the failed checks"
-      assert_empty @claude.runs
+      assert_empty @harness.runs
       assert_empty @github.pushed
     end
 
@@ -325,7 +325,7 @@ module Chomper
       @worktree.has_changes = true
       capture_io { @runner.run("42") }
 
-      assert_includes @claude.runs.first[:prompt], "CI FAILURES",
+      assert_includes @harness.runs.first[:prompt], "CI FAILURES",
                       "a recent failure still has detail — the newest failed check decides"
     end
 
@@ -334,17 +334,17 @@ module Chomper
                                       conclusion: "failure", output: nil)]
       out, = capture_io { @runner.run("42") }
       assert_includes out, "already fresh"
-      assert_empty @claude.runs
+      assert_empty @harness.runs
     end
 
     def test_fresh_feedback_runs_claude_and_advances_the_cutoff
       seed_pr_cache(comments: [feedback_comment])
       capture_io { @runner.run("42") }
 
-      assert_includes @claude.runs.first[:prompt], "UNADDRESSED FEEDBACK"
+      assert_includes @harness.runs.first[:prompt], "UNADDRESSED FEEDBACK"
       assert_equal [["42", "openproject", "2026-01-01T10:00:00Z"]], @pull.acted,
                    "the cutoff advances so gh-agent doesn't re-handle the same feedback"
-      assert_equal 1, @github.issue_posts.length, "Claude's summary is posted on the PR"
+      assert_equal 1, @github.issue_posts.length, "the LLM's summary is posted on the PR"
       assert_empty @github.pushed, "an answer without code changes pushes nothing"
     end
 
@@ -359,7 +359,7 @@ module Chomper
       ])
       out, = capture_io { @runner.run("42") }
       assert_includes out, "already fresh"
-      assert_empty @claude.runs
+      assert_empty @harness.runs
     end
 
     def test_conflicted_merge_is_resolved_by_claude_and_concluded
@@ -368,8 +368,8 @@ module Chomper
       @runner.define_singleton_method(:conflicted_files) { |_repo| ["app/x.rb"] }
       capture_io { @runner.run("42") }
 
-      assert_includes @claude.runs.first[:prompt], "MERGE CONFLICTS"
-      assert_includes @claude.runs.first[:prompt], "app/x.rb"
+      assert_includes @harness.runs.first[:prompt], "MERGE CONFLICTS"
+      assert_includes @harness.runs.first[:prompt], "app/x.rb"
       assert_equal ["Merge dev into bug/42-fix"], @worktree.commits,
                    "the resolved merge is concluded with a merge commit"
       assert_equal 1, @github.pushed.length
@@ -521,7 +521,7 @@ module Chomper
     end
 
     def test_non_interactive_refresh_pushes_to_the_fork_without_prompting
-      runner = PrRunner.new(@ctx, claude: @claude, github: @github, gh_pull: @pull,
+      runner = PrRunner.new(@ctx, harness: @harness, github: @github, gh_pull: @pull,
                             op_pull: @op_pull, interactive: false)
       inject_worktree(runner, @worktree)
       @worktree.behind = true
@@ -536,7 +536,7 @@ module Chomper
       # A PR whose head branch lives on the canonical repo (one a maintainer
       # adopted and re-published) is not chomper's to write to.
       seed_pr_cache(head_repo: "opf/openproject")
-      runner = PrRunner.new(@ctx, claude: @claude, github: @github,
+      runner = PrRunner.new(@ctx, harness: @harness, github: @github,
                             gh_pull: @pull, op_pull: @op_pull, interactive: false)
       inject_worktree(runner, @worktree)
       @worktree.behind = true

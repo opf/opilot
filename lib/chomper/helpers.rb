@@ -242,7 +242,7 @@ module Chomper
     # the bracket wrapping — so every line chomper writes shares one format.
     LOG_TIME_FORMAT = "%H:%M:%S"
 
-    # Render Markdown as ANSI for the terminal — used both for Claude's streamed
+    # Render Markdown as ANSI for the terminal — used both for the LLM's streamed
     # text and for re-displaying saved plans from disk, so they look the same.
     # Skipped when stdout isn't a tty (piped, captured by tests, redirected);
     # then the raw, cyan-tinted text is shown. Falls back to the raw text if
@@ -320,7 +320,7 @@ module Chomper
     end
 
     # Calls the user back for an input prompt that typically follows a long
-    # unattended Claude run. OSC 9 posts a desktop notification in terminals
+    # unattended the LLM run. OSC 9 posts a desktop notification in terminals
     # that support it (Ghostty, iTerm2, WezTerm, kitty); others drop the
     # sequence. The BEL after it rings the bell everywhere else (sound, dock
     # bounce, tab highlight — whatever the emulator is configured to do).
@@ -360,7 +360,7 @@ module Chomper
     # package: the activity tab is a narrow column, so a plan with five `##`
     # sections spends most of its width on its own titles. Bold reads the same and
     # costs one line. Applied centrally in `#post_activity` rather than per caller,
-    # since the text comes from Claude as often as from chomper and prompt guidance
+    # since the text comes from the LLM as often as from chomper and prompt guidance
     # alone doesn't hold.
     #
     # Fenced blocks are left alone (a leading `#` there is a code comment or a
@@ -442,18 +442,18 @@ module Chomper
       end
     end
 
-    # Fail with Claude#ensure_available!'s "start the container" message before a
-    # command that will call Claude does any work — interactive prompts, WP
+    # Fail with Harness#ensure_available!'s "start the container" message before a
+    # command that will call the LLM does any work — interactive prompts, WP
     # fetches, a filter wizard — rather than mid-run with a connection error.
-    # `respond_to?` because every runner's tests inject a fake Claude.
-    def ensure_claude!
-      @claude.ensure_available! if @claude.respond_to?(:ensure_available!)
+    # `respond_to?` because every runner's tests inject a fake harness.
+    def ensure_harness!
+      @harness.ensure_available! if @harness.respond_to?(:ensure_available!)
     end
 
     # `./chomper` provisions the clones, but a clone whose `git clone` failed (a
     # wrong `base` in repos.json, a network blip) only WARNS and is skipped — so
     # this state is reachable, and every later stage needs the clone: it is where
-    # Claude writes, and its `.git/info/exclude` is what keeps a `pd` spec tree
+    # the LLM writes, and its `.git/info/exclude` is what keeps a `pd` spec tree
     # out of unrelated commits (installed silently, so its absence says nothing).
     # Raised instead of letting Git.open surface `path does not exist`, which
     # names neither the repo nor the fix.
@@ -506,7 +506,7 @@ module Chomper
     # without moving the tree, and no run checks the tree back off its fix branch
     # — so a plan would otherwise be written against the original `git clone`
     # commit, or against another WP's leftover branch with its changes applied,
-    # and nothing in the tree would tell Claude either.
+    # and nothing in the tree would tell the LLM either.
     #
     # Detached at origin/<base>: between runs the clone is a read-only mirror, and
     # a local base branch would be a second thing to keep in sync.
@@ -514,7 +514,7 @@ module Chomper
     #
     # Never fatal — a stale answer beats no answer, so failures warn and move on.
     # A DIRTY tree is left strictly alone: it means an implement run died after
-    # Claude wrote files but before #commit, and a checkout would discard work
+    # the LLM wrote files but before #commit, and a checkout would discard work
     # recorded nowhere else.
     def sync_base!(repo)
       wt = worktree(repo)
@@ -531,14 +531,14 @@ module Chomper
     end
 
     # Untracked files are deliberately not counted: a `pd` spec tree lives in the
-    # clone untracked-and-git-excluded by design, and Claude's own scratch output
+    # clone untracked-and-git-excluded by design, and the LLM's own scratch output
     # would otherwise pin the tree to a stale commit forever.
     def dirty_worktree?(wt)
       st = wt.status
       st.changed.any? || st.added.any? || st.deleted.any?
     end
 
-    # Sync every clone Claude is about to read. One log line for the set, since
+    # Sync every clone the LLM is about to read. One log line for the set, since
     # #sync_base! already reports the cases worth seeing (dirty tree, fetch
     # failure) and a per-repo "ok" on a whole-registry plan is just noise.
     def sync_bases_for_reading(repos)
@@ -574,7 +574,7 @@ module Chomper
     end
 
     # Build the ItemState for a WP, creating its work_packages/<host>/<id>/ directory. The
-    # target repos are loaded from target_repos.json (set once Claude picks them
+    # target repos are loaded from target_repos.json (set once the LLM picks them
     # in the plan); until then the state defaults to the registry's default repo.
     def state_for(item_id, subject, type = nil)
       dir = Helpers.item_dir(@ctx, item_id)
@@ -618,10 +618,10 @@ module Chomper
       (file.exist? ? Helpers.safe_json_read(file) : nil) || {}
     end
 
-    # Persist the repos Claude chose for a WP (validated against the registry) and
+    # Persist the repos the LLM chose for a WP (validated against the registry) and
     # update the live state. Names not in the registry are ignored; if none
     # survive, the default repo is used so a fix still ships somewhere. `bases` is
-    # a { name => base } map of the per-repo base overrides Claude declared (via
+    # a { name => base } map of the per-repo base overrides the LLM declared (via
     # the REPOS `name@base` syntax); it is kept only for valid, chosen repos.
     def set_target_repos(st, names, bases = {})
       repos = Array(names).filter_map { |n| @ctx.repos[n.to_s.strip] }.uniq(&:name)
@@ -643,13 +643,13 @@ module Chomper
       st.bases = overrides
     end
 
-    # Rewrite a host path under .chomper/ to its path inside the Claude container.
+    # Rewrite a host path under .chomper/ to its path inside the harness container.
     def container_path(host_path)
       host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
     end
 
     # Rewrite a host path inside a repo's worktree to its /repos/<name> path
-    # inside the Claude container.
+    # inside the harness container.
     def container_path_for(repo, host_path)
       host_path.to_s.sub(repo.worktree_host.to_s, repo.worktree_container)
     end
@@ -657,7 +657,7 @@ module Chomper
     # Fetch a WP's related work packages (relations + parent/children) via the
     # injected @pull, write the index to related.json, and return its container
     # path — or nil when there are none, so the prompt omits the RELATED section.
-    # Each related WP is also cached to its own item.json (by @pull) so Claude can
+    # Each related WP is also cached to its own item.json (by @pull) so the LLM can
     # read the full detail on demand via the item_path in the index. Shared by the
     # op-agent (Agent) and the terminal fix/plan flow (FixRunner).
     def related_ref(st)
@@ -671,12 +671,12 @@ module Chomper
     end
 
     # Shape Repo objects for a prompt's repo listing — name, container path (where
-    # Claude reads/edits the files), and the one-line description.
+    # the LLM reads/edits the files), and the one-line description.
     def repos_for_prompt(repos)
       repos.map { |r| { name: r.name, path: r.worktree_container, description: r.description } }
     end
 
-    # Read the `REPOS:` line Claude put at the top of a fresh plan, validate the
+    # Read the `REPOS:` line the LLM put at the top of a fresh plan, validate the
     # names against the registry, record the chosen repos, and strip the line from
     # the saved plan. Falls back to the default repo when the line is absent or
     # names nothing valid (so single-repo plans need no REPOS line).
@@ -704,7 +704,7 @@ module Chomper
 
     # True when a phase will resume an existing per-WP session (so the plan and
     # issue are already in context). False for a fresh session — e.g. the first
-    # call, or after the session was cleared — where the prompt must tell Claude
+    # call, or after the session was cleared — where the prompt must tell the LLM
     # to read the plan instead of assuming it.
     def session_resumable?(st)
       Helpers.file_has_content?(st.session_file)
@@ -732,10 +732,10 @@ module Chomper
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
       prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, model: Claude::MODEL_FAST)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, model: Harness::MODEL_FAST)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
-        .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" Claude prepended anyway
+        .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" the LLM prepended anyway
         .gsub(/\s+/, " ")
         .slice(0, 72).to_s.strip
     rescue => e
@@ -743,7 +743,7 @@ module Chomper
       ""
     end
 
-    def generate_pr_description(st, repo, model: Claude::MODEL_WORK)
+    def generate_pr_description(st, repo, model: Harness::MODEL_WORK)
       pr_desc_file = st.pr_desc_file(repo)
       return if Helpers.file_has_content?(pr_desc_file)
       wt               = worktree(repo)
@@ -756,7 +756,7 @@ module Chomper
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @claude.run(prompt, tools: Claude::TOOLS_READ, model: model, session_file: st.session_file)
+      pr_text = @harness.run(prompt, tools: Harness::TOOLS_READ, model: model, session_file: st.session_file)
       pr_body = pr_text[/^#.*/m] || pr_text
       pr_desc_file.write(strip_ansi(pr_body))
     end

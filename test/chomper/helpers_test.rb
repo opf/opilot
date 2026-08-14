@@ -200,7 +200,7 @@ module Chomper
 
     class FakeWorktree
       attr_reader :checkouts, :fetched, :configs
-      # `dirty` stands in for an implement run that died after Claude wrote files
+      # `dirty` stands in for an implement run that died after the LLM wrote files
       # but before Helpers#commit swept them up; `fetch_error` for an unreachable
       # origin. Both are cases sync_base! must not act on.
       def initialize(dirty: false, fetch_error: nil)
@@ -331,7 +331,7 @@ module Chomper
       teardown_repo_host
     end
 
-    # --- sync_base! (freshness of the tree Claude reads) ---------------------
+    # --- sync_base! (freshness of the tree the LLM reads) ---------------------
 
     def test_sync_base_fetches_and_moves_the_tree_onto_current_upstream
       # The bug this closes: nothing between runs moved the working tree, so a

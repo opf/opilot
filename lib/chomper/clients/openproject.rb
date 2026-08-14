@@ -183,7 +183,7 @@ module Chomper
       #
       # Headings are demoted to bold on the way out (Helpers.demote_headings):
       # the activity tab is a narrow column, and this is the one funnel every
-      # comment passes through — Claude's replies, a posted plan, the pd links.
+      # comment passes through — the LLM's replies, a posted plan, the pd links.
       def post_activity(wp_id, comment:, internal: true)
         HTTP.post_json(
           "#{@base}/api/v3/work_packages/#{wp_id}/activities",

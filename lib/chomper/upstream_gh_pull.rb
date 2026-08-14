@@ -9,7 +9,7 @@ module Chomper
   # No write access here, so intents are `reply_only`: answer, or offer GitHub
   # suggestions, never push.
   #
-  # The search API is a cheap pre-filter, so comments and a Claude call are only
+  # The search API is a cheap pre-filter, so comments and an LLM call are only
   # spent on PRs that really mention the bot. OFF unless
   # CHOMPER_TRACK_UPSTREAM_PRS is set AND CHOMPER_ALLOWED_GH_USERS is non-empty
   # (see #enabled?) — this is the one source reaching outside chomper's own PRs.

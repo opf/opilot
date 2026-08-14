@@ -5,12 +5,13 @@ require "rainbow"
 require "tty-markdown"
 
 module Chomper
-  class Claude
+  class Harness
     include Helpers
 
-    # The claude CLI run ended with an error result (e.g. it requested a tool
-    # that isn't granted, or hit max turns). Whatever text was streamed before
-    # the failure is partial and must not be treated as a finished answer.
+    # The pi run ended with an error result (e.g. it requested a tool that
+    # isn't granted, or the run was truncated or aborted). Whatever text was
+    # streamed before the failure is partial and must not be treated as a
+    # finished answer.
     Error = Class.new(StandardError)
 
     # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
@@ -25,10 +26,10 @@ module Chomper
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
     # Models, pinned so behaviour doesn't drift when the catalog's default
-    # changes. Values are OpenRouter slugs behind pi's provider prefix, not
-    # Anthropic API ids (see docs/pi-harness-plan.md) — a value from before the
-    # pi migration (e.g. "claude-opus-4-8") is stale and must be updated in any
-    # existing .env. A WP's work model is shared by every session-bound phase
+    # changes. Values are OpenRouter slugs behind pi's provider prefix
+    # (openrouter/<vendor>/<model>), not bare Anthropic API ids — a bare id
+    # (e.g. "claude-opus-4-8") is not a valid slug and must be corrected in
+    # any existing .env. A WP's work model is shared by every session-bound phase
     # (chat, plan, review, implement, PR description) — they resume one per-WP
     # session, and switching models mid-session would discard the cache and
     # resumed context. MODEL_FAST is for stateless one-shot passes where a
@@ -66,7 +67,7 @@ module Chomper
       MSG
     end
 
-    # Runs Claude with the given prompt. Streams tool-use lines to tty, returns text output.
+    # Runs the LLM with the given prompt. Streams tool-use lines to tty, returns text output.
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.
     def run(prompt, tools: nil, model: MODEL_WORK, session_file: nil)
@@ -134,9 +135,9 @@ module Chomper
         exit_info           = nil
 
         req = Net::HTTP::Post.new(@uri)
-        req["X-Claude-Tools"]   = tools      if tools
-        req["X-Claude-Model"]   = model      if model
-        req["X-Claude-Session"] = session_id if session_id
+        req["X-Harness-Tools"]   = tools      if tools
+        req["X-Harness-Model"]   = model      if model
+        req["X-Harness-Session"] = session_id if session_id
         req.body = prompt
 
         Net::HTTP.start(@uri.host, @uri.port, read_timeout: 600) do |http|
@@ -221,9 +222,9 @@ module Chomper
       # crash) — treat that as an error too, so the caller doesn't pass empty
       # text off as a finished answer.
       if !error && exit_info && exit_info["timed_out"]
-        error = "claude run timed out and was killed"
+        error = "pi run timed out and was killed"
       elsif !error && exit_info && exit_info["code"].to_i != 0 && text.to_s.strip.empty?
-        error = "claude exited #{exit_signal_desc(exit_info)} with no result"
+        error = "pi exited #{exit_signal_desc(exit_info)} with no result"
       end
 
       # Enrich an error with the real cause from the CLI's stderr tail. For the
@@ -247,7 +248,7 @@ module Chomper
       if exit_info
         parts << "[exit #{exit_signal_desc(exit_info)}]" if exit_info["code"].to_i != 0 || exit_info["signal"]
         stderr = exit_info["stderr"].to_s.strip
-        parts << "\n\nclaude stderr:\n#{stderr}" unless stderr.empty?
+        parts << "\n\npi stderr:\n#{stderr}" unless stderr.empty?
       end
       parts.join(" ").gsub(/ +\n/, "\n")
     end

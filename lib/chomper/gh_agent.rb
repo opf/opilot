@@ -6,7 +6,7 @@ require_relative "pr_runner"
 
 module Chomper
   # The GitHub counterpart of Agent. Two sources, polled together every tick:
-  # 1. chomper's own PRs (GhPull) — "always reply, code if asked": Claude edits
+  # 1. chomper's own PRs (GhPull) — "always reply, code if asked": the LLM edits
   #    the worktree when a comment asks, and the change is committed and pushed to
   #    the bot's fork to update the draft PR.
   # 2. upstream PRs that @-mention chomper (UpstreamGhPull) — chomper has no write
@@ -20,12 +20,12 @@ module Chomper
     # gh-agent acts exclusively as the CONTRIBUTOR bot: it watches the bot's
     # own PRs and pushes only to the bot's fork.
     def initialize(ctx, pull: GhPull.new(ctx), upstream_pull: UpstreamGhPull.new(ctx),
-                   claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
+                   harness: Harness.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
                    pr_runner: nil)
       @ctx           = ctx
       @pull          = pull
       @upstream_pull = upstream_pull
-      @claude        = claude
+      @harness        = harness
       @github        = github
       @pr_runner     = pr_runner
     end
@@ -35,7 +35,7 @@ module Chomper
         puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — gh-agent acts as the bot account and needs its token."
         return
       end
-      ensure_claude!
+      ensure_harness!
       scan_from_at = setup
       puts "  gh-agent started — polling #{sources} every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
@@ -117,7 +117,7 @@ module Chomper
       intent.reply_only ? handle_review(intent) : handle_own(intent)
     end
 
-    # An upstream PR chomper did not open: fetch its head read-only so Claude can
+    # An upstream PR chomper did not open: fetch its head read-only so the LLM can
     # read the diff, then review/answer in text. Never commits or pushes.
     def handle_review(intent)
       repo         = @ctx.repos.by_upstream(intent.repo)
@@ -136,7 +136,7 @@ module Chomper
         comment_id: intent.comment_id, in_reply_to: intent.in_reply_to,
         ci: review_ci_ref(ci_file, intent.head_sha)
       )
-      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: session_file)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: session_file)
       post_suggestions(intent, reply)
       post_reply(intent, reply)
     end
@@ -204,7 +204,7 @@ module Chomper
       session_file = pr_dir / "gh_session_id"
 
       # Fetch the PR head over HTTPS (never the worktree's possibly-SSH origin),
-      # then sync the branch to it before Claude touches anything. The branch
+      # then sync the branch to it before the LLM touches anything. The branch
       # lives in the PR's head repo — the user's fork — not the base repo.
       @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
       checkout_pr_branch(repo, intent.branch)
@@ -216,16 +216,16 @@ module Chomper
         pr_thread: container_path(pr_file), comment: intent.text.to_s,
         author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
       )
-      reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
       push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
     # CI failed on one of chomper's own PRs. Same shape
-    # as handle_own — sync the PR head, let Claude read the cached failure detail
+    # as handle_own — sync the PR head, let the LLM read the cached failure detail
     # (ci.json: failed checks, annotations, failed-job log tails) and fix it in
-    # the worktree, then commit + push to update the draft PR. Claude may make no
+    # the worktree, then commit + push to update the draft PR. the LLM may make no
     # change (e.g. a flaky/infra failure it shouldn't "fix"), in which case it
     # just replies and nothing is pushed.
     def handle_ci(intent)
@@ -248,7 +248,7 @@ module Chomper
         title: intent.subject, item: item_ref, plan: plan_ref,
         pr_thread: container_path(pr_file), ci: container_path(ci_file)
       )
-      reply = @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: session_file)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: session_file)
 
       post_reply(intent, reply)
       push_followup(intent, repo) if commit_followup(intent, repo)
@@ -266,7 +266,7 @@ module Chomper
     end
 
     # A comment on a `pd` change proposal's PR. `pd propose` is first-shot only,
-    # so this is where a proposal actually gets iterated: Claude revises the spec
+    # so this is where a proposal actually gets iterated: the LLM revises the spec
     # artifacts, the runner re-validates and re-checks the write scope, and the
     # revision is pushed to update the PR.
     #
@@ -311,14 +311,14 @@ module Chomper
     def product_runner
       @product_runner ||= begin
         require_relative "pd"
-        PD::Runner.new(@ctx, claude: @claude)
+        PD::Runner.new(@ctx, harness: @harness)
       end
     end
 
     # Built lazily: PrRunner's default OpenProject client (for the WP mirror)
     # is only needed once a refresh is actually triggered.
     def pr_runner
-      @pr_runner ||= PrRunner.new(@ctx, claude: @claude, github: @github,
+      @pr_runner ||= PrRunner.new(@ctx, harness: @harness, github: @github,
                                   gh_pull: @pull, interactive: false)
     end
 
@@ -349,7 +349,7 @@ module Chomper
       log_script "Warning: could not save scan-from window: #{e.message}"
     end
 
-    # Post Claude's reply: in-thread for an inline review comment, otherwise on
+    # Post the LLM's reply: in-thread for an inline review comment, otherwise on
     # the PR's conversation. Records our comment id so it isn't re-triggered.
     def post_reply(intent, body)
       text = Helpers.extract_reply(body)
@@ -390,7 +390,7 @@ module Chomper
       end
     end
 
-    # Commit whatever Claude changed in the worktree. Returns true when a commit
+    # Commit whatever the LLM changed in the worktree. Returns true when a commit
     # was made, false when the comment was answered without touching any file.
     def commit_followup(intent, repo)
       Helpers.adopt_github_author!(@ctx.contributor_token)
@@ -407,7 +407,7 @@ module Chomper
     end
 
     # The subject for a follow-up commit: the WP label (matching the PR title's
-    # "[label] …" form) plus a concise description of the change Claude just made
+    # "[label] …" form) plus a concise description of the change the LLM just made
     # (Helpers#generate_commit_subject). Falls back to a generic subject when
     # subject generation yields nothing.
     def feedback_commit_message(intent, diff)

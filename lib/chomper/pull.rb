@@ -193,7 +193,7 @@ module Chomper
     # Work packages related to `wp_id` — its explicit relations (relates, blocks,
     # precedes, duplicates, …) plus its parent and direct children — each
     # materialised to its own item.json (via fetch_single_item) so a handler can
-    # let Claude read the full detail on demand. Returns an array of
+    # let the LLM read the full detail on demand. Returns an array of
     # { "id", "relation", "subject", "status" } refs (display ids).
     #
     # Best-effort: any failure yields [] (or drops the offending WP) so it can

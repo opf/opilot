@@ -3,7 +3,7 @@ require "pathname"
 
 module Chomper
   # One product repo chomper can plan and ship fixes in. A work package's fix may
-  # land in one repo or several; Claude chooses which (see Prompts.plan). Each
+  # land in one repo or several; the LLM chooses which (see Prompts.plan). Each
   # repo is a self-contained clone under .chomper/repos/<name>, mounted into the
   # harness container at /repos/<name>.
   #
@@ -14,7 +14,7 @@ module Chomper
   #                      from (`git clone --reference-if-able … --dissociate`, so
   #                      the clone is fast yet stays standalone), or nil to clone
   #                      fresh from upstream
-  # - description        one-line hint shown to Claude during repo selection
+  # - description        one-line hint shown to the LLM during repo selection
   # - worktree_host      host path of this repo's checkout (.chomper/repos/<name>)
   # - worktree_container its path inside the harness container (/repos/<name>)
   Repo = Struct.new(:name, :upstream, :base, :shared_repo_path, :description,

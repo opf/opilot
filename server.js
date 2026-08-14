@@ -1,8 +1,11 @@
-// HTTP wrapper around `pi --mode json` — runs inside the chomper-claude
-// container. Translates pi's JSON event stream into the NDJSON frame shapes
-// claude.rb already parses (assistant/result/session_id/exit) — see
-// docs/pi-harness-plan.md for why the shim stays and which pi interface it
-// uses, and translate()'s comment below for the event-shape ground truth.
+// HTTP wrapper around `pi --mode json` — runs inside the harness container.
+// Translates pi's JSON event stream into the NDJSON frame shapes harness.rb
+// already parses (assistant/result/session_id/exit). `server.js` holds the
+// controls the container needs regardless of which CLI/SDK runs underneath —
+// the server-side tool-grant allowlist, model-string validation, and the
+// one-request-at-a-time queue — so the shim stays even though pi itself has
+// no HTTP interface; see translate()'s comment below for the event-shape
+// ground truth.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -14,7 +17,7 @@ const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 // Server-side allowlist of tool grants. The header is client-controlled, so
 // only the exact grants the runner uses are accepted. pi's tool names are
 // lowercase and there's no glob tool — `find` covers that job.
-// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/claude.rb.
+// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/harness.rb.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
@@ -22,7 +25,7 @@ const ALLOWED_TOOL_GRANTS = new Set([
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 // A model id now carries an OpenRouter vendor slug behind a provider prefix,
-// e.g. "openrouter/anthropic/claude-opus-4.8" (claude.rb supplies the full
+// e.g. "openrouter/anthropic/claude-opus-4.8" (harness.rb supplies the full
 // string; server.js does no prefixing of its own). Validated by shape, not an
 // allowlist: it grants no privilege (unlike the tool grants above), so the
 // only risk is a malformed value reaching --model. Forbids spaces and a
@@ -79,8 +82,8 @@ function lastAssistantOf(messages) {
 // The final assistant message's stopReason decides the outcome. "stop" is a
 // clean finish; everything else (error, aborted, deferred, length, a
 // leftover toolUse) is surfaced as an error rather than passed off as a
-// finished answer — mirrors Claude Code's own "an error means the run died
-// mid-way" rule in claude.rb.
+// finished answer — a run that died mid-way must not be mistaken for one that
+// finished (see the matching rule in harness.rb).
 function settleResult(msg) {
   if (!msg) {
     return { type: 'result', subtype: 'error_no_response', is_error: true,
@@ -95,8 +98,8 @@ function settleResult(msg) {
 }
 
 // Translates one parsed pi `--mode json` event into zero or more chomper
-// NDJSON frames. Ground truth for the event shapes (verified against pi
-// 0.84.2, not just its docs — see docs/pi-harness-plan.md):
+// NDJSON frames. Ground truth for the event shapes below is pi 0.84.2 itself
+// (its shipped docs/json.md plus packages/ai/src/types.ts), not guesswork:
 //
 //   {"type":"session","id":...}                                    — first line
 //   {"type":"tool_execution_start","toolName":...,"args":{...}}
@@ -106,7 +109,7 @@ function settleResult(msg) {
 //
 // Flushed on text_end (the FULL text for one content block, per pi's
 // AssistantMessageEvent union — packages/ai/src/types.ts), not on every
-// text_delta: claude.rb passes each forwarded "text" part through a full
+// text_delta: harness.rb passes each forwarded "text" part through a full
 // Markdown parser (TTY::Markdown, in render_markdown). pi's deltas are raw
 // token/word fragments — parsing each one alone as its own tiny markdown
 // document reflows it into its own paragraph (stray blank lines) and can
@@ -166,7 +169,15 @@ function runPi(body, tools, model, sessionId, res, done) {
   const args = [
     '--mode', 'json',
     '--no-extensions', '-e', '/app/pi-guards.ts',
-    '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-approve',
+    '--no-skills', '--no-prompt-templates',
+    // pi loads a project's CLAUDE.md/AGENTS.md at startup even when it does
+    // not trust the project (untrusted, prompt-injectable work-package text
+    // is exactly the case here) — --no-context-files stops that. The plan
+    // and implement prompts instead tell it to read each target repo's
+    // CLAUDE.md/AGENTS.md directly, so there's still one path for this data
+    // and the runner controls it.
+    '--no-context-files',
+    '--no-approve',
     '--offline',
     '--session-dir', PI_SESSION_DIR,
   ];
@@ -227,7 +238,7 @@ function runPi(body, tools, model, sessionId, res, done) {
     if (state.sessionId) {
       res.write(JSON.stringify({ type: 'session_id', session_id: state.sessionId }) + '\n');
     }
-    // Final diagnostic event: exit code/signal + stderr tail, so claude.rb can
+    // Final diagnostic event: exit code/signal + stderr tail, so harness.rb can
     // fold the real cause into the error it raises.
     res.write(JSON.stringify({
       type: 'exit',
@@ -268,9 +279,9 @@ function startServer() {
       return;
     }
 
-    const tools     = req.headers['x-claude-tools'];
-    const model     = req.headers['x-claude-model'] || null;
-    const sessionId = req.headers['x-claude-session'] || null;
+    const tools     = req.headers['x-harness-tools'];
+    const model     = req.headers['x-harness-model'] || null;
+    const sessionId = req.headers['x-harness-session'] || null;
 
     if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });

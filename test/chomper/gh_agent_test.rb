@@ -4,7 +4,7 @@ module Chomper
   class GhAgentTest < Minitest::Test
     PostedComment = Struct.new(:id, keyword_init: true)
 
-    class FakeClaude
+    class FakeHarness
       attr_reader :runs
       attr_writer :reply
       def initialize(reply: "Done — guarded the nil case.",
@@ -13,7 +13,7 @@ module Chomper
       end
       def run(prompt, tools: nil, model: nil, session_file: nil)
         @runs << { prompt: prompt, tools: tools, model: model, session_file: session_file }
-        raise "claude blew up" if @boom
+        raise "harness blew up" if @boom
         # The follow-up commit-subject pass uses a distinct prompt.
         prompt.include?("commit subject line") ? @subject : @reply
       end
@@ -109,10 +109,10 @@ module Chomper
       )
       (@ctx.state_dir / "work_packages" / "test.host" / "42").mkpath
 
-      @claude  = FakeClaude.new
+      @harness  = FakeHarness.new
       @github  = FakeGitHub.new
       @pull    = FakePull.new
-      @agent   = GhAgent.new(@ctx, pull: @pull, claude: @claude, github: @github)
+      @agent   = GhAgent.new(@ctx, pull: @pull, harness: @harness, github: @github)
       @worktree = FakeWorktree.new(has_changes: true)
       inject_worktree(@agent, @worktree)
     end
@@ -163,8 +163,8 @@ module Chomper
     def test_ci_intent_fixes_commits_pushes_and_marks_acted_by_sha
       capture_io { @agent.handle_and_ack(ci_intent) }
 
-      run = @claude.runs.first
-      assert_equal Claude::TOOLS_IMPL, run[:tools], "the CI fix runs with write tools"
+      run = @harness.runs.first
+      assert_equal Harness::TOOLS_IMPL, run[:tools], "the CI fix runs with write tools"
       assert_includes run[:prompt], "CI failed", "the fix-ci prompt is used"
       assert_equal 1, @github.issue_posts.length, "chomper replies on the PR conversation"
       assert_equal [["fork/r", "bug/42-fix-the-bug", @repo.worktree_host]], @github.pushed,
@@ -186,7 +186,7 @@ module Chomper
 
     def test_upstream_reply_only_reviews_without_committing_or_pushing
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, @worktree = FakeWorktree.new(has_changes: true))
 
       capture_io { agent.handle(review_intent) }
@@ -194,36 +194,36 @@ module Chomper
       assert_equal 1, @github.issue_posts.length, "the review reply is posted to the PR conversation"
       assert_empty @worktree.commits, "reply-only must never commit"
       assert_empty @github.pushed,    "reply-only must never push"
-      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
-      assert_equal Claude::TOOLS_READ, review_run[:tools], "review runs read-only"
+      review_run = @harness.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      assert_equal Harness::TOOLS_READ, review_run[:tools], "review runs read-only"
     end
 
     def test_upstream_review_includes_failing_ci_when_it_matches_the_head
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, FakeWorktree.new)
       write_review_ci_json("abc123")
 
       capture_io { agent.handle(review_intent(head_sha: "abc123")) }
 
-      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      review_run = @harness.runs.find { |r| r[:prompt].include?("you do NOT own") }
       assert_includes review_run[:prompt], "FAILING CI", "the review is handed the CI failure detail"
     end
 
     def test_upstream_review_ignores_ci_cached_against_a_different_head
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, FakeWorktree.new)
       write_review_ci_json("oldsha")   # a failure from an earlier commit
 
       capture_io { agent.handle(review_intent(head_sha: "newsha")) }
 
-      review_run = @claude.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      review_run = @harness.runs.find { |r| r[:prompt].include?("you do NOT own") }
       refute_includes review_run[:prompt], "FAILING CI", "a stale failure isn't shown as current"
     end
 
     def test_upstream_review_posts_suggestions_as_an_applicable_review
-      @claude.reply = <<~OUT
+      @harness.reply = <<~OUT
         A nil-guard is missing here.
         SUGGESTIONS:
         ```json
@@ -233,7 +233,7 @@ module Chomper
         Suggested a nil-guard inline.
       OUT
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, FakeWorktree.new)
 
       capture_io { agent.handle(review_intent(head_sha: "abc123")) }
@@ -254,9 +254,9 @@ module Chomper
     end
 
     def test_upstream_review_without_suggestions_posts_no_review
-      @claude.reply = "Just a question — no change needed.\nREPLY:\nLooks fine to me."
+      @harness.reply = "Just a question — no change needed.\nREPLY:\nLooks fine to me."
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, FakeWorktree.new)
 
       capture_io { agent.handle(review_intent(head_sha: "abc123")) }
@@ -266,9 +266,9 @@ module Chomper
     end
 
     def test_upstream_suggestions_need_a_head_sha_to_anchor
-      @claude.reply = "SUGGESTIONS:\n```json\n[{\"path\":\"a.rb\",\"line\":3,\"suggestion\":\"x = 1\"}]\n```\nREPLY:\nsee inline"
+      @harness.reply = "SUGGESTIONS:\n```json\n[{\"path\":\"a.rb\",\"line\":3,\"suggestion\":\"x = 1\"}]\n```\nREPLY:\nsee inline"
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
-                          claude: @claude, github: @github)
+                          harness: @harness, github: @github)
       inject_worktree(agent, FakeWorktree.new)
 
       capture_io { agent.handle(review_intent(head_sha: nil)) }
@@ -293,7 +293,7 @@ module Chomper
     def test_reply_preamble_before_the_marker_is_never_posted
       # A model hitting an obstacle narrates it before "the real reply" — the
       # REPLY: contract keeps that narration off the PR.
-      @claude.reply = "I can't retrieve PR #127 — no web access here.\n\n" \
+      @harness.reply = "I can't retrieve PR #127 — no web access here.\n\n" \
                       "Here's my honest reply for the thread:\n\nREPLY:\nWhat #128 does: wraps toModel."
       inject_worktree(@agent, @worktree = FakeWorktree.new(has_changes: false))
       @agent.handle(gh_intent(text: "@chomper compare this with #127"))
@@ -303,14 +303,14 @@ module Chomper
 
     def test_commit_subject_runs_stateless_on_a_cheap_model_and_falls_back
       capture_io { @agent.handle(gh_intent) }
-      subject_run = @claude.runs.find { |r| r[:prompt].include?("commit subject line") }
+      subject_run = @harness.runs.find { |r| r[:prompt].include?("commit subject line") }
       refute_nil subject_run, "a follow-up pass should generate the commit subject"
       assert_nil subject_run[:session_file], "the subject is generated statelessly, not in the gh session"
-      assert_equal Claude::MODEL_FAST, subject_run[:model], "the cheap model crafts the commit subject"
+      assert_equal Harness::MODEL_FAST, subject_run[:model], "the cheap model crafts the commit subject"
       assert_includes subject_run[:prompt], "return if total.nil?", "the diff is embedded in the prompt"
 
       # When the model returns nothing usable, fall back to the generic subject.
-      blank = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(subject: "  "), github: @github)
+      blank = GhAgent.new(@ctx, pull: @pull, harness: FakeHarness.new(subject: "  "), github: @github)
       @blank_wt = FakeWorktree.new(has_changes: true); inject_worktree(blank, @blank_wt)
       capture_io { blank.handle(gh_intent) }
       assert_equal ["[#42] address PR feedback"], @blank_wt.commits
@@ -318,13 +318,13 @@ module Chomper
 
     def test_refresh_command_hands_the_pr_to_pr_runner_and_acks_the_trigger
       pr_runner = FakePrRunner.new
-      agent = GhAgent.new(@ctx, pull: @pull, claude: @claude, github: @github, pr_runner: pr_runner)
+      agent = GhAgent.new(@ctx, pull: @pull, harness: @harness, github: @github, pr_runner: pr_runner)
 
       capture_io { agent.handle_and_ack(gh_intent(text: "@chomper refresh").tap { |i| i.command = :refresh }) }
 
       assert_equal [["42", "openproject"]], pr_runner.refreshed,
                    "the refresh is delegated to PrRunner's single-PR entry point"
-      assert_empty @claude.runs, "gh-agent must not also run its own conversational pass"
+      assert_empty @harness.runs, "gh-agent must not also run its own conversational pass"
       assert_empty @github.issue_posts, "PrRunner posts the summary itself"
       assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted,
                    "the trigger comment is acked so it doesn't replay"
@@ -370,13 +370,13 @@ module Chomper
 
     def test_implementation_runs_with_write_tools_and_a_gh_session
       capture_io { @agent.handle(gh_intent) }
-      run = @claude.runs.first
-      assert_equal Claude::TOOLS_IMPL, run[:tools]
+      run = @harness.runs.first
+      assert_equal Harness::TOOLS_IMPL, run[:tools]
       assert_equal gh_session_path, run[:session_file]
     end
 
     def test_handle_and_ack_marks_acted_and_reports_on_error
-      agent = GhAgent.new(@ctx, pull: @pull, claude: FakeClaude.new(boom: true), github: @github)
+      agent = GhAgent.new(@ctx, pull: @pull, harness: FakeHarness.new(boom: true), github: @github)
       inject_worktree(agent, FakeWorktree.new(has_changes: false))
 
       capture_io { agent.handle_and_ack(gh_intent) }

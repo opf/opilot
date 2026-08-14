@@ -19,7 +19,7 @@ module Chomper
 
     # Records every capture prompt and writes a fixed plan to the outfile,
     # standing in for the (re-)plan path of process_item.
-    class FakePlanClaude
+    class FakePlanHarness
       attr_reader :prompts
 
       def initialize; @prompts = []; end
@@ -32,12 +32,12 @@ module Chomper
 
     # Plays back one scripted outcome per capture call: a string is written to
     # the outfile, :error raises like a run that died mid-way (no outfile write).
-    class ScriptedPlanClaude
+    class ScriptedPlanHarness
       def initialize(*outputs); @outputs = outputs; end
 
       def capture(_prompt, tools: nil, model: nil, outfile:, session_file: nil)
         out = @outputs.shift or raise "unexpected capture call"
-        raise Claude::Error, "run died" if out == :error
+        raise Harness::Error, "run died" if out == :error
         Pathname(outfile).write(out)
       end
     end
@@ -49,7 +49,7 @@ module Chomper
     end
 
     # A runner whose fix branch already carries commits, so the build/ship
-    # paths can run without a worktree or a Claude implementation pass.
+    # paths can run without a worktree or an LLM implementation pass.
     class PrebuiltRunner < FixRunner
       private def checkout_branch(_st, _repo); end
       private def branch_has_commits?(_st, _repo); true; end
@@ -95,8 +95,8 @@ module Chomper
       data
     end
 
-    def runner(single: nil, singles: nil, claude: nil)
-      FixRunner.new(@ctx, pull: FakePull.new(single: single, singles: singles), claude: claude, publish: nil)
+    def runner(single: nil, singles: nil, harness: nil)
+      FixRunner.new(@ctx, pull: FakePull.new(single: single, singles: singles), harness: harness, publish: nil)
     end
 
     def with_stdin(text)
@@ -133,7 +133,7 @@ module Chomper
       # Skipped at the approval prompt: what matters is that neither command
       # refused before getting there.
       %i[build_ids plan_ids].each do |mode|
-        run = NoGitRunner.new(@ctx, pull: FakePull.new(single: data), claude: FakePlanClaude.new)
+        run = NoGitRunner.new(@ctx, pull: FakePull.new(single: data), harness: FakePlanHarness.new)
         capture_io { with_stdin("s\n") { run.public_send(mode, "7") } }
       end
     end
@@ -141,7 +141,7 @@ module Chomper
     def test_ship_publishes_as_the_contributor_bot
       # There is one publishing identity, and `ship` uses it like every other
       # mode: the fix branch goes to the bot's fork, never to a canonical repo.
-      publish = FixRunner.new(@ctx, pull: FakePull.new, claude: nil).instance_variable_get(:@publish)
+      publish = FixRunner.new(@ctx, pull: FakePull.new, harness: nil).instance_variable_get(:@publish)
       assert_equal "contributor-tok", publish.author_token
       assert_equal "GITHUB_CONTRIBUTOR_TOKEN", publish.token_env_var
     end
@@ -162,7 +162,7 @@ module Chomper
     end
 
     # With several ids a fetch failure on one is logged, not fatal, and the
-    # remaining ids still run. Both items here resolve without Claude (one
+    # remaining ids still run. Both items here resolve without the LLM (one
     # missing, one already shipped) so the run completes without an agent.
     def test_ship_with_multiple_ids_continues_past_a_fetch_failure
       shipped = write_item(7, "Shipped one")
@@ -176,9 +176,9 @@ module Chomper
     end
 
     def test_build_ids_commits_locally_without_publishing
-      claude = FakePlanClaude.new
+      harness = FakePlanHarness.new
       r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "8" => item(8, "Buildable") }),
-                             claude: claude, publish: nil)
+                             harness: harness, publish: nil)
 
       out, = with_stdin("y\n") { capture_io { r.build_ids("8") } }
 
@@ -190,13 +190,13 @@ module Chomper
     end
 
     def test_build_ids_reports_an_already_shipped_wp
-      claude = FakePlanClaude.new
+      harness = FakePlanHarness.new
       pr_dir = @ctx.state_dir / "work_packages" / "op.example.com" / "9" / "repos" / "openproject"
       pr_dir.mkpath
       (pr_dir / "pr_url.txt").write("https://github.com/o/r/pull/12")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "9" / "plan.md").write("## Plan: done")
       r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "9" => item(9, "Done one") }),
-                             claude: claude, publish: nil)
+                             harness: harness, publish: nil)
 
       out, = with_stdin("y\n") { capture_io { r.build_ids("9") } }
 
@@ -205,8 +205,8 @@ module Chomper
     end
 
     def test_plan_ids_plans_a_live_wp_and_stops_without_shipping
-      claude = FakePlanClaude.new
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "5" => item(5, "By id") }), claude: claude, publish: nil)
+      harness = FakePlanHarness.new
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "5" => item(5, "By id") }), harness: harness, publish: nil)
 
       out, = with_stdin("y\n") { capture_io { r.plan_ids("5") } }
 
@@ -217,20 +217,20 @@ module Chomper
     end
 
     def test_plan_ids_injects_related_context_when_present
-      claude = FakePlanClaude.new
+      harness = FakePlanHarness.new
       pull = FakePull.new(singles: { "23" => item(23, "Plannable") })
       pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
-      r = FixRunner.new(@ctx, pull: pull, claude: claude, publish: nil)
+      r = FixRunner.new(@ctx, pull: pull, harness: harness, publish: nil)
 
       with_stdin("y\n") { capture_io { r.plan_ids("23") } }
 
-      assert_includes claude.prompts.first, "RELATED:", "the plan prompt should carry related-WP context"
+      assert_includes harness.prompts.first, "RELATED:", "the plan prompt should carry related-WP context"
       assert (@ctx.state_dir / "work_packages" / "op.example.com" / "23" / "related.json").exist?, "the related index should be written"
     end
 
     def test_plan_ids_recovers_when_generation_returns_no_plan
-      claude = ScriptedPlanClaude.new("Let me look at the issue.", "## Plan: #15 — Flaky plan")
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "15" => item(15, "Flaky plan") }), claude: claude, publish: nil)
+      harness = ScriptedPlanHarness.new("Let me look at the issue.", "## Plan: #15 — Flaky plan")
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "15" => item(15, "Flaky plan") }), harness: harness, publish: nil)
 
       # First generation streams only preamble: recovery prompt, [r]etry
       # regenerates a real plan, then [s]kip at the approval prompt.
@@ -244,8 +244,8 @@ module Chomper
     end
 
     def test_plan_ids_recovers_when_claude_run_dies
-      claude = ScriptedPlanClaude.new(:error)
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "16" => item(16, "Dead run") }), claude: claude, publish: nil)
+      harness = ScriptedPlanHarness.new(:error)
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "16" => item(16, "Dead run") }), harness: harness, publish: nil)
 
       out, = with_stdin("d\n") { capture_io { r.plan_ids("16") } }
 
@@ -263,9 +263,9 @@ module Chomper
     TEXT
 
     def test_plan_ids_offers_options_then_plans_the_chosen_one
-      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #31 — chosen")
+      harness = ScriptedPlanHarness.new(OPTIONS_ANSWER, "## Plan: #31 — chosen")
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "31" => item(31, "Two ways") }),
-                        claude: claude, publish: nil)
+                        harness: harness, publish: nil)
 
       # Options are offered, [2] is chosen, then [s]kip at the approval prompt.
       out, = with_stdin("2\ns\n") { capture_io { r.plan_ids("31") } }
@@ -278,15 +278,15 @@ module Chomper
     end
 
     def test_option_prompt_passes_the_choice_into_the_plan_call
-      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #32 — chosen")
+      harness = ScriptedPlanHarness.new(OPTIONS_ANSWER, "## Plan: #32 — chosen")
       captured = []
-      claude.define_singleton_method(:capture) do |prompt, **kwargs|
+      harness.define_singleton_method(:capture) do |prompt, **kwargs|
         captured << prompt
         out = @outputs.shift or raise "unexpected capture call"
         Pathname(kwargs[:outfile]).write(out)
       end
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "32" => item(32, "Two ways") }),
-                        claude: claude, publish: nil)
+                        harness: harness, publish: nil)
 
       with_stdin("1 but keep the toast\ns\n") { capture_io { r.plan_ids("32") } }
 
@@ -297,9 +297,9 @@ module Chomper
     end
 
     def test_option_prompt_accepts_free_direction_instead_of_a_number
-      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #33 — own way")
+      harness = ScriptedPlanHarness.new(OPTIONS_ANSWER, "## Plan: #33 — own way")
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "33" => item(33, "Two ways") }),
-                        claude: claude, publish: nil)
+                        harness: harness, publish: nil)
 
       out, = with_stdin("do it with a rake task\ns\n") { capture_io { r.plan_ids("33") } }
 
@@ -309,9 +309,9 @@ module Chomper
     end
 
     def test_option_prompt_can_drop_the_work_package
-      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER)
+      harness = ScriptedPlanHarness.new(OPTIONS_ANSWER)
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "34" => item(34, "Two ways") }),
-                        claude: claude, publish: nil)
+                        harness: harness, publish: nil)
 
       out, = with_stdin("d\n") { capture_io { r.plan_ids("34") } }
 
@@ -322,15 +322,15 @@ module Chomper
     def test_replan_rewrites_plan_with_typed_feedback
       write_item(6, "Replannable")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "6" / "plan.md").write("## Original plan")
-      claude = FakePlanClaude.new
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "6" => item(6, "Replannable") }), claude: claude, publish: nil)
+      harness = FakePlanHarness.new
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "6" => item(6, "Replannable") }), harness: harness, publish: nil)
 
       # Existing plan.md skips initial generation; [r] re-plans, then [s] skips.
       out, = with_stdin("r\nuse a rake task instead\ns\n") { capture_io { r.plan_ids("6") } }
 
-      assert_equal 1, claude.prompts.size
-      assert_includes claude.prompts.first, "use a rake task instead"
-      assert_includes claude.prompts.first, "EXISTING PLAN"
+      assert_equal 1, harness.prompts.size
+      assert_includes harness.prompts.first, "use a rake task instead"
+      assert_includes harness.prompts.first, "EXISTING PLAN"
       assert_equal "## Revised plan", (@ctx.state_dir / "work_packages" / "op.example.com" / "6" / "plan.md").read
       assert_includes out, "skipped"
     end
@@ -338,19 +338,19 @@ module Chomper
     def test_replan_empty_feedback_uses_chat_context
       write_item(7, "Replannable")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "7" / "plan.md").write("## Original plan")
-      claude = FakePlanClaude.new
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "7" => item(7, "Replannable") }), claude: claude, publish: nil)
+      harness = FakePlanHarness.new
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "7" => item(7, "Replannable") }), harness: harness, publish: nil)
 
       capture_io { with_stdin("r\n\ns\n") { r.plan_ids("7") } }
 
-      assert_includes claude.prompts.first, "preceding conversation"
+      assert_includes harness.prompts.first, "preceding conversation"
     end
 
     def test_replan_failure_keeps_previous_plan
       write_item(17, "Replan dies")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "17" / "plan.md").write("## Plan: original")
-      claude = ScriptedPlanClaude.new(:error)
-      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "17" => item(17, "Replan dies") }), claude: claude, publish: nil)
+      harness = ScriptedPlanHarness.new(:error)
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "17" => item(17, "Replan dies") }), harness: harness, publish: nil)
 
       # [r]e-plan with feedback dies; the old plan survives and the approval
       # prompt returns, where [s]kip ends the WP.

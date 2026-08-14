@@ -9,7 +9,7 @@ packages, implements them in isolated git clones, and opens draft PRs.
 
 A fix can land in **one or more product repos**, defined in `repos.json` (`name`,
 `upstream`, `base`, optional `shared_repo_path`, `description`, plus a top-level
-`summary`). Claude sees the registry while planning and declares the targets on the
+`summary`). the LLM sees the registry while planning and declares the targets on the
 plan's first line — `REPOS: <name>[@<base>][, <name>…]` — which
 `Helpers#record_chosen_repos` stores in `target_repos.json`, with any `@<base>`
 override (e.g. `openproject@release/17.6`) in `target_base.json`. The fix branch is
@@ -44,7 +44,7 @@ WP's `updatedAt` vs the scan floor (the list payload carries no per-field
 timestamp), so a WP handed over long ago but bumped inside the window fires once.
 
 **Once a prototype exists, the work package is done.** `#handle_ship` answers a
-shipped WP with the PR link and spends no Claude call: code review belongs on the
+shipped WP with the PR link and spends no LLM call: code review belongs on the
 pull request, where gh-agent reads comments and pushes changes, and two tracks for
 one fix would split the record of it. Planning again would also rewrite `plan.md`
 while the PR keeps linking the gist of the plan as it was.
@@ -131,7 +131,7 @@ which would truncate a big CI matrix).
 
 **Tracked upstream PRs** (`UpstreamGhPull`) — open PRs on a registry `upstream` that
 @-mention chomper, except the bot's own (`own_pr?`). Found via the search API so a
-Claude call is spent only on real mentions. The trigger is a prompt addressed to
+an LLM call is spent only on real mentions. The trigger is a prompt addressed to
 chomper, not a review pass over other people's work; what differs is write access,
 so these intents are `reply_only` — read-only fetch, answered in text
 (`Prompts.pr_review`), never pushed. Applicable code still lands: for lines already
@@ -177,7 +177,7 @@ nothing" and "not scanning" look identical in the log.
   ids, exactly those; without, the op-agent filter wizard plus a bulk mirror.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
   fetching, planning, or shipping. `.chomper/` is mounted read-only at `/state`, so
-  `Prompts.free_chat` orients Claude at the layout and it Greps/Reads from there.
+  `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
   Fresh per-run session; needs no tokens or allowlist.
 
 ### pd (product development)
@@ -239,15 +239,13 @@ docker compose build runner
 Four Docker containers orchestrated by `compose.yml`:
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
-  Claude, pushes branches, opens PRs. Does all real git.
+  the LLM, pushes branches, opens PRs. Does all real git.
 - **Harness** (Node 22 + [pi], compose service `harness`, `Dockerfile.harness`) —
   wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
   never published), which translates pi's JSON event stream into the frame
-  shapes `lib/chomper/claude.rb` parses (see docs/pi-harness-plan.md — this
-  migrated off the Claude Code CLI; the `Chomper::Claude` class is unchanged
-  on purpose — see "Not in this change" in docs/pi-harness-plan.md — but the
-  container/service name and its URL var moved off "claude" (`HARNESS_URL`).
-  Working directory is `/repos` with every worktree at
+  shapes `lib/chomper/harness.rb` (`Chomper::Harness`) parses. Runs against
+  OpenRouter, so any model is one `CHOMPER_MODEL` away. Working directory is
+  `/repos` with every worktree at
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
   target repo's directly instead. Its Bash grant is **read-only git** —
@@ -289,8 +287,8 @@ bare `docker compose run …` works from the repo root.
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `wp ship`/`build`/`plan` |
 | `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@chomper refresh` via `#refresh_one` |
-| `claude.rb` | HTTP client to the harness container; per-WP session IDs |
-| `prompts.rb` | All Claude prompts in one place. Everything chomper publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `harness.rb` | HTTP client to the harness container; per-WP session IDs |
+| `prompts.rb` | All LLM prompts in one place. Everything chomper publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#post_activity` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
@@ -312,7 +310,7 @@ PR needs the store's layout on every tick.
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by
    `last_acted_comment_at`. A WP whose Developers include chomper, with no fresh comment, yields a synthetic
    `:ship` (`source: :developer`, de-duped by `developer_acted_at`).
-2. **Plan** — Claude (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
+2. **Plan** — the LLM (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
    one comment) until a reply names a number. Every clone is first synced to current upstream
    (`sync_bases_for_reading` → `#sync_base!`) because `./chomper` fetches each base
@@ -322,7 +320,7 @@ PR needs the store's layout on every tick.
    time (which repos the fix lands in is the plan's own output); `:chat` syncs just
    the target repos. A **dirty** tree is left strictly alone, and a fetch failure
    warns rather than fails.
-3. **Implement** — Claude (Read/Write/Edit + read-only Bash) works across each chosen
+3. **Implement** — the LLM (Read/Write/Edit + read-only Bash) works across each chosen
    clone on `bug/<id>-<slug>` in one resumed session; the runner commits
    `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
    ids, bare `STC-162` for semantic ones).
@@ -363,7 +361,7 @@ up front rather than after a full plan and implement run (`build`/`plan` need no
 operation goes through, because a per-command check gets forgotten — `./chomper`
 only *warns* when a clone fails, and `Git.open`'s error names neither the repo nor
 the fix. `#ensure_claude!` fails with "start the container" at every entry point that
-will call Claude, not mid-run with a connection error.
+will call the LLM, not mid-run with a connection error.
 
 `:ship` (`@chomper build`, alias `fix`) is the only working intent: it plans and
 implements in one pass, unless the plan call answers with `OPTIONS` and waits for
@@ -386,7 +384,7 @@ globally unique, so `pr_reviews/` is flat.
 .chomper/
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
-├── chat_session_id          # Claude session for the current `chat` REPL (reset each run)
+├── chat_session_id          # LLM session for the current `chat` REPL (reset each run)
 ├── work_packages/<op_host>/
 │   ├── op_agent_filters.json   # saved op-agent search filters
 │   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
@@ -399,7 +397,7 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── target_repos.json    # repo names from the plan's REPOS line
 │       ├── target_base.json     # optional per-repo base overrides ({repo: base})
 │       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR
-│       ├── session_id           # Claude session (plan + implement)
+│       ├── session_id           # LLM session (plan + implement)
 │       └── repos/<repo_name>/
 │           ├── pr.md            # PR description (per-repo diff)
 │           ├── pr_url.txt       # published PR URL
@@ -407,7 +405,7 @@ globally unique, so `pr_reviews/` is flat.
 │           ├── ci.json          # CI failure detail, keyed by head SHA
 │           ├── gh_pr.json       # act-state: last_acted_comment_at, reply ids, ci_acted_sha,
 │           │                    #   ci_quiet_sha, ci_attempts, ci_gave_up, pr_done
-│           └── gh_session_id    # gh-agent's Claude session
+│           └── gh_session_id    # gh-agent's LLM session
 ├── pr_reviews/<owner>-<repo>/<number>/   # tracked upstream PR (chomper didn't open it)
 │   └── pr.json / ci.json / gh_pr.json / gh_session_id
 ├── changes/ , openspec/     # `pd` state — see lib/chomper/pd/CLAUDE.md
@@ -421,20 +419,20 @@ globally unique, so `pr_reviews/` is flat.
 
 Runner POSTs to `http://harness:47291` with headers:
 
-- `X-Claude-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
+- `X-Harness-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
   `"read,grep,find,ls,bash,write,edit"` (implementation). `server.js` rejects any
   other grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
-- `X-Claude-Model` — one model per WP for every session-bound phase (`MODEL_WORK`),
+- `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_WORK`),
   plus `MODEL_FAST` for stateless one-shots — OpenRouter slugs behind pi's provider
   prefix (`openrouter/anthropic/claude-opus-4.8`), not Anthropic API ids. Validated
   by format, not an allowlist — model choice grants no privilege.
-- `X-Claude-Session` — session ID (omit on first call; save from the response).
+- `X-Harness-Session` — session ID (omit on first call; save from the response).
 
 `server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/pi-guards.ts`,
 `--no-context-files`, `--no-approve`, `--offline`, and the tools/model/session
 above), translates its JSON event stream into the assistant/result/session_id/exit
-frame shapes claude.rb parses, and persists the session ID. It sets no `cwd`, so it
-inherits `/repos`. See docs/pi-harness-plan.md for the full event-shape mapping.
+frame shapes harness.rb parses, and persists the session ID. It sets no `cwd`, so it
+inherits `/repos`. See `translate()`'s comment in server.js for the full event-shape mapping.
 
 ### Required environment variables (`.env`)
 

@@ -33,7 +33,7 @@ module Chomper
           nil
         end
 
-        # The most useful text to feed back to Claude or show the operator:
+        # The most useful text to feed back to the LLM or show the operator:
         # stderr when there is any, else stdout.
         def message
           e = err.to_s.strip
@@ -68,7 +68,7 @@ module Chomper
 
       # Human-readable failure lines from a validate Result, for the re-prompt.
       # Falls back to the raw message when the JSON isn't in the shape we expect,
-      # so a CLI change degrades to "show Claude the output" rather than silence.
+      # so a CLI change degrades to "show the LLM the output" rather than silence.
       def self.failures(result)
         doc = result.json
         return result.message unless doc.is_a?(Hash) && doc["items"].is_a?(Array)

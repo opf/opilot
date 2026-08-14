@@ -92,7 +92,7 @@ module Chomper
       end
     end
 
-    # Everything that talks to OpenProject, GitHub, or Claude comes through here:
+    # Everything that talks to OpenProject, GitHub, or the LLM comes through here:
     # load the config, then stamp exactly one log header in the shared format
     # ("=== <command> [targets] <timestamp> ==="). Per-command header wording had
     # drifted into five different shapes ("Session", "GH Session", "PR refresh"…),

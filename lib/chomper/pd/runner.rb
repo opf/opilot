@@ -19,11 +19,11 @@ module Chomper
 
       CHANGE_ID_PATTERN = /\A[a-z0-9][a-z0-9-]*\z/
 
-      def initialize(ctx, op: nil, intake: nil, claude: nil, publish: nil, openspec: nil, pull: nil)
+      def initialize(ctx, op: nil, intake: nil, harness: nil, publish: nil, openspec: nil, pull: nil)
         @ctx      = ctx
         @op       = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
         @intake   = intake
-        @claude   = claude || Claude.new(ctx)
+        @harness   = harness || Harness.new(ctx)
         @publish  = publish
         @openspec = openspec
         @pull     = pull
@@ -39,7 +39,7 @@ module Chomper
         end
       end
 
-      # How many times Claude gets to fix its own output before the run fails.
+      # How many times the LLM gets to fix its own output before the run fails.
       # Two is plenty: past that the problem is the prompt or the intake, not a
       # structural slip the model can see and correct.
       MAX_VALIDATE_ATTEMPTS = 2
@@ -103,7 +103,7 @@ module Chomper
 
         # Canonical → working on the way OUT, not on the way in. Intake is written
         # by the runner, into the canonical store (state.intake_dir, tracker.json);
-        # the materialise-then-persist order the Claude-driven stages use would
+        # the materialise-then-persist order the LLM-driven stages use would
         # mirror the stale working copy straight back over everything just written
         # and lose the whole intake. Nothing is committed here — the store commits
         # on the next persist!, with the change that consumed this intake.
@@ -141,7 +141,7 @@ module Chomper
         state = change_state_for(change_id, store)
         require_intake!(state, change_id)
         # Before the branch is checked out and the tree materialised, not after.
-        ensure_claude!
+        ensure_harness!
 
         # Branch first, then materialise: checking out replaces the working tree,
         # and the spec tree has to land on top of whatever that leaves behind.
@@ -164,7 +164,7 @@ module Chomper
       # loop and the same write scope — because a revision can go out of bounds
       # exactly as easily as a first draft.
       #
-      # Returns Claude's raw text so the caller can post the reply; the commit is
+      # Returns the LLM's raw text so the caller can post the reply; the commit is
       # left in the clone for the caller to push.
       def revise_proposal(change_id, comment_section:, pr_thread:, session_file:, repo_name: nil)
         repo  = resolve_repo(repo_name)
@@ -172,10 +172,10 @@ module Chomper
         state = change_state_for(change_id, store)
         store.materialise!
 
-        reply = @claude.run(
+        reply = @harness.run(
           Prompts.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
                                    pr_thread: pr_thread, comment_section: comment_section),
-          tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: session_file
+          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: session_file
         )
 
         # A question rather than a change request leaves the tree untouched: reply
@@ -257,7 +257,7 @@ module Chomper
 
         ids.each do |wp_id|
           implement_one(wp_id, repo_name: opts[:repo])
-        rescue Chomper::FatalError, Claude::Error => e
+        rescue Chomper::FatalError, Harness::Error => e
           # With one id there is nothing else to do, so the failure is the result;
           # with several, one bad id must not cost the others their run.
           raise if ids.length == 1
@@ -269,7 +269,7 @@ module Chomper
 
       # Resolve the publishing identity now rather than at `propose`'s push. Every
       # `pd` stage publishes as the contributor bot, and propose only discovers a
-      # missing or invalid token after Claude has done the expensive work.
+      # missing or invalid token after the LLM has done the expensive work.
       #
       # Advisory, not fatal: `init` and `intake` are useful with no GitHub token at
       # all, so this reports and moves on.
@@ -357,15 +357,15 @@ module Chomper
         Helpers.file_has_content?(state.pr_url_file) ? state.pr_url_file.read.strip : nil
       end
 
-      # Claude writes the proposal, then the runner validates it and hands any
+      # The LLM writes the proposal, then the runner validates it and hands any
       # failures back. Validation is runner-side because the openspec CLI is not in
       # the harness container (pi-guards.ts allows read-only git and nothing else),
       # so the "agent iterates on its own output" gate becomes a re-prompt loop.
-      # Returns :too_broad when Claude refused on scope grounds.
+      # Returns :too_broad when the LLM refused on scope grounds.
       def write_proposal(state, repo)
         change_dir = state.working_change_dir
         log_script "Proposing #{state.change_id} in #{repo.name}…"
-        text = @claude.run(
+        text = @harness.run(
           Prompts.propose(
             change_id:    state.change_id,
             change_dir:   state.working_change_container,
@@ -375,10 +375,10 @@ module Chomper
             repo_path:    repo.worktree_container,
             instructions: artifact_instructions(state, repo)
           ),
-          tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
+          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: state.session_file
         )
 
-        # What Claude DID beats what it said about what it did. It routinely
+        # What the LLM DID beats what it said about what it did. It routinely
         # narrates its reasoning ("this is one feature, so I wrote a proposal
         # rather than TOO_BROAD"), and a bare search for the sentinel anywhere in
         # that prose reads the explanation as the verdict — discarding a complete,
@@ -396,7 +396,7 @@ module Chomper
       end
 
       # The scope refusal is only a refusal when it is the ANSWER: the prompt asks
-      # for it on the first line, so anything further in is Claude talking about
+      # for it on the first line, so anything further in is the LLM talking about
       # the sentinel rather than emitting it. A short preamble is tolerated the way
       # FixRunner tolerates one before NEEDS_INFO.
       def too_broad?(text)
@@ -406,7 +406,7 @@ module Chomper
 
       # OpenSpec's own per-artifact instructions, with every path it emits
       # rewritten from the runner's view of the clone to the container's — the CLI
-      # resolves absolute paths against where IT ran, and Claude sees the same
+      # resolves absolute paths against where IT ran, and the LLM sees the same
       # files at /repos/<name>.
       #
       # Degrades to a note rather than failing the run: a paraphrase-free prompt
@@ -449,17 +449,17 @@ module Chomper
                   "#{MAX_VALIDATE_ATTEMPTS} revisions:\n#{failures}"
           end
           log_script "openspec validate failed (attempt #{attempt + 1}/#{MAX_VALIDATE_ATTEMPTS}) — re-prompting"
-          @claude.run(
+          @harness.run(
             Prompts.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
                                    failures: failures, attempt: attempt + 1,
                                    max_attempts: MAX_VALIDATE_ATTEMPTS),
-            tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: state.session_file
+            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: state.session_file
           )
         end
       end
 
       # A planning stage must not be able to modify source. pi-guards.ts confines
-      # Claude to /repos, which is repo-level; this is the path-level half, and it
+      # the LLM to /repos, which is repo-level; this is the path-level half, and it
       # matters more here than it would with a dedicated spec repo because the run
       # happens inside a real product clone.
       #
@@ -725,7 +725,7 @@ module Chomper
           return nil
         end
 
-        ensure_claude!
+        ensure_harness!
         # Branch first, then materialise: checking out replaces the working tree.
         checkout_branch(st, repo)
         found[:store].materialise!
@@ -736,14 +736,14 @@ module Chomper
           # Inside this branch, not above it: a re-run that only publishes an
           # already-built branch must not rewind the status it set last time.
           transition!(wp_id, item, @ctx.pd_implementing_status)
-          @claude.run(
+          @harness.run(
             Prompts.implement_task(
               repo: repo.name, repo_path: repo.worktree_container,
               change_id: found[:change_id], change_dir: state.working_change_container,
               wp_label: wp_label(wp_id), section: found[:section].title,
               tasks: render_tasks(found[:section]), item: container_path(st.item_file)
             ),
-            tools: Claude::TOOLS_IMPL, model: Claude::MODEL_WORK, session_file: st.session_file
+            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: st.session_file
           )
           restore_spec_tree!(found[:store], found[:change_id])
           publish # memoize the identity commit() authors as
@@ -865,7 +865,7 @@ module Chomper
         section.items.map { |i| "- [#{i[:done] ? "x" : " "}] #{i[:text]}" }.join("\n")
       end
 
-      # plan.md, written by the runner rather than Claude: for a `pd` work package
+      # plan.md, written by the runner rather than the LLM: for a `pd` work package
       # the spec IS the plan. It exists because everything downstream of a shipped
       # PR expects one — the PR body's gist link, and the prompts gh-agent and
       # `wp pr` build (`plan:`) — so without it a pd PR would be the one kind
@@ -912,7 +912,7 @@ module Chomper
       # result is an ordinary chomper PR: gh-agent picks it up from pr_url.txt, and
       # `./chomper wp pr <id>` can refresh it.
       def ship_task(st, state, repo, wp_id, item)
-        generate_pr_description(st, repo, model: Claude::MODEL_WORK)
+        generate_pr_description(st, repo, model: Harness::MODEL_WORK)
         url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
         unless url
           # The status stays where it is: the work is committed but nothing is up

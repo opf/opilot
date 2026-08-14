@@ -102,7 +102,7 @@ module Chomper
       end
 
       # Writes whatever the block says on each call and records the prompts.
-      class FakeClaude
+      class FakeHarness
         attr_reader :prompts
 
         def initialize(&on_run)
@@ -162,10 +162,10 @@ module Chomper
         FileUtils.rm_rf(@tmpdir)
       end
 
-      def runner(claude: nil, items: nil, produces_commit: true)
+      def runner(harness: nil, items: nil, produces_commit: true)
         items ||= { "501" => { root: @tmpdir, data: @item } }
         TestRunner.new(@ctx, op: @op, intake: Object.new, publish: @publish,
-                       claude: claude || FakeClaude.new, pull: FakePull.new(items),
+                       harness: harness || FakeHarness.new, pull: FakePull.new(items),
                        produces_commit: produces_commit)
       end
 
@@ -201,10 +201,10 @@ module Chomper
       end
 
       def test_the_prompt_carries_this_section_only
-        claude = FakeClaude.new
-        implement(runner(claude: claude), "501")
+        harness = FakeHarness.new
+        implement(runner(harness: harness), "501")
 
-        prompt = claude.prompts.first
+        prompt = harness.prompts.first
         assert_includes prompt, "## RRule parsing"
         assert_includes prompt, "- [ ] parse the rule"
         refute_includes prompt, "expand occurrences",
@@ -239,12 +239,12 @@ module Chomper
         # The mirror image of propose's write scope: there a planning run had
         # touched source and the run was discarded; here the spec is only the input,
         # so failing would throw away a working implementation over a stray edit.
-        claude = FakeClaude.new do
+        harness = FakeHarness.new do
           (@repo.worktree_host / "app.rb").write("real work\n")
           (@store.working_change_dir("add-x") / "proposal.md").write("rewritten by the implementer\n")
           "done"
         end
-        _, out = implement(runner(claude: claude), "501")
+        _, out = implement(runner(harness: harness), "501")
 
         assert_equal "# Recurring meetings\nWhy this exists.\n",
                      (@store.change_dir("add-x") / "proposal.md").read,
@@ -264,8 +264,8 @@ module Chomper
       end
 
       def test_an_already_shipped_work_package_is_reported_and_skipped
-        claude = FakeClaude.new { raise "must not run" }
-        run    = runner(claude: claude)
+        harness = FakeHarness.new { raise "must not run" }
+        run    = runner(harness: harness)
         st_dir = item_state_dir / "repos" / "openproject"
         st_dir.mkpath
         (st_dir / "pr_url.txt").write("https://github.com/opf/openproject/pull/12\n")

@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y bash git ripgrep && rm -rf /var/lib/apt
 
 # Pinned: unpinned installs let each machine's image bake a different CLI
 # version. Bump deliberately after verifying the gateway path still works
-# headless (see docs/pi-harness-plan.md).
+# headless.
 RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.2
 
 RUN git config --system --add safe.directory '*' \

@@ -225,7 +225,7 @@ module Chomper
         Converter.unconvertible(attachment["fileName"].to_s, "#{e.class}: #{e.message}")
       end
 
-      # A single index the propose prompt can point Claude at, and that a human
+      # A single index the propose prompt can point the LLM at, and that a human
       # reviewing the proposal PR can scan to see whether anything was skipped.
       # Silence about a dropped attachment is the failure mode this prevents.
       def write_attachment_index(dir, entries, unconvertible)

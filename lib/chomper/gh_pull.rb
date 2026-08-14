@@ -40,7 +40,7 @@ module Chomper
   # - gh_pr.json — gh-agent's act-state: `last_acted_comment_at` (replay cutoff)
   #                and `chomper_comment_ids` (our own replies). Kept separate so
   #                it isn't rewritten on every content refresh and so pr.json can
-  #                be handed to Claude without leaking bookkeeping.
+  #                be handed to the LLM without leaking bookkeeping.
   class GhPull
     include Helpers
     include GhPrCache
@@ -333,7 +333,7 @@ module Chomper
       end.first
     end
 
-    # The title to show Claude. A shipped PR has a work-package mirror beside it;
+    # The title to show the LLM. A shipped PR has a work-package mirror beside it;
     # a spec PR has none, so its PR title is the only name it has.
     def default_subject(dir, content, spec:)
       return content["title"].to_s if spec
@@ -343,7 +343,7 @@ module Chomper
 
     # The one recognised PR command word: "@chomper refresh" asks for the full
     # `pr`-command treatment of this PR (GhAgent hands it to PrRunner). Any
-    # other trigger text is a plain comment for Claude to converse over.
+    # other trigger text is a plain comment for the LLM to converse over.
     def parse_command(body)
       :refresh if body.to_s.match?(/#{mention_re.source}\s+refresh\b/i)
     end

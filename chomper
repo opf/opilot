@@ -70,8 +70,7 @@ fi
 
 if _need OPENROUTER_API_KEY; then
   # Held only by the authgw gateway — never passed to the harness container.
-  # Required: pi has no equivalent to Claude Code's interactive OAuth login for
-  # this path, so there's no fallback to prompt away (docs/pi-harness-plan.md).
+  # Required: there's no interactive-login fallback for this path.
   echo "  OpenRouter API key — kept out of the harness container (held by authgw)."
   echo "  Get one at https://openrouter.ai/keys"
   OPENROUTER_API_KEY_ENTRY=""
@@ -160,7 +159,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # Unknown subcommands are passed through to Ruby.
 #
 # Two separate questions, because `pd` splits them: every pd subcommand works
-# inside a product clone, but only the ones that call Claude need the harness
+# inside a product clone, but only the ones that call the LLM need the harness
 # container started. Starting it for `pd init`/`pd intake` would be pure latency.
 # The grouped commands (`wp`, `pd`) carry the verb in $2, so both are matched on
 # the subcommand: `wp pull` only mirrors work packages and needs neither.

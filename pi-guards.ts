@@ -1,12 +1,11 @@
 // pi extension, loaded via `--no-extensions -e /app/pi-guards.ts` — the single
-// gate every tool call passes through. Replaces Claude Code's two PreToolUse
-// hooks (guard-writes.js, guard-bash.js): confine writes to /repos, confine
-// bash to read-only git. No type annotations — this file is loaded straight
-// off disk, so an annotation pi's loader can't strip would kill the extension
-// at startup, and a dead guard fails OPEN (an unguarded write/bash), not closed.
+// gate every tool call passes through: confine writes to /repos, confine bash
+// to read-only git. No type annotations — this file is loaded straight off
+// disk, so an annotation pi's loader can't strip would kill the extension at
+// startup, and a dead guard fails OPEN (an unguarded write/bash), not closed.
 //
 // KNOWN_TOOLS is an allowlist, not just a set of special cases: a tool name pi
-// adds in a later release and that TOOLS_READ/TOOLS_IMPL (claude.rb) never
+// adds in a later release and that TOOLS_READ/TOOLS_IMPL (harness.rb) never
 // grants should still be refused here rather than silently passed through.
 
 const READONLY_GIT = new Set([

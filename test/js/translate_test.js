@@ -1,13 +1,12 @@
 // Plain-Node test for server.js's pi -> chomper NDJSON translation. No test
-// framework (the repo has none for JS — see docs/pi-harness-plan.md's
-// Verification section): run with `node test/js/translate_test.js`.
+// framework (the repo has none for JS): run with `node test/js/translate_test.js`.
 //
 // Fixtures under test/fixtures/pi/ are real pi 0.84.2 --mode json transcripts
-// (captured against a stub upstream during the Claude Code -> pi migration
-// spike), except tool_use_and_success.ndjson, which is hand-authored from the
-// same verified event shapes (docs/json.md plus the AssistantMessage/
-// TextContent/ToolCall types in pi-mono's packages/ai/src/types.ts) because no
-// live OpenRouter credential was available to capture a real successful run.
+// (captured against a stub upstream), except tool_use_and_success.ndjson,
+// which is hand-authored from the same verified event shapes (docs/json.md
+// plus the AssistantMessage/TextContent/ToolCall types in pi-mono's
+// packages/ai/src/types.ts) because no live OpenRouter credential was
+// available to capture a real successful run.
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
@@ -69,7 +68,7 @@ test('tool_execution_start becomes a tool_use assistant frame; text flushes once
 
   // The fixture has text_start + two text_delta + one text_end for this
   // block. Forwarding each delta as its own frame is exactly the bug this
-  // guards against: claude.rb runs every "text" part through a full Markdown
+  // guards against: harness.rb runs every "text" part through a full Markdown
   // parser (render_markdown), which reflows a lone word-fragment into its own
   // paragraph — the stray-newline bug. Only text_end (the complete block)
   // may become a frame.

@@ -4,7 +4,7 @@ module Chomper
   class AgentTest < Minitest::Test
     # ── fakes ──────────────────────────────────────────────────────────────────
 
-    class FakeClaude
+    class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
       def initialize(plan: "## Plan\nDo the thing.\n",
                      chat: "Here's my take.", impl: "", pr: "# PR title\nbody")
@@ -121,10 +121,10 @@ module Chomper
       )
 
       @repo    = registry.default
-      @claude  = FakeClaude.new
+      @harness  = FakeHarness.new
       @publish = FakePublish.new(@ctx.state_dir, pr: "https://github.com/o/r/pull/7")
       @pull    = FakePull.new
-      @agent   = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      @agent   = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
       @worktree = FakeWorktree.new
       inject_worktree(@agent, @worktree)
 
@@ -172,8 +172,8 @@ module Chomper
     end
 
     def test_produce_plan_needs_info_posts_questions_and_writes_no_plan
-      @claude = FakeClaude.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- How do I reproduce it?")
-      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      @harness = FakeHarness.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- How do I reproduce it?")
+      @agent  = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
       inject_worktree(@agent, FakeWorktree.new)
 
       st = @agent.send(:state_for, "42", "Fix the bug")
@@ -198,8 +198,8 @@ module Chomper
 
     # An agent whose writer answers every plan call with `plan`.
     def agent_answering(plan)
-      @claude = FakeClaude.new(plan: plan)
-      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      @harness = FakeHarness.new(plan: plan)
+      @agent  = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
       inject_worktree(@agent, @worktree)
       @agent
     end
@@ -218,7 +218,7 @@ module Chomper
 
       assert options_path.exist?, "the offered options must be saved — a number means nothing without them"
       refute plan_path.exist?
-      assert_empty @claude.runs, "must not implement while it waits for a choice"
+      assert_empty @harness.runs, "must not implement while it waits for a choice"
       refute pr_url_path.exist?
       assert_includes @notes.last, "**1 — Guard the paste**"
       assert_includes @notes.last, "@chomper build 1"
@@ -228,17 +228,17 @@ module Chomper
       save_options
       @agent.handle(intent(:ship, text: "2"))
 
-      assert(@claude.captures.any? { |p| p.include?("chose option 2") },
+      assert(@harness.captures.any? { |p| p.include?("chose option 2") },
              "the chosen option must reach the plan call as its focus")
       assert plan_path.exist?
       assert pr_url_path.exist?
     end
 
-    def test_ship_repeats_a_standing_offer_without_calling_claude
+    def test_ship_repeats_a_standing_offer_without_calling_harness
       save_options
       @agent.handle(intent(:ship))
 
-      assert_empty @claude.captures, "the saved options are re-posted, not regenerated"
+      assert_empty @harness.captures, "the saved options are re-posted, not regenerated"
       assert_includes @notes.last, "Pick one"
     end
 
@@ -275,7 +275,7 @@ module Chomper
       agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
 
       refute options_path.exist?
-      refute(@claude.captures.any? { |p| p.include?("Offer options ONLY when") },
+      refute(@harness.captures.any? { |p| p.include?("Offer options ONLY when") },
              "the options gate is only for a work package with no approach yet")
     end
 
@@ -284,7 +284,7 @@ module Chomper
       st    = agent.send(:state_for, "42", "Fix the bug")
 
       assert_equal :failed, agent.send(:produce_plan, st, nil, allow_options: true)
-      assert_equal 2, @claude.captures.length, "one retry, never a loop"
+      assert_equal 2, @harness.captures.length, "one retry, never a loop"
       refute plan_path.exist?
       refute options_path.exist?
     end
@@ -302,7 +302,7 @@ module Chomper
       save_options
       @agent.handle(intent(:ship, text: "2 but keep the toast"))
 
-      prompt = @claude.captures.find { |p| p.include?("chose option 2") }
+      prompt = @harness.captures.find { |p| p.include?("chose option 2") }
       assert prompt, "a leading number still selects the option"
       assert_includes prompt, "The reporter added: but keep the toast"
     end
@@ -311,7 +311,7 @@ module Chomper
       save_options
       @agent.handle(intent(:ship, text: "1"))
 
-      prompt = @claude.captures.find { |p| p.include?("chose option 1") }
+      prompt = @harness.captures.find { |p| p.include?("chose option 1") }
       assert_includes prompt, "The offer named these repos for it: openproject"
     end
 
@@ -330,7 +330,7 @@ module Chomper
 
       @agent.handle(intent(:ship, text: "use a toast instead"))
 
-      assert_empty @claude.captures, "a shipped work package must not spend a plan call"
+      assert_empty @harness.captures, "a shipped work package must not spend a plan call"
       assert_equal before, plan_path.read, "the plan the PR links must not be rewritten"
       assert_includes @notes.last, "Ask for the change on the pull request"
       assert_includes @notes.last, "https://github.com/o/r/pull/1"
@@ -342,7 +342,7 @@ module Chomper
 
       @agent.handle(intent(:ship, text: "2"))
 
-      assert_empty @claude.captures
+      assert_empty @harness.captures
       assert_includes @notes.last, "pull request"
     end
 
@@ -353,7 +353,7 @@ module Chomper
       pr_url_path.write("https://github.com/o/r/pull/1\n")
 
       @agent.send(:ship, st)
-      assert_empty @claude.runs, "should not implement when already shipped"
+      assert_empty @harness.runs, "should not implement when already shipped"
       assert(@notes.any? { |n| n.include?("already shipped") })
     end
 
@@ -372,7 +372,7 @@ module Chomper
       inject_worktree(@agent, FakeWorktree.new(has_commits: true))
 
       @agent.send(:ship, st)
-      refute(@claude.runs.any? { |p| p.include?("APPROVED PLAN") }, "should not re-run implement")
+      refute(@harness.runs.any? { |p| p.include?("APPROVED PLAN") }, "should not re-run implement")
       assert pr_url_path.exist?
     end
 
@@ -396,8 +396,8 @@ module Chomper
         ]
       ))
       @ctx.repos = Registry.build(script_dir: Pathname(@tmpdir), state_dir: @ctx.state_dir, op_repo_path: @tmpdir)
-      @claude = FakeClaude.new(plan: "REPOS: openproject, ck\n## Plan\nDo it across both.\n")
-      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      @harness = FakeHarness.new(plan: "REPOS: openproject, ck\n## Plan\nDo it across both.\n")
+      @agent  = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
       inject_worktree(@agent, FakeWorktree.new)
 
       @agent.handle(intent(:ship))
@@ -410,7 +410,7 @@ module Chomper
     end
 
     def test_plan_without_a_repos_line_falls_back_to_the_default_repo
-      @agent.handle(intent(:ship))   # FakeClaude's plan has no REPOS line
+      @agent.handle(intent(:ship))   # FakeHarness's plan has no REPOS line
       assert pr_url_path.exist?, "ships to the default repo when no REPOS line is given"
     end
 
@@ -432,8 +432,8 @@ module Chomper
     end
 
     def test_handle_ship_skips_ship_when_needs_info
-      @claude = FakeClaude.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- repro?")
-      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      @harness = FakeHarness.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- repro?")
+      @agent  = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
       inject_worktree(@agent, FakeWorktree.new)
 
       @agent.handle(intent(:ship))
@@ -453,7 +453,7 @@ module Chomper
       assert_includes wt.fetched, ["origin", { ref: "dev" }],
                       "the base must be re-fetched at plan time, not trusted from launch"
       assert_includes wt.checkouts, "origin/dev",
-                      "and the tree moved onto it before Claude reads anything"
+                      "and the tree moved onto it before the LLM reads anything"
     end
 
     def test_chat_syncs_the_clone_before_answering
@@ -476,8 +476,8 @@ module Chomper
     def test_handle_ship_threads_one_session_through_plan_implement_and_pr
       @agent.handle(intent(:ship))
       session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
-      assert_equal [session], @claude.capture_sessions.uniq, "plan must use the per-WP session"
-      assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
+      assert_equal [session], @harness.capture_sessions.uniq, "plan must use the per-WP session"
+      assert_equal [session], @harness.run_sessions.uniq, "implement and PR description must resume the planning session"
     end
 
     # A work package planned by an earlier run (when `plan` was its own command)
@@ -488,7 +488,7 @@ module Chomper
 
       @agent.handle(intent(:ship))
       assert pr_url_path.exist?
-      assert_empty @claude.captures, "a plan a human has read is built as it reads, never rewritten"
+      assert_empty @harness.captures, "a plan a human has read is built as it reads, never rewritten"
     end
 
     def test_handle_chat_posts_reply_and_changes_no_files
@@ -510,7 +510,7 @@ module Chomper
       index = JSON.parse(related_path.read)
       assert_equal "/state/work_packages/op.example.com/200/item.json", index.first["item_path"]
 
-      plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
+      plan_prompt = @harness.captures.find { |p| p.include?("AVAILABLE REPOS") }
       assert_includes plan_prompt, "RELATED:"
       assert_includes plan_prompt, "/state/work_packages/op.example.com/42/related.json"
     end
@@ -519,19 +519,19 @@ module Chomper
       @pull.related = [{ "id" => "50", "relation" => "parent", "subject" => "Epic", "status" => "New" }]
       @agent.handle(intent(:chat, text: "how does this relate to the epic?"))
 
-      chat_prompt = @claude.runs.find { |p| p.include?("You are chomper") }
+      chat_prompt = @harness.runs.find { |p| p.include?("You are chomper") }
       assert_includes chat_prompt, "RELATED:"
     end
 
     def test_no_related_means_no_index_and_no_related_line
       @agent.handle(intent(:ship))   # FakePull.related defaults to []
       refute related_path.exist?
-      plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
+      plan_prompt = @harness.captures.find { |p| p.include?("AVAILABLE REPOS") }
       refute_includes plan_prompt, "RELATED:"
     end
 
     def test_handle_and_ack_marks_but_posts_no_note_on_error
-      agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
+      agent = Agent.new(@ctx, pull: @pull, harness: @harness, publish: BoomPublish.new)
       inject_worktree(agent, FakeWorktree.new)
       plan_path.dirname.mkpath
       plan_path.write("## Plan\nDo it.\n")   # approve will reach the failing push
@@ -563,7 +563,7 @@ module Chomper
     end
 
     def test_developer_intent_acks_the_marker_on_error
-      agent = Agent.new(@ctx, pull: @pull, claude: @claude, publish: BoomPublish.new)
+      agent = Agent.new(@ctx, pull: @pull, harness: @harness, publish: BoomPublish.new)
       inject_worktree(agent, FakeWorktree.new)
 
       agent.send(:handle_and_ack, developer_intent)

@@ -151,7 +151,7 @@ module Chomper
 
     def test_gh_agent_routes_a_spec_intent_to_revise_proposal
       agent  = GhAgent.new(@ctx, pull: Object.new, upstream_pull: Object.new,
-                           claude: Object.new, github: Object.new)
+                           harness: Object.new, github: Object.new)
       runner = RecordingRunner.new
       agent.instance_variable_set(:@product_runner, runner)
 

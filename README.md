@@ -87,7 +87,7 @@ cd openproject-chomper
 │    │      * Plan files                      │                       │
 │    │      * Draft PR data                   │                       │     ┌────────────┐
 │    │  * Pushes branches and opens PRs       ├───────────────────────┤────▶│ GitHub API │
-│    │  * Delegates conversations to Claude   │                       │     └────────────┘
+│    │  * Delegates conversations to the LLM  │                       │     └────────────┘
 │    └────────────────────────────────────────┘                       │
 │                      ▲                                              │
 │                      │ json                                         │
@@ -114,7 +114,7 @@ comments), so it is boxed in from several directions:
 
 * **No host or LAN exposure** — port 47291 is not published; the container sits
   on an `internal: true` Docker network reachable only by the runner.
-* **Server-side tool allowlist** — `server.js` refuses any `X-Claude-Tools`
+* **Server-side tool allowlist** — `server.js` refuses any `X-Harness-Tools`
   grant that isn't one of the two known tool sets, and validates session IDs.
 * **Egress allowlist** — model calls reach `authgw` directly over the internal
   network; all other outbound traffic goes through a tinyproxy sidecar that
@@ -284,11 +284,11 @@ fuller comments. `CLAUDE.md` documents each one's rationale.
 ### Repos
 
 The product repos are the committed registry in `repos.json` — each with a `name`,
-its `upstream` owner/repo, the `base` branch PRs target, and a description Claude
+its `upstream` owner/repo, the `base` branch PRs target, and a description the LLM
 reads. There is no per-repo setup beyond that: `./chomper` clones each one into
 `.chomper/repos/<name>` on first use.
 
-A fix is not tied to one repo. Claude declares its targets on the first line of the
+A fix is not tied to one repo. The LLM declares its targets on the first line of the
 plan (`REPOS: openproject, primer_view_components`), and chomper then ships an
 independent branch and PR to each repo that actually changed. `REPOS:
 openproject@release/17.6` targets a non-default base branch, for a backport.

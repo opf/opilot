@@ -78,7 +78,7 @@ module Chomper
       end
 
       def runner(op)
-        Runner.new(@ctx, op: op, intake: Object.new, claude: Object.new, publish: Object.new)
+        Runner.new(@ctx, op: op, intake: Object.new, harness: Object.new, publish: Object.new)
       end
 
       def generate(op, *args)

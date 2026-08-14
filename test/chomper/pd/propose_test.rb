@@ -34,7 +34,7 @@ module Chomper
       end
 
       # Writes whatever it was told to on each call, and records the prompts.
-      class FakeClaude
+      class FakeHarness
         attr_reader :prompts
 
         def initialize(&on_run)
@@ -100,7 +100,7 @@ module Chomper
         (dir / "001-concept.md").write("---\nid: 118\n---\n# Concept\nBody\n")
       end
 
-      # Write a plausible proposal into the WORKING tree, as Claude would.
+      # Write a plausible proposal into the WORKING tree, as the LLM would.
       def write_proposal!
         dir = @state.working_change_dir
         dir.mkpath
@@ -108,58 +108,58 @@ module Chomper
         (dir / "tasks.md").write("## RRule parsing\n- [ ] parse\n\n## Materialisation\n- [ ] expand\n")
       end
 
-      def runner(claude: nil, openspec: nil, op: nil)
+      def runner(harness: nil, openspec: nil, op: nil)
         Runner.new(@ctx, op: op || FakeOP.new, intake: Object.new,
-                          claude: claude || FakeClaude.new, openspec: openspec,
+                          harness: harness || FakeHarness.new, openspec: openspec,
                           publish: Object.new)
       end
 
       # --- the validator loop ----------------------------------------------
 
       def test_a_valid_proposal_needs_no_revision
-        claude = FakeClaude.new
+        harness = FakeHarness.new
         spec   = FakeOpenSpec.new(true)
-        runner(claude: claude, openspec: spec).send(:validate_proposal!, @state, @repo)
+        runner(harness: harness, openspec: spec).send(:validate_proposal!, @state, @repo)
 
         assert_equal 1, spec.calls
-        assert_empty claude.prompts, "a proposal that validates must not be re-prompted"
+        assert_empty harness.prompts, "a proposal that validates must not be re-prompted"
       end
 
       def test_a_failing_proposal_is_re_prompted_with_the_validator_output
-        claude = FakeClaude.new
+        harness = FakeHarness.new
         spec   = FakeOpenSpec.new(false, true)
-        runner(claude: claude, openspec: spec).send(:validate_proposal!, @state, @repo)
+        runner(harness: harness, openspec: spec).send(:validate_proposal!, @state, @repo)
 
         assert_equal 2, spec.calls
-        assert_equal 1, claude.prompts.length
-        assert_includes claude.prompts.first, "requirement has no scenarios",
+        assert_equal 1, harness.prompts.length
+        assert_includes harness.prompts.first, "requirement has no scenarios",
                         "the re-prompt must carry what the validator actually said"
-        assert_includes claude.prompts.first, "openspec/changes/add-x"
+        assert_includes harness.prompts.first, "openspec/changes/add-x"
       end
 
       def test_the_loop_gives_up_after_the_attempt_cap
-        claude = FakeClaude.new
+        harness = FakeHarness.new
         spec   = FakeOpenSpec.new(false, false, false)
         error = assert_raises(Chomper::FatalError) do
-          runner(claude: claude, openspec: spec).send(:validate_proposal!, @state, @repo)
+          runner(harness: harness, openspec: spec).send(:validate_proposal!, @state, @repo)
         end
 
         assert_match(/still fails `openspec validate --strict`/, error.message)
-        assert_equal Runner::MAX_VALIDATE_ATTEMPTS, claude.prompts.length
+        assert_equal Runner::MAX_VALIDATE_ATTEMPTS, harness.prompts.length
         assert_equal Runner::MAX_VALIDATE_ATTEMPTS + 1, spec.calls
       end
 
       # --- the scope refusal ------------------------------------------------
 
       def test_a_written_proposal_beats_prose_mentioning_the_sentinel
-        # Regression: Claude narrates its reasoning ("this is one feature, so I
+        # Regression: the LLM narrates its reasoning ("this is one feature, so I
         # wrote a proposal rather than TOO_BROAD"), and searching the whole output
         # for the sentinel read that explanation as the verdict — discarding four
         # files it had just written.
-        claude = FakeClaude.new { write_proposal!; "I judged the scope fine, so I wrote a proposal rather than TOO_BROAD." }
+        harness = FakeHarness.new { write_proposal!; "I judged the scope fine, so I wrote a proposal rather than TOO_BROAD." }
         spec   = FakeOpenSpec.new(true)
 
-        assert_nil runner(claude: claude, openspec: spec).send(:write_proposal, @state, @repo)
+        assert_nil runner(harness: harness, openspec: spec).send(:write_proposal, @state, @repo)
         assert (@state.working_change_dir / "proposal.md").exist?, "the proposal must survive"
         assert_equal 1, spec.calls, "and must still be validated"
       end
@@ -169,10 +169,10 @@ module Chomper
         # tool rather than chomper's memory of a design doc. `validate --strict`
         # checks delta structure but not, say, the proposal's Capabilities section,
         # so a hand-written format drifts without anything noticing.
-        claude = FakeClaude.new { write_proposal!; "done" }
-        runner(claude: claude, openspec: FakeOpenSpec.new(true)).send(:write_proposal, @state, @repo)
+        harness = FakeHarness.new { write_proposal!; "done" }
+        runner(harness: harness, openspec: FakeOpenSpec.new(true)).send(:write_proposal, @state, @repo)
 
-        prompt = claude.prompts.first
+        prompt = harness.prompts.first
         assert_includes prompt, "write proposal.md", "the CLI's instructions must reach the prompt"
         assert_includes prompt, "come from the `openspec` CLI itself"
         refute_includes prompt, "ADDED / MODIFIED / REMOVED",
@@ -189,9 +189,9 @@ module Chomper
       end
 
       def test_a_genuine_refusal_writes_nothing_and_reports_the_split
-        claude = FakeClaude.new { "TOO_BROAD\n### Suggested split\n- reading mode\n- export to PDF\n" }
+        harness = FakeHarness.new { "TOO_BROAD\n### Suggested split\n- reading mode\n- export to PDF\n" }
         out, = capture_io do
-          assert_equal :too_broad, runner(claude: claude).send(:write_proposal, @state, @repo)
+          assert_equal :too_broad, runner(harness: harness).send(:write_proposal, @state, @repo)
         end
         assert_match(/more than one atomic feature/, out)
         assert_match(/reading mode/, out)
@@ -199,7 +199,7 @@ module Chomper
 
       def test_a_run_that_writes_nothing_and_says_nothing_is_an_error
         error = assert_raises(Chomper::FatalError) do
-          runner(claude: FakeClaude.new { "I had a look around." }).send(:write_proposal, @state, @repo)
+          runner(harness: FakeHarness.new { "I had a look around." }).send(:write_proposal, @state, @repo)
         end
         assert_match(/no proposal was written/, error.message)
       end
@@ -213,7 +213,7 @@ module Chomper
 
       def test_touching_source_discards_the_run
         # A planning stage must not be able to modify source. pi-guards.ts only
-        # confines Claude to /repos; this is the path-level half.
+        # confines the LLM to /repos; this is the path-level half.
         write_proposal!
         (@repo.worktree_host / "app.rb").write("puts 666\n")
 

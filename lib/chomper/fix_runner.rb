@@ -12,16 +12,16 @@ module Chomper
     # `ship` publishes as the CONTRIBUTOR bot, like every other mode: the fix
     # branch goes to the bot's fork and a cross-repo draft PR is opened against
     # upstream, so a maintainer merges it or nothing lands.
-    def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: nil)
+    def initialize(ctx, pull: Pull.new(ctx), harness: Harness.new(ctx), publish: nil)
       @ctx     = ctx
       @pull    = pull
-      @claude  = claude
+      @harness  = harness
       @publish = publish || Publish.new(ctx)
     end
 
     # Plan/approve/implement/ship one or more work packages by id. Each WP is
     # fetched live; an already-shipped WP is reported and skipped. With several
-    # ids a failure on one (bad id, Claude error) is logged and the rest still
+    # ids a failure on one (bad id, LLM error) is logged and the rest still
     # run; with a single id the failure is fatal since there is nothing else to do.
     def ship_ids(*wp_ids)
       require_publish_token!
@@ -42,7 +42,7 @@ module Chomper
     private
 
     # `wp ship` ends in a push and a PR, and it only gets there after a full plan and
-    # implement pass — so a missing token has to fail before that Claude work, not
+    # implement pass — so a missing token has to fail before that LLM work, not
     # after it (`Publish#open_pr` reported it at the very end). `pr` has always
     # checked its token up front; this brings its sibling into line.
     #
@@ -56,7 +56,7 @@ module Chomper
     end
 
     def process_ids(wp_ids, mode:)
-      ensure_claude!
+      ensure_harness!
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""
@@ -81,9 +81,9 @@ module Chomper
 
         begin
           process_item(item, mode: mode)
-        rescue Claude::Error => e
-          raise Chomper::FatalError, "Claude run failed: #{e.message}" if total == 1
-          log_script "#{wp_label(wp_id)} — Claude run failed: #{e.message}"
+        rescue Harness::Error => e
+          raise Chomper::FatalError, "The LLM run failed: #{e.message}" if total == 1
+          log_script "#{wp_label(wp_id)} — The LLM run failed: #{e.message}"
         end
       end
     end
@@ -99,7 +99,7 @@ module Chomper
       st      = state_for(id, subject, type)
       # One model for every session-bound phase of this WP (plan, chat, replan,
       # implement, PR description) — switching mid-session would drop the context.
-      model   = Claude::MODEL_WORK
+      model   = Harness::MODEL_WORK
 
       replan_feedback = nil
       # Set once the operator picks an option (or types their own direction) at
@@ -116,23 +116,23 @@ module Chomper
         if replan_feedback || !Helpers.file_has_content?(st.plan_file)
           sync_bases_for_reading(@ctx.repos.all)
         end
-        # On Claude::Error the failure was already shown in red; both branches
+        # On Harness::Error the failure was already shown in red; both branches
         # fall through so the loop can recover instead of crashing the run.
         if replan_feedback
           log_script "Re-planning #{wp_label(id)} — #{subject}"
           begin
-            # Read-only across all repos; Claude re-declares the target repo(s) in
+            # Read-only across all repos; the LLM re-declares the target repo(s) in
             # the revised plan. Branch checkout waits until #ship.
-            @claude.capture(
+            @harness.capture(
               Prompts.replan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                              item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject, resumed: session_resumable?(st),
                              related: related_ref(st)),
-              tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
+              tools: Harness::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st)
-          rescue Claude::Error
+          rescue Harness::Error
             # capture didn't write the outfile, so the previous plan survives;
             # the user just saw the error and can retry from the prompt below.
           end
@@ -142,15 +142,15 @@ module Chomper
           log_script "Planning #{wp_label(id)} — #{subject}"
           begin
             # Pass session_file so a prior chat's context carries into the (re-)plan.
-            @claude.capture(
+            @harness.capture(
               Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                            item: container_path(st.item_file),
                            item_id: id, title: subject, hint: option_focus.to_s,
                            related: related_ref(st), allow_options: option_focus.nil?),
-              tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
+              tools: Harness::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st) if plan_present?(st)
-          rescue Claude::Error
+          rescue Harness::Error
             # capture didn't write the outfile; the no-plan check below recovers.
           end
           just_generated = true
@@ -192,7 +192,7 @@ module Chomper
           end
         end
 
-        # Preamble-tolerant NEEDS_INFO check: Claude sometimes writes a sentence
+        # Preamble-tolerant NEEDS_INFO check: the LLM sometimes writes a sentence
         # before the sentinel when it can't proceed.
         if st.plan_file.read.match?(/\bNEEDS_INFO\b/)
           questions = st.plan_file.read.sub(/.*\bNEEDS_INFO\b\s*\n?/m, "").strip
@@ -327,14 +327,14 @@ module Chomper
     end
 
     # Feedback for a re-plan. Empty input means "fold in what we discussed in
-    # chat" — the Claude session already carries that conversation.
+    # chat" — the LLM session already carries that conversation.
     def prompt_replan_feedback
       print "  Feedback (empty = revise per the chat above): "
       msg = $stdin.gets&.chomp.to_s
       msg.empty? ? "Revise the plan to incorporate the changes requested in the preceding conversation." : msg
     end
 
-    def run_chat(st, model = Claude::MODEL_WORK)
+    def run_chat(st, model = Harness::MODEL_WORK)
       # The session already holds the plan (just generated/revised), so pass its
       # path as a fallback rather than re-embedding the full text on every turn.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
@@ -347,9 +347,9 @@ module Chomper
           item_id: st.item_id, subject: st.subject,
           item: container_path(st.item_file), plan: plan_ref, message: msg
         )
-        @claude.run(prompt, tools: Claude::TOOLS_READ, model: model, session_file: st.session_file)
+        @harness.run(prompt, tools: Harness::TOOLS_READ, model: model, session_file: st.session_file)
         # Ring after the reply, not before the first message: the user just
-        # chose [c]hat and is present; it's Claude's answers they wander off on.
+        # chose [c]hat and is present; it's the LLM's answers they wander off on.
         ping_terminal("chomper: chat reply for #{wp_label(st.item_id)} ready")
         puts ""
       end
@@ -360,15 +360,15 @@ module Chomper
     # write tools) and commit per repo. Skipped when every fix branch already
     # has commits — a prior `build` — so `ship` then only publishes. Returns the
     # repos that actually changed ([] when the plan turned out to be a no-op).
-    def implement(st, model = Claude::MODEL_WORK)
+    def implement(st, model = Harness::MODEL_WORK)
       st.repos.each { |r| checkout_branch(st, r) }
 
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @claude.run(
+        @harness.run(
           Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                             resumed: session_resumable?(st)),
-          tools: Claude::TOOLS_IMPL, model: model, session_file: st.session_file
+          tools: Harness::TOOLS_IMPL, model: model, session_file: st.session_file
         )
         st.repos.each { |r| commit(st, r) }
       end
@@ -384,7 +384,7 @@ module Chomper
     # `build`: implement and commit, then stop — nothing is pushed and no PR is
     # opened. The committed branch sits in the local clone for review; a later
     # `wp ship <id>` finds it via branch_has_commits? and goes straight to publish.
-    def build(st, model = Claude::MODEL_WORK)
+    def build(st, model = Harness::MODEL_WORK)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
@@ -392,7 +392,7 @@ module Chomper
       end
     end
 
-    def ship(st, model = Claude::MODEL_WORK)
+    def ship(st, model = Harness::MODEL_WORK)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
         generate_pr_description(st, repo, model: model)

@@ -66,7 +66,7 @@ PR needs the store's layout on every agent tick.
   moved.
 - **`pd propose <change-id>`** — turns intake into `proposal.md`, `design.md`,
   `tasks.md` and `specs/<capability>/spec.md` deltas, opens the **spec PR that is the
-  approval gate**, and halts. Claude writes with `TOOLS_IMPL`; the runner then runs
+  approval gate**, and halts. the LLM writes with `TOOLS_IMPL`; the runner then runs
   `openspec validate --strict --json` and feeds failures back for up to
   `MAX_VALIDATE_ATTEMPTS` (2) revisions in the same session — the CLI isn't in the
   harness container, so "the agent iterates on its own output" is a runner-driven
@@ -75,7 +75,7 @@ PR needs the store's layout on every agent tick.
   becomes exactly one FEATURE.
 
   **The write scope is enforced** (`#enforce_write_scope!`) — a planning stage must
-  not be able to modify source, and `pi-guards.ts` only confines Claude to
+  not be able to modify source, and `pi-guards.ts` only confines the LLM to
   `/repos`. Two surfaces are checked: everything git can see, and the spec tree
   diffed against the canonical store (git reports nothing about an excluded tree).
   Anything outside `changes/<change-id>/` resets the clone and fails the run before
@@ -131,7 +131,7 @@ PR needs the store's layout on every agent tick.
   Publishing goes through the same `Publish#open_pr` as the bug-fix flow, so
   `gh-agent` picks the result up from `pr_url.txt` and `./chomper wp pr <id>` can
   refresh it. The work package is **transitioned twice** (`#transition!`): to
-  `CHOMPER_PD_IMPLEMENTING_STATUS` when the Claude run starts (inside the
+  `CHOMPER_PD_IMPLEMENTING_STATUS` when the LLM run starts (inside the
   `branch_has_commits?` guard, so a re-run that only publishes an already-built
   branch doesn't rewind it) and to `CHOMPER_PD_IMPLEMENTED_STATUS` once the draft PR
   is open — a run that produced no code stays at the former, which is exactly what
@@ -152,7 +152,7 @@ silently rewriting it would break the binding the operator thinks they made.
 
 - **canonical** — `.chomper/openspec/<repo>/`, a runner-owned `git init` repo. The
   durable copy, carrying its own commit identity since it is never pushed.
-- **working** — `<clone>/openspec/`, the only place `pi-guards.ts` lets Claude
+- **working** — `<clone>/openspec/`, the only place `pi-guards.ts` lets the LLM
   write, and where the `openspec` CLI expects the tree relative to the code.
 - **review** — a `spec/<change-id>` branch pushed to the bot's fork.
 
@@ -174,7 +174,7 @@ to get a duplicate FEATURE.
 ## Attachments are converted in the runner, at intake time
 
 `intake/converter.rb`. The harness container has no converter and `pi-guards.ts`
-allows only read-only git, so Claude's `read` tool is the sole way in — fine for
+allows only read-only git, so the LLM's `read` tool is the sole way in — fine for
 text, images and PDFs, useless on `.xlsx`/`.docx`/`.pptx`, which are ZIP-of-XML.
 Spreadsheets go through `roo` to one **CSV per sheet** (500-row cap, with the
 truncation written into the file itself); `.docx`/`.pptx` are extracted by hand with

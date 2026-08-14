@@ -7,7 +7,7 @@ require_relative "gh_pr_cache"
 
 module Chomper
   # The terminal `pr` command: for each open PR a WP shipped (one per
-  # <id>/repos/<name>/), merge in the latest base branch (Claude resolves
+  # <id>/repos/<name>/), merge in the latest base branch (the LLM resolves
   # conflicts), fix failing CI, address feedback newer than chomper's last action,
   # then commit and push after a terminal confirmation.
   #
@@ -25,10 +25,10 @@ module Chomper
     # Everything here acts as the contributor bot: reads, comments, and the push
     # to the PR's head branch on the bot's fork. A PR whose head lives on a
     # canonical repo isn't chomper's to write to and its refresh is discarded.
-    def initialize(ctx, claude: Claude.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
+    def initialize(ctx, harness: Harness.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
                    gh_pull: nil, op_pull: nil, interactive: true)
       @ctx         = ctx
-      @claude      = claude
+      @harness      = harness
       @github      = github
       @interactive = interactive
       # Reused only for its act-state writers (comment cutoff + own-reply ids),
@@ -47,7 +47,7 @@ module Chomper
       unless @ctx.contributor_token
         raise FatalError, "No GitHub token is set — `wp pr` needs GITHUB_CONTRIBUTOR_TOKEN to read and update PRs."
       end
-      ensure_claude!
+      ensure_harness!
       targets.each do |target|
         target.match?(%r{\Ahttps?://}) ? refresh_url(target) : refresh_wp(target)
       end
@@ -272,13 +272,13 @@ module Chomper
           end
           return
         end
-        # Only the clean base merge — no Claude pass needed.
+        # Only the clean base merge — no LLM pass needed.
         deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head,
                 reply: nil, feedback: [])
         return
       end
 
-      reply = refresh_with_claude(wp_id, dir, repo, base_repo, number, content, base_ref,
+      reply = refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref,
                                   ci: ci_ref, conflicts: conflicts, feedback: feedback)
       commit_refresh(wp_id, wt, repo, branch, base_ref, conflicts)
       deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head,
@@ -306,7 +306,7 @@ module Chomper
     # Merge origin/<base> into the PR branch when it is behind. Returns the list
     # of conflicted paths — [] for an up-to-date branch or a clean merge (which
     # commits itself). A conflicted merge is left in progress, its markers in the
-    # worktree, for Claude to resolve; commit_refresh concludes it.
+    # worktree, for the LLM to resolve; commit_refresh concludes it.
     def merge_base(wt, repo, branch, base_ref)
       fetch_base(wt, repo, base_ref)
       return [] if wt.log.between("HEAD", "origin/#{base_ref}").execute.none?
@@ -317,7 +317,7 @@ module Chomper
     rescue Git::Error
       files = conflicted_files(repo)
       raise if files.empty?   # not a conflict — a real git failure
-      log_script "Merge stopped on #{files.length} conflicted file(s) — Claude will resolve them."
+      log_script "Merge stopped on #{files.length} conflicted file(s) — the LLM will resolve them."
       files
     end
 
@@ -327,7 +327,7 @@ module Chomper
       out.to_s.split("\n").map(&:strip).reject(&:empty?)
     end
 
-    # Conflicted files Claude failed to resolve — any still carrying a conflict
+    # Conflicted files the LLM failed to resolve — any still carrying a conflict
     # marker at line start. (The bare ======= middle marker is not checked: a
     # plain line of equals signs is legitimate in Markdown/RDoc.)
     def unresolved_conflicts(repo, files)
@@ -339,7 +339,7 @@ module Chomper
 
     # The container path of ci.json when the PR head's CI has a completed
     # failure (detail freshly cached); :ci_detail_expired when it failed but
-    # every summary/annotation/log has aged out of retention (nothing for Claude
+    # every summary/annotation/log has aged out of retention (nothing for the LLM
     # to act on — the caller falls back to a base sync + push, which re-runs
     # CI); else nil. Unlike gh-agent's poller this ignores
     # act-state and the attempt cap — the operator explicitly asked.
@@ -395,7 +395,7 @@ module Chomper
         .sort_by { |c| c["created_at"].to_s }
     end
 
-    def refresh_with_claude(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:)
+    def refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:)
       item_file = Helpers.item_dir(@ctx, wp_id) / "item.json"
       plan_file = Helpers.item_dir(@ctx, wp_id) / "plan.md"
       prompt = Prompts.pr_refresh(
@@ -407,14 +407,14 @@ module Chomper
         ci: ci, conflicts: conflicts, feedback_count: feedback.length
       )
       # Shares gh-agent's per-PR session so prior PR conversations carry over.
-      @claude.run(prompt, tools: Claude::TOOLS_IMPL, session_file: dir / "gh_session_id")
+      @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: dir / "gh_session_id")
     end
 
     # Commit what the refresh produced. A conflicted merge is concluded here (the
     # merge commit carries the resolution — plus any CI/feedback fixes made in
-    # the same pass); otherwise any files Claude changed become a follow-up
+    # the same pass); otherwise any files the LLM changed become a follow-up
     # commit with a generated subject, exactly like gh-agent's comment fixes.
-    # No-ops when Claude changed nothing (e.g. it only answered questions).
+    # No-ops when the LLM changed nothing (e.g. it only answered questions).
     def commit_refresh(wp_id, wt, repo, branch, base_ref, conflicts)
       Helpers.adopt_github_author!(@ctx.contributor_token)
       if conflicts.any?
@@ -442,7 +442,7 @@ module Chomper
     end
 
     # Push whatever the refresh produced (after a terminal confirmation), post
-    # Claude's summary on the PR, and advance the comment cutoff over the
+    # the LLM's summary on the PR, and advance the comment cutoff over the
     # feedback just addressed so gh-agent doesn't act on it again. A discard
     # resets the branch and acknowledges nothing, so a re-run starts over.
     def deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head, reply:, feedback:)
@@ -488,7 +488,7 @@ module Chomper
       end
     end
 
-    # Post Claude's summary as a PR comment (labelled automated, like gh-agent's
+    # Post the LLM's summary as a PR comment (labelled automated, like gh-agent's
     # replies) and record its id so the pollers never treat it as a trigger.
     def post_summary(wp_id, dir, base_repo, number, reply)
       text = Helpers.extract_reply(reply)

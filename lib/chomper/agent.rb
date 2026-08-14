@@ -21,16 +21,16 @@ module Chomper
   class Agent
     include Helpers
 
-    def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
+    def initialize(ctx, pull: Pull.new(ctx), harness: Harness.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
       @pull    = pull
-      @claude  = claude
+      @harness  = harness
       @publish = publish
       @api     = Clients::OpenProject.new(ctx.op_url, ctx.token)
     end
 
     def run
-      ensure_claude!
+      ensure_harness!
       filters = setup
       puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
@@ -65,7 +65,7 @@ module Chomper
     # Handle one intent, then mark its trigger acted. A *handled* error (raised
     # and caught here) is logged and still acked, so a permanent failure — e.g. a
     # denied push — is not replayed every poll. We do NOT post an error note to
-    # the WP: a transient failure (e.g. a Claude error_during_execution) would
+    # the WP: a transient failure (e.g. an LLM error_during_execution) would
     # leave noise on the work package for no benefit. Only a hard crash or a
     # Ctrl-C (SystemExit is not a StandardError, so it passes this rescue)
     # leaves the trigger for the next poll to retry.
@@ -127,7 +127,7 @@ module Chomper
                             item: container_path(st.item_file),
                             plan: plan_ref, message: intent.text.to_s,
                             related: related_ref(st))
-      reply = @claude.run(prompt, tools: Claude::TOOLS_READ, session_file: st.session_file)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
 
@@ -160,7 +160,7 @@ module Chomper
       return ship(st) if Helpers.file_has_content?(st.plan_file) && direction.empty?
 
       # 3. An offer is standing and the reply names no option: post the same list
-      #    again (no Claude call), because the question is still the question.
+      #    again (no LLM call), because the question is still the question.
       if direction.empty? && Helpers.file_has_content?(st.options_file)
         post_options(st, intent)
         return
@@ -186,12 +186,12 @@ module Chomper
     # neither, and is handled like any other failed run — logged, never commented.
     def produce_plan(st, feedback, allow_options: false, retry_bad_options: true)
       # Planning is read-only across every repo's worktree (all mounted at
-      # /repos/<name>); the branch checkout waits until #ship, once Claude has
+      # /repos/<name>); the branch checkout waits until #ship, once the LLM has
       # chosen the target repo(s) in the plan.
       #
       # Every repo is synced, not just the eventual targets: which repos the fix
       # lands in is the plan's own output, so at this point there is nothing
-      # narrower to sync, and Claude reads across the registry to decide.
+      # narrower to sync, and the LLM reads across the registry to decide.
       sync_bases_for_reading(@ctx.repos.all)
       item_c  = container_path(st.item_file)
       plan_c  = container_path(st.plan_file)
@@ -203,7 +203,7 @@ module Chomper
         prompt = Prompts.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
                                 resumed: session_resumable?(st), related: related)
-        @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
+        @harness.capture(prompt, tools: Harness::TOOLS_READ, outfile: st.plan_file,
                         session_file: st.session_file)
         record_chosen_repos(st)
         return :ok
@@ -213,7 +213,7 @@ module Chomper
       prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
                             related: related, allow_options: allow_options)
-      @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
+      @harness.capture(prompt, tools: Harness::TOOLS_READ, outfile: st.plan_file,
                       session_file: st.session_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
@@ -259,7 +259,7 @@ module Chomper
 
     # Post the offered options as one work-package comment.
     #
-    # Composed here rather than by Claude so the wording, the numbering and the
+    # Composed here rather than by the LLM so the wording, the numbering and the
     # reply instructions are the same every time, and so no heading or sign-off
     # can reach the activity tab; the writer supplies only the title and the
     # sentence. A Developers handover addresses nobody (the intent carries no
@@ -333,9 +333,9 @@ module Chomper
       # unless every target repo already holds commits from an earlier pass.
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @claude.run(Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
+        @harness.run(Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                                       resumed: session_resumable?(st)),
-                    tools: Claude::TOOLS_IMPL, session_file: st.session_file)
+                    tools: Harness::TOOLS_IMPL, session_file: st.session_file)
         st.repos.each { |r| commit(st, r) }
       end
 

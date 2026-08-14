@@ -1,5 +1,5 @@
 module Chomper
-  # All Claude prompts live here, in one place, so the instructions that drive a
+  # All LLM prompts live here, in one place, so the instructions that drive a
   # tool-enabled agent can be audited and reviewed without hunting through the
   # codebase. Methods are pure: they take already-resolved strings (container
   # paths, text) and return the prompt — no I/O, no context lookups.
@@ -9,9 +9,9 @@ module Chomper
   # never re-worded per prompt (that's how contradictions creep in).
   module Prompts
     # Prepended to every phase except `implement`. Implementation is the ONLY
-    # phase allowed to change anything; everywhere else Claude must not edit,
+    # phase allowed to change anything; everywhere else the LLM must not edit,
     # create, or delete files, run commands, or otherwise act on the plan. The
-    # harness also withholds the write tools, but saying so stops Claude from
+    # harness also withholds the write tools, but saying so stops the LLM from
     # wasting turns trying (and from posting "I need write permission" replies).
     READ_ONLY = <<~TEXT.strip
       You are in READ-ONLY mode. Do NOT edit, create, or delete any file or
@@ -131,7 +131,7 @@ module Chomper
 
     # The AVAILABLE REPOS block + repo-selection instruction shared by plan/replan.
     # `repos` is an array of { name:, path:, description: }; `summary` is the
-    # registry's top-level routing hint. Claude reads across the listed repos and
+    # registry's top-level routing hint. the LLM reads across the listed repos and
     # declares its choice on the first line as `REPOS: <name>[, <name>…]`.
     def self.repos_section(summary, repos)
       listing = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})  — #{r[:description]}" }.join("\n")
@@ -469,7 +469,7 @@ module Chomper
     TEXT
 
     # Reply to a comment on a chomper-opened GitHub PR (tools: read/write/edit).
-    # "Always reply, code if asked": Claude answers every comment, and edits the
+    # "Always reply, code if asked": the LLM answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
     # git — the runner commits any changes and pushes them to the bot's fork to
     # update the draft PR; merging still requires a maintainer.
@@ -528,9 +528,9 @@ module Chomper
     end
 
     # Fix a failed CI run on a chomper-opened PR (tools: read/write/edit). Mirrors
-    # gh_reply, but the trigger is CI rather than a comment: Claude reads the
+    # gh_reply, but the trigger is CI rather than a comment: the LLM reads the
     # cached failure detail and fixes the defect in the worktree. The runner
-    # commits and pushes to update the draft PR; Claude must not run git itself.
+    # commits and pushes to update the draft PR; the LLM must not run git itself.
     def self.fix_ci(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:, ci:)
       <<~PROMPT
         You are chomper, an AI code assistant. CI failed on GitHub pull request
@@ -559,7 +559,7 @@ module Chomper
     # operator's terminal `pr` command, and the work is whichever of the three
     # task blocks apply: resolve the conflicts a base-branch merge left behind,
     # fix what CI is failing on, and address review feedback that has gone
-    # unanswered. The runner commits and pushes; Claude never runs git.
+    # unanswered. The runner commits and pushes; the LLM never runs git.
     def self.pr_refresh(worktree:, repo:, pr_number:, title:, base:, item:, plan:, pr_thread:,
                         ci: nil, conflicts: [], feedback_count: 0)
       tasks = []
