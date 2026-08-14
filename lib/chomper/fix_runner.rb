@@ -102,6 +102,10 @@ module Chomper
       model   = Claude::MODEL_WORK
 
       replan_feedback = nil
+      # Set once the operator picks an option (or types their own direction) at
+      # the options prompt below. Present means the approach is settled, so the
+      # next plan call asks for a plan rather than for options.
+      option_focus = nil
       loop do
         just_generated = false
         # Sync before reading, for the same reason as Agent#produce_plan: the
@@ -141,7 +145,8 @@ module Chomper
             @claude.capture(
               Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                            item: container_path(st.item_file),
-                           item_id: id, title: subject, related: related_ref(st)),
+                           item_id: id, title: subject, hint: option_focus.to_s,
+                           related: related_ref(st), allow_options: option_focus.nil?),
               tools: Claude::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st) if plan_present?(st)
@@ -149,6 +154,27 @@ module Chomper
             # capture didn't write the outfile; the no-plan check below recovers.
           end
           just_generated = true
+        end
+
+        # The writer may answer with implementation options instead of a plan, the
+        # same judgment the agent's `ship` gets. Ask here rather than plan blind:
+        # the operator is at the console, so the answer costs one keystroke.
+        if Helpers.file_has_content?(st.plan_file) &&
+           st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
+          options = Helpers.parse_options(st.plan_file.read)
+          safe_rm(st.plan_file)                    # holds options, never a plan
+          if options.length < 2
+            log_script "#{wp_label(id)} — unusable options came back; planning one approach instead."
+            option_focus = ""                      # empty, not nil: asks for a plan
+            next
+          end
+          case (answer = prompt_option_choice(id, options))
+          when :skip then log_script "#{wp_label(id)} skipped."; break
+          when :drop then log_script "#{wp_label(id)} dropped."; break
+          else
+            option_focus = answer
+            next                                   # plan the chosen option
+          end
         end
 
         # A run that dies mid-way (denied tool, max turns, timeout) can leave
@@ -249,6 +275,36 @@ module Chomper
         when "s", "skip"  then return :skip
         when "d", "drop"  then return :drop
         else puts "  Please enter c, s, or d."
+        end
+      end
+    end
+
+    # Offer the implementation options at the console, the same list a work
+    # package gets (Prompts::OPTIONS_CONTRACT). Returns the plan focus for the
+    # chosen option, free text as its own direction (so the operator is never
+    # forced to pick one of the three), :skip, or :drop.
+    def prompt_option_choice(id, options)
+      ping_terminal("chomper: #{wp_label(id)} has #{options.length} ways to fix it")
+      puts ""
+      puts "  #{Rainbow("This fix has more than one shape:").bold}"
+      options.each do |o|
+        tag = [o["repos"].to_a.join(", "), o["size"]].reject { |s| s.to_s.strip.empty? }.join(" · ")
+        puts "    #{Rainbow("#{o["n"]})").bold} #{Rainbow(o["title"]).bold} — #{o["summary"]}"
+        puts "       estimate: #{tag}" unless tag.empty?
+      end
+      puts ""
+      numbers = options.map { |o| o["n"] }
+      loop do
+        print "  Build [#{numbers.join("/")}] / your own direction / [s]kip / [d]rop: "
+        answer = $stdin.gets&.chomp.to_s.strip
+        case answer
+        when "s", "skip" then return :skip
+        when "d", "drop" then return :drop
+        when ""          then puts "  Enter a number, a direction, s, or d."
+        else
+          # A number selects (with any trailing words folded in); anything else is
+          # direction of the operator's own, exactly as in a work-package comment.
+          return Helpers.option_choice(options, answer) || answer
         end
       end
     end

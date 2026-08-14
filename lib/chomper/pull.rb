@@ -119,6 +119,34 @@ module Chomper
       item_path.write(JSON.generate(data))
     end
 
+    # Tell a non-allowlisted commenter, once per work package, that their trigger
+    # was not acted on. Silence reads as a bug or as chomper ignoring the person,
+    # and it is worst where it matters most: chomper offers implementation options
+    # to anyone who can comment, but only an allowlisted user may choose one.
+    #
+    # One comment per WP, ever (`refusal_noted_at`), because the reply is the one
+    # thing an unlisted user can make chomper do — a per-comment answer would let
+    # anyone fill the activity tab. Mirrors the trigger's visibility, and needs no
+    # 👀 (the note is the acknowledgement).
+    def note_refused_trigger(wp_id, trigger)
+      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
+      return unless item_path.exist?
+      data = Helpers.safe_json_read(item_path) || {}
+      return if data["refusal_noted_at"]
+
+      # The note names no command word, so it can never be read back as a trigger
+      # (chomper's own comments are only excluded one deep, by id).
+      who  = Helpers.mention(trigger["user"], trigger["user_href"])
+      body = "#{who} I do not act on this comment. On this instance only the users in " \
+             "chomper's allowlist can trigger me. Ask one of them to comment, or ask an " \
+             "administrator to add you.".strip
+      code, _body = @api.post_activity(wp_id, comment: body, internal: trigger["internal"] == true)
+      return unless code == 201
+
+      data["refusal_noted_at"] = Time.now.utc.iso8601
+      item_path.write(JSON.generate(data))
+    end
+
     # Record the ID of a note posted by chomper so it is never re-detected as a
     # trigger. Called by the agent after successfully posting a reply.
     def record_chomper_comment(wp_id, comment_id)
@@ -372,6 +400,7 @@ module Chomper
         user_id = trigger_user_id(trigger)
         unless user_id && @ctx.allowed_op_user_ids.include?(user_id)
           puts "  [@chomper] Ignoring trigger from user #{user_id || "unknown"} — not in allowlist"
+          note_refused_trigger(wp_display_id(wp), trigger)
           mark_chomper_acted(wp_display_id(wp), trigger["created_at"])
           return nil
         end
@@ -498,14 +527,16 @@ module Chomper
     def parse_command(raw)
       text = strip_mention(raw)
       case text
-      when /\A@chomper\s+plan\b\s*(.*)/im     then [:plan,    $1.strip]
       # One intent, several names: `ship` is the canonical word, `fix` the legacy
       # one, and the rest are what people actually reach for when they mean
       # "just do it" — each would otherwise fall through to :chat and get an
-      # answer where a PR was wanted.
-      when /\A@chomper\s+(?:ship|fix|prototype|build|pr|implement)\b\s*(.*)/im
+      # answer where a PR was wanted. `plan` and `approve` were separate intents
+      # until the options step replaced them: `ship` already stops and asks when a
+      # fix has more than one shape, so the way to review an approach is to read
+      # the options or the prototype. Both words stay mapped here, because the
+      # people who learned them would otherwise get a chat answer.
+      when /\A@chomper\s+(?:ship|fix|prototype|build|pr|implement|plan|approve)\b\s*(.*)/im
         [:ship, $1.strip]
-      when /\A@chomper\s+approve\b/i          then [:approve, nil]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
       # trailing text folded in as a focus hint (see Prompts::LENSES).
       when /\A@chomper\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts.lens($1, $2)]

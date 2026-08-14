@@ -254,6 +254,71 @@ module Chomper
       refute (@ctx.state_dir / "work_packages" / "op.example.com" / "16" / "plan.md").exist?
     end
 
+    # ── implementation options at the console ────────────────────────────────
+
+    OPTIONS_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I insert plain text and show a message. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor. | openproject | large
+    TEXT
+
+    def test_plan_ids_offers_options_then_plans_the_chosen_one
+      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #31 — chosen")
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "31" => item(31, "Two ways") }),
+                        claude: claude, publish: nil)
+
+      # Options are offered, [2] is chosen, then [s]kip at the approval prompt.
+      out, = with_stdin("2\ns\n") { capture_io { r.plan_ids("31") } }
+
+      assert_includes out, "This fix has more than one shape"
+      assert_includes out, "Rebuild the editor"
+      assert_includes out, "estimate: openproject"
+      assert_equal "## Plan: #31 — chosen",
+                   (@ctx.state_dir / "work_packages" / "op.example.com" / "31" / "plan.md").read
+    end
+
+    def test_option_prompt_passes_the_choice_into_the_plan_call
+      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #32 — chosen")
+      captured = []
+      claude.define_singleton_method(:capture) do |prompt, **kwargs|
+        captured << prompt
+        out = @outputs.shift or raise "unexpected capture call"
+        Pathname(kwargs[:outfile]).write(out)
+      end
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "32" => item(32, "Two ways") }),
+                        claude: claude, publish: nil)
+
+      with_stdin("1 but keep the toast\ns\n") { capture_io { r.plan_ids("32") } }
+
+      assert_includes captured.first, "Offer options ONLY when", "the first call may ask"
+      assert_includes captured.last, "chose option 1"
+      assert_includes captured.last, "The reporter added: but keep the toast"
+      refute_includes captured.last, "Offer options ONLY when", "the second call must not ask again"
+    end
+
+    def test_option_prompt_accepts_free_direction_instead_of_a_number
+      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER, "## Plan: #33 — own way")
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "33" => item(33, "Two ways") }),
+                        claude: claude, publish: nil)
+
+      out, = with_stdin("do it with a rake task\ns\n") { capture_io { r.plan_ids("33") } }
+
+      assert_equal "## Plan: #33 — own way",
+                   (@ctx.state_dir / "work_packages" / "op.example.com" / "33" / "plan.md").read
+      assert_includes out, "skipped"
+    end
+
+    def test_option_prompt_can_drop_the_work_package
+      claude = ScriptedPlanClaude.new(OPTIONS_ANSWER)
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "34" => item(34, "Two ways") }),
+                        claude: claude, publish: nil)
+
+      out, = with_stdin("d\n") { capture_io { r.plan_ids("34") } }
+
+      assert_includes out, "dropped"
+      refute (@ctx.state_dir / "work_packages" / "op.example.com" / "34" / "plan.md").exist?
+    end
+
     def test_replan_rewrites_plan_with_typed_feedback
       write_item(6, "Replannable")
       (@ctx.state_dir / "work_packages" / "op.example.com" / "6" / "plan.md").write("## Original plan")

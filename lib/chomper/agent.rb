@@ -1,7 +1,4 @@
 require "json"
-# Ruby 4.0 dropped the full CGI library; cgi/escape is the part that survived and
-# is all we use (CGI.escapeHTML, for the mention in an OP comment).
-require "cgi/escape"
 require_relative "clients"
 
 module Chomper
@@ -23,10 +20,6 @@ module Chomper
   # work_packages/<host>/<id>/ — plan.md present = has a plan, pr_url.txt present = shipped.
   class Agent
     include Helpers
-
-    # First line of a plan call that answers with implementation options rather
-    # than a plan (Prompts::OPTIONS_CONTRACT), the sibling of NEEDS_INFO.
-    OPTIONS_SENTINEL = "OPTIONS"
 
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
@@ -101,24 +94,17 @@ module Chomper
       @requester = requester_mention(intent)   # who to address in replies
       @reply_internal = intent.internal        # mirror the trigger's visibility
       case intent.command
-      when :chat    then handle_chat(intent)
-      when :plan    then handle_plan(intent)
-      when :approve then handle_approve(intent)
-      when :ship    then handle_ship(intent)
+      when :chat then handle_chat(intent)
+      when :ship then handle_ship(intent)
       end
     end
 
     private
 
     # An OpenProject mention of the commenter, so replies notify and address them
-    # by name (falls back to the bare name, then empty, when details are missing).
-    # Name and id are attacker-influenced (OpenProject display names are free
-    # text), so the name is HTML-escaped and the id must be numeric.
+    # by name. Empty for a Developers handover, which carries no commenter.
     def requester_mention(intent)
-      name = CGI.escapeHTML(intent.user.to_s)
-      id   = intent.user_href.to_s.split("/").last.to_s
-      return name unless id.match?(/\A\d+\z/)
-      %Q(<mention class="mention" data-id="#{id}" data-type="user" data-text="#{name}">@#{name}</mention>)
+      Helpers.mention(intent.user, intent.user_href)
     end
 
     # Prefix a reply with the requester mention, when known.
@@ -145,53 +131,43 @@ module Chomper
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
 
-    # `@chomper plan` never offers options: asking for a plan is already a choice
-    # to review one approach before any code is written. It does accept an option
-    # number, so a reader who wants the detail of option 2 can have it.
-    def handle_plan(intent)
+    # The one working intent: plan, implement, and open the prototype.
+    #
+    # This is where every trigger word lands — `ship` and its aliases, a
+    # Developers handover, and the retired `plan`/`approve` words. There is no
+    # separate plan-and-wait command any more: a fix with more than one defensible
+    # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
+    # fix with one shape is planned and shipped in the same call — so a simple
+    # ticket costs exactly what it did before. NEEDS_INFO still guards blind fixes.
+    # Once a prototype exists the work moves to the pull request and this handler
+    # only points there (#report_shipped).
+    def handle_ship(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
-      return unless produce_plan(st, option_focus(st, intent.text) || intent.text) == :ok
-      post_note(st.item_id, addressed(
-        "here is the plan:\n\n#{st.plan_file.read.strip}\n\n" \
-        "Reply `@chomper approve` to implement it, `@chomper plan <feedback>` to change it, " \
-        "or `@chomper grill` to examine it for gaps first."))
-    end
+      # The approach the reader settled: a chosen option (with anything they wrote
+      # after the number folded in) or their free text.
+      direction = (option_focus(st, intent.text) || intent.text.to_s).strip
 
-    def handle_approve(intent)
-      st = state_for(intent.item_id, intent.subject, intent.type)
-      unless Helpers.file_has_content?(st.plan_file)
-        post_note(st.item_id, addressed("there is no plan yet. Comment `@chomper plan` first, or `@chomper ship` to plan and ship in one step."))
+      # 1. A prototype already exists, so this work package's part is done: point
+      #    at the pull request, and spend no plan call doing it.
+      if shipped?(st)
+        report_shipped(st, direction: direction)
         return
       end
-      ship(st)
-    end
 
-    # Express lane: plan and ship in one pass (NEEDS_INFO still guards blind fixes).
-    #
-    # One step comes first, when nobody has chosen an approach yet: a fix with
-    # more than one defensible shape is offered as numbered options and waits for
-    # a number (Prompts::OPTIONS_CONTRACT). A fix with one shape is planned and
-    # shipped in the same call, so a simple ticket costs exactly what it did
-    # before. Both triggers reach this path — a `@chomper ship` comment and a
-    # Developers handover synthesize the same intent.
-    def handle_ship(intent)
-      st    = state_for(intent.item_id, intent.subject, intent.type)
-      focus = option_focus(st, intent.text)          # nil unless the text is a saved option's number
-      # An approved plan, a chosen option, or free-text direction all mean the
-      # approach is already settled; only a bare `ship` on an unplanned WP asks.
-      asking = focus.nil? && !Helpers.file_has_content?(st.plan_file)
+      # 2. A plan is on file and nobody gave new direction: build it as it reads.
+      #    This is what the retired `approve` did, and the only way to get a
+      #    prototype of the exact plan a human has already read.
+      return ship(st) if Helpers.file_has_content?(st.plan_file) && direction.empty?
 
-      if asking && Helpers.file_has_content?(st.options_file)
-        # Options are already on the work package. A repeat `ship` re-posts them
-        # (no Claude call); free text is direction, and plans with it below.
-        if intent.text.to_s.strip.empty?
-          post_options(st, intent)
-          return
-        end
-        asking = false
+      # 3. An offer is standing and the reply names no option: post the same list
+      #    again (no Claude call), because the question is still the question.
+      if direction.empty? && Helpers.file_has_content?(st.options_file)
+        post_options(st, intent)
+        return
       end
 
-      case produce_plan(st, focus || intent.text, allow_options: asking)
+      # 4. Nothing has settled the approach: this is the one call that may ask.
+      case produce_plan(st, direction, allow_options: direction.empty?)
       when :options then post_options(st, intent)
       when :ok      then ship(st)
       end
@@ -250,8 +226,8 @@ module Chomper
 
       # The sentinel is read whether or not options were invited, so an
       # uninvited OPTIONS block can never be committed and shipped as a plan.
-      if st.plan_file.read.lstrip.start_with?(OPTIONS_SENTINEL)
-        options = parse_options(st.plan_file.read)
+      if st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
+        options = Helpers.parse_options(st.plan_file.read)
         safe_rm(st.plan_file)                    # the file holds options, never a plan
         if allow_options && options.length > 1
           st.options_file.write("#{JSON.pretty_generate(options)}\n")
@@ -275,33 +251,10 @@ module Chomper
 
     # ── implementation options ────────────────────────────────────────────────
 
-    # Read the OPTIONS block a plan call can answer with: one pipe-delimited line
-    # per option (see Prompts::OPTIONS_CONTRACT). Lines that do not parse are
-    # dropped, so a stray sentence around the block costs nothing, and a duplicate
-    # number keeps its first line — the numbers are what a reader replies with.
-    def parse_options(body)
-      body.to_s.lines.filter_map { |line|
-        fields = line.split("|").map(&:strip)
-        next unless fields.length >= 3
-        number = fields[0][/\d+/]
-        next unless number
-        { "n" => number.to_i, "title" => fields[1], "summary" => fields[2],
-          "repos" => fields[3].to_s.split(",").map(&:strip).reject(&:empty?),
-          "size" => fields[4].to_s }
-      }.uniq { |o| o["n"] }.sort_by { |o| o["n"] }
-    end
-
     # The plan-prompt focus for an option the reporter selected, or nil when the
-    # text is not the number of a saved option. Only a bare number counts
-    # ("2", "option 2"): anything else is feedback, exactly as before.
+    # comment names no saved option (it is then plain direction).
     def option_focus(st, text)
-      number = text.to_s.strip[/\A(?:option\s+)?(\d{1,2})\z/i, 1]
-      return nil unless number
-      option = (Helpers.safe_json_read(st.options_file) || []).find { |o| o["n"] == number.to_i }
-      return nil unless option
-      "The reporter chose option #{option["n"]} of the options you offered: " \
-        "#{option["title"]} — #{option["summary"]} " \
-        "Plan that option only, and do not plan the other options."
+      Helpers.option_choice(Helpers.safe_json_read(st.options_file) || [], text)
     end
 
     # Post the offered options as one work-package comment.
@@ -317,28 +270,59 @@ module Chomper
       return if options.empty?
 
       entries = options.map do |o|
+        # An estimate, not a promise: the plan's own REPOS line decides where the
+        # fix lands, and the size is the writer's guess before it writes any code.
         tag = [o["repos"].to_a.join(", "), o["size"]].reject { |s| s.to_s.strip.empty? }.join(" · ")
         entry = "**#{o["n"]} — #{o["title"]}** — #{o["summary"]}"
-        tag.empty? ? entry : "#{entry}\n#{tag}"
+        tag.empty? ? entry : "#{entry}\nestimate: #{tag}"
       end
       first = options.first["n"]
       body = +"I can fix this in #{options.length} ways. Pick one, or describe a different way.\n\n"
       body << entries.join("\n\n")
       body << "\n\nReply `@chomper ship #{first}` to build option #{first}. " \
-              "Reply `@chomper plan #{first}` to read the plan for it first. " \
+              "Add words after the number to change that option. " \
               "Reply `@chomper ship` with your own approach if no option fits."
       body << "\n\nOnly a user on chomper's allowlist can select an option." if @ctx.allowed_op_user_ids.any?
 
       post_note(st.item_id, addressed(body), internal: intent.source == :developer ? false : nil)
     end
 
+    # ── an existing prototype ─────────────────────────────────────────────────
+
+    # Every target repo already has a published PR.
+    def shipped?(st)
+      st.repos.any? && st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
+    end
+
+    def pr_links(st)
+      st.repos.map { |r| st.pr_url_file(r).read.strip }.join("\n")
+    end
+
+    # The work package's part is over once a prototype exists: the review of the
+    # code happens on the pull request, where chomper reads comments and pushes
+    # changes (gh-agent). Two tracks for one fix would split the record of it, so
+    # a request made here is answered with the link rather than acted on.
+    #
+    # Planning again would also be wrong on its own: it rewrites plan.md while the
+    # PR keeps linking the gist of the plan as it was, so the two would silently
+    # disagree.
+    def report_shipped(st, direction: "")
+      lead = if direction.to_s.strip.empty?
+               "this work package is already shipped:"
+             else
+               "I do not change the code from here. Ask for the change on the pull request, " \
+               "where I read the comments and push the changes:"
+             end
+      post_note(st.item_id, addressed("#{lead}\n\n#{pr_links(st)}"))
+    end
+
     # Turn the saved plan into a draft PR. Idempotent/resumable: re-reports an
     # existing PR, and skips implementation when the branch already has commits.
     def ship(st)
       # Already shipped to every target repo? Re-report the existing PR links.
-      if st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
-        links = st.repos.map { |r| st.pr_url_file(r).read.strip }.join("\n")
-        post_note(st.item_id, addressed("this work package is already shipped:\n\n#{links}"))
+      # #handle_ship catches this first; the guard stays for every other caller.
+      if shipped?(st)
+        report_shipped(st)
         return
       end
 

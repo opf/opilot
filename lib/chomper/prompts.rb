@@ -219,6 +219,10 @@ module Chomper
     # The lines are pipe-delimited data, not prose: the comment is composed by
     # Agent#post_options, so its wording and reply instructions are identical
     # every time and cannot pick up a heading or a sign-off.
+    # First line of an answer that carries options instead of a plan. Shared by
+    # every reader of that answer (Agent, FixRunner) so the word is written once.
+    OPTIONS_SENTINEL = "OPTIONS"
+
     OPTIONS_CONTRACT = <<~TEXT.strip
       Offer options ONLY when the choices differ in scope, or in behaviour the
       reporter can see. NEVER offer options for implementation detail — which file
@@ -248,10 +252,10 @@ module Chomper
     # Agent#produce_plan detects that sentinel on the first line and posts the
     # questions back to the WP instead of saving a plan.
     #
-    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) for the `ship`
-    # path, where no human has chosen an approach yet. It stays off for an
-    # explicit `@chomper plan`, for a chosen option, and for the terminal flows —
-    # each already has a human in the loop.
+    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) for a work-package
+    # trigger where no human has chosen an approach yet. It stays off once an
+    # option or a direction is given, and off for the terminal flows — those have
+    # an operator at the console who sees the plan before it is built.
     def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
                   allow_options: false)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
@@ -383,7 +387,7 @@ module Chomper
         You are chomper, an AI code assistant working on OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
         This is a conversation: answer the user's question. Do not implement the plan
-        here — if they want it built, tell them to comment `@chomper approve` or `@chomper ship`.
+        here — if they want it built, tell them to comment `@chomper ship`.
 
         ISSUE: #{item}  (JSON — fields: subject, description, comments[])#{related_line(related)}
         CURRENT PLAN: #{plan}
@@ -392,14 +396,17 @@ module Chomper
 
         #{THIN_REPORT_GATE}
 
-        AVAILABLE COMMANDS (mention these when relevant):
-        - @chomper ship [feedback]  — plan and ship in one step (use this for most tasks;
-                                      fix / prototype / build / pr / implement all mean the same).
-                                      When the fix has more than one shape, ship first offers
-                                      numbered options and waits
+        AVAILABLE COMMANDS (mention these when relevant) — `ship` is the only
+        working command; there is no separate plan or approve step any more, and
+        `plan`/`approve` in a comment now mean `ship`:
+        - @chomper ship [feedback]  — build it (fix / prototype / build / pr / implement all
+                                      mean the same). When the fix has more than one shape,
+                                      ship offers numbered options first and waits. Feedback
+                                      is direction, and revises an existing prototype
         - @chomper ship <number>    — build the option with that number, once options were offered
-        - @chomper plan [feedback]  — for complex tasks: draft a plan for review before touching any code
-        - @chomper approve          — implement and ship a plan that was drafted with @chomper plan
+                                      (words after the number change that option)
+        Once the pull request exists, changes to the code are asked for **on the pull
+        request**, not here — say so instead of promising a change on this work package.
         - @chomper grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions
         - @chomper summarize [focus] — recap the thread: state, decisions, open questions
 

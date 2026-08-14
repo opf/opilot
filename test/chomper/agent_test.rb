@@ -268,13 +268,15 @@ module Chomper
       assert_includes @notes.last, "allowlist"
     end
 
-    # `@chomper plan` is already a request to review one approach.
-    def test_plan_trigger_never_asks_for_options
-      agent_answering(OPTIONS_ANSWER).handle(intent(:plan))
+    # A settled approach must never re-open the question.
+    def test_ship_with_a_saved_plan_never_asks_for_options
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
 
       refute options_path.exist?
       refute(@claude.captures.any? { |p| p.include?("Offer options ONLY when") },
-             "the options gate belongs to ship, not plan")
+             "the options gate is only for a work package with no approach yet")
     end
 
     def test_options_without_a_usable_list_asks_once_for_a_plan_then_gives_up
@@ -288,12 +290,60 @@ module Chomper
     end
 
     def test_parse_options_skips_junk_and_orders_by_number
-      rows = @agent.send(:parse_options,
+      rows = Helpers.parse_options(
                          "OPTIONS\nnonsense\n2 | B | second | openproject | large\n" \
                          "**1** | A | first | openproject | small\n")
 
       assert_equal [1, 2], rows.map { |o| o["n"] }
       assert_equal "first", rows.first["summary"]
+    end
+
+    def test_ship_with_a_number_and_trailing_words_keeps_both
+      save_options
+      @agent.handle(intent(:ship, text: "2 but keep the toast"))
+
+      prompt = @claude.captures.find { |p| p.include?("chose option 2") }
+      assert prompt, "a leading number still selects the option"
+      assert_includes prompt, "The reporter added: but keep the toast"
+    end
+
+    def test_offer_passes_the_option_repos_on_as_the_expected_targets
+      save_options
+      @agent.handle(intent(:ship, text: "1"))
+
+      prompt = @claude.captures.find { |p| p.include?("chose option 1") }
+      assert_includes prompt, "The offer named these repos for it: openproject"
+    end
+
+    def test_offer_labels_the_repo_and_size_line_as_an_estimate
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+      assert_includes @notes.last, "estimate: openproject"
+    end
+
+    # ── an existing prototype ─────────────────────────────────────────────────
+
+    def test_direction_after_shipping_points_at_the_pr_and_plans_nothing
+      pr_url_path.write("https://github.com/o/r/pull/1\n")
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
+      before = plan_path.read
+
+      @agent.handle(intent(:ship, text: "use a toast instead"))
+
+      assert_empty @claude.captures, "a shipped work package must not spend a plan call"
+      assert_equal before, plan_path.read, "the plan the PR links must not be rewritten"
+      assert_includes @notes.last, "Ask for the change on the pull request"
+      assert_includes @notes.last, "https://github.com/o/r/pull/1"
+    end
+
+    def test_option_switch_after_shipping_also_points_at_the_pr
+      save_options
+      pr_url_path.write("https://github.com/o/r/pull/1\n")
+
+      @agent.handle(intent(:ship, text: "2"))
+
+      assert_empty @claude.captures
+      assert_includes @notes.last, "pull request"
     end
 
     # ── ship ──────────────────────────────────────────────────────────────────
@@ -366,24 +416,18 @@ module Chomper
 
     # ── handlers / routing ────────────────────────────────────────────────────
 
-    def test_handle_approve_without_plan_guards
-      @agent.handle(intent(:approve))
-      refute pr_url_path.exist?
-      assert(@notes.any? { |n| n.include?("no plan yet") })
-    end
-
     def test_reply_is_internal_when_trigger_is_internal
-      @agent.handle(intent(:approve, internal: true))
+      @agent.handle(intent(:ship, internal: true))
       assert_equal [true], @note_visibility
     end
 
     def test_reply_is_public_when_trigger_is_public
-      @agent.handle(intent(:approve, internal: false))
+      @agent.handle(intent(:ship, internal: false))
       assert_equal [false], @note_visibility
     end
 
     def test_reply_defaults_to_internal_when_visibility_unknown
-      @agent.handle(intent(:approve, internal: nil))
+      @agent.handle(intent(:ship, internal: nil))
       assert_equal [true], @note_visibility
     end
 
@@ -404,7 +448,7 @@ module Chomper
       wt = FakeWorktree.new
       inject_worktree(@agent, wt)
 
-      @agent.handle(intent(:plan))
+      @agent.handle(intent(:ship))
 
       assert_includes wt.fetched, ["origin", { ref: "dev" }],
                       "the base must be re-fetched at plan time, not trusted from launch"
@@ -436,16 +480,15 @@ module Chomper
       assert_equal [session], @claude.run_sessions.uniq, "implement and PR description must resume the planning session"
     end
 
-    def test_handle_plan_posts_the_plan_text_as_a_comment
-      @agent.handle(intent(:plan))
-      note = @notes.find { |n| n.include?("Do the thing.") }
-      assert note, "the plan content should be posted to the WP"
-      assert_includes note, "@chomper approve"
-    end
+    # A work package planned by an earlier run (when `plan` was its own command)
+    # ships on the next trigger, with no approval step left to wait for.
+    def test_ship_ships_a_plan_left_by_an_earlier_run
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
 
-    def test_handle_plan_waits_for_approval_without_shipping
-      @agent.handle(intent(:plan))
-      refute pr_url_path.exist?, "a plan must wait for @chomper approve before shipping"
+      @agent.handle(intent(:ship))
+      assert pr_url_path.exist?
+      assert_empty @claude.captures, "a plan a human has read is built as it reads, never rewritten"
     end
 
     def test_handle_chat_posts_reply_and_changes_no_files
@@ -459,9 +502,9 @@ module Chomper
 
     def related_path(id = "42"); @ctx.state_dir / "work_packages" / "op.example.com" / id / "related.json"; end
 
-    def test_handle_plan_writes_related_index_and_injects_it
+    def test_ship_writes_related_index_and_injects_it
       @pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
-      @agent.handle(intent(:plan))
+      @agent.handle(intent(:ship))
 
       assert related_path.exist?, "the related index should be written"
       index = JSON.parse(related_path.read)
@@ -481,7 +524,7 @@ module Chomper
     end
 
     def test_no_related_means_no_index_and_no_related_line
-      @agent.handle(intent(:plan))   # FakePull.related defaults to []
+      @agent.handle(intent(:ship))   # FakePull.related defaults to []
       refute related_path.exist?
       plan_prompt = @claude.captures.find { |p| p.include?("AVAILABLE REPOS") }
       refute_includes plan_prompt, "RELATED:"
@@ -493,7 +536,7 @@ module Chomper
       plan_path.dirname.mkpath
       plan_path.write("## Plan\nDo it.\n")   # approve will reach the failing push
 
-      agent.send(:handle_and_ack, intent(:approve, user: "Jane", user_href: "/api/v3/users/2"))
+      agent.send(:handle_and_ack, intent(:ship, user: "Jane", user_href: "/api/v3/users/2"))
 
       # Acked despite the failure → no infinite re-try on the next poll.
       assert_equal [["42", "2024-02-01T00:00:00Z"]], @pull.acted
@@ -530,10 +573,10 @@ module Chomper
     end
 
     def test_replies_mention_the_requesting_user
-      @agent.handle(intent(:approve, user: "Jane Doe", user_href: "/api/v3/users/2"))
+      @agent.handle(intent(:ship, user: "Jane Doe", user_href: "/api/v3/users/2"))
       note = @notes.last
       assert_includes note, %q(<mention class="mention" data-id="2" data-type="user" data-text="Jane Doe">@Jane Doe</mention>)
-      assert_includes note, "no plan yet"
+      assert_includes note, "https://github.com/o/r/pull/7"
     end
   end
 end

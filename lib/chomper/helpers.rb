@@ -2,6 +2,9 @@ require "json"
 require "tempfile"
 require "time"
 require "uri"
+# Ruby 4.0 dropped the full CGI library; cgi/escape is the part that survived,
+# and CGI.escapeHTML is all .mention needs.
+require "cgi/escape"
 require "rainbow"
 require "tty-markdown"
 
@@ -55,6 +58,71 @@ module Chomper
       JSON.parse(path.read)
     rescue StandardError
       nil
+    end
+
+    # An OpenProject mention of a user, so a comment notifies and addresses them
+    # by name. Falls back to the bare name, then to "", when the details are
+    # missing. Display names are free text an attacker can influence, so the name
+    # is HTML-escaped and the id must be numeric.
+    def self.mention(name, user_href)
+      escaped = CGI.escapeHTML(name.to_s)
+      id      = user_href.to_s.split("/").last.to_s
+      return escaped unless id.match?(/\A\d+\z/)
+      %Q(<mention class="mention" data-id="#{id}" data-type="user" data-text="#{escaped}">@#{escaped}</mention>)
+    end
+
+    # ── implementation options ──────────────────────────────────────────────
+    #
+    # A plan call may answer with implementation options instead of a plan (see
+    # Prompts::OPTIONS_CONTRACT). Both readers of that answer live here — the
+    # agent, which offers the options in a work-package comment, and the terminal
+    # runner, which offers them at the console — so the parsing and the wording of
+    # a chosen option are written once.
+
+    # Read the OPTIONS block: one pipe-delimited line per option. Lines that do
+    # not parse are dropped, so a stray sentence around the block costs nothing,
+    # and a duplicate number keeps its first line — the numbers are what a reader
+    # answers with.
+    def self.parse_options(body)
+      body.to_s.lines.filter_map { |line|
+        fields = line.split("|").map(&:strip)
+        next unless fields.length >= 3
+        number = fields[0][/\d+/]
+        next unless number
+        { "n" => number.to_i, "title" => fields[1], "summary" => fields[2],
+          "repos" => fields[3].to_s.split(",").map(&:strip).reject(&:empty?),
+          "size" => fields[4].to_s }
+      }.uniq { |o| o["n"] }.sort_by { |o| o["n"] }
+    end
+
+    # Resolve a reader's answer to the plan-call focus for the option they chose,
+    # or nil when the answer names no option (it is then plain direction). A
+    # **leading** number selects: "2", "option 2" and "2 but keep the toast" all
+    # choose option 2, and whatever follows the number rides along instead of
+    # being lost. One implementation, because a work-package comment and the
+    # terminal prompt must read an answer the same way.
+    def self.option_choice(options, text)
+      number, extra = text.to_s.strip.match(/\A(?:option\s+)?(\d{1,2})\b[\s,.:;–—-]*(.*)\z/im)&.captures
+      return nil unless number
+      option = options.to_a.find { |o| o["n"] == number.to_i }
+      return nil unless option
+      option_focus_text(option, extra.to_s)
+    end
+
+    # The plan-call focus for a chosen option. `extra` is anything the reader
+    # wrote after the number ("2 but keep the toast"), which is direction on top
+    # of the option and must not be dropped. The option's own repo list is passed
+    # on as the expected targets, so the repos named in the offer and the repos in
+    # the plan's REPOS line do not drift apart.
+    def self.option_focus_text(option, extra = "")
+      repos = option["repos"].to_a.join(", ")
+      text  = +"The reporter chose option #{option["n"]} of the options you offered: " \
+               "#{option["title"]} — #{option["summary"]} " \
+               "Plan that option only, and do not plan the other options."
+      text << " The offer named these repos for it: #{repos}. Keep to them in the REPOS line " \
+              "unless the code makes that impossible; if you must change them, say why in the plan." unless repos.empty?
+      text << " The reporter added: #{extra.strip}" unless extra.to_s.strip.empty?
+      text
     end
 
     # Write JSON to `path` atomically (tempfile in the same dir, then rename),

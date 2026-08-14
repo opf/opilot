@@ -162,10 +162,12 @@ Simply run `./chomper agent`
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
 `@chomper ship` plans and ships in one step (aliases: `fix`, `prototype`,
 `build`, `pr`, `implement`),
-`@chomper plan` drafts a plan for review, `@chomper approve` ships the drafted
-plan. `@chomper grill` stress-tests the ticket or plan (gaps, edge cases,
-risks), `@chomper summarize` recaps a long thread — and anything else just
-chats.
+`@chomper grill` stress-tests the ticket or plan (gaps, edge cases, risks),
+`@chomper summarize` recaps a long thread — and anything else just chats. There is
+no separate plan-and-approve step: `ship` asks first when a fix has more than one
+shape (below), and everything else is reviewed as a prototype and revised with
+`@chomper ship <feedback>`. The words `plan` and `approve` still work, and now mean
+`ship`.
 Naming the chomper user in a WP's **Developers** field also triggers the `ship`
 flow —
 once per WP, from anyone (disable with `CHOMPER_DEVELOPER_TRIGGER=0`; point it at
@@ -173,10 +175,15 @@ a different field with `CHOMPER_DEVELOPER_FIELD`).
 
 Either way, `ship` **offers options first** when the fix has more than one
 defensible shape: two or three numbered options, one sentence each, and no code
-until someone replies `@chomper ship <number>` (`@chomper plan <number>` reads the
-plan for one first). A fix with a single shape is planned and shipped in the same
-pass, so a simple ticket is unaffected. `@chomper plan` never asks — it is already
-a request to review one approach.
+until someone replies `@chomper ship <number>` (words after the number change that
+option). A fix with a single shape is planned and shipped in the same pass, so a
+simple ticket is unaffected, and free-text direction (`@chomper ship use a toast
+instead`) skips the question too. `./chomper wp ship` offers the same options at the
+console.
+
+Once the prototype is open, the work moves to the pull request: ask for code changes
+there, where chomper reads the comments and pushes. A `@chomper ship` on a shipped
+work package just answers with the link.
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
@@ -360,7 +367,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ### Feature ideas
 * Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
 * Make prototyping implement multiple solutions at once, when applicable
-* Add a command to generate implementation options and cap it to N characters
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias

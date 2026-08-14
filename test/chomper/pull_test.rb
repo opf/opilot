@@ -135,12 +135,15 @@ module Chomper
 
     # ── parse_command ─────────────────────────────────────────────────────────
 
-    def test_parse_command_plan_without_feedback
-      assert_equal [:plan, ""], @pull.send(:parse_command, "@chomper plan")
+    # `plan` and `approve` are retired words kept mapped to :ship — the option
+    # step replaced the plan-and-wait flow, and a reader who still types them must
+    # not get a chat answer where a prototype was wanted.
+    def test_parse_command_plan_is_a_ship
+      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper plan")
     end
 
-    def test_parse_command_plan_with_feedback
-      assert_equal [:plan, "also handle nil input"],
+    def test_parse_command_plan_with_feedback_is_a_ship
+      assert_equal [:ship, "also handle nil input"],
                    @pull.send(:parse_command, "@chomper plan also handle nil input")
     end
 
@@ -167,8 +170,8 @@ module Chomper
                    @pull.send(:parse_command, "@chomper building on the last comment")
     end
 
-    def test_parse_command_approve
-      assert_equal [:approve, nil], @pull.send(:parse_command, "@chomper approve")
+    def test_parse_command_approve_is_a_ship
+      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper approve")
     end
 
     def test_parse_command_free_text_is_chat
@@ -201,7 +204,7 @@ module Chomper
     MENTION = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 
     def test_parse_command_handles_mention_markup_approve
-      assert_equal [:approve, nil], @pull.send(:parse_command, "#{MENTION} approve")
+      assert_equal [:ship, ""], @pull.send(:parse_command, "#{MENTION} approve")
     end
 
     def test_parse_command_handles_mention_markup_ship_with_feedback
@@ -214,7 +217,7 @@ module Chomper
 
     def test_parse_command_handles_emoji_only_mention
       emoji_mention = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">🤖</mention>)
-      assert_equal [:plan, ""], @pull.send(:parse_command, "#{emoji_mention} plan")
+      assert_equal [:ship, ""], @pull.send(:parse_command, "#{emoji_mention} plan")
     end
   end
 
@@ -309,10 +312,23 @@ module Chomper
 
     # Seed a cached item.json so fetch_work_package_item returns its comments
     # without any activities HTTP call.
-    def seed_item(id, updated_at, comments)
+    def seed_item(id, updated_at, comments, extra: {})
       dir = Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s
       dir.mkpath
-      (dir / "item.json").write(JSON.generate({ "updated_at" => updated_at, "comments" => comments }))
+      (dir / "item.json").write(JSON.generate(
+        { "updated_at" => updated_at, "comments" => comments }.merge(extra)
+      ))
+    end
+
+    # Collect the comment bodies chomper posts during a poll (the refusal note is
+    # the only one Pull itself posts; every other note comes from the Agent).
+    def capture_notes
+      notes = []
+      stub_request(:post, %r{/work_packages/\d+/activities}).to_return do |req|
+        notes << JSON.parse(req.body).dig("comment", "raw")
+        { status: 201, body: "{}" }
+      end
+      notes
     end
 
     def build_pull(allowed_op_user_ids = [], developer_trigger: true, developer_field_name: "Developers")
@@ -405,7 +421,7 @@ module Chomper
       assert_equal 1, @pull.scanned_count
       assert_equal 0, @pull.changed_count   # seeded item.json is current → cached
       assert_equal "1",                   intents[0].item_id
-      assert_equal :plan,                 intents[0].command
+      assert_equal :ship,                 intents[0].command
       assert_equal "watch the edges",     intents[0].text
       assert_equal "2024-02-01T00:00:00Z", intents[0].comment_at
     end
@@ -418,11 +434,30 @@ module Chomper
           "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} fix it" }
       ])
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      notes = capture_notes
 
       assert_equal [], @pull.poll_intents(FILTERS)
       # marked acted so it is not re-evaluated next poll
       on_disk = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
       assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
+      # …and the commenter is told once, rather than left with silence
+      assert_equal 1, notes.length
+      assert_includes notes.first, "allowlist"
+      assert_includes notes.first, "Mallory"
+      assert on_disk["refusal_noted_at"], "the refusal must be marked so it is said only once"
+    end
+
+    def test_refusal_note_is_posted_only_once_per_work_package
+      @pull = build_pull(["1"])
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Mallory", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} fix it" }
+      ], extra: { "refusal_noted_at" => "2024-01-03T00:00:00Z" })
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      notes = capture_notes
+
+      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_empty notes, "a second rejected trigger must not add another comment"
     end
 
     def test_emits_trigger_from_allowlisted_user_id
@@ -486,7 +521,7 @@ module Chomper
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
-      assert_equal :plan, intents[0].command
+      assert_equal :ship, intents[0].command
     end
 
     def test_ignores_work_packages_without_a_trigger
@@ -508,7 +543,7 @@ module Chomper
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
-      assert_equal :plan,              intents[0].command
+      assert_equal :ship,              intents[0].command
       assert_equal "watch the edges",  intents[0].text
     end
 
@@ -692,7 +727,7 @@ module Chomper
 
       intents = @pull.poll_intents(FILTERS)
       assert_equal 1, intents.length
-      assert_equal :plan, intents[0].command
+      assert_equal :ship, intents[0].command
       assert_nil intents[0].source
     end
 

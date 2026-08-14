@@ -40,10 +40,20 @@ the reply is unaddressed/internal with no 👀 pickup signal. The de-dup gate is
 WP's `updatedAt` vs the scan floor (the list payload carries no per-field
 timestamp), so a WP handed over long ago but bumped inside the window fires once.
 
+**Once a prototype exists, the work package is done.** `#handle_ship` answers a
+shipped WP with the PR link and spends no Claude call: code review belongs on the
+pull request, where gh-agent reads comments and pushes changes, and two tracks for
+one fix would split the record of it. Planning again would also rewrite `plan.md`
+while the PR keeps linking the gist of the plan as it was.
+
+**A plan on file with no new direction is built, not rewritten.** That is what the
+retired `approve` did, and the only way to get a prototype of the exact plan a human
+has read.
+
 **`ship` offers options before it writes code.** A fix with more than one
 defensible shape is answered with 2–3 numbered options, one sentence each, and
-nothing else happens until someone replies `@chomper ship <n>` (or `@chomper plan
-<n>`). The judgment is folded into the *same* plan call as a third first-line
+nothing else happens until someone replies `@chomper ship <n>`. The judgment is
+folded into the *same* plan call as a third first-line
 sentinel beside `NEEDS_INFO` and `REPOS:` — `OPTIONS`, then one pipe-delimited line
 per option (`Prompts::OPTIONS_CONTRACT`) — so a one-shape ticket is planned and
 shipped in that call and costs exactly what it did before. `Agent#produce_plan`
@@ -51,10 +61,23 @@ returns `:options`, writes `options.json`, and `#post_options` composes the comm
 in Ruby (the writer supplies only title and sentence, so the wording, numbering and
 reply instructions cannot drift). The sentinel is honoured even when options were
 *not* invited, so an uninvited block is never shipped as a plan; an unusable list
-buys one retry for a plan, then `:failed`. `@chomper plan` never invites options —
-asking for a plan is already a choice of one approach — and `approve` is untouched.
+buys one retry for a plan, then `:failed`. Options are invited only when nothing has
+settled the approach yet: a saved plan, a chosen option, or free-text direction all
+skip the question.
+A **leading** number selects, and words after it ride along as direction
+(`Helpers.option_choice`/`#option_focus_text`, shared with the terminal), so
+"2 but keep the toast" neither loses the option nor loses the sentence. The repo/size
+line is labelled an **estimate**, because the plan's own `REPOS` line decides where
+the fix lands; the chosen option's repos are passed into the plan call as the expected
+targets so the two rarely disagree.
+
 Selecting is allowlist-gated like any comment trigger, which the offer says out
-loud when `CHOMPER_ALLOWED_OP_USER_IDS` is set. A **Developers** handover names no
+loud when `CHOMPER_ALLOWED_OP_USER_IDS` is set. A rejected trigger is no longer
+silent: `Pull#note_refused_trigger` answers the commenter **once per WP**
+(`refusal_noted_at`), because chomper offers options to anyone who can comment while
+only allowlisted users may choose one, and because a reply is the one thing an
+unlisted user can make chomper do — a per-comment answer would let anyone fill the
+activity tab. A **Developers** handover names no
 commenter, so its offer is posted **publicly** (the one visibility override in
 `#post_note`): an internal comment that mentions nobody reaches nobody who can
 answer it. That handover has only its one shot, so an offer nobody answers waits
@@ -126,7 +149,10 @@ nothing" and "not scanning" look identical in the log.
 
 - **`wp ship <id>...`** (alias `wp fix`) — fetch by id (ignoring filters), run a
   plan/approve loop (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`) per id, ship each
-  approved plan as a draft PR. One failure doesn't abort the rest.
+  approved plan as a draft PR. One failure doesn't abort the rest. A fix with more than
+  one shape is offered as the same numbered options first
+  (`#prompt_option_choice`) — a number picks one, free text is direction of the
+  operator's own — so a ticket behaves the same at the console as in the thread.
 - **`wp build <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
 - **`wp plan <id>...`** — stop at the approved plan.
@@ -242,7 +268,7 @@ bare `docker compose run …` works from the repo root.
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
 | `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent`s |
-| `agent.rb` | Main event loop — dispatches `:chat`, `:plan`, `:approve`, `:ship` |
+| `agent.rb` | Main event loop — dispatches the two intents, `:chat` and `:ship` |
 | `gh_pull.rb` | Polls chomper's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
 | `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning chomper; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
@@ -327,9 +353,13 @@ will call Claude, not mid-run with a connection error.
 
 `:ship` (`@chomper ship`, plus the aliases `fix`, `prototype`, `build`, `pr`,
 `implement` — an unrecognised word falls through to `:chat` and answers where a PR
-was wanted) combines plan + implement in one pass, unless the plan call answers with
-`OPTIONS` and waits for `@chomper ship <n>`; `:plan` waits for a human
-`@chomper approve`. Chat lenses (`grill`, `summarize`) are preset instructions over
+was wanted) is the only working intent: it plans and implements in one pass, unless
+the plan call answers with `OPTIONS` and waits for `@chomper ship <n>`. The separate
+`:plan`/`:approve` intents are **gone** — the options step replaced plan-and-wait, and
+everything else is reviewed as a prototype and revised with `@chomper ship <feedback>`.
+Both words still parse (as `:ship` aliases), because the people who learned them would
+otherwise get a chat answer where a prototype was wanted. The terminal `wp plan` is a
+different thing and stays: it has an operator at the console. Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
 ### State on disk (`.chomper/` — gitignored)
@@ -349,6 +379,7 @@ globally unique, so `pr_reviews/` is flat.
 │   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
 │   └── <wp_id>/
 │       ├── item.json            # WP metadata (incl. developers[]) + poll cache + acted_at
+│       │                        #   + refusal_noted_at (the one allowlist note per WP)
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── options.json         # offered implementation options; present = waiting for a number
