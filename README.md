@@ -354,6 +354,8 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ### Feature ideas
+* Generate arbitrary non-code artifacts like SVGs or stylesheets
+  * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
