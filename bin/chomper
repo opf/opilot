@@ -23,6 +23,7 @@ require "chomper/fix_runner"
 require "chomper/pr_runner"
 require "chomper/pull_runner"
 require "chomper/chat_runner"
+require "chomper/usage_runner"
 # chomper/pd is NOT required here: only `pd` uses the pipeline, so CLI#pd requires
 # it on demand (and chomper/pd/intake later still — it pulls in roo, nokogiri and
 # rubyzip, which only the stages that read a document ever need). The one part

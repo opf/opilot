@@ -223,6 +223,7 @@ module Chomper
           ./chomper pd <command>     product development: the spec-driven pipeline
           ./chomper chat [message]   read-only chat about your local mirrors
           ./chomper status           what chomper has planned or shipped
+          ./chomper usage            OpenRouter spend: account, this key, model pricing
           ./chomper reset            delete .chomper/, clones included
 
         `./chomper wp` and `./chomper pd` list their own commands, and --help works

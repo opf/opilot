@@ -21,6 +21,7 @@ module Chomper
       case cmd
       when "status" then @ui.status
       when "reset"  then @ui.reset
+      when "usage"  then UsageRunner.new(@ctx).run
       # The agent loops — chomper's main mode. No arguments: they poll.
       when "agent"    then agent(rest)
       # Pre-group names for `agent op` / `agent gh`. Kept working rather than

@@ -149,6 +149,7 @@ comments), so it is boxed in from several directions:
 | `./chomper wp pull [<id>...]` | Mirror work packages into the local cache |
 | `./chomper chat [message]` | Free read-only chat about the local mirrors |
 | `./chomper status` / `reset` | List planned/shipped work packages / wipe `.chomper/` for a fresh start |
+| `./chomper usage` | OpenRouter spend: account balance, this key's usage/limit, and pricing for the configured models |
 
 Everything keyed on a work-package id lives under `wp` (`./chomper wp` lists the
 group); the spec-driven pipeline lives under `pd`.

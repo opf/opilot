@@ -223,6 +223,7 @@ before touching anything under `lib/chomper/pd/`.
 ./chomper pd implement <wp-id>...
 
 ./chomper status    # list planned/shipped work packages
+./chomper usage     # OpenRouter spend: account balance, this key, model pricing
 ./chomper reset     # delete .chomper/ (clones included)
 
 # Tests
@@ -258,7 +259,11 @@ Four Docker containers orchestrated by `compose.yml`:
 - **Authgw** (Node 20, `authgw.js`) — holds the real `OPENROUTER_API_KEY`,
   validates the fixed gateway token (`CHOMPER_GW_TOKEN`, non-secret), swaps it
   for the real key in the same `Authorization: Bearer` header, forwards to a
-  hardcoded `openrouter.ai`. Not an open proxy, so it egresses directly.
+  hardcoded `openrouter.ai`. Not an open proxy, so it egresses directly. It is a
+  raw forwarder rather than an inference-only proxy, so `./chomper usage`
+  (`Clients::OpenRouter`) reaches `/api/v1/credits` and `/api/v1/key` through it
+  the same way pi reaches chat completions — the runner never holds the key
+  either, only the same non-secret handshake token.
 - **Proxy** (tinyproxy) — egress allowlist for the harness container
   (`tinyproxy-filter`); everything else denied. Model calls don't go through it
   (they reach authgw directly over the internal network).

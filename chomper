@@ -173,6 +173,10 @@ _needs_harness() {
   return 1
 }
 
+# `usage` needs only authgw (it reads OpenRouter's account/key balance through
+# it) — not the full harness/proxy pair a real pi run needs.
+_needs_authgw() { _needs_harness || _is usage; }
+
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
 # writes the clone's .git/info/exclude, and the rest read or write its openspec/.
 _needs_repos() { _needs_harness || [ "$CMD" = "pd" ]; }
@@ -209,16 +213,21 @@ if _needs_repos; then
   done < <(dc --progress quiet run --no-deps --rm runner ruby bin/repos list)
 fi
 
-if _needs_harness; then
+if _needs_authgw; then
   # The OpenRouter key is held only by the authgw gateway and never reaches
-  # the harness container; pi authenticates to authgw with this fixed,
-  # non-secret handshake token instead (pi-models.json resolves it via
-  # $CHOMPER_GW_TOKEN).
+  # the harness container; pi (and `usage`) authenticate to it with this
+  # fixed, non-secret handshake token instead (pi-models.json resolves it via
+  # $CHOMPER_GW_TOKEN; the runner gets it via compose.yml).
   : "${OPENROUTER_API_KEY:=$(_env_get OPENROUTER_API_KEY)}"
   export OPENROUTER_API_KEY
   export CHOMPER_GW_TOKEN="chomper-internal-gateway"
-  # proxy starts as harness's dependency; authgw needs the real key or it exits.
-  dc up -d --wait --remove-orphans authgw harness
-  trap 'dc stop harness proxy authgw 2>/dev/null || true' EXIT INT TERM
+  if _needs_harness; then
+    # proxy starts as harness's dependency; authgw needs the real key or it exits.
+    dc up -d --wait --remove-orphans authgw harness
+    trap 'dc stop harness proxy authgw 2>/dev/null || true' EXIT INT TERM
+  else
+    dc up -d --wait --remove-orphans authgw
+    trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM
+  fi
 fi
 dc --progress quiet run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/chomper" "$@"

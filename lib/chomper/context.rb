@@ -9,7 +9,8 @@ module Chomper
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :harness_url, :contributor_token,
-                :state_container, :op_url, :token
+                :state_container, :op_url, :token,
+                :authgw_url, :gw_token
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
     def self.build(script_dir = nil)
@@ -33,6 +34,12 @@ module Chomper
       # container an unset token arrives as "", which is TRUTHY.
       @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
       @harness_url        = ENV.fetch("HARNESS_URL", "http://harness:47291")
+      # authgw is the only sidecar holding the real OpenRouter key; `usage`
+      # queries it for account/key balance the same non-secret way pi does —
+      # a Bearer CHOMPER_GW_TOKEN, never the real key. nil (not "") when unset,
+      # so `usage` can tell "not running via ./chomper" from "token is blank".
+      @authgw_url         = ENV.fetch("AUTHGW_URL", "http://authgw:47292")
+      @gw_token           = presence(ENV["CHOMPER_GW_TOKEN"])
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
       # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
