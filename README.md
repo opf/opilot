@@ -331,6 +331,14 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 
 ## TODO
 
+### Productization
+* Wire the agent into our Compose stack!
+  * either via an override file or a separate branch/fork
+* Make use of the MCP server
+  * Use MCP calls instead of the local JSON WP mirrors
+* Make use of our own LLM
+* Make the agent work off webhooks instead of constant polling
+
 ### Security & Hosting
 * Switch from Docker to Podman for root-less process model
 * (?) Permission to read OP user emails
@@ -338,10 +346,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ### AI Architecture
 * Add intent classification interface:
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command
-* Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
 * Set up token limits & cleanly handle threshold breaches
-* Switch away from Anthropic models
-  * Ideally, this would be our own hosted LLM.
 * Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
@@ -355,7 +360,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias
 * AppSignal integration — ingesting the errors is the open half; ticket creation itself now exists (`pd generate-wp`)
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
-* Make the agent mode work off webhooks instead of constant polling
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
   * Or just run chomper in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container
