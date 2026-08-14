@@ -15,7 +15,7 @@ plan's first line — `REPOS: <name>[@<base>][, <name>…]` — which
 override (e.g. `openproject@release/17.6`) in `target_base.json`. The fix branch is
 both cut from and PR'd against that base (`ItemState#base_for`).
 
-Each repo is a standalone clone at `.chomper/repos/<name>`, mounted into the claude
+Each repo is a standalone clone at `.chomper/repos/<name>`, mounted into the harness
 container at `/repos/<name>`; the runner ships an independent branch + PR to each
 repo that actually changed (`Chomper::Registry`/`Chomper::Repo`). `OP_REPO_PATH`
 seeds *only* the openproject clone from a local checkout (a wrong path falls back to
@@ -240,21 +240,32 @@ Four Docker containers orchestrated by `compose.yml`:
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
   Claude, pushes branches, opens PRs. Does all real git.
-- **Claude** (Node 20 + Claude Code CLI) — wraps `claude -p` via `server.js` on port
-  47291 (internal network only, never published). Working directory is `/repos` with
-  every worktree at `/repos/<name>`, so Claude Code auto-loads
-  `/repos/openproject/CLAUDE.md` as project memory. Its Bash grant is **read-only
-  git** — history for context, but no commit, push, or non-git command. Two
-  `PreToolUse` hooks (`--settings /app/claude-settings.json`): `guard-writes.js`
-  blocks writes outside `/repos`, `guard-bash.js` allows only read-only git.
-  `ANTHROPIC_API_KEY` selects auth: a real key routes via `ANTHROPIC_BASE_URL` →
-  authgw with only a fixed handshake token in this container; the literal `oauth`
-  (or a legacy blank) uses stored `claude auth login` creds.
-- **Authgw** (Node 20, `authgw.js`) — holds the real key, validates the fixed
-  gateway token (`CHOMPER_GW_TOKEN`, non-secret), injects `x-api-key`, forwards to a
-  hardcoded `api.anthropic.com`. Not an open proxy, so it egresses directly.
-- **Proxy** (tinyproxy) — egress allowlist for the claude container
-  (`tinyproxy-filter`); everything else denied.
+- **Harness** (Node 22 + [pi], compose service `harness`, `Dockerfile.harness`) —
+  wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
+  never published), which translates pi's JSON event stream into the frame
+  shapes `lib/chomper/claude.rb` parses (see docs/pi-harness-plan.md — this
+  migrated off the Claude Code CLI; the `Chomper::Claude` class is unchanged
+  on purpose — see "Not in this change" in docs/pi-harness-plan.md — but the
+  container/service name and its URL var moved off "claude" (`HARNESS_URL`).
+  Working directory is `/repos` with every worktree at
+  `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
+  CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
+  target repo's directly instead. Its Bash grant is **read-only git** —
+  history for context, but no commit, push, or non-git command. One extension,
+  `pi-guards.ts` (loaded via `--no-extensions -e`, pi's only PreToolUse-style
+  hook), enforces both: blocks writes outside `/repos`, allows only read-only
+  git. `pi-models.json` routes the `openrouter` provider through authgw,
+  resolving its `apiKey` to `CHOMPER_GW_TOKEN` (a fixed handshake value, not a
+  secret) — the real key never reaches this container.
+- **Authgw** (Node 20, `authgw.js`) — holds the real `OPENROUTER_API_KEY`,
+  validates the fixed gateway token (`CHOMPER_GW_TOKEN`, non-secret), swaps it
+  for the real key in the same `Authorization: Bearer` header, forwards to a
+  hardcoded `openrouter.ai`. Not an open proxy, so it egresses directly.
+- **Proxy** (tinyproxy) — egress allowlist for the harness container
+  (`tinyproxy-filter`); everything else denied. Model calls don't go through it
+  (they reach authgw directly over the internal network).
+
+[pi]: https://github.com/badlogic/pi-mono
 
 `./chomper` handles first-run setup (`.env` wizard, cloning each repo) then invokes
 the runner. `compose.yml` mounts key on `SCRIPT_DIR`, exported as an absolute host
@@ -278,7 +289,7 @@ bare `docker compose run …` works from the repo root.
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `wp ship`/`build`/`plan` |
 | `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@chomper refresh` via `#refresh_one` |
-| `claude.rb` | HTTP client to the claude container; per-WP session IDs |
+| `claude.rb` | HTTP client to the harness container; per-WP session IDs |
 | `prompts.rb` | All Claude prompts in one place. Everything chomper publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#post_activity` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
@@ -401,24 +412,29 @@ globally unique, so `pr_reviews/` is flat.
 │   └── pr.json / ci.json / gh_pr.json / gh_session_id
 ├── changes/ , openspec/     # `pd` state — see lib/chomper/pd/CLAUDE.md
 ├── repos/<repo_name>/       # this repo's standalone clone (mounted at /repos/<name>)
-└── claude-auth/             # claude CLI config (OAuth creds when no API key is set)
+├── pi-agent/                # pi's config dir (settings.json/models.json seeded by
+│                            #   server.js from pi-settings.json/pi-models.json, auth.json)
+└── pi-sessions/             # pi session transcripts, keyed by --session <id>
 ```
 
-### Claude container communication
+### Harness container communication
 
-Runner POSTs to `http://claude:47291` with headers:
+Runner POSTs to `http://harness:47291` with headers:
 
-- `X-Claude-Tools` — `"Read,Grep,Glob,Bash"` (planning/chat) or
-  `"Read,Grep,Glob,Write,Edit,Bash"` (implementation). `server.js` rejects any other
-  grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
+- `X-Claude-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
+  `"read,grep,find,ls,bash,write,edit"` (implementation). `server.js` rejects any
+  other grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
 - `X-Claude-Model` — one model per WP for every session-bound phase (`MODEL_WORK`),
-  plus `MODEL_FAST` for stateless one-shots. Validated by format, not an allowlist —
-  model choice grants no privilege.
+  plus `MODEL_FAST` for stateless one-shots — OpenRouter slugs behind pi's provider
+  prefix (`openrouter/anthropic/claude-opus-4.8`), not Anthropic API ids. Validated
+  by format, not an allowlist — model choice grants no privilege.
 - `X-Claude-Session` — session ID (omit on first call; save from the response).
 
-`server.js` spawns `claude -p` with `--output-format stream-json --verbose --model
-<model>`, streams NDJSON back, and persists the session ID. It sets no `cwd`, so it
-inherits `/repos`.
+`server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/pi-guards.ts`,
+`--no-context-files`, `--no-approve`, `--offline`, and the tools/model/session
+above), translates its JSON event stream into the assistant/result/session_id/exit
+frame shapes claude.rb parses, and persists the session ID. It sets no `cwd`, so it
+inherits `/repos`. See docs/pi-harness-plan.md for the full event-shape mapping.
 
 ### Required environment variables (`.env`)
 
@@ -426,15 +442,15 @@ inherits `/repos`.
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token. Read access suffices for `wp`/`chat`; agent mode needs write (to comment), `pd` needs `:add_work_packages` |
-| `CLAUDE_URL` | Optional; where the runner reaches the claude container (default `http://claude:47291`) |
+| `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
 | `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
 | `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on chomper's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `CHOMPER_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@chomper` mentions (read-only answers). **Off by default** — the only source reaching outside chomper's own PRs. Also needs `CHOMPER_ALLOWED_GH_USERS` |
-| `ANTHROPIC_API_KEY` | A real key (recommended) lives only in authgw. The literal `oauth` selects `claude auth login` instead (creds in the claude container — less isolated); a legacy blank means the same |
-| `CHOMPER_MODEL` | Optional; overrides the work model (default `claude-opus-4-8`) |
-| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `claude-haiku-4-5`) |
+| `OPENROUTER_API_KEY` | Required to run the harness container. Lives only in authgw — never reaches the harness container |
+| `CHOMPER_MODEL` | Optional; overrides the work model (default `openrouter/anthropic/claude-opus-4.8`) |
+| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `CHOMPER_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `CHOMPER_ASSIGN_TRIGGER` is still honoured as a fallback |
 | `CHOMPER_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
 | `CHOMPER_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |

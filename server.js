@@ -1,27 +1,52 @@
-// HTTP wrapper around `claude -p` — runs inside the chomper-claude container.
+// HTTP wrapper around `pi --mode json` — runs inside the chomper-claude
+// container. Translates pi's JSON event stream into the NDJSON frame shapes
+// claude.rb already parses (assistant/result/session_id/exit) — see
+// docs/pi-harness-plan.md for why the shim stays and which pi interface it
+// uses, and translate()'s comment below for the event-shape ground truth.
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 
 const PORT = 47291;
 const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 // Server-side allowlist of tool grants. The header is client-controlled, so
-// only the exact grants the runner uses are accepted — anything else (e.g. an
-// unexpected Bash(*)) is refused rather than passed to --allowedTools.
+// only the exact grants the runner uses are accepted. pi's tool names are
+// lowercase and there's no glob tool — `find` covers that job.
 // Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/claude.rb.
 const ALLOWED_TOOL_GRANTS = new Set([
-  'Read,Grep,Glob,Bash',
-  'Read,Grep,Glob,Write,Edit,Bash',
+  'read,grep,find,ls,bash',
+  'read,grep,find,ls,bash,write,edit',
 ]);
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-// Model is validated by shape, not against an allowlist: it grants no
-// privilege (unlike the tool grants above), so the only risk is a malformed
-// value reaching --model. The pattern forbids spaces and a leading dash, so it
-// can't smuggle extra CLI args; it stays permissive on the ID itself so model
-// strings don't need syncing here on every release. The runner picks the model
-// (claude.rb MODEL_WORK / MODEL_FAST).
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// A model id now carries an OpenRouter vendor slug behind a provider prefix,
+// e.g. "openrouter/anthropic/claude-opus-4.8" (claude.rb supplies the full
+// string; server.js does no prefixing of its own). Validated by shape, not an
+// allowlist: it grants no privilege (unlike the tool grants above), so the
+// only risk is a malformed value reaching --model. Forbids spaces and a
+// leading dash so it can't smuggle extra CLI args.
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+
+const PI_AGENT_DIR   = process.env.PI_CODING_AGENT_DIR || '/pi-agent';
+const PI_SESSION_DIR = process.env.PI_CODING_AGENT_SESSION_DIR || '/sessions';
+
+// Copies the image's baked-in config into the writable agent dir on every
+// boot, so pi-settings.json/pi-models.json stay in version control and the
+// first-run wizard needs no change. Unconditional, not "if missing": these two
+// files are meant to be exactly what's in git — an edit to pi-models.json (e.g.
+// adding a compat flag) must take effect on the next container start, not be
+// masked forever by a copy seeded before the edit existed. Neither file is
+// meant to be hand-edited in the running container (unlike pi's own
+// auth.json, untouched here), so this can't discard anything meant to persist.
+function seedAgentDir() {
+  fs.mkdirSync(PI_AGENT_DIR, { recursive: true });
+  const seeds = [['pi-settings.json', 'settings.json'], ['pi-models.json', 'models.json']];
+  for (const [src, destName] of seeds) {
+    fs.copyFileSync(path.join('/app', src), path.join(PI_AGENT_DIR, destName));
+  }
+}
 
 // Serialise requests so sessions are never interleaved.
 const queue = [];
@@ -31,7 +56,7 @@ function drain() {
   if (queue.length === 0) { busy = false; return; }
   busy = true;
   const { body, tools, model, sessionId, res } = queue.shift();
-  runClaude(body, tools, model, sessionId, res, drain);
+  runPi(body, tools, model, sessionId, res, drain);
 }
 
 function enqueue(body, tools, model, sessionId, res) {
@@ -39,21 +64,112 @@ function enqueue(body, tools, model, sessionId, res) {
   if (!busy) drain();
 }
 
-function runClaude(body, tools, model, sessionId, res, done) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose',
-                '--settings', '/app/claude-settings.json'];
-  if (tools) args.push('--allowedTools', tools);
-  if (model) args.push('--model', model);
-  if (sessionId) {
-    args.push('--resume', sessionId);
-  }
+function extractText(message) {
+  if (!message || !Array.isArray(message.content)) return '';
+  return message.content.filter(p => p.type === 'text').map(p => p.text).join('');
+}
 
-  const proc = spawn('claude', args, { env: process.env });
+function lastAssistantOf(messages) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') return messages[i];
+  }
+  return null;
+}
+
+// The final assistant message's stopReason decides the outcome. "stop" is a
+// clean finish; everything else (error, aborted, deferred, length, a
+// leftover toolUse) is surfaced as an error rather than passed off as a
+// finished answer — mirrors Claude Code's own "an error means the run died
+// mid-way" rule in claude.rb.
+function settleResult(msg) {
+  if (!msg) {
+    return { type: 'result', subtype: 'error_no_response', is_error: true,
+              result: 'pi produced no assistant response' };
+  }
+  if (msg.stopReason === 'stop') {
+    return { type: 'result', subtype: 'success', is_error: false, result: extractText(msg) };
+  }
+  const subtype = msg.stopReason === 'error' ? 'error_during_execution' : `error_${msg.stopReason}`;
+  const result = msg.errorMessage || extractText(msg) || subtype;
+  return { type: 'result', subtype, is_error: true, result };
+}
+
+// Translates one parsed pi `--mode json` event into zero or more chomper
+// NDJSON frames. Ground truth for the event shapes (verified against pi
+// 0.84.2, not just its docs — see docs/pi-harness-plan.md):
+//
+//   {"type":"session","id":...}                                    — first line
+//   {"type":"tool_execution_start","toolName":...,"args":{...}}
+//   {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":...}}
+//   {"type":"agent_end","messages":[...],"willRetry":bool}
+//   {"type":"agent_settled"}
+//
+// pi can run several internal agent_start/agent_end cycles for ONE prompt —
+// auto-retry on a transient provider error, or overflow compaction — each
+// with its own agent_end (willRetry: true on all but the last). Only
+// agent_settled means "no automatic retry, compaction retry, or queued
+// continuation remains" (pi's docs/extensions.md), so `state.lastAssistantMessage`
+// is only updated (not acted on) at agent_end, and the result frame is
+// synthesized once, at agent_settled — acting on the first agent_end would
+// report a transient retry as the final outcome.
+//
+// `mutable state` carries {sessionId, lastAssistantMessage} across calls for
+// one process's stream.
+function translate(parsed, state) {
+  const frames = [];
+  switch (parsed.type) {
+    case 'session':
+      state.sessionId = parsed.id;
+      break;
+    case 'tool_execution_start':
+      frames.push({
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: parsed.toolName, input: parsed.args }] },
+      });
+      break;
+    case 'message_update': {
+      const evt = parsed.assistantMessageEvent;
+      if (evt && evt.type === 'text_delta' && evt.delta) {
+        frames.push({ type: 'assistant', message: { content: [{ type: 'text', text: evt.delta }] } });
+      }
+      break;
+    }
+    case 'agent_end': {
+      // Only overwrite when this cycle actually has an assistant message — an
+      // aborted/compaction cycle's agent_end can carry messages with none, and
+      // clobbering a good prior result with null would report a run that
+      // succeeded as "no assistant response" once agent_settled fires.
+      const msg = lastAssistantOf(parsed.messages || []);
+      if (msg) state.lastAssistantMessage = msg;
+      break;
+    }
+    case 'agent_settled':
+      frames.push(settleResult(state.lastAssistantMessage));
+      break;
+    default:
+      break;
+  }
+  return frames;
+}
+
+function runPi(body, tools, model, sessionId, res, done) {
+  const args = [
+    '--mode', 'json',
+    '--no-extensions', '-e', '/app/pi-guards.ts',
+    '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-approve',
+    '--offline',
+    '--session-dir', PI_SESSION_DIR,
+  ];
+  if (tools) args.push('--tools', tools);
+  if (model) args.push('--model', model);
+  if (sessionId) args.push('--session', sessionId);
+
+  const proc = spawn('pi', args, { env: process.env });
 
   let timedOut = false;
   const timer = setTimeout(() => {
     timedOut = true;
-    process.stderr.write('claude process timed out — killing\n');
+    process.stderr.write('pi process timed out — killing\n');
     proc.kill('SIGTERM');
   }, PROC_TIMEOUT_MS);
 
@@ -61,27 +177,27 @@ function runClaude(body, tools, model, sessionId, res, done) {
 
   res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
 
-  // Stream stdout to client while scanning for the session ID.
-  let capturedSessionId = null;
+  const state = {};
   let lineBuffer = '';
   proc.stdout.on('data', chunk => {
-    res.write(chunk);
     lineBuffer += chunk.toString();
     const lines = lineBuffer.split('\n');
     lineBuffer = lines.pop();
     for (const line of lines) {
-      if (capturedSessionId) continue;
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed.session_id) capturedSessionId = parsed.session_id;
-      } catch (e) {}
+      if (!line.trim()) continue;
+      let parsed;
+      try { parsed = JSON.parse(line); } catch (e) { continue; }
+      for (const frame of translate(parsed, state)) {
+        res.write(JSON.stringify(frame) + '\n');
+      }
     }
   });
 
-  // Mirror stderr to the container log AND keep a bounded tail to forward to the
-  // runner. On an `error_during_execution` result the CLI leaves the result text
-  // empty and writes the real cause (API error, internal crash, …) only to
-  // stderr — without forwarding it the runner sees just the bare subtype.
+  // Mirror stderr to the container log AND keep a bounded tail to forward to
+  // the runner. A pre-flight CLI failure (e.g. --session pointing at a
+  // session pi can't find) prints a plain-text line to stderr, exits 1, and
+  // emits NO JSON at all — the stderr tail is the only place that reason
+  // exists, forwarded via the exit event below.
   const STDERR_TAIL_MAX = 8000;
   let stderrTail = '';
   proc.stderr.on('data', chunk => {
@@ -91,14 +207,15 @@ function runClaude(body, tools, model, sessionId, res, done) {
 
   proc.on('close', (code, signal) => {
     clearTimeout(timer);
-    if (!capturedSessionId && lineBuffer.trim()) {
+    if (lineBuffer.trim()) {
       try {
-        const parsed = JSON.parse(lineBuffer);
-        if (parsed.session_id) capturedSessionId = parsed.session_id;
+        for (const frame of translate(JSON.parse(lineBuffer), state)) {
+          res.write(JSON.stringify(frame) + '\n');
+        }
       } catch (e) {}
     }
-    if (capturedSessionId) {
-      res.write(JSON.stringify({ type: 'session_id', session_id: capturedSessionId }) + '\n');
+    if (state.sessionId) {
+      res.write(JSON.stringify({ type: 'session_id', session_id: state.sessionId }) + '\n');
     }
     // Final diagnostic event: exit code/signal + stderr tail, so claude.rb can
     // fold the real cause into the error it raises.
@@ -122,44 +239,55 @@ function runClaude(body, tools, model, sessionId, res, done) {
   });
 }
 
-const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200);
-    res.end('ok');
-    return;
-  }
+// Starts the HTTP listener. Split out from module load so requiring this file
+// (e.g. from test/js/translate_test.js) only defines the pure translation
+// functions — it doesn't seed the agent dir or bind a port as a side effect.
+function startServer() {
+  seedAgentDir();
 
-  if (req.method !== 'POST') {
-    res.writeHead(405);
-    res.end();
-    return;
-  }
+  const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && req.url === '/health') {
+      res.writeHead(200);
+      res.end('ok');
+      return;
+    }
 
-  const tools     = req.headers['x-claude-tools'];
-  const model     = req.headers['x-claude-model'] || null;
-  const sessionId = req.headers['x-claude-session'] || null;
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
 
-  if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
-    res.writeHead(403, { 'Content-Type': 'text/plain' });
-    res.end('unknown tool grant\n');
-    return;
-  }
-  if (model && !MODEL_RE.test(model)) {
-    res.writeHead(400, { 'Content-Type': 'text/plain' });
-    res.end('malformed model\n');
-    return;
-  }
-  if (sessionId && !SESSION_ID_RE.test(sessionId)) {
-    res.writeHead(400, { 'Content-Type': 'text/plain' });
-    res.end('malformed session id\n');
-    return;
-  }
+    const tools     = req.headers['x-claude-tools'];
+    const model     = req.headers['x-claude-model'] || null;
+    const sessionId = req.headers['x-claude-session'] || null;
 
-  const chunks = [];
-  req.on('data', chunk => chunks.push(chunk));
-  req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, res));
-});
+    if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('unknown tool grant\n');
+      return;
+    }
+    if (model && !MODEL_RE.test(model)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('malformed model\n');
+      return;
+    }
+    if (sessionId && !SESSION_ID_RE.test(sessionId)) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('malformed session id\n');
+      return;
+    }
 
-server.listen(PORT, '0.0.0.0', () => {
-  process.stderr.write(`Claude HTTP server listening on port ${PORT}\n`);
-});
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, res));
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
+    process.stderr.write(`pi HTTP server listening on port ${PORT}\n`);
+  });
+}
+
+if (require.main === module) startServer();
+
+module.exports = { translate, settleResult, extractText, lastAssistantOf };

@@ -5,8 +5,8 @@ module Chomper
   class ClaudeTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:claude_url, :log_file)
-              .new("http://claude.test:47291", Pathname(@tmpdir) / "chomp.log")
+      ctx = Struct.new(:harness_url, :log_file)
+              .new("http://harness.test:47291", Pathname(@tmpdir) / "chomp.log")
       @claude = Claude.new(ctx)
       @session_file = Pathname(@tmpdir) / "session_id"
     end
@@ -25,7 +25,7 @@ module Chomper
     end
 
     def stub_claude(body)
-      stub_request(:post, "http://claude.test:47291").to_return(status: 200, body: body)
+      stub_request(:post, "http://harness.test:47291").to_return(status: 200, body: body)
     end
 
     def test_run_returns_streamed_text_on_success
@@ -73,7 +73,7 @@ module Chomper
     end
 
     def test_run_raises_on_http_error_with_body
-      stub_request(:post, "http://claude.test:47291")
+      stub_request(:post, "http://harness.test:47291")
         .to_return(status: 403, body: "unknown tool grant\n")
 
       capture_io do
@@ -135,13 +135,16 @@ module Chomper
 
     def test_run_retries_fresh_when_resumed_session_is_gone
       @session_file.write("dead-session-id")
-      # First call (with --resume) fails: the CLI can't find the session. Second
-      # call (fresh, no session) succeeds. WebMock replays responses in order.
-      stub_request(:post, "http://claude.test:47291").to_return(
+      # First call (with --resume) fails: pi can't find the session. This is a
+      # pre-flight CLI failure — verified against pi 0.84.2 to print a plain
+      # stderr line and exit 1 with NO JSON output at all (no session/result
+      # event), so server.js's translate() emits no result frame either; only
+      # the exit event (code, stderr) reaches claude.rb here. Second call
+      # (fresh, no session) succeeds. WebMock replays responses in order.
+      stub_request(:post, "http://harness.test:47291").to_return(
         { status: 200, body: ndjson(
-          { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
           { type: "exit", code: 1, signal: nil, timed_out: false,
-            stderr: "No conversation found with session ID: dead-session-id" }) },
+            stderr: "No session found matching 'dead-session-id'" }) },
         { status: 200, body: ndjson(
           assistant_text("fresh answer"),
           { type: "result", subtype: "success", is_error: false, result: "fresh answer" },

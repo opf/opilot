@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Node + the OpenSpec CLI, for the `pd` (product development) pipeline. OpenSpec
-# runs in the RUNNER, never in the claude container: guard-bash.js there permits
+# runs in the RUNNER, never in the harness container: pi-guards.ts there permits
 # read-only git and nothing else, and widening it for a non-git binary would
 # undo the container's whole posture. The runner is the trusted orchestrator, so
 # this is the right home — but it does hold both API tokens, hence the pin and

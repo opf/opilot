@@ -67,7 +67,7 @@ module Chomper
       end
 
       assert_equal 2, claude.prompts.length, "each non-empty line is one turn"
-      assert_equal "Read,Grep,Glob,Bash", claude.tools, "chat is read-only"
+      assert_equal Claude::TOOLS_READ, claude.tools, "chat is read-only"
       # Both turns thread the same fresh per-run session file.
       session = @ctx.state_dir / "chat_session_id"
       assert_equal [session, session], claude.session_files

@@ -14,32 +14,36 @@ module Chomper
     Error = Class.new(StandardError)
 
     # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
-    # any other grant. Grep and Glob are granted everywhere: without them the
-    # model has no way to search the repo and reaches for Bash find/grep
-    # instead, which is denied and kills the run. Bash is granted so Claude can
-    # browse git history (log/show/blame/diff) across the repos for context; the
-    # guard-bash.js PreToolUse hook confines it to read-only git — no commit,
+    # any other grant. pi's tool names are lowercase; there's no glob tool, so
+    # `find` covers that job. Grep/find/ls are granted everywhere: without them
+    # the model has no way to search the repo and reaches for Bash find/grep
+    # instead, which is denied and kills the run. Bash is granted so pi can
+    # browse git history (log/show/blame/diff) across the repos for context;
+    # the pi-guards.ts tool_call hook confines it to read-only git — no commit,
     # push, remote, or non-git command — and the egress proxy blocks exfiltration.
-    TOOLS_READ = "Read,Grep,Glob,Bash"
-    TOOLS_IMPL = "Read,Grep,Glob,Write,Edit,Bash"
+    TOOLS_READ = "read,grep,find,ls,bash"
+    TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
-    # Models, pinned so behaviour doesn't drift when the CLI's default changes.
-    # A WP's work model is shared by every session-bound phase (chat, plan,
-    # review, implement, PR description) — they resume one per-WP session, and
-    # switching models mid-session would discard the cache and resumed context.
-    # MODEL_FAST is for stateless one-shot passes where a cheaper model suffices
-    # (e.g. crafting a gh-agent commit subject). server.js validates the value by
-    # format, not an allowlist — model choice grants no privilege (unlike the tool
-    # grants above).
-    MODEL_WORK   = ENV.fetch("CHOMPER_MODEL", "claude-opus-4-8")
-    MODEL_FAST   = ENV.fetch("CHOMPER_TRIAGE_MODEL", "claude-haiku-4-5")
+    # Models, pinned so behaviour doesn't drift when the catalog's default
+    # changes. Values are OpenRouter slugs behind pi's provider prefix, not
+    # Anthropic API ids (see docs/pi-harness-plan.md) — a value from before the
+    # pi migration (e.g. "claude-opus-4-8") is stale and must be updated in any
+    # existing .env. A WP's work model is shared by every session-bound phase
+    # (chat, plan, review, implement, PR description) — they resume one per-WP
+    # session, and switching models mid-session would discard the cache and
+    # resumed context. MODEL_FAST is for stateless one-shot passes where a
+    # cheaper model suffices (e.g. crafting a gh-agent commit subject).
+    # server.js validates the value by format, not an allowlist — model choice
+    # grants no privilege (unlike the tool grants above).
+    MODEL_WORK   = ENV.fetch("CHOMPER_MODEL", "openrouter/anthropic/claude-opus-4.8")
+    MODEL_FAST   = ENV.fetch("CHOMPER_TRIAGE_MODEL", "openrouter/anthropic/claude-haiku-4.5")
 
     def initialize(ctx)
       @ctx = ctx
-      @uri = URI(@ctx.claude_url)
+      @uri = URI(@ctx.harness_url)
     end
 
-    # Is the claude container up and serving? Cheap GET against server.js's
+    # Is the harness container up and serving? Cheap GET against server.js's
     # health endpoint — the same one compose's healthcheck uses.
     def available?
       Net::HTTP.start(@uri.host, @uri.port, open_timeout: 2, read_timeout: 2) do |http|
@@ -56,8 +60,8 @@ module Chomper
     def ensure_available!
       return if available?
       raise Chomper::FatalError, <<~MSG.strip
-        The claude container is not reachable at #{@ctx.claude_url}.
-        Start it with `docker compose up -d --wait claude`, or run this through
+        The harness container is not reachable at #{@ctx.harness_url}.
+        Start it with `docker compose up -d --wait harness`, or run this through
         ./chomper (which starts it for the commands that need it).
       MSG
     end
@@ -68,19 +72,19 @@ module Chomper
     def run(prompt, tools: nil, model: MODEL_WORK, session_file: nil)
       session_id = session_file&.exist? ? session_file.read.strip : nil
 
-      header = Rainbow("#{log_prefix} CLAUDE CODE PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
+      header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
       log_append(Rainbow(prompt.strip).cyan)
 
-      resp_header = Rainbow("#{log_prefix} CLAUDE CODE RESPONSE").bold
+      resp_header = Rainbow("#{log_prefix} PI RESPONSE").bold
       puts resp_header
       log_append(resp_header)
 
       text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: session_id)
 
-      # A resumed session the CLI no longer has (e.g. the claude container was
+      # A resumed session the CLI no longer has (e.g. the harness container was
       # recreated/killed before the transcript was durably written) makes
       # --resume fail immediately, and the dead id would poison this WP forever —
       # every later call reads the same id and fails identically. Recover once by
@@ -138,9 +142,9 @@ module Chomper
         Net::HTTP.start(@uri.host, @uri.port, read_timeout: 600) do |http|
           http.request(req) do |res|
             unless res.is_a?(Net::HTTPSuccess)
-              # e.g. 403 "unknown tool grant" when the claude image predates a
+              # e.g. 403 "unknown tool grant" when the harness image predates a
               # grant change — surface the body instead of streaming nothing.
-              error = "claude server HTTP #{res.code}: #{res.body.to_s.strip}"
+              error = "harness server HTTP #{res.code}: #{res.body.to_s.strip}"
               $stdout.puts Rainbow("  ✗ #{error}").red
               next
             end
@@ -248,11 +252,12 @@ module Chomper
       parts.join(" ").gsub(/ +\n/, "\n")
     end
 
-    # The CLI's message when --resume points at a session it can't find. Detected
-    # via the stderr tail server.js now forwards (the bare result subtype is just
-    # "error_during_execution", which alone can't distinguish a lost session).
+    # pi's message when --session points at a session it can't find (verified
+    # against pi 0.84.2: "No session found matching '<id>'", printed to stderr
+    # with no JSON output at all and exit 1). Detected via the stderr tail
+    # server.js forwards on the exit event.
     def lost_session?(error)
-      error.to_s.match?(/No conversation found with session ID/i)
+      error.to_s.match?(/No session found matching/i)
     end
 
     # "1" for a normal non-zero exit, "via SIGTERM" when killed by a signal.

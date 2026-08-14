@@ -69,13 +69,13 @@ PR needs the store's layout on every agent tick.
   approval gate**, and halts. Claude writes with `TOOLS_IMPL`; the runner then runs
   `openspec validate --strict --json` and feeds failures back for up to
   `MAX_VALIDATE_ATTEMPTS` (2) revisions in the same session — the CLI isn't in the
-  claude container, so "the agent iterates on its own output" is a runner-driven
+  harness container, so "the agent iterates on its own output" is a runner-driven
   re-prompt loop. Intake spanning more than one atomic feature returns `TOO_BROAD`
   with a suggested split (mirroring `Prompts.plan`'s `NEEDS_INFO`), since one change
   becomes exactly one FEATURE.
 
   **The write scope is enforced** (`#enforce_write_scope!`) — a planning stage must
-  not be able to modify source, and `guard-writes.js` only confines Claude to
+  not be able to modify source, and `pi-guards.ts` only confines Claude to
   `/repos`. Two surfaces are checked: everything git can see, and the spec tree
   diffed against the canonical store (git reports nothing about an excluded tree).
   Anything outside `changes/<change-id>/` resets the clone and fails the run before
@@ -152,7 +152,7 @@ silently rewriting it would break the binding the operator thinks they made.
 
 - **canonical** — `.chomper/openspec/<repo>/`, a runner-owned `git init` repo. The
   durable copy, carrying its own commit identity since it is never pushed.
-- **working** — `<clone>/openspec/`, the only place `guard-writes.js` lets Claude
+- **working** — `<clone>/openspec/`, the only place `pi-guards.ts` lets Claude
   write, and where the `openspec` CLI expects the tree relative to the code.
 - **review** — a `spec/<change-id>` branch pushed to the bot's fork.
 
@@ -173,8 +173,8 @@ to get a duplicate FEATURE.
 
 ## Attachments are converted in the runner, at intake time
 
-`intake/converter.rb`. The claude container has no converter and `guard-bash.js`
-allows only read-only git, so Claude's `Read` tool is the sole way in — fine for
+`intake/converter.rb`. The harness container has no converter and `pi-guards.ts`
+allows only read-only git, so Claude's `read` tool is the sole way in — fine for
 text, images and PDFs, useless on `.xlsx`/`.docx`/`.pptx`, which are ZIP-of-XML.
 Spreadsheets go through `roo` to one **CSV per sheet** (500-row cap, with the
 truncation written into the file itself); `.docx`/`.pptx` are extracted by hand with
@@ -191,9 +191,9 @@ This is the one place chomper parses attacker-influenceable binary input inside 
 trusted container, so it enforces a size cap, a zip entry-count cap, an inflated-size
 cap and `Zip.validate_entry_sizes`, and isolates every failure per attachment.
 
-## `openspec` runs in the runner, never in the claude container
+## `openspec` runs in the runner, never in the harness container
 
-`openspec.rb` — widening `guard-bash.js` for a non-git binary would undo the
+`openspec.rb` — widening `pi-guards.ts` for a non-git binary would undo the
 container's whole posture. `openspec init` always runs with `--tools none`, which
 writes only `openspec/`: without it the CLI drops an `AGENTS.md` into the product
 clone, over the real one OpenProject already has (and which its `CLAUDE.md` symlinks

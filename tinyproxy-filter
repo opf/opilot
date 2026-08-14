@@ -1,7 +1,6 @@
 # Hosts the claude container may reach (extended regex, one per line).
-# Anthropic API + auth/console, plus Rails docs for reference during
-# planning. Everything else is denied.
-^([a-z0-9-]+\.)*anthropic\.com$
-^([a-z0-9-]+\.)*claude\.ai$
-^([a-z0-9-]+\.)*claude\.com$
+# Model calls go to authgw over the internal network (NO_PROXY in
+# compose.yml), not through this proxy — this list is for anything else pi
+# might reach, plus Rails docs for reference during planning. Everything else
+# is denied.
 ^(guides|api)\.rubyonrails\.org$
