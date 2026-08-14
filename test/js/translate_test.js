@@ -59,7 +59,7 @@ test('a retry storm before an eventual success reports only the final outcome', 
   assert.strictEqual(results[0].result, 'Here are the files.');
 });
 
-test('tool_execution_start becomes a tool_use assistant frame; deltas stream as text', () => {
+test('tool_execution_start becomes a tool_use assistant frame; text flushes once, on text_end, not per delta', () => {
   const { frames } = runTranscript('tool_use_and_success.ndjson');
   const assistantFrames = frames.filter(f => f.type === 'assistant');
   const toolUse = assistantFrames.find(f => f.message.content[0].type === 'tool_use');
@@ -67,8 +67,15 @@ test('tool_execution_start becomes a tool_use assistant frame; deltas stream as 
   assert.strictEqual(toolUse.message.content[0].name, 'bash');
   assert.deepStrictEqual(toolUse.message.content[0].input, { command: 'git -C /repos/openproject log --oneline -1' });
 
+  // The fixture has text_start + two text_delta + one text_end for this
+  // block. Forwarding each delta as its own frame is exactly the bug this
+  // guards against: claude.rb runs every "text" part through a full Markdown
+  // parser (render_markdown), which reflows a lone word-fragment into its own
+  // paragraph — the stray-newline bug. Only text_end (the complete block)
+  // may become a frame.
   const textFrames = assistantFrames.filter(f => f.message.content[0].type === 'text');
-  assert.strictEqual(textFrames.map(f => f.message.content[0].text).join(''), 'The repo is at abc1234.');
+  assert.strictEqual(textFrames.length, 1, 'exactly one text frame — flushed on text_end, not one per delta');
+  assert.strictEqual(textFrames[0].message.content[0].text, 'The repo is at abc1234.');
 
   const result = frames.find(f => f.type === 'result');
   assert.strictEqual(result.is_error, false);

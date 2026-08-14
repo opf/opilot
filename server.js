@@ -100,9 +100,19 @@ function settleResult(msg) {
 //
 //   {"type":"session","id":...}                                    — first line
 //   {"type":"tool_execution_start","toolName":...,"args":{...}}
-//   {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":...}}
+//   {"type":"message_update","assistantMessageEvent":{"type":"text_end","content":...}}
 //   {"type":"agent_end","messages":[...],"willRetry":bool}
 //   {"type":"agent_settled"}
+//
+// Flushed on text_end (the FULL text for one content block, per pi's
+// AssistantMessageEvent union — packages/ai/src/types.ts), not on every
+// text_delta: claude.rb passes each forwarded "text" part through a full
+// Markdown parser (TTY::Markdown, in render_markdown). pi's deltas are raw
+// token/word fragments — parsing each one alone as its own tiny markdown
+// document reflows it into its own paragraph (stray blank lines) and can
+// split an inline code span whose backticks land in different deltas. A
+// complete block per text_end parses correctly; only the mid-paragraph
+// "live typing" look is traded away, not correctness.
 //
 // pi can run several internal agent_start/agent_end cycles for ONE prompt —
 // auto-retry on a transient provider error, or overflow compaction — each
@@ -129,8 +139,8 @@ function translate(parsed, state) {
       break;
     case 'message_update': {
       const evt = parsed.assistantMessageEvent;
-      if (evt && evt.type === 'text_delta' && evt.delta) {
-        frames.push({ type: 'assistant', message: { content: [{ type: 'text', text: evt.delta }] } });
+      if (evt && evt.type === 'text_end' && evt.content) {
+        frames.push({ type: 'assistant', message: { content: [{ type: 'text', text: evt.content }] } });
       }
       break;
     }
