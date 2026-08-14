@@ -110,12 +110,11 @@ module Chomper
     # commands are useless without knowing what triggers them.
     def triggers
       <<~TRIGGERS.strip
-        Triggers — on a work package:  @chomper ship | grill | summarize, or
-                                       anything else to just talk. ship offers
+        Triggers — on a work package:  @chomper build | grill | summarize, or
+                                       anything else to just talk. build offers
                                        numbered options when a fix has more than
-                                       one shape; reply `ship <n>` to build one
-                                       (ship aliases: fix, prototype, build, pr,
-                                       implement, plan, approve)
+                                       one shape; reply `build <n>` to build one
+                                       (one alias: fix)
                    on a chomper PR:    any @chomper comment gets a reply — and
                                        code, if asked; refresh re-runs `wp pr`
       TRIGGERS

@@ -133,8 +133,8 @@ module Chomper
 
     # The one working intent: plan, implement, and open the prototype.
     #
-    # This is where every trigger word lands — `ship` and its aliases, a
-    # Developers handover, and the retired `plan`/`approve` words. There is no
+    # This is where every trigger lands — `@chomper build` (alias `fix`) and a
+    # Developers handover. There is no
     # separate plan-and-wait command any more: a fix with more than one defensible
     # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
     # fix with one shape is planned and shipped in the same call — so a simple
@@ -279,9 +279,9 @@ module Chomper
       first = options.first["n"]
       body = +"I can fix this in #{options.length} ways. Pick one, or describe a different way.\n\n"
       body << entries.join("\n\n")
-      body << "\n\nReply `@chomper ship #{first}` to build option #{first}. " \
+      body << "\n\nReply `@chomper build #{first}` to build option #{first}. " \
               "Add words after the number to change that option. " \
-              "Reply `@chomper ship` with your own approach if no option fits."
+              "Reply `@chomper build` with your own approach if no option fits."
       body << "\n\nOnly a user on chomper's allowlist can select an option." if @ctx.allowed_op_user_ids.any?
 
       post_note(st.item_id, addressed(body), internal: intent.source == :developer ? false : nil)

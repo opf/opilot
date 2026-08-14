@@ -221,7 +221,7 @@ module Chomper
       assert_empty @claude.runs, "must not implement while it waits for a choice"
       refute pr_url_path.exist?
       assert_includes @notes.last, "**1 — Guard the paste**"
-      assert_includes @notes.last, "@chomper ship 1"
+      assert_includes @notes.last, "@chomper build 1"
     end
 
     def test_ship_with_an_option_number_plans_that_option_and_ships

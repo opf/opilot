@@ -160,14 +160,11 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 Simply run `./chomper agent`
 
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
-`@chomper ship` plans and ships in one step (aliases: `fix`, `prototype`,
-`build`, `pr`, `implement`),
+`@chomper build` plans and ships in one step (one alias: `fix`),
 `@chomper grill` stress-tests the ticket or plan (gaps, edge cases, risks),
 `@chomper summarize` recaps a long thread — and anything else just chats. There is
-no separate plan-and-approve step: `ship` asks first when a fix has more than one
-shape (below), and everything else is reviewed as a prototype and revised with
-`@chomper ship <feedback>`. The words `plan` and `approve` still work, and now mean
-`ship`.
+no separate plan-and-approve step: `build` asks first when a fix has more than one
+shape (below), and the code is then reviewed on the pull request.
 Naming the chomper user in a WP's **Developers** field also triggers the `ship`
 flow —
 once per WP, from anyone (disable with `CHOMPER_DEVELOPER_TRIGGER=0`; point it at
@@ -175,14 +172,14 @@ a different field with `CHOMPER_DEVELOPER_FIELD`).
 
 Either way, `ship` **offers options first** when the fix has more than one
 defensible shape: two or three numbered options, one sentence each, and no code
-until someone replies `@chomper ship <number>` (words after the number change that
+until someone replies `@chomper build <number>` (words after the number change that
 option). A fix with a single shape is planned and shipped in the same pass, so a
-simple ticket is unaffected, and free-text direction (`@chomper ship use a toast
+simple ticket is unaffected, and free-text direction (`@chomper build use a toast
 instead`) skips the question too. `./chomper wp ship` offers the same options at the
 console.
 
 Once the prototype is open, the work moves to the pull request: ask for code changes
-there, where chomper reads the comments and pushes. A `@chomper ship` on a shipped
+there, where chomper reads the comments and pushes. A `@chomper build` on a shipped
 work package just answers with the link.
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any

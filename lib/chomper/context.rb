@@ -95,7 +95,7 @@ module Chomper
     end
 
     # Act on chomper being named in a WP's Developers field as if that person commented
-    # `@chomper ship` (default on; set CHOMPER_DEVELOPER_TRIGGER=0 to disable —
+    # `@chomper build` (default on; set CHOMPER_DEVELOPER_TRIGGER=0 to disable —
     # the older CHOMPER_ASSIGN_TRIGGER still works, since it was this same
     # switch). Setting the field needs OpenProject's edit-work-package
     # permission, but is not gated by the comment allowlist — turn this off on

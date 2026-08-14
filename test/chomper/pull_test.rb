@@ -135,43 +135,33 @@ module Chomper
 
     # ── parse_command ─────────────────────────────────────────────────────────
 
-    # `plan` and `approve` are retired words kept mapped to :ship — the option
-    # step replaced the plan-and-wait flow, and a reader who still types them must
-    # not get a chat answer where a prototype was wanted.
-    def test_parse_command_plan_is_a_ship
-      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper plan")
+    def test_parse_command_build_with_feedback
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper build be careful")
     end
 
-    def test_parse_command_plan_with_feedback_is_a_ship
-      assert_equal [:ship, "also handle nil input"],
-                   @pull.send(:parse_command, "@chomper plan also handle nil input")
+    def test_parse_command_build_without_feedback
+      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper build")
     end
 
-    def test_parse_command_ship_with_feedback
-      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper ship be careful")
+    # One alias, and only one.
+    def test_parse_command_fix_is_the_alias
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@chomper fix be careful")
     end
 
-    def test_parse_command_ship_aliases
-      %w[fix prototype build pr implement].each do |word|
-        assert_equal [:ship, "be careful"],
-                     @pull.send(:parse_command, "@chomper #{word} be careful"),
-                     "expected `@chomper #{word}` to ship"
+    # The words the build command replaced are no longer commands. They are
+    # answered as chat, where the reply names the real one.
+    def test_parse_command_retired_words_are_chat
+      %w[ship prototype pr implement plan approve].each do |word|
+        command, = @pull.send(:parse_command, "@chomper #{word} be careful")
+        assert_equal :chat, command, "expected `@chomper #{word}` to be chat, not a command"
       end
     end
 
-    def test_parse_command_ship_alias_without_feedback
-      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper prototype")
-    end
-
-    # A word that merely starts with an alias is not the alias (\b, not a prefix
-    # match) — "building" is a sentence, not a command.
-    def test_parse_command_ship_alias_needs_a_word_boundary
+    # A word that merely starts with a command word is not the command (\b, not a
+    # prefix match) — "building" is a sentence.
+    def test_parse_command_build_needs_a_word_boundary
       assert_equal [:chat, "building on the last comment"],
                    @pull.send(:parse_command, "@chomper building on the last comment")
-    end
-
-    def test_parse_command_approve_is_a_ship
-      assert_equal [:ship, ""], @pull.send(:parse_command, "@chomper approve")
     end
 
     def test_parse_command_free_text_is_chat
@@ -203,12 +193,12 @@ module Chomper
     # OpenProject wraps the handle in CKEditor mention markup.
     MENTION = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">@Chomper 🤖</mention>)
 
-    def test_parse_command_handles_mention_markup_approve
-      assert_equal [:ship, ""], @pull.send(:parse_command, "#{MENTION} approve")
+    def test_parse_command_handles_mention_markup_build
+      assert_equal [:ship, ""], @pull.send(:parse_command, "#{MENTION} build")
     end
 
-    def test_parse_command_handles_mention_markup_ship_with_feedback
-      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "#{MENTION} ship be careful")
+    def test_parse_command_handles_mention_markup_build_with_feedback
+      assert_equal [:ship, "be careful"], @pull.send(:parse_command, "#{MENTION} build be careful")
     end
 
     def test_parse_command_handles_mention_markup_chat
@@ -217,7 +207,7 @@ module Chomper
 
     def test_parse_command_handles_emoji_only_mention
       emoji_mention = %q(<mention class="mention" data-id="557" data-type="user" data-text="🤖">🤖</mention>)
-      assert_equal [:ship, ""], @pull.send(:parse_command, "#{emoji_mention} plan")
+      assert_equal [:ship, ""], @pull.send(:parse_command, "#{emoji_mention} build")
     end
   end
 
@@ -411,7 +401,7 @@ module Chomper
     def test_emits_intent_for_chomper_comment
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} plan watch the edges" }
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} build watch the edges" }
       ])
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
@@ -478,7 +468,7 @@ module Chomper
     def test_ignores_comment_recorded_as_chomper_reply
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Tom", "user_href" => "/api/v3/users/1",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan" }
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper build" }
       ])
       # Mark comment 9 as a chomper-generated reply.
       item_path = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json"
@@ -514,7 +504,7 @@ module Chomper
     def test_emits_intent_for_plain_text_chomper_call
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "@Chomper plan watch the edges" }
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@Chomper build watch the edges" }
       ])
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
@@ -536,7 +526,7 @@ module Chomper
     def test_emits_intent_for_op_native_mention_without_literal_handle
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{ID_MENTION} plan watch the edges" }
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{ID_MENTION} build watch the edges" }
       ])
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
@@ -559,7 +549,7 @@ module Chomper
 
     def test_chomper_mentioned_recognises_op_native_mention_by_id
       assert @pull.send(:chomper_mentioned?, ID_MENTION)
-      assert @pull.send(:chomper_mentioned?, "@chomper plan")
+      assert @pull.send(:chomper_mentioned?, "@chomper build")
       refute @pull.send(:chomper_mentioned?, %q(<mention data-id="2">@Alice</mention> hi))
       refute @pull.send(:chomper_mentioned?, "just a normal comment")
     end
@@ -720,7 +710,7 @@ module Chomper
     def test_comment_trigger_wins_over_developer_in_same_tick
       seed_item(1, "2024-01-02T00:00:00Z", [
         { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper plan watch the edges" }
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "@chomper build watch the edges" }
       ])
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))

@@ -422,7 +422,7 @@ module Chomper
     end
 
     # Naming chomper in a WP's Developers field means "just ship it": synthesize the
-    # same :ship intent a `@chomper ship` comment produces (plan + implement +
+    # same :ship intent a `@chomper build` comment produces (plan + implement +
     # draft PR, no approval gate). Deliberately not allowlist-gated — setting the
     # field requires OpenProject's edit-work-package permission — and fires at
     # most once per WP, ever (developer_acted_at in item.json). A WP that already
@@ -527,15 +527,13 @@ module Chomper
     def parse_command(raw)
       text = strip_mention(raw)
       case text
-      # One intent, several names: `ship` is the canonical word, `fix` the legacy
-      # one, and the rest are what people actually reach for when they mean
-      # "just do it" — each would otherwise fall through to :chat and get an
-      # answer where a PR was wanted. `plan` and `approve` were separate intents
-      # until the options step replaced them: `ship` already stops and asks when a
-      # fix has more than one shape, so the way to review an approach is to read
-      # the options or the prototype. Both words stay mapped here, because the
-      # people who learned them would otherwise get a chat answer.
-      when /\A@chomper\s+(?:ship|fix|prototype|build|pr|implement|plan|approve)\b\s*(.*)/im
+      # `build` is the word, `fix` its one alias. The list is deliberately short:
+      # every extra synonym is one more word a reader must know is special, and a
+      # word that is not on it still gets an answer — it falls through to :chat,
+      # whose prompt lists the real command (see Prompts.chat). The intent keeps
+      # the name `:ship`, because publishing the prototype is what it does, and
+      # `:build` already names the terminal mode that stops before the push.
+      when /\A@chomper\s+(?:build|fix)\b\s*(.*)/im
         [:ship, $1.strip]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
       # trailing text folded in as a focus hint (see Prompts::LENSES).

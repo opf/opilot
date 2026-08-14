@@ -28,7 +28,10 @@ Agent loops: `./chomper agent` (both), `agent op`, `agent gh` — the older
 
 ### op-agent
 
-Polls work packages, driven by `@chomper` comments.
+Polls work packages, driven by `@chomper` comments. The one command word is
+**`@chomper build`** (alias `fix`); every other word is chat. The words this
+replaced — `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too,
+so an old habit gets an answer that names the real command rather than silence.
 
 Naming chomper in a WP's **Developers** field is a second trigger, synthesizing the same
 `:ship` intent (`Pull#intent_from_developer`). It fires **once per WP, ever**
@@ -52,7 +55,7 @@ has read.
 
 **`ship` offers options before it writes code.** A fix with more than one
 defensible shape is answered with 2–3 numbered options, one sentence each, and
-nothing else happens until someone replies `@chomper ship <n>`. The judgment is
+nothing else happens until someone replies `@chomper build <n>`. The judgment is
 folded into the *same* plan call as a third first-line
 sentinel beside `NEEDS_INFO` and `REPOS:` — `OPTIONS`, then one pipe-delimited line
 per option (`Prompts::OPTIONS_CONTRACT`) — so a one-shape ticket is planned and
@@ -351,15 +354,14 @@ only *warns* when a clone fails, and `Git.open`'s error names neither the repo n
 the fix. `#ensure_claude!` fails with "start the container" at every entry point that
 will call Claude, not mid-run with a connection error.
 
-`:ship` (`@chomper ship`, plus the aliases `fix`, `prototype`, `build`, `pr`,
-`implement` — an unrecognised word falls through to `:chat` and answers where a PR
-was wanted) is the only working intent: it plans and implements in one pass, unless
-the plan call answers with `OPTIONS` and waits for `@chomper ship <n>`. The separate
-`:plan`/`:approve` intents are **gone** — the options step replaced plan-and-wait, and
-everything else is reviewed as a prototype and revised with `@chomper ship <feedback>`.
-Both words still parse (as `:ship` aliases), because the people who learned them would
-otherwise get a chat answer where a prototype was wanted. The terminal `wp plan` is a
-different thing and stays: it has an operator at the console. Chat lenses (`grill`, `summarize`) are preset instructions over
+`:ship` (`@chomper build`, alias `fix`) is the only working intent: it plans and
+implements in one pass, unless the plan call answers with `OPTIONS` and waits for
+`@chomper build <n>`. The separate `:plan`/`:approve` intents are **gone** — the
+options step replaced plan-and-wait, and the code is reviewed as a prototype on the
+PR. The intent keeps the name `:ship` (publishing the prototype is what it does, and
+`:build` already names the terminal mode that stops before the push), so the comment
+word and the symbol differ on purpose. The terminal verbs are unchanged — `wp plan`,
+`wp build` and `wp ship` all have an operator at the console. Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
 ### State on disk (`.chomper/` — gitignored)
