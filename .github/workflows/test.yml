@@ -30,3 +30,15 @@ jobs:
 
       - name: Run tests
         run: bundle exec rake
+
+  test-harness-js:
+    # server.js's pi -> chomper translation (harness.rb's counterpart) has no
+    # Ruby coverage; this is its only test. Node version matches Dockerfile.harness.
+    runs-on: ubuntu-latest
+    container:
+      image: node:22-slim
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run translate() tests
+        run: node test/js/translate_test.js
