@@ -1,4 +1,4 @@
-# Shared hardening for the sidecar containers (claude/authgw/proxy). The runner
+# Shared hardening for the sidecar containers (harness/authgw/proxy). The runner
 # is the trusted orchestrator and deliberately not hardened this way.
 x-hardened: &hardened
   read_only: true
@@ -30,7 +30,7 @@ services:
       # Non-root needs a writable HOME for bundler/git config scratch.
       - HOME=/tmp
       - GITHUB_CONTRIBUTOR_TOKEN=${GITHUB_CONTRIBUTOR_TOKEN:-}
-      - CLAUDE_URL=http://claude:47291
+      - HARNESS_URL=http://harness:47291
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL
       - GIT_COMMITTER_NAME
@@ -63,51 +63,60 @@ services:
       - internal
       - egress
 
-  # The claude container is deliberately not published on the host and sits on
+  # The harness container is deliberately not published on the host and sits on
   # an internal-only network: server.js is unauthenticated, so its only client
-  # must be the runner. All outbound traffic goes through the egress proxy,
-  # which allows Anthropic endpoints only — work-package text is untrusted, and
-  # this closes the exfiltration channel a prompt injection would need.
-  claude:
+  # must be the runner. Model calls reach OpenRouter via authgw over the
+  # internal network (NO_PROXY below); anything else goes through the egress
+  # proxy, which allows only the hosts in tinyproxy-filter — work-package text
+  # is untrusted, and this closes the exfiltration channel a prompt injection
+  # would need.
+  harness:
     build:
       context: .
-      dockerfile: Dockerfile.claude
+      dockerfile: Dockerfile.harness
     depends_on:
       - proxy
-    # Run as the host user (exported by ./chomper) so OAuth creds written into the
-    # bind-mounted .chomper/claude-auth are owned by — and persist for — you. The
-    # image's baked node user is uid 1000; on a host whose user isn't 1000 that
-    # node uid can't write the host-owned auth dir, so auth wouldn't persist.
-    # Defaults to 1000 (the node user) when unset, e.g. a bare `docker compose run`.
+    # Run as the host user (exported by ./chomper) so files pi writes into the
+    # bind-mounted .chomper/pi-agent and .chomper/pi-sessions are owned by —
+    # and persist for — you. The image's baked node user is uid 1000; on a
+    # host whose user isn't 1000 that node uid can't write host-owned dirs, so
+    # nothing would persist. Defaults to 1000 (the node user) when unset, e.g.
+    # a bare `docker compose run`.
     user: "${CHOMPER_UID:-1000}:${CHOMPER_GID:-1000}"
-    # Run the CLI in /repos (the parent of every repo's worktree) so Claude sees
-    # them all at /repos/<name>; it still auto-loads /repos/openproject/CLAUDE.md
-    # (OpenProject's AGENTS.md) as project memory when it reads files there.
+    # Run the CLI in /repos (the parent of every repo's worktree) so pi sees
+    # them all at /repos/<name>. --no-context-files (server.js) stops pi
+    # auto-loading /repos/openproject/CLAUDE.md the way Claude Code did — the
+    # prompts tell it to read each target repo's CLAUDE.md/AGENTS.md instead
+    # (see docs/pi-harness-plan.md, "context files").
     working_dir: /repos
     volumes:
-      - ${SCRIPT_DIR:-.}/.chomper/claude-auth:/home/node/.claude
-      # Every repo's standalone clone, at /repos/<name>. Claude reads/edits files
+      # pi's config dir (settings.json/models.json seeded by server.js,
+      # auth.json, model catalogs) — writable so first boot can seed it.
+      - ${SCRIPT_DIR:-.}/.chomper/pi-agent:/pi-agent
+      # Session transcripts, keyed by --session <id> — writable, and now on a
+      # host mount so a session survives the container being recreated.
+      - ${SCRIPT_DIR:-.}/.chomper/pi-sessions:/sessions
+      # Every repo's standalone clone, at /repos/<name>. pi reads/edits files
       # here and browses git history (read-only) — each clone carries its own .git.
       - ${SCRIPT_DIR:-.}/.chomper/repos:/repos
-      # Read-only: claude only reads item/plan files from here; the runner is the
-      # sole writer of .chomper state. Defense-in-depth beyond the write-guard hook.
+      # Read-only: pi only reads item/plan files from here; the runner is the
+      # sole writer of .chomper state. Defense-in-depth beyond the write-guard.
       - ${SCRIPT_DIR:-.}/.chomper:/state:ro
     environment:
-      - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - PI_CODING_AGENT_DIR=/pi-agent
+      - PI_CODING_AGENT_SESSION_DIR=/sessions
       # When running as the host uid, /home/node (owned by the baked node user) and
       # an absent passwd entry would otherwise break os.homedir(); point HOME at the
-      # tmpfs so stray ~/.cache writes land there. Creds still persist via
-      # CLAUDE_CONFIG_DIR, which is the host-owned, writable bind mount.
+      # tmpfs so stray cache writes land there. Config/sessions still persist via
+      # the two mounts above, which are host-owned, writable bind mounts.
       - HOME=/tmp
       - FORCE_COLOR=1
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
-      # API-key mode: chomper sets these to route through the authgw gateway
-      # (which holds the real key); the container carries only a non-secret
-      # handshake token. OAuth fallback (no API key): both stay empty, so the CLI
-      # uses the stored login creds and reaches Anthropic via the proxy. The real
-      # key never reaches this container in either mode.
-      - ANTHROPIC_BASE_URL=${CHOMPER_CLAUDE_BASE_URL:-}
-      - ANTHROPIC_AUTH_TOKEN=${CHOMPER_GW_TOKEN:-}
+      # The real OpenRouter key never reaches this container: pi-models.json
+      # routes the openrouter provider through authgw (which holds the real
+      # key) and authenticates with this non-secret handshake token.
+      - CHOMPER_GW_TOKEN=${CHOMPER_GW_TOKEN:-}
+      - PI_OFFLINE=1
       - HTTP_PROXY=http://proxy:8888
       - HTTPS_PROXY=http://proxy:8888
       # authgw is reached directly over the internal network, not via tinyproxy.
@@ -121,20 +130,21 @@ services:
       timeout: 5s
       retries: 15
 
-  # Auth gateway — holds the real ANTHROPIC_API_KEY and injects it as x-api-key
-  # on requests forwarded to api.anthropic.com. The claude container points
-  # ANTHROPIC_BASE_URL here and authenticates with the fixed gateway token, so
-  # the real key never lives alongside untrusted work-package content. Always
-  # forwards to a hardcoded host, so it is not an open proxy.
+  # Auth gateway — holds the real OPENROUTER_API_KEY and injects it as the
+  # Authorization bearer token on requests forwarded to openrouter.ai. pi's
+  # models.json override (pi-models.json) points the openrouter provider's
+  # baseUrl here and authenticates with the fixed gateway token, so the real
+  # key never lives alongside untrusted work-package content. Always forwards
+  # to a hardcoded host, so it is not an open proxy.
   authgw:
     build:
       context: .
       dockerfile: Dockerfile.authgw
     environment:
-      - ANTHROPIC_API_KEY
-      # Fixed handshake value (not a secret); must match claude's
-      # ANTHROPIC_AUTH_TOKEN. authgw only runs in API-key mode, where chomper
-      # exports this (the single source for the value).
+      - OPENROUTER_API_KEY
+      # Fixed handshake value (not a secret); must match the value
+      # pi-models.json resolves $CHOMPER_GW_TOKEN to in the harness container.
+      # chomper exports this (the single source for the value).
       - CHOMPER_GW_TOKEN
     networks:
       - internal
@@ -146,8 +156,9 @@ services:
       timeout: 5s
       retries: 15
 
-  # Egress allowlist proxy for the claude container (tinyproxy, CONNECT to
-  # Anthropic domains only — see tinyproxy-filter).
+  # Egress allowlist proxy for the harness container (tinyproxy, CONNECT to
+  # the hosts in tinyproxy-filter only — model calls bypass it entirely,
+  # reaching authgw directly over the internal network).
   proxy:
     build:
       context: .
@@ -158,7 +169,7 @@ services:
     <<: *hardened
 
 networks:
-  # No route to the outside world — claude can only talk to runner and proxy.
+  # No route to the outside world — harness can only talk to runner and proxy.
   internal:
     internal: true
   egress:

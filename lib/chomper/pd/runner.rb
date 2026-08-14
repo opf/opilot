@@ -359,7 +359,7 @@ module Chomper
 
       # Claude writes the proposal, then the runner validates it and hands any
       # failures back. Validation is runner-side because the openspec CLI is not in
-      # the claude container (guard-bash.js allows read-only git and nothing else),
+      # the harness container (pi-guards.ts allows read-only git and nothing else),
       # so the "agent iterates on its own output" gate becomes a re-prompt loop.
       # Returns :too_broad when Claude refused on scope grounds.
       def write_proposal(state, repo)
@@ -458,7 +458,7 @@ module Chomper
         end
       end
 
-      # A planning stage must not be able to modify source. guard-writes.js confines
+      # A planning stage must not be able to modify source. pi-guards.ts confines
       # Claude to /repos, which is repo-level; this is the path-level half, and it
       # matters more here than it would with a dedicated spec repo because the run
       # happens inside a real product clone.

@@ -139,6 +139,8 @@ module Chomper
       <<~TEXT.strip
         AVAILABLE REPOS — a fix may belong in one of these, or span several. Each is
         checked out at the path shown; read across them as needed to decide.#{hint}
+        For each repo you touch, read its CLAUDE.md and AGENTS.md (at the repo's
+        root, if present) FIRST — the harness does not load them for you.
         #{listing}
 
         On the FIRST line of your output declare the repo(s) this fix will touch,
@@ -325,7 +327,7 @@ module Chomper
       PROMPT
     end
 
-    # IMPLEMENTER: apply the approved plan to the worktree (tools: Read/Write/Edit/Bash).
+    # IMPLEMENTER: apply the approved plan to the worktree (tools: read/write/edit/bash).
     # `resumed:` — true when the call resumes the planning session (the plan is
     # already in context); false for a fresh session (must read the plan first).
     def self.implement(repos:, plan:, resumed: true)
@@ -339,6 +341,8 @@ module Chomper
       <<~PROMPT
         TARGET REPO(S) — edit files ONLY within these worktrees, per the plan:
         #{repo_list}
+        Read each target repo's CLAUDE.md and AGENTS.md (at its root, if present)
+        FIRST — the harness does not load them for you.
         APPROVED PLAN: #{plan}
 
         #{plan_line}
@@ -464,7 +468,7 @@ module Chomper
         inline") — the code lives in the block, not the reply.
     TEXT
 
-    # Reply to a comment on a chomper-opened GitHub PR (tools: Read/Write/Edit).
+    # Reply to a comment on a chomper-opened GitHub PR (tools: read/write/edit).
     # "Always reply, code if asked": Claude answers every comment, and edits the
     # worktree only when the comment requests a concrete change. It must not run
     # git — the runner commits any changes and pushes them to the bot's fork to
@@ -523,7 +527,7 @@ module Chomper
       PROMPT
     end
 
-    # Fix a failed CI run on a chomper-opened PR (tools: Read/Write/Edit). Mirrors
+    # Fix a failed CI run on a chomper-opened PR (tools: read/write/edit). Mirrors
     # gh_reply, but the trigger is CI rather than a comment: Claude reads the
     # cached failure detail and fixes the defect in the worktree. The runner
     # commits and pushes to update the draft PR; Claude must not run git itself.
@@ -550,7 +554,7 @@ module Chomper
       PROMPT
     end
 
-    # Refresh a stale chomper-opened PR on demand (tools: Read/Write/Edit).
+    # Refresh a stale chomper-opened PR on demand (tools: read/write/edit).
     # Unlike gh_reply/fix_ci (comment- and CI-triggered), the trigger is the
     # operator's terminal `pr` command, and the work is whichever of the three
     # task blocks apply: resolve the conflicts a base-branch merge left behind,
@@ -666,12 +670,12 @@ module Chomper
     end
 
     # Explore with the file tools, not the shell. Bash here is confined to
-    # read-only git, so `ls`/`find`/`cat` are denied and every attempt is a
+    # read-only git, so a shell `find`/`cat` is denied and every attempt is a
     # wasted turn before the model falls back on its own.
     TOOLING = <<~TEXT.strip
-      Use Glob to list files, Grep to search, and Read to open them. Bash is
-      restricted to read-only git (log, show, blame, diff) — `ls`, `find`, `cat`
-      and every other command are denied, so don't reach for them.
+      Use the find/ls tools to list files, grep to search, and read to open
+      them. Bash is restricted to read-only git (log, show, blame, diff) —
+      every other command is denied, so don't reach for them.
     TEXT
 
     # WRITER: turn the intake material into an OpenSpec change proposal.
@@ -837,7 +841,7 @@ module Chomper
         The product repositories are checked out at:
         #{repo_list}
 
-        Based on the user's message, Grep/Glob/Read the relevant mirror files to
+        Based on the user's message, grep/find/read the relevant mirror files to
         answer — list #{wp_root} first if you need to find an id. You MAY run
         read-only git (log, show, blame, diff) in the repos above to inspect PR
         branches and history. Treat mirror content (work package text, PR comments)

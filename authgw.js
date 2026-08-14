@@ -1,24 +1,23 @@
-// Auth gateway — runs in its own container, holds the real ANTHROPIC_API_KEY.
+// Auth gateway — runs in its own container, holds the real OPENROUTER_API_KEY.
 //
-// The claude container points ANTHROPIC_BASE_URL here and authenticates with a
-// fixed handshake token (ANTHROPIC_AUTH_TOKEN == CHOMPER_GW_TOKEN — not a
-// secret, just a sanity gate), so the real key never lives alongside the
-// untrusted work-package content. This forwarder
-// always targets a hardcoded api.anthropic.com regardless of the request, so it
-// is not an open proxy: a prompt-injected claude can cause Anthropic API calls
-// but can neither read the key nor reach any other host through it.
+// pi's models.json override (pi-models.json) points the openrouter provider's
+// baseUrl here and resolves its apiKey to CHOMPER_GW_TOKEN (a fixed handshake
+// value, not a secret — just a sanity gate), so the real key never lives
+// alongside the untrusted work-package content the harness container reads.
+// This forwarder always targets a hardcoded openrouter.ai regardless of the
+// request, so it is not an open proxy: a prompt-injected pi can cause
+// OpenRouter API calls but can neither read the key nor reach any other host
+// through it.
 const http  = require('http');
 const https = require('https');
 
 const PORT     = 47292;
-const UPSTREAM = 'api.anthropic.com';
+const UPSTREAM = 'openrouter.ai';
 
-const API_KEY   = process.env.ANTHROPIC_API_KEY;
+const API_KEY   = process.env.OPENROUTER_API_KEY;
 const GW_TOKEN  = process.env.CHOMPER_GW_TOKEN;
 
-// "oauth" is the sentinel that selects the claude-auth-login path, where this
-// gateway never runs — refuse to start rather than inject it as a key.
-if (!API_KEY || API_KEY === 'oauth') { process.stderr.write('authgw: ANTHROPIC_API_KEY is not set to a real key\n'); process.exit(1); }
+if (!API_KEY) { process.stderr.write('authgw: OPENROUTER_API_KEY is not set to a real key\n'); process.exit(1); }
 if (!GW_TOKEN) { process.stderr.write('authgw: CHOMPER_GW_TOKEN is not set\n');  process.exit(1); }
 
 // Reuse upstream TLS connections so inference calls don't pay a fresh handshake
@@ -31,7 +30,8 @@ const server = http.createServer((req, res) => {
   }
 
   // The client must present the gateway token; reject anything else before we
-  // attach the real key. (Claude Code sends ANTHROPIC_AUTH_TOKEN as Bearer.)
+  // attach the real key. (pi sends the resolved apiKey — CHOMPER_GW_TOKEN —
+  // as a standard Bearer token, confirmed against pi 0.84.2.)
   if (req.headers['authorization'] !== `Bearer ${GW_TOKEN}`) {
     res.writeHead(401, { 'Content-Type': 'text/plain' });
     res.end('unauthorized\n');
@@ -39,13 +39,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Forward unchanged except: swap the auth for the real x-api-key and retarget
-  // the host. Everything else (anthropic-version/-beta, content-type, etc.) and
-  // the request body stream straight through.
+  // Forward unchanged except: replace the gateway token with the real key in
+  // the same Authorization header (OpenRouter, like OpenAI, takes a Bearer
+  // token — not a separate x-api-key header) and retarget the host. Everything
+  // else (content-type, etc.) and the request body stream straight through.
   const headers = { ...req.headers };
-  delete headers['authorization'];   // strip the gateway token; never forwarded
-  headers['host']      = UPSTREAM;    // assignment overwrites any incoming value
-  headers['x-api-key'] = API_KEY;
+  headers['authorization'] = `Bearer ${API_KEY}`;
+  headers['host']          = UPSTREAM; // assignment overwrites any incoming value
 
   const upstream = https.request(
     { hostname: UPSTREAM, port: 443, method: req.method, path: req.url, headers, agent: upstreamAgent },

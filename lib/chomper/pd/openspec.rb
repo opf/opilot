@@ -7,7 +7,7 @@ module Chomper
     # Thin wrapper around the `openspec` CLI (npm @fission-ai/openspec, pinned in
     # Dockerfile.runner).
     #
-    # It runs in the RUNNER, never in the claude container: guard-bash.js there
+    # It runs in the RUNNER, never in the harness container: pi-guards.ts there
     # allows read-only git and nothing else, and widening it for a non-git binary
     # would undo the container's whole posture. So the agent writes spec files and
     # the runner validates them — the same split as every other tool chomper uses.

@@ -34,6 +34,7 @@ Use it to automate any portion of your development workflow: from patching simpl
 ## Requirements
 
 - **Docker**
+- [OpenRouter](https://openrouter.ai/keys) API key — held only by the `authgw` container, never by the one running untrusted work-package content
 - GitHub auth token tied to a permission-less contributor account (we currently use [op-chomper](https://github.com/op-chomper))
 - Project-scoped OpenProject API token (read/write for the product development pipeline, or just read-only for the rest)
 
@@ -91,46 +92,46 @@ cd openproject-chomper
 │                      ▲                                              │
 │                      │ json                                         │
 │                      ▼                                              │
-│   ┌──────────── claude container ────────────┐   ┌─── proxy ───┐    │
+│   ┌──────────── harness container ───────────┐   ┌─── proxy ───┐    │
 │   │ Node.js server (:47291)                  │   │ tinyproxy   │    │   ┌────────────────────────┐
-│   │   POST / → `claude -p`                   │──▶│ (:8888)     ├────┼──▶│ Anthropic telemetry,   │
-│   │                                          │   │ egress      │    │   │ Rails docs (allowlist) │
-│   │ volumes:                                 │   │ allowlist   │    │   └────────────────────────┘
-│   │   .chomper/        → /state  (ro)        │   └─────────────┘    │
-│   │   .chomper/repos   → /repos  (rw)        │   ┌── authgw ───┐    │   ┌────────────────────────┐
-│   │                                          │   │ injects     │    │   │ api.anthropic.com      │
-│   │ no real API key — inference via authgw,  │──▶│ x-api-key   ├────┼──▶│ (inference)            │
-│   │ everything else via proxy; internal-only │   │ (real key)  │    │   └────────────────────────┘
+│   │   POST / → `pi --mode json`              │──▶│ (:8888)     ├────┼──▶│ Rails docs (allowlist) │
+│   │                                          │   │ egress      │    │   └────────────────────────┘
+│   │ volumes:                                 │   │ allowlist   │    │
+│   │   .chomper/          → /state      (ro)  │   └─────────────┘    │
+│   │   .chomper/repos     → /repos      (rw)  │   ┌── authgw ───┐    │   ┌────────────────────────┐
+│   │   .chomper/pi-agent  → /pi-agent   (rw)  │   │ replaces    │    │   │ openrouter.ai          │
+│   │   .chomper/pi-sess.. → /sessions   (rw)  │──▶│ the gateway ├────┼──▶│ (inference, any model) │
+│   │ no real API key — inference via authgw,  │   │ token with  │    │   └────────────────────────┘
+│   │ everything else via proxy; internal-only │   │ the real key│    │
 │   └──────────────────────────────────────────┘   └─────────────┘    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Security model
 
-The claude container processes untrusted text (work package descriptions and
+The harness container processes untrusted text (work package descriptions and
 comments), so it is boxed in from several directions:
 
 * **No host or LAN exposure** — port 47291 is not published; the container sits
   on an `internal: true` Docker network reachable only by the runner.
 * **Server-side tool allowlist** — `server.js` refuses any `X-Claude-Tools`
   grant that isn't one of the two known tool sets, and validates session IDs.
-* **Egress allowlist** — all outbound traffic goes through a tinyproxy sidecar
-  that only permits Anthropic endpoints (plus Rails docs); a prompt injection
+* **Egress allowlist** — model calls reach `authgw` directly over the internal
+  network; all other outbound traffic goes through a tinyproxy sidecar that
+  only permits the hosts in `tinyproxy-filter` (Rails docs); a prompt injection
   has no channel to exfiltrate data.
-* **API key isolation** — when an API key is configured, the real
-  `ANTHROPIC_API_KEY` lives only in the separate `authgw` gateway, which injects
-  it into inference requests; the claude container carries just a fixed
-  (non-secret) handshake token, so a prompt injection can cause API calls but
-  cannot read or exfiltrate the key. (The optional `claude auth login` fallback
-  trades this away — OAuth creds then live in the claude container, though the
-  egress allowlist still limits where they could go.)
-* **Write confinement** — a `PreToolUse` hook (`guard-writes.js`) blocks any
-  file mutation outside `/repos`, a second hook (`guard-bash.js`) confines Bash to
-  read-only git, and the `.chomper` state dir is additionally mounted **read-only**
-  (`/state`), so plans, cached state, and session files can't be tampered with
-  even if the hook were bypassed.
+* **API key isolation** — the real `OPENROUTER_API_KEY` lives only in the
+  separate `authgw` gateway, which injects it into inference requests; the
+  harness container carries just a fixed (non-secret) handshake token
+  (`pi-models.json` resolves it), so a prompt injection can cause API calls but
+  cannot read or exfiltrate the key.
+* **Write confinement** — `pi-guards.ts`, pi's one `tool_call` hook, blocks any
+  file mutation outside `/repos` and confines Bash to read-only git, and the
+  `.chomper` state dir is additionally mounted **read-only** (`/state`), so
+  plans, cached state, and session files can't be tampered with even if the
+  guard were bypassed.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
-  `no-new-privileges`, and no OpenProject/GitHub tokens or Anthropic API key in
+  `no-new-privileges`, and no OpenProject/GitHub tokens or OpenRouter API key in
   the environment.
 * **Human gate** — everything ships as a *draft* PR; review it as untrusted
   code, since WP content can attempt prompt injection.
@@ -273,7 +274,7 @@ fuller comments. `CLAUDE.md` documents each one's rationale.
 |---|---|
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token — read work packages, comment on them |
-| `ANTHROPIC_API_KEY` | A real key (held by the authgw gateway, never by the claude container), or the literal `oauth` to log in with `claude auth login` instead |
+| `OPENROUTER_API_KEY` | Required. Held by the authgw gateway, never by the harness container |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — chomper's only identity |
 | `OP_REPO_PATH` | Optional. A local openproject checkout to seed that clone from, for a faster first clone |
 | `CHOMPER_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@chomper` (comma-separated). Empty = anyone |
@@ -301,7 +302,7 @@ State lives in `.chomper/` (gitignored) and is safe to delete with
 | `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `agent op` run |
 | `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR chomper didn't open |
 | `openspec/<repo>/`, `changes/<host>/<id>/` | The `pd` pipeline's canonical spec store and per-change state |
-| `repos/<name>/` | Each product repo's standalone clone, mounted into the claude container |
+| `repos/<name>/` | Each product repo's standalone clone, mounted into the harness container |
 | `chomp.log`, `progress.txt` | Full prompt/response log; pipe-delimited audit log |
 
 ---
@@ -338,23 +339,15 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ## TODO
 
 ### Security & Hosting
-* Separate Claude API credit account
 * (?) Permission to read OP user emails
 
 ### AI Architecture
-* Plug in our OpenRouter key
 * Add intent classification interface:
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command
 * Consolidate the project with AI stream: local WP JSON mirrors could be replaced with the MCP
 * Set up token limits & cleanly handle threshold breaches
-* Migrate from `claude -p` to a Claude SDK
-* Replace Claude Code with a generic AI "file edit engine" layer
-  * The LLM container should run something like `LiteLLM` or `OpenCode`, so that we can configure any model we like, commercial or open.
-  * The infra is ready for this, we can just replace the chomper-claude container with some other thing that listens on HTTP :47291
-* Replace Claude!
-  * We can likely save a lot on costs by switching to Codex.
-  * Or, lean away from US by switching to Mistral.
-  * Or, **ideally**, plug in an open model.
+* Switch away from Anthropic models
+  * Ideally, this would be our own hosted LLM.
 * Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use separate agents for development and review to clearly split domain ownership
@@ -363,7 +356,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 
 ### Feature ideas
 * Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
-* Make prototyping implement multiple solutions at once, when applicable
 * Agent forking workflow:
   * More universal `adopt` alias that does not require `gh`
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias

@@ -212,7 +212,7 @@ module Chomper
       end
 
       def test_touching_source_discards_the_run
-        # A planning stage must not be able to modify source. guard-writes.js only
+        # A planning stage must not be able to modify source. pi-guards.ts only
         # confines Claude to /repos; this is the path-level half.
         write_proposal!
         (@repo.worktree_host / "app.rb").write("puts 666\n")

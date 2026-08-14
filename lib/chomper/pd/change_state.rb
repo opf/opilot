@@ -17,7 +17,7 @@ module Chomper
     # them (see ChangeStore below):
     #
     #   canonical  .chomper/openspec/<repo>/       runner-owned git repo, the truth
-    #   working    <clone>/openspec/               where guard-writes.js lets Claude write
+    #   working    <clone>/openspec/               where pi-guards.ts lets Claude write
     #   review     branch spec/<change-id> on the bot's fork   the PR diff surface
     ChangeState = Struct.new(:change_id, :store, :state_dir, keyword_init: true) do
       # The repo is the store's — carrying it as a second member only created a
@@ -57,7 +57,7 @@ module Chomper
         store.working_change_dir(change_id)
       end
 
-      # The path Claude is given, inside the claude container.
+      # The path Claude is given, inside the harness container.
       def working_change_container
         "#{repo.worktree_container}/openspec/changes/#{change_id}"
       end

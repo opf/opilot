@@ -8,7 +8,7 @@ module Chomper
 
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
-                :log_file, :claude_url, :contributor_token,
+                :log_file, :harness_url, :contributor_token,
                 :state_container, :op_url, :token
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
@@ -32,7 +32,7 @@ module Chomper
       # compose.yml passes the token as `TOKEN=${TOKEN:-}` — so inside the
       # container an unset token arrives as "", which is TRUTHY.
       @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
-      @claude_url         = ENV.fetch("CLAUDE_URL", "http://claude:47291")
+      @harness_url        = ENV.fetch("HARNESS_URL", "http://harness:47291")
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
       # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
