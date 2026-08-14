@@ -2,17 +2,16 @@
 
 > ⚠️ **Proof of concept — use at your own risk!**
 
-
 ## What is this?
 
-Your friendly neighborhood AI software development assistant. 
+Your friendly neighborhood AI software development assistant.
 
 Use it to automate any portion of your development workflow: from patching simple bugs to delivering entire features end-to-end.
 
 1. **Product ideation**: Collect ideas in a document/WP, then tag `@Chomper` to generate a feature spec.
 1. **WP preparation**: Generate a work package tree from an approved feature spec
 1. **WP refinement**: Refine work package via `@Chomper grill` & free-form chatting
-1. **Prototyping**: Generate code prototypes via `@Chomper build`. Refine the code by chatting with [Chomper Bot](https://github.com/op-chomper) within the PR. 
+1. **Prototyping**: Generate code prototypes via `@Chomper build`. Refine the code by chatting with [Chomper Bot](https://github.com/op-chomper) within the PR.
 1. **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
 1. **General PR assistance**: Tag `@Chomper` in any upstream PR with questions.
 
@@ -86,7 +85,7 @@ cd openproject-chomper
 │ │      * WP metadata mirror         │            │                                        │ │
 │ │      * Plan files                 │            │                                        │ │
 │ │      * Draft PR data              │            └─────────┬─────────────────────┬────────┘ │
-│ │  * Pushes branches, opens PRs     │                      │                     │          │             
+│ │  * Pushes branches, opens PRs     │                      │                     │          │
 │ │  * Delegates chat to the LLM      │                      │                     │          │
 │ └───────┬──────────────────┬────────┘                      ▼                     ▼          │
 │         │                  │                     ┌─ proxy ───────────┐ ┌─ authgw ─────────┐ │
@@ -157,38 +156,30 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 Simply run `./chomper agent`
 
 On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
-`@chomper build` plans and ships in one step (one alias: `fix`),
-`@chomper grill` stress-tests the ticket or plan (gaps, edge cases, risks),
-`@chomper summarize` recaps a long thread — and anything else just chats. There is
-no separate plan-and-approve step: `build` asks first when a fix has more than one
-shape (below), and the code is then reviewed on the pull request.
-Naming the chomper user in a WP's **Developers** field also triggers the `ship`
-flow —
-once per WP, from anyone (disable with `CHOMPER_DEVELOPER_TRIGGER=0`; point it at
-a different field with `CHOMPER_DEVELOPER_FIELD`).
+`@chomper build` plans and ships in one step, `@chomper grill` stress-tests the ticket or plan, `@chomper summarize` recaps a long thread —
+anything else just chats. Naming the chomper user in a WP's **Developers** field
+also triggers `build`, once per WP, from anyone (disable with
+`CHOMPER_DEVELOPER_TRIGGER=0`, or point it elsewhere with `CHOMPER_DEVELOPER_FIELD`).
 
-Either way, `ship` **offers options first** when the fix has more than one
-defensible shape: two or three numbered options, one sentence each, and no code
-until someone replies `@chomper build <number>` (words after the number change that
-option). A fix with a single shape is planned and shipped in the same pass, so a
-simple ticket is unaffected, and free-text direction (`@chomper build use a toast
-instead`) skips the question too. `./chomper wp ship` offers the same options at the
-console.
+When a fix has more than one defensible shape, `build` **offers options first** —
+two or three numbered one-liners, no code until someone replies `@chomper build
+<number>` (extra words become direction for that option). A single-shape fix, or
+free-text direction (`@chomper build use a toast instead`), skips straight to
+shipping. `./chomper wp ship` offers the same options at the console.
 
-Once the prototype is open, the work moves to the pull request: ask for code changes
-there, where chomper reads the comments and pushes. A `@chomper build` on a shipped
-work package just answers with the link.
+Once the prototype is open, review happens on the pull request: ask for changes
+there and chomper reads the comments and pushes; a later `@chomper build` on a
+shipped work package just answers with the link.
 
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
 runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep). Failing
-CI is picked up on its own, without being asked.
+CI is picked up on its own.
 
-Set `CHOMPER_TRACK_UPSTREAM_PRS=1` and chomper also tracks the product repos'
-**upstream** PRs, answering `@chomper` mentions there. It has no write access to
-those branches, so it replies in text and offers applicable changes as GitHub
-suggestions the author can apply in one click. Off by default — it is the only
-thing that makes chomper look outside its own PRs.
+Set `CHOMPER_TRACK_UPSTREAM_PRS=1` to also track the product repos' **upstream**
+PRs: chomper has no write access there, so it replies in text and offers
+applicable changes as one-click GitHub suggestions. Off by default — the only way
+chomper looks outside its own PRs.
 
 ### Product development (`pd`)
 
@@ -256,7 +247,13 @@ Then, from inside your OpenProject repo, run this:
 gh adopt 42        # or paste the PR URL
 ```
 
-It fetches the branch from the bot's fork, rebases it onto the current base with `--reset-author` so **every commit becomes yours** (author from your local git identity, no capture needed), pushes it to the canonical repo, opens an equivalent draft PR against the same base branch _under your own account_ (so secret-gated CI runs), and comments a link to the new PR on the bot's original (leaving it open so gh-agent keeps tracking it). The adopted PR's body has the work-package link re-fanged (`hxxp://` → `http://`), so **your** PR is the one OpenProject's GitHub integration references on the ticket — the bot's defanged PR never clutters the activity tab. It also drops chomper's own preamble — the AI-generated disclaimer and the `gh adopt` note, neither of which is true of your PR — and puts `Adapted from #<bot-pr>` in its place, so the provenance stays one click away. That block is fenced in the bot's body between `<!-- chomper:banner -->` and `<!-- /chomper:banner -->` (`Publish::BANNER_OPEN`/`BANNER_CLOSE`) and the alias deletes exactly that range, rather than matching the banner's wording — which would break the first time the wording changed. The implementation-plan link sits outside the fence and survives, since it documents the change rather than who wrote it. The rebase changes the commits' SHAs — expected, since they become yours — and linearizes any base-merge commits into a clean branch; if a commit collides with the base it pauses for you to resolve. The push is a plain (non-force) create: the fix branch doesn't exist on the canonical repo yet, so a rejection means something unexpected is already there and it stops rather than clobbering it.
+It does the following:
+* Refreshes the code branch from upstream
+* Rewrites commit ownership to **you**
+* Pushes a new branch to the upstream repo
+* Opens a draft PR for the new branch.
+
+The chomper agent will pick up on this and close its PR, pointing to yours.
 
 ---
 
