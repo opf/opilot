@@ -40,6 +40,26 @@ the reply is unaddressed/internal with no 👀 pickup signal. The de-dup gate is
 WP's `updatedAt` vs the scan floor (the list payload carries no per-field
 timestamp), so a WP handed over long ago but bumped inside the window fires once.
 
+**`ship` offers options before it writes code.** A fix with more than one
+defensible shape is answered with 2–3 numbered options, one sentence each, and
+nothing else happens until someone replies `@chomper ship <n>` (or `@chomper plan
+<n>`). The judgment is folded into the *same* plan call as a third first-line
+sentinel beside `NEEDS_INFO` and `REPOS:` — `OPTIONS`, then one pipe-delimited line
+per option (`Prompts::OPTIONS_CONTRACT`) — so a one-shape ticket is planned and
+shipped in that call and costs exactly what it did before. `Agent#produce_plan`
+returns `:options`, writes `options.json`, and `#post_options` composes the comment
+in Ruby (the writer supplies only title and sentence, so the wording, numbering and
+reply instructions cannot drift). The sentinel is honoured even when options were
+*not* invited, so an uninvited block is never shipped as a plan; an unusable list
+buys one retry for a plan, then `:failed`. `@chomper plan` never invites options —
+asking for a plan is already a choice of one approach — and `approve` is untouched.
+Selecting is allowlist-gated like any comment trigger, which the offer says out
+loud when `CHOMPER_ALLOWED_OP_USER_IDS` is set. A **Developers** handover names no
+commenter, so its offer is posted **publicly** (the one visibility override in
+`#post_note`): an internal comment that mentions nobody reaches nobody who can
+answer it. That handover has only its one shot, so an offer nobody answers waits
+for a human — by design, with no reminder.
+
 "Developers" is a **user custom field**, not a stock one, so its `customFieldN` key
 differs per instance and can't be hardcoded: `#developer_field_key` reads the WP's
 `_links.schema` and matches the schema's field *names* against
@@ -253,7 +273,8 @@ PR needs the store's layout on every tick.
    `last_acted_comment_at`. A WP whose Developers include chomper, with no fresh comment, yields a synthetic
    `:ship` (`source: :developer`, de-duped by `developer_acted_at`).
 2. **Plan** — Claude (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
-   comment. Every clone is first synced to current upstream
+   comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
+   one comment) until a reply names a number. Every clone is first synced to current upstream
    (`sync_bases_for_reading` → `#sync_base!`) because `./chomper` fetches each base
    once at launch and no run checks the tree back off its fix branch — without this a
    long-lived loop plans against the original clone commit or another WP's leftover
@@ -306,7 +327,8 @@ will call Claude, not mid-run with a connection error.
 
 `:ship` (`@chomper ship`, plus the aliases `fix`, `prototype`, `build`, `pr`,
 `implement` — an unrecognised word falls through to `:chat` and answers where a PR
-was wanted) combines plan + implement in one pass; `:plan` waits for a human
+was wanted) combines plan + implement in one pass, unless the plan call answers with
+`OPTIONS` and waits for `@chomper ship <n>`; `:plan` waits for a human
 `@chomper approve`. Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
@@ -329,6 +351,7 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── item.json            # WP metadata (incl. developers[]) + poll cache + acted_at
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
+│       ├── options.json         # offered implementation options; present = waiting for a number
 │       ├── target_repos.json    # repo names from the plan's REPOS line
 │       ├── target_base.json     # optional per-repo base overrides ({repo: base})
 │       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR

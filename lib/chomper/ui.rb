@@ -16,13 +16,17 @@ module Chomper
         # have shipped to several repos.
         pr_files = (dir / "repos").exist? ? (dir / "repos").children.map { |d| d / "pr_url.txt" }.select(&:exist?) : []
         # Only work packages chomper has acted on — not every polled (cached) WP.
-        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? || pr_files.any?
+        # options.json counts: chomper answered with implementation options and is
+        # waiting for a number, which is action taken and work still open.
+        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? ||
+                    (dir / "options.json").exist? || pr_files.any?
         item = Helpers.safe_json_read(dir / "item.json") || {}
         {
-          id:      dir.basename.to_s,
-          subject: item["subject"] || "(unknown)",
-          url:     item["url"],
-          pr_urls: pr_files.map { |f| f.read.strip }
+          id:       dir.basename.to_s,
+          subject:  item["subject"] || "(unknown)",
+          url:      item["url"],
+          pr_urls:  pr_files.map { |f| f.read.strip },
+          awaiting: !(dir / "plan.md").exist? && pr_files.empty? && (dir / "options.json").exist?
         }
       end
 
@@ -31,13 +35,14 @@ module Chomper
         return
       end
 
-      shipped = rows.count { |r| r[:pr_urls].any? }
-      planned = rows.length - shipped
+      shipped  = rows.count { |r| r[:pr_urls].any? }
+      awaiting = rows.count { |r| r[:awaiting] }
+      planned  = rows.length - shipped - awaiting
       puts ""
-      puts "  📝 #{planned} planned   🚀 #{shipped} shipped"
+      puts "  📝 #{planned} planned   ⏳ #{awaiting} awaiting a choice   🚀 #{shipped} shipped"
       puts ""
       rows.each do |r|
-        flag = r[:pr_urls].any? ? "🚀" : "📝"
+        flag = if r[:pr_urls].any? then "🚀" elsif r[:awaiting] then "⏳" else "📝" end
         puts "    #{flag} #{Rainbow(Helpers.wp_label(r[:id]).ljust(7)).bold}  #{Rainbow(r[:subject]).bold}"
         puts "               #{r[:url]}" if r[:url]
         r[:pr_urls].each { |u| puts "               PR: #{u}" }

@@ -126,7 +126,7 @@ module Chomper
     # runners (agent and the terminal fix/plan flow) via #state_for.
     ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
                            :item_file, :related_file, :target_repos_file,
-                           :target_base_file, :session_file, keyword_init: true) do
+                           :target_base_file, :options_file, :session_file, keyword_init: true) do
       # Per-repo artifact directory (<id>/repos/<name>/), created on demand.
       def repo_dir(repo)
         dir = item_dir / "repos" / repo_name(repo)
@@ -523,6 +523,11 @@ module Chomper
         related_file:      dir / "related.json",
         target_repos_file: dir / "target_repos.json",
         target_base_file:  dir / "target_base.json",
+        # The implementation options offered for this WP, written when a `ship`
+        # plan call answers with the OPTIONS sentinel. Present means "chomper is
+        # waiting for a number"; a chosen option leaves it in place, so the
+        # reporter can read the list again after the prototype exists.
+        options_file:      dir / "options.json",
         session_file:      dir / "session_id"
       )
     end

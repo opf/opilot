@@ -24,6 +24,10 @@ module Chomper
   class Agent
     include Helpers
 
+    # First line of a plan call that answers with implementation options rather
+    # than a plan (Prompts::OPTIONS_CONTRACT), the sibling of NEEDS_INFO.
+    OPTIONS_SENTINEL = "OPTIONS"
+
     def initialize(ctx, pull: Pull.new(ctx), claude: Claude.new(ctx), publish: Publish.new(ctx))
       @ctx     = ctx
       @pull    = pull
@@ -141,9 +145,12 @@ module Chomper
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
 
+    # `@chomper plan` never offers options: asking for a plan is already a choice
+    # to review one approach before any code is written. It does accept an option
+    # number, so a reader who wants the detail of option 2 can have it.
     def handle_plan(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
-      return unless produce_plan(st, intent.text) == :ok
+      return unless produce_plan(st, option_focus(st, intent.text) || intent.text) == :ok
       post_note(st.item_id, addressed(
         "here is the plan:\n\n#{st.plan_file.read.strip}\n\n" \
         "Reply `@chomper approve` to implement it, `@chomper plan <feedback>` to change it, " \
@@ -159,18 +166,49 @@ module Chomper
       ship(st)
     end
 
+    # Express lane: plan and ship in one pass (NEEDS_INFO still guards blind fixes).
+    #
+    # One step comes first, when nobody has chosen an approach yet: a fix with
+    # more than one defensible shape is offered as numbered options and waits for
+    # a number (Prompts::OPTIONS_CONTRACT). A fix with one shape is planned and
+    # shipped in the same call, so a simple ticket costs exactly what it did
+    # before. Both triggers reach this path — a `@chomper ship` comment and a
+    # Developers handover synthesize the same intent.
     def handle_ship(intent)
-      st = state_for(intent.item_id, intent.subject, intent.type)
-      # Express lane: plan and ship in one pass (NEEDS_INFO still guards blind fixes).
-      return unless produce_plan(st, intent.text) == :ok
-      ship(st)
+      st    = state_for(intent.item_id, intent.subject, intent.type)
+      focus = option_focus(st, intent.text)          # nil unless the text is a saved option's number
+      # An approved plan, a chosen option, or free-text direction all mean the
+      # approach is already settled; only a bare `ship` on an unplanned WP asks.
+      asking = focus.nil? && !Helpers.file_has_content?(st.plan_file)
+
+      if asking && Helpers.file_has_content?(st.options_file)
+        # Options are already on the work package. A repeat `ship` re-posts them
+        # (no Claude call); free text is direction, and plans with it below.
+        if intent.text.to_s.strip.empty?
+          post_options(st, intent)
+          return
+        end
+        asking = false
+      end
+
+      case produce_plan(st, focus || intent.text, allow_options: asking)
+      when :options then post_options(st, intent)
+      when :ok      then ship(st)
+      end
     end
 
     # ── shared steps ──────────────────────────────────────────────────────────
 
     # Generate (or revise) the plan for a WP. Returns :ok when plan.md is saved,
-    # or :needs_info (having already posted the questions as a note).
-    def produce_plan(st, feedback)
+    # :needs_info (having already posted the questions as a note), or :options
+    # when the writer answered with implementation options instead of a plan
+    # (options.json written, the comment left to the caller).
+    #
+    # `allow_options:` is the caller's judgment that no human has picked an
+    # approach yet; the writer's judgment is whether the fix really has more than
+    # one shape (Prompts::OPTIONS_CONTRACT). `:failed` means the call produced
+    # neither, and is handled like any other failed run — logged, never commented.
+    def produce_plan(st, feedback, allow_options: false, retry_bad_options: true)
       # Planning is read-only across every repo's worktree (all mounted at
       # /repos/<name>); the branch checkout waits until #ship, once Claude has
       # chosen the target repo(s) in the plan.
@@ -198,7 +236,7 @@ module Chomper
       log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
       prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
-                            related: related)
+                            related: related, allow_options: allow_options)
       @claude.capture(prompt, tools: Claude::TOOLS_READ, outfile: st.plan_file,
                       session_file: st.session_file)
 
@@ -210,8 +248,88 @@ module Chomper
         return :needs_info
       end
 
+      # The sentinel is read whether or not options were invited, so an
+      # uninvited OPTIONS block can never be committed and shipped as a plan.
+      if st.plan_file.read.lstrip.start_with?(OPTIONS_SENTINEL)
+        options = parse_options(st.plan_file.read)
+        safe_rm(st.plan_file)                    # the file holds options, never a plan
+        if allow_options && options.length > 1
+          st.options_file.write("#{JSON.pretty_generate(options)}\n")
+          log_script "Options offered for #{wp_label(st.item_id)} — #{options.length}"
+          return :options
+        end
+        unless retry_bad_options
+          log_script "#{wp_label(st.item_id)} — the writer answered with options twice; no plan produced."
+          return :failed
+        end
+        # A single option, an unusable list, or options nobody asked for: ask once
+        # more for a plan. Bounded to one retry, so a writer that keeps answering
+        # with options ends the trigger instead of looping.
+        log_script "Unusable OPTIONS for #{wp_label(st.item_id)} — asking for one plan instead."
+        return produce_plan(st, feedback, retry_bad_options: false)
+      end
+
       record_chosen_repos(st)
       :ok
+    end
+
+    # ── implementation options ────────────────────────────────────────────────
+
+    # Read the OPTIONS block a plan call can answer with: one pipe-delimited line
+    # per option (see Prompts::OPTIONS_CONTRACT). Lines that do not parse are
+    # dropped, so a stray sentence around the block costs nothing, and a duplicate
+    # number keeps its first line — the numbers are what a reader replies with.
+    def parse_options(body)
+      body.to_s.lines.filter_map { |line|
+        fields = line.split("|").map(&:strip)
+        next unless fields.length >= 3
+        number = fields[0][/\d+/]
+        next unless number
+        { "n" => number.to_i, "title" => fields[1], "summary" => fields[2],
+          "repos" => fields[3].to_s.split(",").map(&:strip).reject(&:empty?),
+          "size" => fields[4].to_s }
+      }.uniq { |o| o["n"] }.sort_by { |o| o["n"] }
+    end
+
+    # The plan-prompt focus for an option the reporter selected, or nil when the
+    # text is not the number of a saved option. Only a bare number counts
+    # ("2", "option 2"): anything else is feedback, exactly as before.
+    def option_focus(st, text)
+      number = text.to_s.strip[/\A(?:option\s+)?(\d{1,2})\z/i, 1]
+      return nil unless number
+      option = (Helpers.safe_json_read(st.options_file) || []).find { |o| o["n"] == number.to_i }
+      return nil unless option
+      "The reporter chose option #{option["n"]} of the options you offered: " \
+        "#{option["title"]} — #{option["summary"]} " \
+        "Plan that option only, and do not plan the other options."
+    end
+
+    # Post the offered options as one work-package comment.
+    #
+    # Composed here rather than by Claude so the wording, the numbering and the
+    # reply instructions are the same every time, and so no heading or sign-off
+    # can reach the activity tab; the writer supplies only the title and the
+    # sentence. A Developers handover addresses nobody (the intent carries no
+    # commenter), so its offer is posted publicly instead — an internal comment
+    # that mentions nobody reaches nobody who can answer it.
+    def post_options(st, intent)
+      options = Helpers.safe_json_read(st.options_file) || []
+      return if options.empty?
+
+      entries = options.map do |o|
+        tag = [o["repos"].to_a.join(", "), o["size"]].reject { |s| s.to_s.strip.empty? }.join(" · ")
+        entry = "**#{o["n"]} — #{o["title"]}** — #{o["summary"]}"
+        tag.empty? ? entry : "#{entry}\n#{tag}"
+      end
+      first = options.first["n"]
+      body = +"I can fix this in #{options.length} ways. Pick one, or describe a different way.\n\n"
+      body << entries.join("\n\n")
+      body << "\n\nReply `@chomper ship #{first}` to build option #{first}. " \
+              "Reply `@chomper plan #{first}` to read the plan for it first. " \
+              "Reply `@chomper ship` with your own approach if no option fits."
+      body << "\n\nOnly a user on chomper's allowlist can select an option." if @ctx.allowed_op_user_ids.any?
+
+      post_note(st.item_id, addressed(body), internal: intent.source == :developer ? false : nil)
     end
 
     # Turn the saved plan into a draft PR. Idempotent/resumable: re-reports an
@@ -271,9 +389,10 @@ module Chomper
     # Replies mirror the trigger comment's visibility: an internal @chomper prompt
     # gets an internal answer, a public one a public answer. Defaults to internal
     # (the safer side) when visibility is unknown — e.g. an error before #handle
-    # set @reply_internal.
-    def post_note(item_id, raw)
-      internal = @reply_internal.nil? ? true : @reply_internal
+    # set @reply_internal. `internal:` overrides that for the one comment that
+    # must reach a reader the trigger cannot name (see #post_options).
+    def post_note(item_id, raw, internal: nil)
+      internal = @reply_internal.nil? ? true : @reply_internal if internal.nil?
       code, body = @api.post_activity(item_id, comment: raw, internal: internal)
       if code == 201
         log_script "Note posted to WP #{wp_label(item_id)}"

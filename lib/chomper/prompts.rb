@@ -205,14 +205,57 @@ module Chomper
       TEXT
     end
 
+    # The second gate on a `ship` plan call: when a fix has more than one
+    # defensible shape, the choice belongs to the reporter, not to chomper. The
+    # writer emits this block instead of a plan and `Agent#produce_plan` turns it
+    # into options.json plus one work-package comment.
+    #
+    # Folded into the plan call rather than run as a call of its own: the writer
+    # has already read the repos to judge the fix, which is exactly what deciding
+    # "is there really a choice here?" needs, and a simple ticket then costs no
+    # extra call. The bar is stated explicitly because a model that is asked for
+    # options will find some in any ticket.
+    #
+    # The lines are pipe-delimited data, not prose: the comment is composed by
+    # Agent#post_options, so its wording and reply instructions are identical
+    # every time and cannot pick up a heading or a sign-off.
+    OPTIONS_CONTRACT = <<~TEXT.strip
+      Offer options ONLY when the choices differ in scope, or in behaviour the
+      reporter can see. NEVER offer options for implementation detail — which file
+      to touch, which helper to add, how to name a thing. When the difference is
+      invisible to the reporter, choose the best shape yourself and write the plan.
+
+      When there is a real choice, do not write a plan. Output exactly this,
+      starting on the first line, and stop:
+
+        OPTIONS
+        1 | <short title> | <one sentence> | <repo>[, <repo>] | small|medium|large
+        2 | <short title> | <one sentence> | <repo>[, <repo>] | small|medium|large
+
+      - Give 2 or 3 options. Put the smallest scope first.
+      - One sentence for each option, 25 words at most. Say what the option gives
+        the reporter, not how you build it.
+      - Each sentence must name a different trade-off, not the same one in other
+        words.
+      - Use only repo names from the list above.
+      - Write nothing before the first line and nothing after the last option.
+    TEXT
+
     # WRITER: produce a fresh implementation plan for an issue.
     #
     # The first instruction is a sufficiency gate: rather than hallucinate a plan
     # from a vague WP, the writer emits a NEEDS_INFO block and stops.
     # Agent#produce_plan detects that sentinel on the first line and posts the
     # questions back to the WP instead of saving a plan.
-    def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil)
+    #
+    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) for the `ship`
+    # path, where no human has chosen an approach yet. It stays off for an
+    # explicit `@chomper plan`, for a chosen option, and for the terminal flows —
+    # each already has a human in the loop.
+    def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
+                  allow_options: false)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
+      options_gate = allow_options ? "\nSECOND, judge whether this fix has one shape or several.\n#{OPTIONS_CONTRACT}\n" : ""
       <<~PROMPT
         #{repos_section(repos_summary, repos)}
 
@@ -229,7 +272,7 @@ module Chomper
           NEEDS_INFO
           ### Questions for the reporter
           - <each specific thing you need before you can proceed>
-
+        #{options_gate}
         Otherwise, produce the plan:
 
         #{plan_skeleton(item_id, title)}
@@ -351,7 +394,10 @@ module Chomper
 
         AVAILABLE COMMANDS (mention these when relevant):
         - @chomper ship [feedback]  — plan and ship in one step (use this for most tasks;
-                                      fix / prototype / build / pr / implement all mean the same)
+                                      fix / prototype / build / pr / implement all mean the same).
+                                      When the fix has more than one shape, ship first offers
+                                      numbered options and waits
+        - @chomper ship <number>    — build the option with that number, once options were offered
         - @chomper plan [feedback]  — for complex tasks: draft a plan for review before touching any code
         - @chomper approve          — implement and ship a plan that was drafted with @chomper plan
         - @chomper grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions

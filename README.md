@@ -171,6 +171,13 @@ flow —
 once per WP, from anyone (disable with `CHOMPER_DEVELOPER_TRIGGER=0`; point it at
 a different field with `CHOMPER_DEVELOPER_FIELD`).
 
+Either way, `ship` **offers options first** when the fix has more than one
+defensible shape: two or three numbered options, one sentence each, and no code
+until someone replies `@chomper ship <number>` (`@chomper plan <number>` reads the
+plan for one first). A fix with a single shape is planned and shipped in the same
+pass, so a simple ticket is unaffected. `@chomper plan` never asks — it is already
+a request to review one approach.
+
 On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
 `@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
 runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep). Failing

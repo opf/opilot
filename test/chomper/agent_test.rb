@@ -182,6 +182,120 @@ module Chomper
       assert(@notes.any? { |n| n.include?("How do I reproduce it?") })
     end
 
+    # ── implementation options ────────────────────────────────────────────────
+
+    # What a `ship` plan call answers with when the fix has more than one shape
+    # (Prompts::OPTIONS_CONTRACT).
+    OPTIONS_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor and show one message. | openproject | large
+    TEXT
+
+    def options_path(id = "42")
+      @ctx.state_dir / "work_packages" / "op.example.com" / id / "options.json"
+    end
+
+    # An agent whose writer answers every plan call with `plan`.
+    def agent_answering(plan)
+      @claude = FakeClaude.new(plan: plan)
+      @agent  = Agent.new(@ctx, pull: @pull, claude: @claude, publish: @publish)
+      inject_worktree(@agent, @worktree)
+      @agent
+    end
+
+    def save_options(count = 2)
+      options_path.parent.mkpath
+      rows = (1..count).map do |n|
+        { "n" => n, "title" => "Option #{n}", "summary" => "I do thing #{n}.",
+          "repos" => ["openproject"], "size" => "small" }
+      end
+      options_path.write(JSON.generate(rows))
+    end
+
+    def test_ship_offers_options_and_writes_neither_plan_nor_code
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+
+      assert options_path.exist?, "the offered options must be saved — a number means nothing without them"
+      refute plan_path.exist?
+      assert_empty @claude.runs, "must not implement while it waits for a choice"
+      refute pr_url_path.exist?
+      assert_includes @notes.last, "**1 — Guard the paste**"
+      assert_includes @notes.last, "@chomper ship 1"
+    end
+
+    def test_ship_with_an_option_number_plans_that_option_and_ships
+      save_options
+      @agent.handle(intent(:ship, text: "2"))
+
+      assert(@claude.captures.any? { |p| p.include?("chose option 2") },
+             "the chosen option must reach the plan call as its focus")
+      assert plan_path.exist?
+      assert pr_url_path.exist?
+    end
+
+    def test_ship_repeats_a_standing_offer_without_calling_claude
+      save_options
+      @agent.handle(intent(:ship))
+
+      assert_empty @claude.captures, "the saved options are re-posted, not regenerated"
+      assert_includes @notes.last, "Pick one"
+    end
+
+    def test_ship_with_free_text_beside_a_standing_offer_plans_instead_of_re_offering
+      save_options
+      @agent.handle(intent(:ship, text: "do it with a toast instead"))
+
+      assert plan_path.exist?, "free text is direction, not a selection"
+      assert pr_url_path.exist?
+    end
+
+    # A Developers handover names no commenter, so an internal offer would reach
+    # nobody who can answer it.
+    def test_developer_handover_offers_options_publicly
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship, source: :developer))
+      assert_equal false, @note_visibility.last
+    end
+
+    def test_offer_from_an_internal_comment_stays_internal
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship, internal: true))
+      assert_equal true, @note_visibility.last
+    end
+
+    def test_offer_names_the_allowlist_when_one_is_set
+      @ctx.allowed_op_user_ids = ["7"]
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+      assert_includes @notes.last, "allowlist"
+    end
+
+    # `@chomper plan` is already a request to review one approach.
+    def test_plan_trigger_never_asks_for_options
+      agent_answering(OPTIONS_ANSWER).handle(intent(:plan))
+
+      refute options_path.exist?
+      refute(@claude.captures.any? { |p| p.include?("Offer options ONLY when") },
+             "the options gate belongs to ship, not plan")
+    end
+
+    def test_options_without_a_usable_list_asks_once_for_a_plan_then_gives_up
+      agent = agent_answering("OPTIONS\nnot a list at all\n")
+      st    = agent.send(:state_for, "42", "Fix the bug")
+
+      assert_equal :failed, agent.send(:produce_plan, st, nil, allow_options: true)
+      assert_equal 2, @claude.captures.length, "one retry, never a loop"
+      refute plan_path.exist?
+      refute options_path.exist?
+    end
+
+    def test_parse_options_skips_junk_and_orders_by_number
+      rows = @agent.send(:parse_options,
+                         "OPTIONS\nnonsense\n2 | B | second | openproject | large\n" \
+                         "**1** | A | first | openproject | small\n")
+
+      assert_equal [1, 2], rows.map { |o| o["n"] }
+      assert_equal "first", rows.first["summary"]
+    end
+
     # ── ship ──────────────────────────────────────────────────────────────────
 
     def test_ship_reports_existing_pr_without_reimplementing
