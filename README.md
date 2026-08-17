@@ -342,7 +342,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 * Make use of the MCP server
   * Use MCP calls instead of (or additionally to) the local JSON WP mirrors
 * Make use of our own LLM
-  * Probably to be able to fetch settings from the OP instance
+  * We probably need to be able to fetch settings from the OP instance
 * Introduce proper UI!
   * AI chat noise deflected from the main activity comments
   * LLM working/typing indicator using HocusPocus
