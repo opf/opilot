@@ -8,6 +8,27 @@ module OPilot
       CtxDouble.new(authgw_url: "http://authgw.test:47292", gw_token: "gw-token", **over)
     end
 
+    # Pin the two models for the duration of the test, regardless of what a
+    # local .env resolves OPILOT_MODEL_HEAVY/LIGHT to — otherwise a config that
+    # points both tiers at the same model (a legitimate thing to do) collides
+    # with the two distinct fake catalog entries below and pricing lookup
+    # can't tell them apart.
+    def setup
+      @orig_heavy = Harness::MODEL_HEAVY
+      @orig_light = Harness::MODEL_LIGHT
+      Harness.send(:remove_const, :MODEL_HEAVY)
+      Harness.const_set(:MODEL_HEAVY, "openrouter/anthropic/claude-opus-4.8")
+      Harness.send(:remove_const, :MODEL_LIGHT)
+      Harness.const_set(:MODEL_LIGHT, "openrouter/anthropic/claude-haiku-4.5")
+    end
+
+    def teardown
+      Harness.send(:remove_const, :MODEL_HEAVY)
+      Harness.const_set(:MODEL_HEAVY, @orig_heavy)
+      Harness.send(:remove_const, :MODEL_LIGHT)
+      Harness.const_set(:MODEL_LIGHT, @orig_light)
+    end
+
     def test_raises_without_a_gateway_token
       assert_raises(OPilot::FatalError) { UsageRunner.new(ctx(gw_token: nil)).run }
     end
@@ -57,8 +78,9 @@ module OPilot
 
     private
 
-    # Matches Harness::MODEL_HEAVY/MODEL_LIGHT's defaults with the "openrouter/"
-    # prefix stripped, since that's how the OpenRouter catalog names them.
+    # Matches the pinned MODEL_HEAVY/MODEL_LIGHT (see setup) with the
+    # "openrouter/" prefix stripped, since that's how the OpenRouter catalog
+    # names them.
     def catalog_body
       JSON.generate(data: [
         { "id" => "anthropic/claude-opus-4.8", "pricing" => { "prompt" => "0.000005", "completion" => "0.000025" } },

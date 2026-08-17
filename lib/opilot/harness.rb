@@ -182,8 +182,8 @@ module OPilot
                     case part["type"]
                     when "tool_use"
                       $stdout.puts "" unless at_line_start
-                      first_val = part["input"]&.values&.first.to_s[0, 80]
-                      $stdout.puts Rainbow("  #{part["name"]}  #{first_val}").cyan
+                      summary = tool_call_summary(part["name"], part["input"])
+                      $stdout.puts Rainbow("  #{part["name"]}  #{summary}").cyan
                       at_line_start = true
                       after_tool    = true
                     when "text"
@@ -264,6 +264,22 @@ module OPilot
     # "1" for a normal non-zero exit, "via SIGTERM" when killed by a signal.
     def exit_signal_desc(exit_info)
       exit_info["signal"] ? "via #{exit_info["signal"]}" : exit_info["code"].to_s
+    end
+
+    # A one-line summary of a tool call for the streamed progress display —
+    # this only affects what's printed/logged, never what pi actually does.
+    # pi's tool schemas (verified against 0.84.2) all declare "path" (read,
+    # write, edit, ls, find, grep), "pattern" (grep, find) or "command" (bash)
+    # among their args, but the model's JSON key order doesn't reliably follow
+    # the schema's declared order — a continuation read re-emits offset before
+    # path, an edit re-emits its edits[] array before path. Picking a named key
+    # instead of "whichever key came first" avoids showing a bare offset
+    # number, or a raw array-of-hashes dump, in place of the file path.
+    def tool_call_summary(name, input)
+      return "" unless input
+      value = input.values_at("path", "pattern", "command").compact.first || input.values.first
+      value = "#{value}:#{input["offset"]}" if name == "read" && input["offset"]
+      value.to_s[0, 80]
     end
 
     def log_append(text)
