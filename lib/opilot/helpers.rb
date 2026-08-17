@@ -732,7 +732,7 @@ module OPilot
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
       prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, model: Harness::MODEL_FAST)
+      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
         .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" the LLM prepended anyway
@@ -743,7 +743,10 @@ module OPilot
       ""
     end
 
-    def generate_pr_description(st, repo, model: Harness::MODEL_WORK)
+    # Stateless — a fresh, cheap-model call rather than a resumed session, since
+    # the item/plan/diff are all passed as file paths or plain text the model can
+    # read itself, with nothing depending on the implement session's history.
+    def generate_pr_description(st, repo, model: Harness::MODEL_LIGHT)
       pr_desc_file = st.pr_desc_file(repo)
       return if Helpers.file_has_content?(pr_desc_file)
       wt               = worktree(repo)
@@ -756,7 +759,7 @@ module OPilot
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @harness.run(prompt, tools: Harness::TOOLS_READ, model: model, session_file: st.session_file)
+      pr_text = @harness.run(prompt, tools: Harness::TOOLS_READ, model: model)
       pr_body = pr_text[/^#.*/m] || pr_text
       pr_desc_file.write(strip_ansi(pr_body))
     end

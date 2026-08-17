@@ -29,15 +29,15 @@ module OPilot
     # changes. Values are OpenRouter slugs behind pi's provider prefix
     # (openrouter/<vendor>/<model>), not bare Anthropic API ids — a bare id
     # (e.g. "claude-opus-4-8") is not a valid slug and must be corrected in
-    # any existing .env. A WP's work model is shared by every session-bound phase
-    # (chat, plan, review, implement, PR description) — they resume one per-WP
-    # session, and switching models mid-session would discard the cache and
-    # resumed context. MODEL_FAST is for stateless one-shot passes where a
-    # cheaper model suffices (e.g. crafting a gh-agent commit subject).
+    # any existing .env. A WP's heavy model is shared by every session-bound phase
+    # (chat, plan, review, implement) — they resume one per-WP session, and
+    # switching models mid-session would discard the cache and resumed context.
+    # MODEL_LIGHT is for stateless one-shot passes where a cheaper model
+    # suffices (e.g. crafting a gh-agent commit subject, or a PR description).
     # server.js validates the value by format, not an allowlist — model choice
     # grants no privilege (unlike the tool grants above).
-    MODEL_WORK   = ENV.fetch("OPILOT_MODEL", "openrouter/anthropic/claude-opus-4.8")
-    MODEL_FAST   = ENV.fetch("OPILOT_TRIAGE_MODEL", "openrouter/anthropic/claude-haiku-4.5")
+    MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-opus-4.8")
+    MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
     def initialize(ctx)
       @ctx = ctx
@@ -70,7 +70,7 @@ module OPilot
     # Runs the LLM with the given prompt. Streams tool-use lines to tty, returns text output.
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.
-    def run(prompt, tools: nil, model: MODEL_WORK, session_file: nil)
+    def run(prompt, tools: nil, model: MODEL_HEAVY, session_file: nil)
       session_id = session_file&.exist? ? session_file.read.strip : nil
 
       header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
@@ -112,7 +112,7 @@ module OPilot
     end
 
     # Like run, but also writes ANSI-stripped output to outfile.
-    def capture(prompt, tools: nil, model: MODEL_WORK, outfile:, session_file: nil)
+    def capture(prompt, tools: nil, model: MODEL_HEAVY, outfile:, session_file: nil)
       text = run(prompt, tools: tools, model: model, session_file: session_file)
       Pathname(outfile).write(strip_ansi(text))
       text

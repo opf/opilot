@@ -306,7 +306,7 @@ module OPilot
       subject_run = @harness.runs.find { |r| r[:prompt].include?("commit subject line") }
       refute_nil subject_run, "a follow-up pass should generate the commit subject"
       assert_nil subject_run[:session_file], "the subject is generated statelessly, not in the gh session"
-      assert_equal Harness::MODEL_FAST, subject_run[:model], "the cheap model crafts the commit subject"
+      assert_equal Harness::MODEL_LIGHT, subject_run[:model], "the cheap model crafts the commit subject"
       assert_includes subject_run[:prompt], "return if total.nil?", "the diff is embedded in the prompt"
 
       # When the model returns nothing usable, fall back to the generic subject.

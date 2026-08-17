@@ -98,8 +98,9 @@ module OPilot
       type    = item_data["type"].to_s
       st      = state_for(id, subject, type)
       # One model for every session-bound phase of this WP (plan, chat, replan,
-      # implement, PR description) — switching mid-session would drop the context.
-      model   = Harness::MODEL_WORK
+      # implement) — switching mid-session would drop the context. The PR
+      # description is a separate, stateless call and picks its own model.
+      model   = Harness::MODEL_HEAVY
 
       replan_feedback = nil
       # Set once the operator picks an option (or types their own direction) at
@@ -334,7 +335,7 @@ module OPilot
       msg.empty? ? "Revise the plan to incorporate the changes requested in the preceding conversation." : msg
     end
 
-    def run_chat(st, model = Harness::MODEL_WORK)
+    def run_chat(st, model = Harness::MODEL_HEAVY)
       # The session already holds the plan (just generated/revised), so pass its
       # path as a fallback rather than re-embedding the full text on every turn.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
@@ -360,7 +361,7 @@ module OPilot
     # write tools) and commit per repo. Skipped when every fix branch already
     # has commits — a prior `build` — so `ship` then only publishes. Returns the
     # repos that actually changed ([] when the plan turned out to be a no-op).
-    def implement(st, model = Harness::MODEL_WORK)
+    def implement(st, model = Harness::MODEL_HEAVY)
       st.repos.each { |r| checkout_branch(st, r) }
 
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
@@ -384,7 +385,7 @@ module OPilot
     # `build`: implement and commit, then stop — nothing is pushed and no PR is
     # opened. The committed branch sits in the local clone for review; a later
     # `wp ship <id>` finds it via branch_has_commits? and goes straight to publish.
-    def build(st, model = Harness::MODEL_WORK)
+    def build(st, model = Harness::MODEL_HEAVY)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
@@ -392,10 +393,10 @@ module OPilot
       end
     end
 
-    def ship(st, model = Harness::MODEL_WORK)
+    def ship(st, model = Harness::MODEL_HEAVY)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
-        generate_pr_description(st, repo, model: model)
+        generate_pr_description(st, repo)
         url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
         if url
           record_progress(st.item_id, st.branch, "shipped:#{repo.name}")

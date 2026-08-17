@@ -44,12 +44,12 @@ module OPilot
     end
 
     # Pricing for the two models opilot is actually configured to call
-    # (OPILOT_MODEL / OPILOT_TRIAGE_MODEL via Harness::MODEL_WORK/MODEL_FAST),
+    # (OPILOT_MODEL_HEAVY / OPILOT_MODEL_LIGHT via Harness::MODEL_HEAVY/MODEL_LIGHT),
     # not the whole catalog — a slug that isn't in it (a typo'd override) shows
     # up here as "not found" instead of surfacing three plan calls later as a
     # confusing 400 from OpenRouter.
     def print_model_pricing(catalog)
-      { "Work model" => Harness::MODEL_WORK, "Fast model" => Harness::MODEL_FAST }.each do |label, slug|
+      { "Heavy model" => Harness::MODEL_HEAVY, "Light model" => Harness::MODEL_LIGHT }.each do |label, slug|
         id    = slug.delete_prefix("openrouter/")
         model = catalog.find { |m| m["id"] == id }
         line  = if model

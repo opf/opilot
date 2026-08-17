@@ -245,7 +245,7 @@ Four Docker containers orchestrated by `compose.yml`:
   wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
   never published), which translates pi's JSON event stream into the frame
   shapes `lib/opilot/harness.rb` (`OPilot::Harness`) parses. Runs against
-  OpenRouter, so any model is one `OPILOT_MODEL` away. Working directory is
+  OpenRouter, so any model is one `OPILOT_MODEL_HEAVY` away. Working directory is
   `/repos` with every worktree at
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
@@ -427,10 +427,11 @@ Runner POSTs to `http://harness:47291` with headers:
 - `X-Harness-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
   `"read,grep,find,ls,bash,write,edit"` (implementation). `server.js` rejects any
   other grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
-- `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_WORK`),
-  plus `MODEL_FAST` for stateless one-shots — OpenRouter slugs behind pi's provider
-  prefix (`openrouter/anthropic/claude-opus-4.8`), not Anthropic API ids. Validated
-  by format, not an allowlist — model choice grants no privilege.
+- `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
+  plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
+  OpenRouter slugs behind pi's provider prefix (`openrouter/anthropic/claude-opus-4.8`),
+  not Anthropic API ids. Validated by format, not an allowlist — model choice grants
+  no privilege.
 - `X-Harness-Session` — session ID (omit on first call; save from the response).
 
 `server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/pi-guards.ts`,
@@ -452,8 +453,8 @@ inherits `/repos`. See `translate()`'s comment in server.js for the full event-s
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
 | `OPENROUTER_API_KEY` | Required to run the harness container. Lives only in authgw — never reaches the harness container |
-| `OPILOT_MODEL` | Optional; overrides the work model (default `openrouter/anthropic/claude-opus-4.8`) |
-| `OPILOT_TRIAGE_MODEL` | Optional; overrides the fast model (default `openrouter/anthropic/claude-haiku-4.5`) |
+| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-opus-4.8`) |
+| `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `OPILOT_ASSIGN_TRIGGER` is still honoured as a fallback |
 | `OPILOT_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
 | `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |

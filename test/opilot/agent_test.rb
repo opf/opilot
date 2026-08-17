@@ -473,11 +473,17 @@ module OPilot
       assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
     end
 
-    def test_handle_ship_threads_one_session_through_plan_implement_and_pr
+    def test_handle_ship_threads_one_session_through_plan_and_implement_but_not_pr_description
       @agent.handle(intent(:ship))
       session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session], @harness.capture_sessions.uniq, "plan must use the per-WP session"
-      assert_equal [session], @harness.run_sessions.uniq, "implement and PR description must resume the planning session"
+
+      pr_index = @harness.runs.index { |p| p.include?("PR description") }
+      refute_nil pr_index, "a PR description pass should run"
+      implement_sessions = @harness.run_sessions.each_index.reject { |i| i == pr_index }.map { |i| @harness.run_sessions[i] }
+      assert_equal [session], implement_sessions.uniq, "implement must resume the planning session"
+      assert_nil @harness.run_sessions[pr_index],
+                 "the PR description is a separate, stateless call — not part of the resumed session"
     end
 
     # A work package planned by an earlier run (when `plan` was its own command)

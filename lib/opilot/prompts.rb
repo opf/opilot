@@ -611,7 +611,7 @@ module OPilot
 
     # A one-line git commit subject for the follow-up change opilot just made on
     # a PR branch. Stateless — the diff is embedded — so it runs on a cheap model
-    # (MODEL_FAST) without dragging the gh-reply session's context, since the
+    # (MODEL_LIGHT) without dragging the gh-reply session's context, since the
     # subject describes the change itself, not the feedback that prompted it.
     def self.commit_subject(diff:)
       <<~PROMPT

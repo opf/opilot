@@ -27,9 +27,9 @@ module OPilot
       assert_includes out, "$98.12 remaining"
       assert_includes out, "$0.28 used"
       assert_includes out, "limit $100.00, $99.72 remaining"
-      assert_includes out, "Work model anthropic/claude-opus-4.8"
+      assert_includes out, "Heavy model anthropic/claude-opus-4.8"
       assert_includes out, "$5.00/1M prompt   $25.00/1M completion"
-      assert_includes out, "Fast model anthropic/claude-haiku-4.5"
+      assert_includes out, "Light model anthropic/claude-haiku-4.5"
       assert_includes out, "$1.00/1M prompt   $5.00/1M completion"
     end
 
@@ -57,7 +57,7 @@ module OPilot
 
     private
 
-    # Matches Harness::MODEL_WORK/MODEL_FAST's defaults with the "openrouter/"
+    # Matches Harness::MODEL_HEAVY/MODEL_LIGHT's defaults with the "openrouter/"
     # prefix stripped, since that's how the OpenRouter catalog names them.
     def catalog_body
       JSON.generate(data: [

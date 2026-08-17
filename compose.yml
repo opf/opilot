@@ -48,8 +48,8 @@ services:
       # explicit `${VAR:-}` would hand the container an empty string, and an
       # empty string beats the default in every `ENV.fetch(name, default)`
       # reader (Context, Harness). Unset must mean absent, not blank.
-      - OPILOT_MODEL
-      - OPILOT_TRIAGE_MODEL
+      - OPILOT_MODEL_HEAVY
+      - OPILOT_MODEL_LIGHT
       - OPILOT_ASSIGN_TRIGGER
       - OPILOT_CI_MAX_ATTEMPTS
       - OPILOT_CI_IGNORE_CHECKS

@@ -175,7 +175,7 @@ module OPilot
         reply = @harness.run(
           Prompts.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
                                    pr_thread: pr_thread, comment_section: comment_section),
-          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: session_file
+          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: session_file
         )
 
         # A question rather than a change request leaves the tree untouched: reply
@@ -375,7 +375,7 @@ module OPilot
             repo_path:    repo.worktree_container,
             instructions: artifact_instructions(state, repo)
           ),
-          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: state.session_file
+          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: state.session_file
         )
 
         # What the LLM DID beats what it said about what it did. It routinely
@@ -453,7 +453,7 @@ module OPilot
             Prompts.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
                                    failures: failures, attempt: attempt + 1,
                                    max_attempts: MAX_VALIDATE_ATTEMPTS),
-            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: state.session_file
+            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: state.session_file
           )
         end
       end
@@ -743,7 +743,7 @@ module OPilot
               wp_label: wp_label(wp_id), section: found[:section].title,
               tasks: render_tasks(found[:section]), item: container_path(st.item_file)
             ),
-            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_WORK, session_file: st.session_file
+            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: st.session_file
           )
           restore_spec_tree!(found[:store], found[:change_id])
           publish # memoize the identity commit() authors as
@@ -912,7 +912,7 @@ module OPilot
       # result is an ordinary opilot PR: gh-agent picks it up from pr_url.txt, and
       # `./opilot wp pr <id>` can refresh it.
       def ship_task(st, state, repo, wp_id, item)
-        generate_pr_description(st, repo, model: Harness::MODEL_WORK)
+        generate_pr_description(st, repo)
         url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
         unless url
           # The status stays where it is: the work is committed but nothing is up
