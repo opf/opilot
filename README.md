@@ -1,22 +1,26 @@
-<img width="100" height="100" alt="opilot" src="https://github.com/user-attachments/assets/1a0383fb-7c98-4cea-b3b6-8c8ef638f9b6" />
+<div align="center">
 
+<img width="100" height="100" alt="opilot" src="https://github.com/user-attachments/assets/1a0383fb-7c98-4cea-b3b6-8c8ef638f9b6" />
 
 # OPilot
 
-> ⚠️ **Proof of concept — use at your own risk!**
+**Your friendly neighborhood AI software development assistant.**
+
+⚠️ _Proof of concept — use at your own risk!_
+
+</div>
 
 ## What is this?
 
-Your friendly neighborhood AI software development assistant.
+AI tools help us design and implement faster. Nevertheless, outside that creative process, there is still some inevitable legwork: checking out branches, running local AI coding assistants by hand, and managing pull requests.
 
-Use it to automate any portion of your development workflow: from patching simple bugs to delivering entire features end-to-end.
+Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with @OPilot in OpenProject or in GitHub PRs!
 
-1. **Product ideation**: Collect ideas in a document/WP, then tag `@OPilot` to generate a feature spec.
-1. **WP preparation**: Generate a work package tree from an approved feature spec
-1. **WP refinement**: Refine work package via `@OPilot grill` & free-form chatting
-1. **Prototyping**: Generate code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
-1. **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
-1. **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
+* **Work package refinement**: Discuss & refine work packages via `@OPilot grill` & free-form chatting
+* **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-chomper) within the PR.
+  * **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
+* **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
+* **Product development**: Use the experimental `pd` product development pipeline to automatically deliver entire features end-to-end, using OpenProject as the work tracking backend.
 
 ---
 
