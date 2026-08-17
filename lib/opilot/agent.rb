@@ -137,10 +137,11 @@ module OPilot
     # Developers handover. There is no
     # separate plan-and-wait command any more: a fix with more than one defensible
     # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
-    # fix with one shape is planned and shipped in the same call — so a simple
-    # ticket costs exactly what it did before. NEEDS_INFO still guards blind fixes.
-    # Once a prototype exists the work moves to the pull request and this handler
-    # only points there (#report_shipped).
+    # fix with one shape is announced (#post_approach_note) and shipped in the
+    # same call — so a simple ticket still costs exactly one plan call, just
+    # with a stated approach instead of a silent one. NEEDS_INFO still guards
+    # blind fixes. Once a prototype exists the work moves to the pull request
+    # and this handler only points there (#report_shipped).
     def handle_ship(intent)
       st = state_for(intent.item_id, intent.subject, intent.type)
       # The approach the reader settled: a chosen option (with anything they wrote
@@ -175,15 +176,17 @@ module OPilot
 
     # ── shared steps ──────────────────────────────────────────────────────────
 
-    # Generate (or revise) the plan for a WP. Returns :ok when plan.md is saved,
-    # :needs_info (having already posted the questions as a note), or :options
-    # when the writer answered with implementation options instead of a plan
-    # (options.json written, the comment left to the caller).
+    # Generate (or revise) the plan for a WP. Returns :ok when plan.md is saved
+    # (having already posted an approach note when the writer named a single
+    # option — see below), :needs_info (having already posted the questions as
+    # a note), or :options when the writer stopped after naming more than one
+    # approach (options.json written, the comment left to the caller).
     #
     # `allow_options:` is the caller's judgment that no human has picked an
     # approach yet; the writer's judgment is whether the fix really has more than
     # one shape (Prompts::OPTIONS_CONTRACT). `:failed` means the call produced
-    # neither, and is handled like any other failed run — logged, never commented.
+    # neither a plan nor a usable options answer, and is handled like any other
+    # failed run — logged, never commented.
     def produce_plan(st, feedback, allow_options: false, retry_bad_options: true)
       # Planning is read-only across every repo's worktree (all mounted at
       # /repos/<name>); the branch checkout waits until #ship, once the LLM has
@@ -227,8 +230,19 @@ module OPilot
       # The sentinel is read whether or not options were invited, so an
       # uninvited OPTIONS block can never be committed and shipped as a plan.
       if st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
-        options = Helpers.parse_options(st.plan_file.read)
-        safe_rm(st.plan_file)                    # the file holds options, never a plan
+        options, remainder = Helpers.parse_leading_options(st.plan_file.read)
+
+        # The common case: one named approach, straight into its plan in the
+        # same response. Ship it — no waiting, no extra call — after saying
+        # what's about to be built.
+        if allow_options && options.length == 1 && !remainder.strip.empty?
+          st.plan_file.write(remainder)
+          record_chosen_repos(st)
+          post_approach_note(st, options.first)
+          return :ok
+        end
+
+        safe_rm(st.plan_file)                    # the file holds no usable plan
         if allow_options && options.length > 1
           st.options_file.write("#{JSON.pretty_generate(options)}\n")
           log_script "Options offered for #{wp_label(st.item_id)} — #{options.length}"
@@ -238,15 +252,25 @@ module OPilot
           log_script "#{wp_label(st.item_id)} — the writer answered with options twice; no plan produced."
           return :failed
         end
-        # A single option, an unusable list, or options nobody asked for: ask once
-        # more for a plan. Bounded to one retry, so a writer that keeps answering
-        # with options ends the trigger instead of looping.
+        # An unusable list, a named approach with no plan attached, or options
+        # nobody asked for: ask once more for a plan. Bounded to one retry, so
+        # a writer that keeps failing to follow the contract ends the trigger
+        # instead of looping.
         log_script "Unusable OPTIONS for #{wp_label(st.item_id)} — asking for one plan instead."
         return produce_plan(st, feedback, retry_bad_options: false)
       end
 
       record_chosen_repos(st)
       :ok
+    end
+
+    # The single-shape case: no choice to offer, so say what's about to be
+    # built instead of silently going straight to implementation.
+    def post_approach_note(st, option)
+      post_note(st.item_id, addressed(
+        "This is a straightforward problem, so I will now implement the following " \
+        "approach: #{option["title"]} — #{option["summary"]}"
+      ))
     end
 
     # ── implementation options ────────────────────────────────────────────────

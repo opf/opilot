@@ -53,20 +53,27 @@ while the PR keeps linking the gist of the plan as it was.
 retired `approve` did, and the only way to get a prototype of the exact plan a human
 has read.
 
-**`ship` offers options before it writes code.** A fix with more than one
-defensible shape is answered with 2–3 numbered options, one sentence each, and
-nothing else happens until someone replies `@opilot build <n>`. The judgment is
-folded into the *same* plan call as a third first-line
-sentinel beside `NEEDS_INFO` and `REPOS:` — `OPTIONS`, then one pipe-delimited line
-per option (`Prompts::OPTIONS_CONTRACT`) — so a one-shape ticket is planned and
-shipped in that call and costs exactly what it did before. `Agent#produce_plan`
-returns `:options`, writes `options.json`, and `#post_options` composes the comment
-in Ruby (the writer supplies only title and sentence, so the wording, numbering and
-reply instructions cannot drift). The sentinel is honoured even when options were
-*not* invited, so an uninvited block is never shipped as a plan; an unusable list
-buys one retry for a plan, then `:failed`. Options are invited only when nothing has
-settled the approach yet: a saved plan, a chosen option, or free-text direction all
-skip the question.
+**`ship` always names the approach before it writes code.** The writer opens
+every invited plan call with a third first-line sentinel beside `NEEDS_INFO`
+and `REPOS:` — `OPTIONS`, then one pipe-delimited line per approach
+(`Prompts::OPTIONS_CONTRACT`). Most tickets have exactly one sensible approach:
+the writer names it in a single option line, then continues straight into the
+plan in the *same* response, so a one-shape ticket still costs exactly one
+plan call — just with a stated approach instead of a silent one.
+`Agent#produce_plan` reads that as a single named approach, saves the plan
+(header stripped), posts "This is a straightforward problem, so I will now
+implement the following approach: `<title>` — `<summary>`", and ships
+immediately — no reply required. A fix with more than one defensible shape is
+answered instead with 2–3 numbered options, one sentence each, and nothing
+else happens until someone replies `@opilot build <n>`; the writer stops right
+after naming them, so no plan is attached to wait on. `#post_options` composes
+that comment in Ruby (the writer supplies only title and sentence, so the
+wording, numbering and reply instructions cannot drift). The sentinel is
+honoured even when options were *not* invited, so an uninvited block is never
+shipped as a plan; an unusable answer (no plan attached, and not a real
+multi-option list either) buys one retry for a plan, then `:failed`. Naming an
+approach is skipped only when something has already settled it: a saved plan,
+a chosen option, or free-text direction.
 A **leading** number selects, and words after it ride along as direction
 (`Helpers.option_choice`/`#option_focus_text`, shared with the terminal), so
 "2 but keep the toast" neither loses the option nor loses the sentence. The repo/size
@@ -155,7 +162,10 @@ nothing" and "not scanning" look identical in the log.
   approved plan as a draft PR. One failure doesn't abort the rest. A fix with more than
   one shape is offered as the same numbered options first
   (`#prompt_option_choice`) — a number picks one, free text is direction of the
-  operator's own — so a ticket behaves the same at the console as in the thread.
+  operator's own — so a ticket behaves the same at the console as in the thread. A
+  one-shape fix names its approach the same way, but the operator already sees it
+  streamed live and still has to say `[y]es` before anything is built — there is
+  no auto-ship at the console.
 - **`wp build <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
 - **`wp plan <id>...`** — stop at the approved plan.

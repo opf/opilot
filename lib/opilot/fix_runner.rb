@@ -157,24 +157,34 @@ module OPilot
           just_generated = true
         end
 
-        # The writer may answer with implementation options instead of a plan, the
-        # same judgment the agent's `ship` gets. Ask here rather than plan blind:
-        # the operator is at the console, so the answer costs one keystroke.
+        # The writer always names the approach before a plan, the same
+        # judgment the agent's `ship` gets. When it named more than one, ask
+        # here rather than plan blind — the operator is at the console, so the
+        # answer costs one keystroke.
         if Helpers.file_has_content?(st.plan_file) &&
            st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
-          options = Helpers.parse_options(st.plan_file.read)
-          safe_rm(st.plan_file)                    # holds options, never a plan
-          if options.length < 2
-            log_script "#{wp_label(id)} — unusable options came back; planning one approach instead."
-            option_focus = ""                      # empty, not nil: asks for a plan
-            next
-          end
-          case (answer = prompt_option_choice(id, options))
-          when :skip then log_script "#{wp_label(id)} skipped."; break
-          when :drop then log_script "#{wp_label(id)} dropped."; break
+          options, remainder = Helpers.parse_leading_options(st.plan_file.read)
+
+          if options.length == 1 && !remainder.strip.empty?
+            # The common case: one named approach, with its plan already in
+            # the same response. Strip the header and fall through to the
+            # review/approval step below — the operator sees it like any
+            # other plan and still has to say yes before anything is built.
+            st.plan_file.write(remainder)
           else
-            option_focus = answer
-            next                                   # plan the chosen option
+            safe_rm(st.plan_file)                  # holds no usable plan
+            if options.length < 2
+              log_script "#{wp_label(id)} — unusable options came back; planning one approach instead."
+              option_focus = ""                    # empty, not nil: asks for a plan
+              next
+            end
+            case (answer = prompt_option_choice(id, options))
+            when :skip then log_script "#{wp_label(id)} skipped."; break
+            when :drop then log_script "#{wp_label(id)} dropped."; break
+            else
+              option_focus = answer
+              next                                 # plan the chosen option
+            end
           end
         end
 

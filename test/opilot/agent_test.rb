@@ -192,6 +192,20 @@ module OPilot
       2 | Rebuild the editor | I rebuild the bundled editor and show one message. | openproject | large
     TEXT
 
+    # The common case: one named approach, with its plan in the same response
+    # (Prompts::OPTIONS_CONTRACT — no real choice, so no reason to stop).
+    SINGLE_OPTION_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+
+      ## Plan: #42 — Fix the bug
+      REPOS: openproject
+      ### Files to change
+      ### Approach
+      ### Tests to run
+      ### Risks / assumptions
+    TEXT
+
     def options_path(id = "42")
       @ctx.state_dir / "work_packages" / "op.example.com" / id / "options.json"
     end
@@ -222,6 +236,20 @@ module OPilot
       refute pr_url_path.exist?
       assert_includes @notes.last, "**1 — Guard the paste**"
       assert_includes @notes.last, "@opilot build 1"
+    end
+
+    # No real choice to offer: the writer names the one approach and keeps
+    # going into its plan in the same response, so opilot announces it and
+    # ships immediately — no options.json, no waiting on a reply.
+    def test_ship_with_one_named_approach_announces_and_ships_without_waiting
+      agent_answering(SINGLE_OPTION_ANSWER).handle(intent(:ship))
+
+      refute options_path.exist?, "one approach is not a choice to save or offer"
+      assert plan_path.exist?
+      refute_includes plan_path.read, "OPTIONS", "the header must not leak into the saved plan"
+      assert pr_url_path.exist?, "it ships in the same call, not after a reply"
+      assert(@notes.any? { |n| n.include?("This is a straightforward problem") && n.include?("Guard the paste") },
+             "the chosen approach is announced before implementing")
     end
 
     def test_ship_with_an_option_number_plans_that_option_and_ships
@@ -275,7 +303,7 @@ module OPilot
       agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
 
       refute options_path.exist?
-      refute(@harness.captures.any? { |p| p.include?("Offer options ONLY when") },
+      refute(@harness.captures.any? { |p| p.include?("Before the plan, always name the approach") },
              "the options gate is only for a work package with no approach yet")
     end
 
@@ -296,6 +324,30 @@ module OPilot
 
       assert_equal [1, 2], rows.map { |o| o["n"] }
       assert_equal "first", rows.first["summary"]
+    end
+
+    def test_parse_leading_options_splits_one_option_from_its_plan
+      options, remainder = Helpers.parse_leading_options(SINGLE_OPTION_ANSWER)
+
+      assert_equal [1], options.map { |o| o["n"] }
+      assert_equal "Guard the paste", options.first["title"]
+      assert_equal "## Plan: #42 — Fix the bug", remainder.lines.first.chomp
+    end
+
+    def test_parse_leading_options_stops_at_the_last_option_line_when_options_only
+      options, remainder = Helpers.parse_leading_options(OPTIONS_ANSWER)
+
+      assert_equal [1, 2], options.map { |o| o["n"] }
+      assert_equal "", remainder
+    end
+
+    def test_parse_leading_options_does_not_mistake_a_plan_table_for_more_options
+      body = "OPTIONS\n1 | Guard the paste | I stop the broken paste. | openproject | small\n\n" \
+             "## Plan: #42 — Fix\n| file | change |\n| a.rb | 3 | guard |\n"
+      options, remainder = Helpers.parse_leading_options(body)
+
+      assert_equal [1], options.map { |o| o["n"] }
+      assert_includes remainder, "| a.rb | 3 | guard |"
     end
 
     def test_ship_with_a_number_and_trailing_words_keeps_both

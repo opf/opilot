@@ -277,6 +277,34 @@ module OPilot
                    (@ctx.state_dir / "work_packages" / "op.example.com" / "31" / "plan.md").read
     end
 
+    # No real choice to offer: the writer names the one approach and keeps
+    # going into its plan in the same response. Nothing to ask — it goes
+    # straight to the normal approval prompt, on the plan the response left.
+    SINGLE_OPTION_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I insert plain text and show a message. | openproject | small
+
+      ## Plan: #35 — Fix the bug
+      REPOS: openproject
+      ### Files to change
+      ### Approach
+      ### Tests to run
+      ### Risks / assumptions
+    TEXT
+
+    def test_plan_ids_accepts_one_named_approach_without_re_asking
+      harness = ScriptedPlanHarness.new(SINGLE_OPTION_ANSWER)
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "35" => item(35, "One way") }),
+                        harness: harness, publish: nil)
+
+      out, = with_stdin("s\n") { capture_io { r.plan_ids("35") } }
+
+      refute_includes out, "This fix has more than one shape"
+      plan = (@ctx.state_dir / "work_packages" / "op.example.com" / "35" / "plan.md").read
+      refute_includes plan, "OPTIONS", "the header must not leak into the saved plan"
+      assert_includes plan, "## Plan: #35 — Fix the bug"
+    end
+
     def test_option_prompt_passes_the_choice_into_the_plan_call
       harness = ScriptedPlanHarness.new(OPTIONS_ANSWER, "## Plan: #32 — chosen")
       captured = []
@@ -290,10 +318,10 @@ module OPilot
 
       with_stdin("1 but keep the toast\ns\n") { capture_io { r.plan_ids("32") } }
 
-      assert_includes captured.first, "Offer options ONLY when", "the first call may ask"
+      assert_includes captured.first, "Before the plan, always name the approach", "the first call may ask"
       assert_includes captured.last, "chose option 1"
       assert_includes captured.last, "The reporter added: but keep the toast"
-      refute_includes captured.last, "Offer options ONLY when", "the second call must not ask again"
+      refute_includes captured.last, "Before the plan, always name the approach", "the second call must not ask again"
     end
 
     def test_option_prompt_accepts_free_direction_instead_of_a_number

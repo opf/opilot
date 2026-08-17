@@ -79,20 +79,44 @@ module OPilot
     # runner, which offers them at the console — so the parsing and the wording of
     # a chosen option are written once.
 
+    # One pipe-delimited option line's fields, or nil when the line doesn't
+    # match — shared by parse_options and parse_leading_options below.
+    def self.parse_option_line(line)
+      fields = line.to_s.split("|").map(&:strip)
+      return nil unless fields.length >= 3
+      number = fields[0][/\d+/]
+      return nil unless number
+      { "n" => number.to_i, "title" => fields[1], "summary" => fields[2],
+        "repos" => fields[3].to_s.split(",").map(&:strip).reject(&:empty?),
+        "size" => fields[4].to_s }
+    end
+
     # Read the OPTIONS block: one pipe-delimited line per option. Lines that do
     # not parse are dropped, so a stray sentence around the block costs nothing,
     # and a duplicate number keeps its first line — the numbers are what a reader
-    # answers with.
+    # answers with. Used for the stops-after-options answer, where nothing but
+    # option lines is expected anywhere in the body.
     def self.parse_options(body)
-      body.to_s.lines.filter_map { |line|
-        fields = line.split("|").map(&:strip)
-        next unless fields.length >= 3
-        number = fields[0][/\d+/]
-        next unless number
-        { "n" => number.to_i, "title" => fields[1], "summary" => fields[2],
-          "repos" => fields[3].to_s.split(",").map(&:strip).reject(&:empty?),
-          "size" => fields[4].to_s }
-      }.uniq { |o| o["n"] }.sort_by { |o| o["n"] }
+      body.to_s.lines.filter_map { |line| parse_option_line(line) }
+        .uniq { |o| o["n"] }.sort_by { |o| o["n"] }
+    end
+
+    # Split a writer's answer into its leading OPTIONS line(s) and whatever
+    # follows (Prompts::OPTIONS_CONTRACT: name the approach, then — when
+    # there's only one — continue straight into the plan in the same
+    # response). Unlike parse_options, this only consumes CONTIGUOUS option
+    # lines right after the sentinel: a plan can itself contain pipe-delimited
+    # markdown table rows, which the tolerant scan above would misread as more
+    # options.
+    def self.parse_leading_options(body)
+      lines = body.to_s.lines
+      lines.shift if lines.first&.strip == Prompts::OPTIONS_SENTINEL
+      options = []
+      while (parsed = parse_option_line(lines.first))
+        options << parsed
+        lines.shift
+      end
+      [options.uniq { |o| o["n"] }.sort_by { |o| o["n"] }, lines.join.lstrip]
     end
 
     # Resolve a reader's answer to the plan-call focus for the option they chose,

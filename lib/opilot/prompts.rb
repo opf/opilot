@@ -143,11 +143,14 @@ module OPilot
         root, if present) FIRST — the harness does not load them for you.
         #{listing}
 
-        On the FIRST line of your output declare the repo(s) this fix will touch,
+        On the first line of the PLAN declare the repo(s) this fix will touch,
         using only names from the list:  REPOS: <name>[@<base>][, <name>…]
-        Append @<base> ONLY when the issue or the user explicitly asks to base that
-        repo's PR on a specific branch (e.g. openproject@release/17.6); a bare name
-        uses the repo's default base. (If you emit NEEDS_INFO below, omit the REPOS line.)
+        (When an OPTIONS line precedes the plan, REPOS still opens the plan
+        itself, not the OPTIONS line — the option's own repo field is only an
+        estimate.) Append @<base> ONLY when the issue or the user explicitly
+        asks to base that repo's PR on a specific branch (e.g.
+        openproject@release/17.6); a bare name uses the repo's default base.
+        (If you emit NEEDS_INFO below, omit the REPOS line.)
       TEXT
     end
 
@@ -207,44 +210,58 @@ module OPilot
       TEXT
     end
 
-    # The second gate on a `ship` plan call: when a fix has more than one
-    # defensible shape, the choice belongs to the reporter, not to opilot. The
-    # writer emits this block instead of a plan and `Agent#produce_plan` turns it
-    # into options.json plus one work-package comment.
+    # The second gate on a `ship` plan call: opilot always names the approach
+    # it's about to take, in the same short format, before writing the plan.
+    # When there's a real choice of approach, the writer stops after naming
+    # 2-3 of them instead of continuing — that choice belongs to the reporter,
+    # not to opilot. `Agent#produce_plan` turns a stopped multi-option answer
+    # into options.json plus one work-package comment; a single named approach
+    # is read straight through into the plan that follows it in the same
+    # response.
     #
     # Folded into the plan call rather than run as a call of its own: the writer
-    # has already read the repos to judge the fix, which is exactly what deciding
-    # "is there really a choice here?" needs, and a simple ticket then costs no
-    # extra call. The bar is stated explicitly because a model that is asked for
-    # options will find some in any ticket.
+    # has already read the repos to judge the fix, which is exactly what naming
+    # the approach needs, and — since the common single-approach case continues
+    # straight into the plan in the same response — a simple ticket still costs
+    # no extra call. The bar for offering more than one is stated explicitly
+    # because a model that is asked for options will find some in any ticket.
     #
-    # The lines are pipe-delimited data, not prose: the comment is composed by
-    # Agent#post_options, so its wording and reply instructions are identical
-    # every time and cannot pick up a heading or a sign-off.
-    # First line of an answer that carries options instead of a plan. Shared by
-    # every reader of that answer (Agent, FixRunner) so the word is written once.
+    # The option line(s) are pipe-delimited data, not prose: a stopped
+    # multi-option answer is turned into a comment by Agent#post_options, so
+    # its wording and reply instructions are identical every time and cannot
+    # pick up a heading or a sign-off.
+    # First line of an answer that names the approach before (or instead of) a
+    # plan. Shared by every reader of that answer (Agent, FixRunner) so the
+    # word is written once.
     OPTIONS_SENTINEL = "OPTIONS"
 
     OPTIONS_CONTRACT = <<~TEXT.strip
-      Offer options ONLY when the choices differ in scope, or in behaviour the
-      reporter can see. NEVER offer options for implementation detail — which file
-      to touch, which helper to add, how to name a thing. When the difference is
-      invisible to the reporter, choose the best shape yourself and write the plan.
-
-      When there is a real choice, do not write a plan. Output exactly this,
-      starting on the first line, and stop:
+      Before the plan, always name the approach you're about to take as one
+      option line:
 
         OPTIONS
         1 | <short title> | <one sentence> | <repo>[, <repo>] | small|medium|large
-        2 | <short title> | <one sentence> | <repo>[, <repo>] | small|medium|large
 
-      - Give 2 or 3 options. Put the smallest scope first.
-      - One sentence for each option, 25 words at most. Say what the option gives
-        the reporter, not how you build it.
-      - Each sentence must name a different trade-off, not the same one in other
-        words.
-      - Use only repo names from the list above.
-      - Write nothing before the first line and nothing after the last option.
+      Most tickets have exactly one sensible approach. When that's true here,
+      write just that one line, then a blank line, then continue straight into
+      the plan below — do not stop, and do not repeat the sentence in the
+      plan's own Approach section beyond what it needs.
+
+      Add a second (and, rarely, third) option line ONLY when the choices
+      differ in scope, or in behaviour the reporter can see. NEVER offer
+      options for implementation detail — which file to touch, which helper to
+      add, how to name a thing. When the difference is invisible to the
+      reporter, there is one approach, not several — hold this bar
+      deliberately, because a model that is asked for options will find some in
+      any ticket.
+
+      - When there IS a real choice: give 2 or 3 options, smallest scope first,
+        one sentence each (25 words at most, saying what the option gives the
+        reporter, not how you build it, each naming a different trade-off),
+        using only repo names from the list above — then write nothing else
+        and stop. The reporter picks; do not write a plan in that response.
+      - The option line's repo names are only an estimate — when you continue
+        into the plan, its own REPOS line still decides where the fix lands.
     TEXT
 
     # WRITER: produce a fresh implementation plan for an issue.
@@ -254,14 +271,14 @@ module OPilot
     # Agent#produce_plan detects that sentinel on the first line and posts the
     # questions back to the WP instead of saving a plan.
     #
-    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) for a work-package
-    # trigger where no human has chosen an approach yet. It stays off once an
-    # option or a direction is given, and off for the terminal flows — those have
-    # an operator at the console who sees the plan before it is built.
+    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) whenever no human
+    # has chosen an approach yet — a fresh trigger, whether from a work package
+    # or the terminal. It stays off once an option or a direction is given (a
+    # replan, or a plan call that follows a chosen option).
     def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
                   allow_options: false)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
-      options_gate = allow_options ? "\nSECOND, judge whether this fix has one shape or several.\n#{OPTIONS_CONTRACT}\n" : ""
+      options_gate = allow_options ? "\nSECOND, name the approach.\n#{OPTIONS_CONTRACT}\n" : ""
       <<~PROMPT
         #{repos_section(repos_summary, repos)}
 
