@@ -256,7 +256,7 @@ module OPilot
         # a writer that keeps failing to follow the contract ends the trigger
         # instead of looping.
         log_script "Unusable OPTIONS for #{wp_label(st.item_id)} — asking for one plan instead."
-        return produce_plan(st, feedback, retry_bad_options: false)
+        return produce_plan(st, feedback, allow_options: allow_options, retry_bad_options: false)
       end
 
       record_chosen_repos(st)
@@ -383,7 +383,7 @@ module OPilot
       end
 
       if opened.any?
-        links = opened.map { |repo, url| "- [#{st.subject} → `#{repo.name}`](#{url})" }.join("\n")
+        links = opened.map { |repo, url| "- [#{st.subject}](#{url}) — `#{repo.name}`" }.join("\n")
         suffix = failed.any? ? "\n\n(I could not open a PR in: #{failed.map(&:name).join(", ")}. Make sure GITHUB_CONTRIBUTOR_TOKEN is set.)" : ""
         post_note(st.item_id, addressed("Here is your AI-generated prototype#{opened.size > 1 ? "s" : ""}:\n\n#{links}#{suffix}"))
       else

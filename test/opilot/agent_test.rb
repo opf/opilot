@@ -28,6 +28,24 @@ module OPilot
       end
     end
 
+    # A harness that answers each successive #capture with the next entry in
+    # `plans`, holding on the last entry once exhausted. Used to drive a
+    # writer's retry (e.g. an unusable OPTIONS answer followed by a good one).
+    class SequencedHarness < FakeHarness
+      def initialize(plans)
+        super()
+        @plans = plans
+      end
+
+      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+        @captures << prompt
+        @capture_sessions << session_file
+        plan = @plans[@captures.length - 1] || @plans.last
+        Pathname(outfile).write(plan)
+        plan
+      end
+    end
+
     # Mirrors the real Publish: open_pr writes the repo's pr_url.txt and returns
     # the URL.
     class FakePublish
@@ -315,6 +333,24 @@ module OPilot
       assert_equal 2, @harness.captures.length, "one retry, never a loop"
       refute plan_path.exist?
       refute options_path.exist?
+    end
+
+    # A writer that names one option but stops without its plan is unusable
+    # (produce_plan's own bar), so the retry fires — but the ticket is still a
+    # single-shape one, and a later well-formed single-option answer must
+    # still be shipped with the approach announced.
+    def test_retry_after_a_stalled_single_option_still_announces_it
+      stalled = "OPTIONS\n1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small\n"
+      @harness = SequencedHarness.new([stalled, SINGLE_OPTION_ANSWER])
+      agent    = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(agent, FakeWorktree.new)
+      st = agent.send(:state_for, "42", "Fix the bug")
+
+      assert_equal :ok, agent.send(:produce_plan, st, nil, allow_options: true)
+      assert_equal 2, @harness.captures.length, "one retry, never a loop"
+      assert plan_path.exist?
+      assert(@notes.any? { |n| n.include?("This is a straightforward problem") && n.include?("Guard the paste") },
+             "allow_options must survive the retry so a later single option is still announced")
     end
 
     def test_parse_options_skips_junk_and_orders_by_number
