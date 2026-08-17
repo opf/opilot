@@ -40,9 +40,9 @@ Use OPilot to remove that friction from your development workflow. It can automa
 ## Requirements
 
 - **Docker**
-- [OpenRouter](https://openrouter.ai/keys) API key — held only by the `authgw` container, never by the one running untrusted work-package content
+- [OpenRouter](https://openrouter.ai/keys) API key
 - GitHub auth token tied to a permission-less contributor account (we currently use [op-opilot](https://github.com/op-opilot))
-- Project-scoped OpenProject API token (read/write for the product development pipeline, or just read-only for the rest)
+- Project-scoped OpenProject API token
 
 ---
 
