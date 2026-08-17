@@ -106,29 +106,25 @@ cd opilot
 The harness container processes untrusted text (work package descriptions and
 comments), so it is boxed in from several directions:
 
-* **No host or LAN exposure** — port 47291 is not published; the container sits
-  on an `internal: true` Docker network reachable only by the runner.
-* **Server-side tool allowlist** — `server.js` refuses any `X-Harness-Tools`
-  grant that isn't one of the two known tool sets, and validates session IDs.
-* **Egress allowlist** — model calls reach `authgw` directly over the internal
-  network; all other outbound traffic goes through a tinyproxy sidecar that
-  only permits the hosts in `tinyproxy-filter` (Rails docs); a prompt injection
-  has no channel to exfiltrate data.
-* **API key isolation** — the real `OPENROUTER_API_KEY` lives only in the
-  separate `authgw` gateway, which injects it into inference requests; the
-  harness container carries just a fixed (non-secret) handshake token
-  (`pi-models.json` resolves it), so a prompt injection can cause API calls but
-  cannot read or exfiltrate the key.
-* **Write confinement** — `pi-guards.ts`, pi's one `tool_call` hook, blocks any
-  file mutation outside `/repos` and confines Bash to read-only git, and the
-  `.opilot` state dir is additionally mounted **read-only** (`/state`), so
-  plans, cached state, and session files can't be tampered with even if the
-  guard were bypassed.
+* **No host or LAN exposure** — port 47291 stays unpublished. The container
+  sits on an internal Docker network reachable only by the runner.
+* **Server-side tool allowlist** — `server.js` accepts only two known
+  `X-Harness-Tools` grants, and validates every session ID.
+* **Egress allowlist** — model calls go straight to `authgw`. All other
+  traffic passes through a tinyproxy allowlist (Rails docs only). A prompt
+  injection has no path to send data out.
+* **API key isolation** — the real `OPENROUTER_API_KEY` stays in the `authgw`
+  gateway. The harness container holds only a fixed, non-secret handshake
+  token. A prompt injection can trigger API calls but cannot read the key.
+* **Write confinement** — `pi-guards.ts` blocks file writes outside `/repos`
+  and allows only read-only git in Bash. The `.opilot` state dir is also
+  mounted read-only, so plans and session files stay safe even if the guard
+  fails.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
-  `no-new-privileges`, and no OpenProject/GitHub tokens or OpenRouter API key in
-  the environment.
-* **Human gate** — everything ships as a *draft* PR; review it as untrusted
-  code, since WP content can attempt prompt injection.
+  `no-new-privileges`. No OpenProject token, GitHub token, or OpenRouter key
+  is present in the environment.
+* **Human gate** — everything ships as a *draft* PR. Review it as untrusted
+  code — WP content can attempt prompt injection.
 
 ---
 
@@ -156,25 +152,27 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 Simply run `./opilot agent`
 
 On a watched **work package** (gated by `OPILOT_ALLOWED_OP_USER_IDS`):
-`@opilot build` plans and ships in one step, `@opilot grill` stress-tests the ticket or plan, `@opilot summarize` recaps a long thread —
-anything else just chats. Naming the opilot user in a WP's **Developers** field
-also triggers `build`, once per WP, from anyone (disable with
-`OPILOT_DEVELOPER_TRIGGER=0`, or point it elsewhere with `OPILOT_DEVELOPER_FIELD`).
+`@opilot build` plans and ships in one step. `@opilot grill` stress-tests the
+ticket or plan. `@opilot summarize` recaps a long thread. Any other comment
+just chats. Naming opilot in a WP's **Developers** field also triggers
+`build`, once per WP, from any user. Set `OPILOT_DEVELOPER_TRIGGER=0` to
+disable this, or `OPILOT_DEVELOPER_FIELD` to use a different field.
 
-When a fix has more than one defensible shape, `build` **offers options first** —
-two or three numbered one-liners, no code until someone replies `@opilot build
-<number>` (extra words become direction for that option). A single-shape fix, or
-free-text direction (`@  build use a toast instead`), skips straight to
-shipping. `./opilot wp ship` offers the same options at the console.
+When a fix has more than one defensible shape, `build` **offers options
+first**: two or three numbered one-liners, with no code until someone replies
+`@opilot build <number>`. Extra words after the number become direction for
+that option. A single-shape fix, or a reply with free-text direction (`@opilot
+build use a toast instead`), skips straight to shipping. `./opilot wp ship`
+offers the same options at the console.
 
-Once the prototype is open, review happens on the pull request: ask for changes
-there and opilot reads the comments and pushes; a later `@opilot build` on a
-shipped work package just answers with the link.
+Once the prototype is open, review happens on the pull request. Ask for
+changes there, and opilot reads the comments and pushes. A later `@opilot
+build` on a shipped work package just answers with the link.
 
-On a opilot-opened **GitHub PR** (gated by ` _ALLOWED_GH_USERS`): any
-`@opilot` comment gets a reply — and code, when asked — while `@opilot refresh`
-runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep). Failing
-CI is picked up on its own.
+On an opilot-opened **GitHub PR** (gated by `OPILOT_ALLOWED_GH_USERS`): any
+`@opilot` comment gets a reply, and code when asked. `@opilot refresh` runs
+the full `wp pr` refresh — forced base merge, CI fix, feedback sweep. Opilot
+picks up failing CI on its own.
 
 Set `OPILOT_TRACK_UPSTREAM_PRS=1` to also track the product repos' **upstream**
 PRs: opilot has no write access there, so it replies in text and offers
@@ -206,15 +204,15 @@ The spec PR **is** the approval gate: nothing is written to OpenProject until yo
 OPilot publishes as a single GitHub **identity**, the **contributor**
 (`GITHUB_CONTRIBUTOR_TOKEN`), in every mode:
 
-* A dedicated unprivileged bot account (such as [op-opilot](https://github.com/op-opilot)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
-* No push ever targets a canonical repo: fork PRs are the only publishing shape, so a maintainer's review and merge is always the gate, and the unattended loops physically cannot land anything upstream
-* Discover these PRs via the link opilot posts back on the work package; you still chat with them by commenting `@opilot …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
+* A dedicated unprivileged bot account (such as [op-opilot](https://github.com/op-opilot)), with **no access to the canonical repo**. It forks, pushes to the fork, and opens cross-repo draft PRs
+* No push ever targets a canonical repo. Fork PRs are the only publishing shape, so a maintainer's review and merge is always the gate — the unattended loops cannot land code upstream on their own
+* Find these PRs from the link opilot posts on the work package. Comment `@opilot …` to keep chatting — gh-agent watches the PR. To run secret-gated CI, _adopt_ a good PR under your own account (below)
 
 Refreshing an existing PR (`wp pr <id|url>`, `@opilot refresh`) pushes to the PR's
 head branch on the bot's fork. A PR whose head lives on the canonical repo (one
 you adopted, say) is not opilot's to write to, so its refresh is discarded.
 
-### Adopting a opilot PR
+### Adopting an opilot PR
 
 Set up the following alias:
 
