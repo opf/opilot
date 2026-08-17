@@ -14,7 +14,7 @@
 
 AI tools help us design and implement faster. Nevertheless, outside that creative process, there is still some inevitable legwork: checking out branches, running local AI coding assistants by hand, and managing pull requests.
 
-Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with @OPilot in OpenProject or in GitHub PRs!
+Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with `@OPilot` in OpenProject or in GitHub PRs!
 
 * **Work package refinement**: Discuss & refine work packages via `@OPilot grill` & free-form chatting
 * **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-chomper) within the PR.
