@@ -36,7 +36,7 @@ module OPilot
     # suffices (e.g. crafting a gh-agent commit subject, or a PR description).
     # server.js validates the value by format, not an allowlist — model choice
     # grants no privilege (unlike the tool grants above).
-    MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-opus-4.8")
+    MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5")
     MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
     def initialize(ctx)
