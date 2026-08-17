@@ -4,7 +4,7 @@
 
 # OPilot
 
-**Your friendly neighborhood AI software development assistant.**
+**Your friendly neighborhood AI software development assistant (for OpenProject)**
 
 ⚠️ _Proof of concept — use at your own risk!_
 
