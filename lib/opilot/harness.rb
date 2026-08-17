@@ -186,16 +186,24 @@ module OPilot
                       $stdout.puts Rainbow("  #{part["name"]}  #{summary}").cyan
                       at_line_start = true
                       after_tool    = true
+                    when "text_delta", "thinking_delta"
+                      # Printed raw (no Markdown rendering) as it streams in, so a
+                      # long-running block — e.g. a reasoning model's "thinking"
+                      # text — is visible instead of leaving the terminal silent
+                      # until text_end/thinking_end or a length-cap error. Not
+                      # accumulated into text_parts: "text" below carries the
+                      # block's full, authoritative content once it completes.
+                      chunk = part["text"].to_s
+                      next if chunk.empty?
+                      print(part["type"] == "thinking_delta" ? Rainbow(chunk).gray : chunk)
+                      at_line_start = chunk.end_with?("\n")
                     when "text"
                       if after_tool && !text_parts.empty? && !text_parts.last.end_with?("\n")
                         text_parts << "\n\n"
                       end
-                      after_tool    = false
-                      # Display the rendered Markdown; keep the raw text for the
-                      # return value, the log, and capture's outfile.
-                      shown = render_markdown(part["text"])
-                      print shown
-                      at_line_start = shown.end_with?("\n")
+                      after_tool = false
+                      # Already shown live via text_delta above; keep the raw text
+                      # for the return value, the log, and capture's outfile.
                       text_parts << part["text"]
                     end
                   end

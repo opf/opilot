@@ -103,19 +103,25 @@ function settleResult(msg) {
 //
 //   {"type":"session","id":...}                                    — first line
 //   {"type":"tool_execution_start","toolName":...,"args":{...}}
+//   {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":...}}
 //   {"type":"message_update","assistantMessageEvent":{"type":"text_end","content":...}}
 //   {"type":"agent_end","messages":[...],"willRetry":bool}
 //   {"type":"agent_settled"}
 //
-// Flushed on text_end (the FULL text for one content block, per pi's
-// AssistantMessageEvent union — packages/ai/src/types.ts), not on every
-// text_delta: harness.rb passes each forwarded "text" part through a full
-// Markdown parser (TTY::Markdown, in render_markdown). pi's deltas are raw
-// token/word fragments — parsing each one alone as its own tiny markdown
-// document reflows it into its own paragraph (stray blank lines) and can
-// split an inline code span whose backticks land in different deltas. A
-// complete block per text_end parses correctly; only the mid-paragraph
-// "live typing" look is traded away, not correctness.
+// text_delta/thinking_delta are forwarded raw, printed as they arrive with no
+// Markdown parsing — pi's deltas are token/word fragments, and running each
+// one alone through a full Markdown parser (TTY::Markdown, in
+// render_markdown) reflows it into its own paragraph (stray blank lines) and
+// can split an inline code span whose backticks land in different deltas.
+// The previous design waited for text_end (the FULL text for one content
+// block) to get correctly-rendered Markdown, but that means a block that
+// never reaches text_end — e.g. a reasoning model's "thinking" block long
+// enough to hit the model's output-length cap — prints nothing at all for as
+// long as it runs, then surfaces only as an `error_length` with no context.
+// Silence-then-failure is worse than slightly-reflowed Markdown while typing,
+// so raw deltas are shown live and text_end/thinking_end now only supply the
+// authoritative final text (for the return value, the log, and capture's
+// outfile) — see harness.rb's http_stream.
 //
 // pi can run several internal agent_start/agent_end cycles for ONE prompt —
 // auto-retry on a transient provider error, or overflow compaction — each
@@ -144,6 +150,8 @@ function translate(parsed, state) {
       const evt = parsed.assistantMessageEvent;
       if (evt && evt.type === 'text_end' && evt.content) {
         frames.push({ type: 'assistant', message: { content: [{ type: 'text', text: evt.content }] } });
+      } else if (evt && (evt.type === 'text_delta' || evt.type === 'thinking_delta') && evt.delta) {
+        frames.push({ type: 'assistant', message: { content: [{ type: evt.type, text: evt.delta }] } });
       }
       break;
     }

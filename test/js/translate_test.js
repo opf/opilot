@@ -58,7 +58,7 @@ test('a retry storm before an eventual success reports only the final outcome', 
   assert.strictEqual(results[0].result, 'Here are the files.');
 });
 
-test('tool_execution_start becomes a tool_use assistant frame; text flushes once, on text_end, not per delta', () => {
+test('tool_execution_start becomes a tool_use assistant frame; each text_delta streams live, text_end carries the one authoritative copy', () => {
   const { frames } = runTranscript('tool_use_and_success.ndjson');
   const assistantFrames = frames.filter(f => f.type === 'assistant');
   const toolUse = assistantFrames.find(f => f.message.content[0].type === 'tool_use');
@@ -67,18 +67,39 @@ test('tool_execution_start becomes a tool_use assistant frame; text flushes once
   assert.deepStrictEqual(toolUse.message.content[0].input, { command: 'git -C /repos/openproject log --oneline -1' });
 
   // The fixture has text_start + two text_delta + one text_end for this
-  // block. Forwarding each delta as its own frame is exactly the bug this
-  // guards against: harness.rb runs every "text" part through a full Markdown
-  // parser (render_markdown), which reflows a lone word-fragment into its own
-  // paragraph — the stray-newline bug. Only text_end (the complete block)
-  // may become a frame.
+  // block. Each delta is forwarded raw (harness.rb prints it unrendered, live,
+  // as it arrives — no Markdown parser sees a lone word-fragment) so a
+  // long-running block is visible instead of leaving the terminal silent.
+  // text_end still carries the complete block exactly once: the one
+  // authoritative copy used for the return value, the log, and capture's
+  // outfile.
+  const deltaFrames = assistantFrames.filter(f => f.message.content[0].type === 'text_delta');
+  assert.deepStrictEqual(deltaFrames.map(f => f.message.content[0].text), ['The ', 'repo is at abc1234.']);
+
   const textFrames = assistantFrames.filter(f => f.message.content[0].type === 'text');
-  assert.strictEqual(textFrames.length, 1, 'exactly one text frame — flushed on text_end, not one per delta');
+  assert.strictEqual(textFrames.length, 1, 'exactly one text frame — the authoritative copy, flushed on text_end');
   assert.strictEqual(textFrames[0].message.content[0].text, 'The repo is at abc1234.');
 
   const result = frames.find(f => f.type === 'result');
   assert.strictEqual(result.is_error, false);
   assert.strictEqual(result.result, 'The repo is at abc1234.');
+});
+
+test('thinking_delta is forwarded raw too, so a truncated reasoning block is not silent', () => {
+  // This is exactly the TTP2-22 failure mode: a reasoning model's "thinking"
+  // block ran long enough to hit the model's output-length cap before ever
+  // reaching thinking_end, so the old text_end-only forwarding produced zero
+  // frames for the whole run — total terminal silence, then a bare
+  // error_length with no context.
+  const state = {};
+  const frames = [
+    ...translate({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'Let me check ' } }, state),
+    ...translate({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'the issue first.' } }, state),
+  ];
+  assert.deepStrictEqual(
+    frames.map(f => f.message.content[0]),
+    [{ type: 'thinking_delta', text: 'Let me check ' }, { type: 'thinking_delta', text: 'the issue first.' }],
+  );
 });
 
 test('settleResult: no assistant message at all is an error, not a silent empty success', () => {
