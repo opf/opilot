@@ -4,7 +4,7 @@
 
 # OPilot
 
-**Your friendly neighborhood software development agent (for OpenProject)**
+**Your friendly neighborhood OpenProject software development agent**
 
 ⚠️ _Proof of concept — use at your own risk!_
 
