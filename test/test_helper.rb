@@ -7,27 +7,27 @@ require "fileutils"
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
-require "chomper/context"
-require "chomper/clients"
-require "chomper/helpers"
-require "chomper/prompts"
-require "chomper/harness"
-require "chomper/ui"
-require "chomper/pull"
-require "chomper/publish"
-require "chomper/agent"
-require "chomper/gh_pull"
-require "chomper/gh_agent"
-require "chomper/combined_agent"
-require "chomper/fix_runner"
-require "chomper/pr_runner"
-require "chomper/chat_runner"
-require "chomper/usage_runner"
-# The `pd` pipeline is lazily required in production (see bin/chomper); the suite
+require "opilot/context"
+require "opilot/clients"
+require "opilot/helpers"
+require "opilot/prompts"
+require "opilot/harness"
+require "opilot/ui"
+require "opilot/pull"
+require "opilot/publish"
+require "opilot/agent"
+require "opilot/gh_pull"
+require "opilot/gh_agent"
+require "opilot/combined_agent"
+require "opilot/fix_runner"
+require "opilot/pr_runner"
+require "opilot/chat_runner"
+require "opilot/usage_runner"
+# The `pd` pipeline is lazily required in production (see bin/opilot); the suite
 # loads all of it, intake converter included, since it tests every stage.
-require "chomper/pd"
-require "chomper/pd/intake"
-require "chomper/cli"
+require "opilot/pd"
+require "opilot/pd/intake"
+require "opilot/cli"
 
 WebMock.disable_net_connect!
 
@@ -48,5 +48,5 @@ end
 Minitest::Test.prepend(WebMockAlwaysReset)
 
 # Disable real retry backoff so the suite doesn't sleep through retries.
-Chomper::Clients::HTTP.base_interval = 0
-Chomper::Clients::GitHub.base_interval = 0
+OPilot::Clients::HTTP.base_interval = 0
+OPilot::Clients::GitHub.base_interval = 0

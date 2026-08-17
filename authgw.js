@@ -1,7 +1,7 @@
 // Auth gateway — runs in its own container, holds the real OPENROUTER_API_KEY.
 //
 // pi's models.json override (pi-models.json) points the openrouter provider's
-// baseUrl here and resolves its apiKey to CHOMPER_GW_TOKEN (a fixed handshake
+// baseUrl here and resolves its apiKey to OPILOT_GW_TOKEN (a fixed handshake
 // value, not a secret — just a sanity gate), so the real key never lives
 // alongside the untrusted work-package content the harness container reads.
 // This forwarder always targets a hardcoded openrouter.ai regardless of the
@@ -15,10 +15,10 @@ const PORT     = 47292;
 const UPSTREAM = 'openrouter.ai';
 
 const API_KEY   = process.env.OPENROUTER_API_KEY;
-const GW_TOKEN  = process.env.CHOMPER_GW_TOKEN;
+const GW_TOKEN  = process.env.OPILOT_GW_TOKEN;
 
 if (!API_KEY) { process.stderr.write('authgw: OPENROUTER_API_KEY is not set to a real key\n'); process.exit(1); }
-if (!GW_TOKEN) { process.stderr.write('authgw: CHOMPER_GW_TOKEN is not set\n');  process.exit(1); }
+if (!GW_TOKEN) { process.stderr.write('authgw: OPILOT_GW_TOKEN is not set\n');  process.exit(1); }
 
 // Reuse upstream TLS connections so inference calls don't pay a fresh handshake
 // each time. Pinned explicitly rather than relying on the global agent default.
@@ -30,7 +30,7 @@ const server = http.createServer((req, res) => {
   }
 
   // The client must present the gateway token; reject anything else before we
-  // attach the real key. (pi sends the resolved apiKey — CHOMPER_GW_TOKEN —
+  // attach the real key. (pi sends the resolved apiKey — OPILOT_GW_TOKEN —
   // as a standard Bearer token, confirmed against pi 0.84.2.)
   if (req.headers['authorization'] !== `Bearer ${GW_TOKEN}`) {
     res.writeHead(401, { 'Content-Type': 'text/plain' });

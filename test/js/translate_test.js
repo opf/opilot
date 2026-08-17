@@ -1,4 +1,4 @@
-// Plain-Node test for server.js's pi -> chomper NDJSON translation. No test
+// Plain-Node test for server.js's pi -> opilot NDJSON translation. No test
 // framework (the repo has none for JS): run with `node test/js/translate_test.js`.
 //
 // Fixtures under test/fixtures/pi/ are real pi 0.84.2 --mode json transcripts

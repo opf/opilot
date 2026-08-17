@@ -1,4 +1,4 @@
-# openproject-chomper
+# OPilot
 
 > ⚠️ **Proof of concept — use at your own risk!**
 
@@ -8,12 +8,12 @@ Your friendly neighborhood AI software development assistant.
 
 Use it to automate any portion of your development workflow: from patching simple bugs to delivering entire features end-to-end.
 
-1. **Product ideation**: Collect ideas in a document/WP, then tag `@Chomper` to generate a feature spec.
+1. **Product ideation**: Collect ideas in a document/WP, then tag `@OPilot` to generate a feature spec.
 1. **WP preparation**: Generate a work package tree from an approved feature spec
-1. **WP refinement**: Refine work package via `@Chomper grill` & free-form chatting
-1. **Prototyping**: Generate code prototypes via `@Chomper build`. Refine the code by chatting with [Chomper Bot](https://github.com/op-chomper) within the PR.
+1. **WP refinement**: Refine work package via `@OPilot grill` & free-form chatting
+1. **Prototyping**: Generate code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
 1. **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
-1. **General PR assistance**: Tag `@Chomper` in any upstream PR with questions.
+1. **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
 
 ---
 
@@ -34,7 +34,7 @@ Use it to automate any portion of your development workflow: from patching simpl
 
 - **Docker**
 - [OpenRouter](https://openrouter.ai/keys) API key — held only by the `authgw` container, never by the one running untrusted work-package content
-- GitHub auth token tied to a permission-less contributor account (we currently use [op-chomper](https://github.com/op-chomper))
+- GitHub auth token tied to a permission-less contributor account (we currently use [op-opilot](https://github.com/op-opilot))
 - Project-scoped OpenProject API token (read/write for the product development pipeline, or just read-only for the rest)
 
 ---
@@ -43,33 +43,33 @@ Use it to automate any portion of your development workflow: from patching simpl
 
 ### Setup
 ```bash
-git clone https://github.com/opf/openproject-chomper
-cd openproject-chomper
+git clone https://github.com/opf/opilot
+cd opilot
 # Create .env based on .env.example OR just leave it to the first startup wizard
 ```
 
 ### Agent mode
 ```bash
-# Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @chomper mentions
-./chomper agent
+# Run the agent: it scans for new activity on OpenProject WPs + its own GitHub PRs and acts on @opilot mentions
+./opilot agent
 ```
 
 ### Script mode
 ```bash
 # Run one-time E2E fix of one or more specific WPs
-./chomper wp ship <id>...
+./opilot wp ship <id>...
 # OR just draft (and approve) a plan without building
-./chomper wp plan <id>...
+./opilot wp plan <id>...
 # OR refresh a stale shipped PR (merge base, fix CI, address comments)
-./chomper wp pr <id-or-pr-url>...
-# and more — ./chomper wp lists the group
+./opilot wp pr <id-or-pr-url>...
+# and more — ./opilot wp lists the group
 ```
 
 ## Bird's-eye view
 
 ```
            ┌─────────────────┐
-           │ ./chomper       │
+           │ ./opilot        │
            │ (shell wrapper) │
            └────────┬────────┘
                     │
@@ -81,7 +81,7 @@ cd openproject-chomper
 │ │                                   │            │                                        │ │
 │ │ Ruby 4.0 script                   │            │ Node.js server (:47291)                │ │
 │ │  * Pulls WP content from OP API   │◀── json ──▶│   POST / -> `pi --mode json`           │ │
-│ │  * Manages metadata in .chomper/  │            │ volumes: .chomper/                     │ │
+│ │  * Manages metadata in .opilot/   │            │ volumes: .opilot/                      │ │
 │ │      * WP metadata mirror         │            │                                        │ │
 │ │      * Plan files                 │            │                                        │ │
 │ │      * Draft PR data              │            └─────────┬─────────────────────┬────────┘ │
@@ -121,7 +121,7 @@ comments), so it is boxed in from several directions:
   cannot read or exfiltrate the key.
 * **Write confinement** — `pi-guards.ts`, pi's one `tool_call` hook, blocks any
   file mutation outside `/repos` and confines Bash to read-only git, and the
-  `.chomper` state dir is additionally mounted **read-only** (`/state`), so
+  `.opilot` state dir is additionally mounted **read-only** (`/state`), so
   plans, cached state, and session files can't be tampered with even if the
   guard were bypassed.
 * **Container hardening** — read-only rootfs, `cap_drop: ALL`,
@@ -138,14 +138,14 @@ comments), so it is boxed in from several directions:
 
 | Command | What it does |
 |---|---|
-| `./chomper wp ship <id>...` | Plan → approve → implement → draft PR, per work package. `wp plan` stops at the approved plan, `wp build` at the local commit. Publishes via the contributor bot's fork |
-| `./chomper wp pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
-| `./chomper wp pull [<id>...]` | Mirror work packages into the local cache |
-| `./chomper chat [message]` | Free read-only chat about the local mirrors |
-| `./chomper status` / `reset` | List planned/shipped work packages / wipe `.chomper/` for a fresh start |
-| `./chomper usage` | OpenRouter spend: account balance, this key's usage/limit, and pricing for the configured models |
+| `./opilot wp ship <id>...` | Plan → approve → implement → draft PR, per work package. `wp plan` stops at the approved plan, `wp build` at the local commit. Publishes via the contributor bot's fork |
+| `./opilot wp pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
+| `./opilot wp pull [<id>...]` | Mirror work packages into the local cache |
+| `./opilot chat [message]` | Free read-only chat about the local mirrors |
+| `./opilot status` / `reset` | List planned/shipped work packages / wipe `.opilot/` for a fresh start |
+| `./opilot usage` | OpenRouter spend: account balance, this key's usage/limit, and pricing for the configured models |
 
-Everything keyed on a work-package id lives under `wp` (`./chomper wp` lists the
+Everything keyed on a work-package id lives under `wp` (`./opilot wp` lists the
 group); the spec-driven pipeline lives under `pd`.
 
 The `wp ship` / `wp build` / `wp plan` loop prompts `[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`
@@ -153,33 +153,33 @@ for each drafted plan; several ids run in turn and one failure doesn't abort the
 
 ### Agent mode (comment-driven)
 
-Simply run `./chomper agent`
+Simply run `./opilot agent`
 
-On a watched **work package** (gated by `CHOMPER_ALLOWED_OP_USER_IDS`):
-`@chomper build` plans and ships in one step, `@chomper grill` stress-tests the ticket or plan, `@chomper summarize` recaps a long thread —
-anything else just chats. Naming the chomper user in a WP's **Developers** field
+On a watched **work package** (gated by `OPILOT_ALLOWED_OP_USER_IDS`):
+`@opilot build` plans and ships in one step, `@opilot grill` stress-tests the ticket or plan, `@opilot summarize` recaps a long thread —
+anything else just chats. Naming the opilot user in a WP's **Developers** field
 also triggers `build`, once per WP, from anyone (disable with
-`CHOMPER_DEVELOPER_TRIGGER=0`, or point it elsewhere with `CHOMPER_DEVELOPER_FIELD`).
+`OPILOT_DEVELOPER_TRIGGER=0`, or point it elsewhere with `OPILOT_DEVELOPER_FIELD`).
 
 When a fix has more than one defensible shape, `build` **offers options first** —
-two or three numbered one-liners, no code until someone replies `@chomper build
+two or three numbered one-liners, no code until someone replies `@opilot build
 <number>` (extra words become direction for that option). A single-shape fix, or
-free-text direction (`@chomper build use a toast instead`), skips straight to
-shipping. `./chomper wp ship` offers the same options at the console.
+free-text direction (`@  build use a toast instead`), skips straight to
+shipping. `./opilot wp ship` offers the same options at the console.
 
 Once the prototype is open, review happens on the pull request: ask for changes
-there and chomper reads the comments and pushes; a later `@chomper build` on a
+there and opilot reads the comments and pushes; a later `@opilot build` on a
 shipped work package just answers with the link.
 
-On a chomper-opened **GitHub PR** (gated by `CHOMPER_ALLOWED_GH_USERS`): any
-`@chomper` comment gets a reply — and code, when asked — while `@chomper refresh`
+On a opilot-opened **GitHub PR** (gated by ` _ALLOWED_GH_USERS`): any
+`@opilot` comment gets a reply — and code, when asked — while `@opilot refresh`
 runs the full `wp pr` refresh (forced base merge, CI fix, feedback sweep). Failing
 CI is picked up on its own.
 
-Set `CHOMPER_TRACK_UPSTREAM_PRS=1` to also track the product repos' **upstream**
-PRs: chomper has no write access there, so it replies in text and offers
+Set `OPILOT_TRACK_UPSTREAM_PRS=1` to also track the product repos' **upstream**
+PRs: opilot has no write access there, so it replies in text and offers
 applicable changes as one-click GitHub suggestions. Off by default — the only way
-chomper looks outside its own PRs.
+opilot looks outside its own PRs.
 
 ### Product development (`pd`)
 
@@ -188,33 +188,33 @@ A separate, spec-driven pipeline: OpenProject **Documents** → an
 → generated work packages → one implementation PR per work package.
 
 ```bash
-./chomper pd init <project-id>                    # resolve ids, seed the spec store
-./chomper pd intake <project-id> <change-id>      # documents (+ attachments) → intake/
-./chomper pd propose <change-id>                  # proposal + the spec PR that gates it
-./chomper pd generate-wp <change-id>              # one parent + a child per tasks.md section
-./chomper pd implement <wp-id>...                 # build one work package from its spec
+./opilot pd init <project-id>                    # resolve ids, seed the spec store
+./opilot pd intake <project-id> <change-id>      # documents (+ attachments) → intake/
+./opilot pd propose <change-id>                  # proposal + the spec PR that gates it
+./opilot pd generate-wp <change-id>              # one parent + a child per tasks.md section
+./opilot pd implement <wp-id>...                 # build one work package from its spec
 ```
 
 The spec PR **is** the approval gate: nothing is written to OpenProject until you run
 `generate-wp`, which is why that step needs a token with add-work-packages rights.
-`./chomper pd` lists the commands; CLAUDE.md carries the full design.
+`./opilot pd` lists the commands; CLAUDE.md carries the full design.
 
 ---
 
 ## Reviewing & pushing
 
-Chomper publishes as a single GitHub **identity**, the **contributor**
+OPilot publishes as a single GitHub **identity**, the **contributor**
 (`GITHUB_CONTRIBUTOR_TOKEN`), in every mode:
 
-* A dedicated unprivileged bot account (such as [op-chomper](https://github.com/op-chomper)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
+* A dedicated unprivileged bot account (such as [op-opilot](https://github.com/op-opilot)) with **no access to the canonical repo** — it forks, pushes to the fork, and opens cross-repo draft PRs
 * No push ever targets a canonical repo: fork PRs are the only publishing shape, so a maintainer's review and merge is always the gate, and the unattended loops physically cannot land anything upstream
-* Discover these PRs via the link chomper posts back on the work package; you still chat with them by commenting `@chomper …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
+* Discover these PRs via the link opilot posts back on the work package; you still chat with them by commenting `@opilot …` (gh-agent watches the PR), and re-publish a good one under your own account — so secret-gated CI can run — by _adopting_ it (below)
 
-Refreshing an existing PR (`wp pr <id|url>`, `@chomper refresh`) pushes to the PR's
+Refreshing an existing PR (`wp pr <id|url>`, `@opilot refresh`) pushes to the PR's
 head branch on the bot's fork. A PR whose head lives on the canonical repo (one
-you adopted, say) is not chomper's to write to, so its refresh is discarded.
+you adopted, say) is not opilot's to write to, so its refresh is discarded.
 
-### Adopting a chomper PR
+### Adopting a opilot PR
 
 Set up the following alias:
 
@@ -231,7 +231,7 @@ git fetch "https://github.com/$fork.git" "$branch"
 git checkout -B "$branch" FETCH_HEAD
 git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
 git push origin "$branch"
-body="$(v "$1" body | sed "/<!-- chomper:banner -->/,/<!-- \/chomper:banner -->/d; s#hxxp://#http://#g; s#hxxps://#https://#g")"
+body="$(v "$1" body | sed "/<!-- opilot:banner -->/,/<!-- \/opilot:banner -->/d; s#hxxp://#http://#g; s#hxxps://#https://#g")"
 body="Adapted from #$num.
 $body"
 url="$(gh pr create --draft --head "$branch" --base "$base" --title "$(v "$1" title)" --body "$body")"
@@ -253,7 +253,7 @@ It does the following:
 * Pushes a new branch to the upstream repo
 * Opens a draft PR for the new branch.
 
-The chomper agent will pick up on this and close its PR, pointing to yours.
+The opilot agent will pick up on this and close its PR, pointing to yours.
 
 ---
 
@@ -268,32 +268,32 @@ fuller comments. `CLAUDE.md` documents each one's rationale.
 | `OPENPROJECT_URL` | OpenProject instance URL |
 | `OPENPROJECT_TOKEN` | API token — read work packages, comment on them |
 | `OPENROUTER_API_KEY` | Required. Held by the authgw gateway, never by the harness container |
-| `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — chomper's only identity |
+| `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — opilot's only identity |
 | `OP_REPO_PATH` | Optional. A local openproject checkout to seed that clone from, for a faster first clone |
-| `CHOMPER_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@chomper` (comma-separated). Empty = anyone |
-| `CHOMPER_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty = any GitHub user, on chomper's own PRs |
-| `CHOMPER_TRACK_UPSTREAM_PRS` | `1` to also track the product repos' upstream PRs, so an `@chomper` mention on one gets answered (read-only). Off by default; needs the allowlist too |
+| `OPILOT_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@opilot` (comma-separated). Empty = anyone |
+| `OPILOT_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty = any GitHub user, on opilot's own PRs |
+| `OPILOT_TRACK_UPSTREAM_PRS` | `1` to also track the product repos' upstream PRs, so an `@opilot` mention on one gets answered (read-only). Off by default; needs the allowlist too |
 
 ### Repos
 
 The product repos are the committed registry in `repos.json` — each with a `name`,
 its `upstream` owner/repo, the `base` branch PRs target, and a description the LLM
-reads. There is no per-repo setup beyond that: `./chomper` clones each one into
-`.chomper/repos/<name>` on first use.
+reads. There is no per-repo setup beyond that: `./opilot` clones each one into
+`.opilot/repos/<name>` on first use.
 
 A fix is not tied to one repo. The LLM declares its targets on the first line of the
-plan (`REPOS: openproject, primer_view_components`), and chomper then ships an
+plan (`REPOS: openproject, primer_view_components`), and opilot then ships an
 independent branch and PR to each repo that actually changed. `REPOS:
 openproject@release/17.6` targets a non-default base branch, for a backport.
 
-State lives in `.chomper/` (gitignored) and is safe to delete with
-`./chomper reset`:
+State lives in `.opilot/` (gitignored) and is safe to delete with
+`./opilot reset`:
 
 | Path | What's in it |
 |---|---|
 | `work_packages/<host>/<id>/` | Per-work-package mirror: `item.json`, `plan.md`, `pr.md`, `pr_url.txt`, session ids |
 | `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `agent op` run |
-| `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR chomper didn't open |
+| `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR opilot didn't open |
 | `openspec/<repo>/`, `changes/<host>/<id>/` | The `pd` pipeline's canonical spec store and per-change state |
 | `repos/<name>/` | Each product repo's standalone clone, mounted into the harness container |
 | `chomp.log`, `progress.txt` | Full prompt/response log; pipe-delimited audit log |
@@ -313,7 +313,7 @@ docker compose run --no-deps --rm runner bundle exec rake
 **Run a single file:**
 
 ```bash
-docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/agent_test.rb
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/agent_test.rb
 ```
 
 **After changing `Gemfile`**, regenerate the lockfile and rebuild the image:
@@ -348,7 +348,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 
 ### AI Architecture
 * Set up token limits & cleanly handle threshold breaches
-* Centralize our skill and agent definitions into another OP repo, so that Chomper may leverage them
+* Centralize our skill and agent definitions into another OP repo, so that OPilot may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
 * Use more clear split between agent "personas" -- reviewer, developer etc.
 * Try to compact token usage
@@ -357,7 +357,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
 ### Feature ideas
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
-* Add a diagram that maps Chomper commands to complete product development flow (waterfall-ish)
+* Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
 * Adoption workflow:
   * More universal `adopt` alias that does not require `gh`?
   * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias
@@ -365,7 +365,7 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
-  * Or just run chomper in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container
-* Idea: Use sub-WPs for any Chomper interactions in agent mode
+  * Or just run OPilot in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container
+* Idea: Use sub-WPs for any OPilot interactions in agent mode
 * Intent classification interface?
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command

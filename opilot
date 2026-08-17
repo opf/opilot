@@ -1,0 +1,233 @@
+#!/bin/bash
+# opilot — setup, auth, then runs the Compose stack.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export SCRIPT_DIR
+ENV_FILE="$SCRIPT_DIR/.env"
+CMD="${1:-}"
+SUB="${2:-}"
+
+# Read / append a single KEY=value in .env. A missing key yields empty (not a
+# failure), so a bare `VAR="$(_env_get KEY)"` is safe under `set -euo pipefail`.
+_env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
+_save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
+# True when CMD is one of the listed words, e.g. `_is agent op-agent`.
+_is() { [[ " $* " == *" $CMD "* ]]; }
+# Which loops a command starts: `agent` alone runs both, `agent op`/`agent gh`
+# (and the pre-group op-agent/gh-agent names) run one. The wizard then prompts for
+# exactly the allowlists the loops it is about to start will read.
+_runs_op() { _is op-agent || { _is agent && [ "$SUB" != gh ]; }; }
+_runs_gh() { _is gh-agent || { _is agent && [ "$SUB" != op ]; }; }
+# docker compose bound to opilot's compose file.
+dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
+
+# True when the wizard should prompt for KEY (not yet in .env). Teardown
+# commands like `reset` never prompt — the wizard would ask for config (and
+# tokens) reset is about to discard.
+_need() { ! _is reset && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
+
+# ── First-run setup ───────────────────────────────────────────────────────
+if _need OPENPROJECT_URL; then
+  echo ""; echo "=== First run — quick setup ==="; echo ""
+  printf "  OpenProject URL [https://community.openproject.org]: "
+  read -r OPENPROJECT_URL; OPENPROJECT_URL="${OPENPROJECT_URL:-https://community.openproject.org}"
+  OPENPROJECT_TOKEN=""
+  while [ -z "$OPENPROJECT_TOKEN" ]; do
+    printf "  API token (view work packages + comment on them): "
+    read -rs OPENPROJECT_TOKEN; echo ""
+    [ -z "$OPENPROJECT_TOKEN" ] && echo "  Token is required — please enter a value."
+  done
+  _save OPENPROJECT_URL "$OPENPROJECT_URL"
+  _save OPENPROJECT_TOKEN "$OPENPROJECT_TOKEN"
+  chmod 600 "$ENV_FILE"
+  echo ""
+fi
+
+
+# The OP allowlist only gates the OpenProject loop's @opilot comment triggers —
+# the terminal modes (`wp …`, `pd …`, `chat`) are operator-driven and never read
+# it, so only a run that starts that loop should demand it during setup.
+if _runs_op && _need OPILOT_ALLOWED_OP_USER_IDS; then
+  echo "  Without an allowlist, ANY OpenProject user can trigger @opilot."
+  echo "  Use OpenProject user ids (the number in a profile URL, /users/<id>) —"
+  echo "  a non-admin API token can't read other users' emails."
+  while :; do
+    printf "  User ids allowed to trigger @opilot (comma-separated): "
+    read -r OPILOT_ALLOWED_OP_USER_IDS
+    [ -n "$OPILOT_ALLOWED_OP_USER_IDS" ] && break
+    # On the public community instance an open trigger lets anyone on the
+    # internet spend your tokens — refuse to proceed without a list.
+    if [[ "$(_env_get OPENPROJECT_URL)" == *community.openproject.org* ]]; then
+      echo "  An allowlist is required when targeting the public community instance."
+    else
+      printf "  Leave empty to allow ALL users — are you sure? [y/N]: "
+      read -r _CONFIRM; [[ "${_CONFIRM:-N}" =~ ^[Yy] ]] && break
+    fi
+  done
+  _save OPILOT_ALLOWED_OP_USER_IDS "$OPILOT_ALLOWED_OP_USER_IDS"
+  echo ""
+fi
+
+if _need OPENROUTER_API_KEY; then
+  # Held only by the authgw gateway — never passed to the harness container.
+  # Required: there's no interactive-login fallback for this path.
+  echo "  OpenRouter API key — kept out of the harness container (held by authgw)."
+  echo "  Get one at https://openrouter.ai/keys"
+  OPENROUTER_API_KEY_ENTRY=""
+  while [ -z "$OPENROUTER_API_KEY_ENTRY" ]; do
+    printf "  OpenRouter API key (sk-or-…): "
+    read -rs OPENROUTER_API_KEY_ENTRY; echo ""
+    [ -z "$OPENROUTER_API_KEY_ENTRY" ] && echo "  A key is required — please enter a value."
+  done
+  _save OPENROUTER_API_KEY "$OPENROUTER_API_KEY_ENTRY"
+  echo ""
+fi
+
+if _need GITHUB_CONTRIBUTOR_TOKEN; then
+  # The CONTRIBUTOR is a dedicated GitHub BOT account — it forks the product
+  # repo, pushes fix branches to that fork, and opens cross-repo draft PRs
+  # against upstream. The agent modes publish exclusively as it. The isolation
+  # comes from the bot account having NO access to the canonical repo — so even
+  # a classic 'public_repo' token can't write there.
+  # Classic public_repo is required (fine-grained tokens can't open fork→upstream PRs).
+  # 'workflow' scope is also required: the bot's fork lags upstream, so a fix
+  # branch based on the current base re-introduces upstream's .github/workflows/*
+  # files relative to the stale fork, and GitHub rejects a classic PAT that
+  # creates/updates any workflow file without it. 'gist' lets opilot attach
+  # each WP's full plan as a secret gist linked from the PR (skipped if absent).
+  echo "  CONTRIBUTOR token — the dedicated BOT account opilot publishes as (not you)."
+  echo "  Used by every mode that publishes: opilot only ever opens fork PRs."
+  echo "  Create a SEPARATE"
+  echo "  GitHub account that is NOT a collaborator on the product repo (a personal/user"
+  echo "  account — org accounts can't grant maintainer edits), then make a classic"
+  echo "  token for IT with the 'public_repo', 'workflow' and 'gist' scopes:"
+  echo "    https://github.com/settings/tokens (classic → public_repo + workflow + gist)"
+  echo "  opilot auto-creates the bot's fork on first publish. Because the bot has no"
+  echo "  access to the canonical repo, it physically cannot push there."
+  echo "  Leave blank to skip (agent modes then can't publish PRs)."
+  printf "  Contributor (bot) GitHub token (ghp_…), or blank: "
+  read -rs GITHUB_CONTRIBUTOR_TOKEN_ENTRY; echo ""
+  _save GITHUB_CONTRIBUTOR_TOKEN "$GITHUB_CONTRIBUTOR_TOKEN_ENTRY"
+  echo ""
+fi
+
+# The GH allowlist only gates the GitHub loop's PR triggers (`wp pr` ignores it),
+# so only a run that starts that loop should demand it — and only once a token is
+# set (the loop needs it).
+if _runs_gh && _need OPILOT_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_CONTRIBUTOR_TOKEN)" ]; then
+  # gh-agent lets the listed GitHub users push code to opilot's PR branches, so
+  # an empty list (any user can trigger on a public PR) needs explicit confirmation.
+  echo "  GitHub logins allowed to trigger @opilot on a PR (gh-agent), comma-separated."
+  while :; do
+    printf "  Allowed GitHub users: "
+    read -r OPILOT_ALLOWED_GH_USERS
+    [ -n "$OPILOT_ALLOWED_GH_USERS" ] && break
+    printf "  Empty = ANY GitHub user can push code to your PR branch — sure? [y/N]: "
+    read -r _CONFIRM; [[ "${_CONFIRM:-N}" =~ ^[Yy] ]] && break
+  done
+  _save OPILOT_ALLOWED_GH_USERS "$OPILOT_ALLOWED_GH_USERS"
+  echo ""
+fi
+
+# ── Load config ───────────────────────────────────────────────────────────
+# repos.json is the single source of truth for the set of repos; each is a
+# standalone clone provisioned below from `bin/repos list`. OP_REPO_PATH is an
+# optional override that seeds the openproject clone from a local checkout (a
+# faster clone) — exported so `bin/repos` sees it inside the runner container.
+OP_REPO_PATH="$(_env_get OP_REPO_PATH)"
+export OP_REPO_PATH
+mkdir -p "$SCRIPT_DIR/.opilot/pi-agent" "$SCRIPT_DIR/.opilot/pi-sessions" "$SCRIPT_DIR/.opilot/repos"
+
+# Run the containers as the host user so everything they write into the bind-mounted
+# .opilot/ (runner: logs + item state; harness: pi's config and sessions) is owned by
+# you, not root/node. On macOS Docker Desktop remaps ownership to the host user regardless;
+# on Linux the container uid is used verbatim, so without this the runner (root)
+# leaves root-owned files and the harness container (node, uid 1000) can't write its
+# auth into a host-owned dir — breaking auth persistence.
+OPILOT_UID="$(id -u)"; OPILOT_GID="$(id -g)"
+export OPILOT_UID OPILOT_GID
+
+# Git identity — passed into the runner container so commits are authored by the
+# host user rather than the container's default identity.
+GIT_AUTHOR_NAME="$(git config user.name 2>/dev/null || true)"
+GIT_AUTHOR_EMAIL="$(git config user.email 2>/dev/null || true)"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+
+# ── Run ───────────────────────────────────────────────────────────────────
+# status/reset work from local state — no worktree, harness, or proxy needed.
+# Unknown subcommands are passed through to Ruby.
+#
+# Two separate questions, because `pd` splits them: every pd subcommand works
+# inside a product clone, but only the ones that call the LLM need the harness
+# container started. Starting it for `pd init`/`pd intake` would be pure latency.
+# The grouped commands (`wp`, `pd`) carry the verb in $2, so both are matched on
+# the subcommand: `wp pull` only mirrors work packages and needs neither.
+
+_needs_harness() {
+  _is agent op-agent gh-agent chat && return 0
+  case "$CMD" in
+    wp) case "$SUB" in ship|fix|build|plan|pr) return 0 ;; esac ;;
+    pd) case "$SUB" in propose|implement) return 0 ;; esac ;;
+  esac
+  return 1
+}
+
+# `usage` needs only authgw (it reads OpenRouter's account/key balance through
+# it) — not the full harness/proxy pair a real pi run needs.
+_needs_authgw() { _needs_harness || _is usage; }
+
+# The clones: needed by everything above, and by every pd subcommand — `pd init`
+# writes the clone's .git/info/exclude, and the rest read or write its openspec/.
+_needs_repos() { _needs_harness || [ "$CMD" = "pd" ]; }
+
+if _needs_repos; then
+  # Git-level backstop (defense in depth on top of Clients::GitHub.protected_branch?):
+  # point each throwaway clone at opilot's pre-push hook so no push from it can
+  # ever reach a base/release branch, keyed on the destination ref.
+  HOOKS_DIR="$SCRIPT_DIR/githooks"
+
+  # Clone each repo into .opilot/repos/<name>. `bin/repos list` emits a real host
+  # path for repos that have a local checkout to seed from; --reference-if-able
+  # makes that clone fast, and --dissociate keeps it fully standalone afterwards
+  # (no runtime dependency on the local checkout, no special mounts).
+  while IFS='|' read -r _name _upstream _base _shared; do
+    [ -z "$_name" ] && continue
+    WT="$SCRIPT_DIR/.opilot/repos/$_name"
+    if [ ! -d "$WT/.git" ]; then
+      _url="https://github.com/$_upstream.git"
+      echo "[ Cloning $_upstream ($_base)${_shared:+ — seeding from $_shared} ]"
+      # Seed from the local checkout when given (--reference-if-able), then
+      # --dissociate so the clone keeps no runtime dependency on it. A failed
+      # clone (e.g. a wrong base branch) warns and is skipped rather than
+      # aborting the whole launch — fix repos.json and re-run to pick it up.
+      if [ -n "$_shared" ]; then
+        git clone --reference-if-able "$_shared" --dissociate --branch "$_base" "$_url" "$WT"
+      else
+        git clone --branch "$_base" "$_url" "$WT"
+      fi || { echo "  ⚠ Could not clone $_upstream ($_base) — skipping. Check its \"base\" in repos.json."; rm -rf "$WT"; continue; }
+    else
+      git -C "$WT" fetch --quiet origin "$_base" || true
+    fi
+    git -C "$WT" config core.hooksPath "$HOOKS_DIR"
+  done < <(dc --progress quiet run --no-deps --rm runner ruby bin/repos list)
+fi
+
+if _needs_authgw; then
+  # The OpenRouter key is held only by the authgw gateway and never reaches
+  # the harness container; pi (and `usage`) authenticate to it with this
+  # fixed, non-secret handshake token instead (pi-models.json resolves it via
+  # $OPILOT_GW_TOKEN; the runner gets it via compose.yml).
+  : "${OPENROUTER_API_KEY:=$(_env_get OPENROUTER_API_KEY)}"
+  export OPENROUTER_API_KEY
+  export OPILOT_GW_TOKEN="opilot-internal-gateway"
+  if _needs_harness; then
+    # proxy starts as harness's dependency; authgw needs the real key or it exits.
+    dc up -d --wait --remove-orphans authgw harness
+    trap 'dc stop harness proxy authgw 2>/dev/null || true' EXIT INT TERM
+  else
+    dc up -d --wait --remove-orphans authgw
+    trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM
+  fi
+fi
+dc --progress quiet run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/opilot" "$@"

@@ -2,7 +2,7 @@
   "providers": {
     "openrouter": {
       "baseUrl": "http://authgw:47292/api/v1",
-      "apiKey": "$CHOMPER_GW_TOKEN"
+      "apiKey": "$OPILOT_GW_TOKEN"
     }
   }
 }

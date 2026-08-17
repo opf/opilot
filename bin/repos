@@ -3,7 +3,7 @@
 #
 # Registry helper, run inside the runner container (it has Ruby + repos.json via
 # the SCRIPT_DIR mount, which the host shell lacks). Prints one
-# `name|upstream|base|shared_repo_path` line per repo, for ./chomper to clone
+# `name|upstream|base|shared_repo_path` line per repo, for ./opilot to clone
 # each repo on the host.
 #
 # shared_repo_path is emitted as a real host path: SCRIPT_DIR is mounted at its
@@ -11,11 +11,11 @@
 # and `git clone --reference-if-able` lines up.
 
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
-require "chomper/repo"
+require "opilot/repo"
 
 script_dir = ENV.fetch("SCRIPT_DIR", Dir.pwd)
-state_dir  = File.join(script_dir, ".chomper")
-registry   = Chomper::Registry.build(script_dir: script_dir, state_dir: state_dir,
+state_dir  = File.join(script_dir, ".opilot")
+registry   = OPilot::Registry.build(script_dir: script_dir, state_dir: state_dir,
                                      op_repo_path: ENV["OP_REPO_PATH"])
 
 unless ARGV[0] == "list"

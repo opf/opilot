@@ -17,7 +17,7 @@ const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 // Server-side allowlist of tool grants. The header is client-controlled, so
 // only the exact grants the runner uses are accepted. pi's tool names are
 // lowercase and there's no glob tool — `find` covers that job.
-// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/chomper/harness.rb.
+// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/opilot/harness.rb.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
@@ -97,7 +97,7 @@ function settleResult(msg) {
   return { type: 'result', subtype, is_error: true, result };
 }
 
-// Translates one parsed pi `--mode json` event into zero or more chomper
+// Translates one parsed pi `--mode json` event into zero or more opilot
 // NDJSON frames. Ground truth for the event shapes below is pi 0.84.2 itself
 // (its shipped docs/json.md plus packages/ai/src/types.ts), not guesswork:
 //

@@ -32,7 +32,7 @@ jobs:
         run: bundle exec rake
 
   test-harness-js:
-    # server.js's pi -> chomper translation (harness.rb's counterpart) has no
+    # server.js's pi -> opilot translation (harness.rb's counterpart) has no
     # Ruby coverage; this is its only test. Node version matches Dockerfile.harness.
     runs-on: ubuntu-latest
     container:

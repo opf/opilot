@@ -4,7 +4,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## What This Project Is
 
-`openproject-chomper` is an AI agent that plans fixes for OpenProject work
+`openproject-opilot` is an AI agent that plans fixes for OpenProject work
 packages, implements them in isolated git clones, and opens draft PRs.
 
 A fix can land in **one or more product repos**, defined in `repos.json` (`name`,
@@ -15,29 +15,29 @@ plan's first line — `REPOS: <name>[@<base>][, <name>…]` — which
 override (e.g. `openproject@release/17.6`) in `target_base.json`. The fix branch is
 both cut from and PR'd against that base (`ItemState#base_for`).
 
-Each repo is a standalone clone at `.chomper/repos/<name>`, mounted into the harness
+Each repo is a standalone clone at `.opilot/repos/<name>`, mounted into the harness
 container at `/repos/<name>`; the runner ships an independent branch + PR to each
-repo that actually changed (`Chomper::Registry`/`Chomper::Repo`). `OP_REPO_PATH`
+repo that actually changed (`OPilot::Registry`/`OPilot::Repo`). `OP_REPO_PATH`
 seeds *only* the openproject clone from a local checkout (a wrong path falls back to
 a fresh clone).
 
 ## Modes
 
-Agent loops: `./chomper agent` (both), `agent op`, `agent gh` — the older
+Agent loops: `./opilot agent` (both), `agent op`, `agent gh` — the older
 `op-agent`/`gh-agent` names still work and are used below.
 
 ### op-agent
 
-Polls work packages, driven by `@chomper` comments. The one command word is
-**`@chomper build`** (alias `fix`); every other word is chat. The words this
+Polls work packages, driven by `@opilot` comments. The one command word is
+**`@opilot build`** (alias `fix`); every other word is chat. The words this
 replaced — `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too,
 so an old habit gets an answer that names the real command rather than silence.
 
-Naming chomper in a WP's **Developers** field is a second trigger, synthesizing the same
+Naming opilot in a WP's **Developers** field is a second trigger, synthesizing the same
 `:ship` intent (`Pull#intent_from_developer`). It fires **once per WP, ever**
 (`developer_acted_at` — clearing and re-setting the field doesn't re-fire; later
 re-work goes through comments) from **anyone** (not allowlist-gated: setting the
-field already needs edit-WP permission; disable with `CHOMPER_DEVELOPER_TRIGGER=0`).
+field already needs edit-WP permission; disable with `OPILOT_DEVELOPER_TRIGGER=0`).
 A same-tick comment wins, an already-shipped WP is marked acted without firing, and
 the reply is unaddressed/internal with no 👀 pickup signal. The de-dup gate is the
 WP's `updatedAt` vs the scan floor (the list payload carries no per-field
@@ -55,7 +55,7 @@ has read.
 
 **`ship` offers options before it writes code.** A fix with more than one
 defensible shape is answered with 2–3 numbered options, one sentence each, and
-nothing else happens until someone replies `@chomper build <n>`. The judgment is
+nothing else happens until someone replies `@opilot build <n>`. The judgment is
 folded into the *same* plan call as a third first-line
 sentinel beside `NEEDS_INFO` and `REPOS:` — `OPTIONS`, then one pipe-delimited line
 per option (`Prompts::OPTIONS_CONTRACT`) — so a one-shape ticket is planned and
@@ -75,11 +75,11 @@ the fix lands; the chosen option's repos are passed into the plan call as the ex
 targets so the two rarely disagree.
 
 Selecting is allowlist-gated like any comment trigger, which the offer says out
-loud when `CHOMPER_ALLOWED_OP_USER_IDS` is set. A rejected trigger is no longer
+loud when `OPILOT_ALLOWED_OP_USER_IDS` is set. A rejected trigger is no longer
 silent: `Pull#note_refused_trigger` answers the commenter **once per WP**
-(`refusal_noted_at`), because chomper offers options to anyone who can comment while
+(`refusal_noted_at`), because opilot offers options to anyone who can comment while
 only allowlisted users may choose one, and because a reply is the one thing an
-unlisted user can make chomper do — a per-comment answer would let anyone fill the
+unlisted user can make opilot do — a per-comment answer would let anyone fill the
 activity tab. A **Developers** handover names no
 commenter, so its offer is posted **publicly** (the one visibility override in
 `#post_note`): an internal comment that mentions nobody reaches nobody who can
@@ -89,11 +89,11 @@ for a human — by design, with no reminder.
 "Developers" is a **user custom field**, not a stock one, so its `customFieldN` key
 differs per instance and can't be hardcoded: `#developer_field_key` reads the WP's
 `_links.schema` and matches the schema's field *names* against
-`CHOMPER_DEVELOPER_FIELD` (default `Developers`, case-insensitive), memoized per
+`OPILOT_DEVELOPER_FIELD` (default `Developers`, case-insensitive), memoized per
 schema href so a poll costs at most one extra call per project+type. Matching by
-name also means a stock field works — `CHOMPER_DEVELOPER_FIELD=Assignee` restores
+name also means a stock field works — `OPILOT_DEVELOPER_FIELD=Assignee` restores
 the old assignee behaviour with no code change. Being multi-value, the field
-renders as an array of links, and any entry naming chomper counts; the link must be a **user**
+renders as an array of links, and any entry naming opilot counts; the link must be a **user**
 (`/users/<id>`), since a group or placeholder user could share the bot's numeric id.
 An instance without the field logs one note and leaves the trigger off. The
 pre-Developers marker `assignee_acted_at` is still honoured on read, so switching the
@@ -109,8 +109,8 @@ Polls two sources each tick. Both watch the thread and inline review comments, a
 gated by the GitHub-login allowlist, and never merge. Shared caching and
 mention-matching live in `GhPrCache`.
 
-**Chomper's own PRs** (`GhPull`, those with a `repos/<name>/pr_url.txt`) — always
-reply, code if asked, pushing to the fork. The one command word is **`@chomper
+**OPilot's own PRs** (`GhPull`, those with a `repos/<name>/pr_url.txt`) — always
+reply, code if asked, pushing to the fork. The one command word is **`@opilot
 refresh`**: the full `pr`-command treatment (`PrRunner#refresh_one`) with the base
 merge forced and the CI fix run regardless of act-state or cap. Built
 `interactive: false`, so fork pushes go straight through while a canonical-repo
@@ -120,19 +120,19 @@ It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 fai
 the detail (annotations, output summaries, failed-job log tails) is cached to
 `ci.json`, fixed with `Prompts.fix_ci`, committed and pushed. The trigger is the
 **head SHA**: `gh_pr.json` tracks `ci_acted_sha` (once per commit) and `ci_attempts`
-(`CHOMPER_CI_MAX_ATTEMPTS`, default 5; past the cap it posts a one-time "needs a
+(`OPILOT_CI_MAX_ATTEMPTS`, default 5; past the cap it posts a one-time "needs a
 human" note and sets `ci_gave_up`). It acts on the *first* failure rather than
 waiting out slow jobs, never acts in the same tick as a comment trigger, ignores
-`CHOMPER_CI_IGNORE_CHECKS`, and needs no allowlist. A green verdict is cached
+`OPILOT_CI_IGNORE_CHECKS`, and needs no allowlist. A green verdict is cached
 (`ci_quiet_sha`) only once the commit has **settled** (`CI_SETTLE_SECONDS`) — checks
 register over time, so a just-pushed commit can look green before its failing jobs
 appear. Check-run reads are fully paginated (`auto_paginate` is off by default,
 which would truncate a big CI matrix).
 
 **Tracked upstream PRs** (`UpstreamGhPull`) — open PRs on a registry `upstream` that
-@-mention chomper, except the bot's own (`own_pr?`). Found via the search API so a
+@-mention opilot, except the bot's own (`own_pr?`). Found via the search API so a
 an LLM call is spent only on real mentions. The trigger is a prompt addressed to
-chomper, not a review pass over other people's work; what differs is write access,
+opilot, not a review pass over other people's work; what differs is write access,
 so these intents are `reply_only` — read-only fetch, answered in text
 (`Prompts.pr_review`), never pushed. Applicable code still lands: for lines already
 in the diff the review emits a `SUGGESTIONS:` block
@@ -143,8 +143,8 @@ failing CI run is read too (keyed by head SHA), so "why is CI red?" gets an
 explained answer. State lives in `pr_reviews/<owner>-<repo>/<number>/` (the name
 predates this framing; renaming it orphans every tracked PR's act-state).
 
-**Off unless `CHOMPER_TRACK_UPSTREAM_PRS` is set, and it also needs
-`CHOMPER_ALLOWED_GH_USERS`** — the only source reaching outside chomper's own PRs.
+**Off unless `OPILOT_TRACK_UPSTREAM_PRS` is set, and it also needs
+`OPILOT_ALLOWED_GH_USERS`** — the only source reaching outside opilot's own PRs.
 The startup banner names which of the three states the run is in, since "scanned
 nothing" and "not scanning" look identical in the log.
 
@@ -169,20 +169,20 @@ nothing" and "not scanning" look identical in the log.
   commit's date, so a fresh comment doesn't block a merge and a just-pushed branch
   doesn't churn merge commits); fix failing CI regardless of act-state or cap (a
   failure past GitHub's ~1-month log retention has no detail left, so it falls back
-  to base-merge + push); address comments newer than chomper's last action (no
+  to base-merge + push); address comments newer than opilot's last action (no
   mention or allowlist gate — the point is sweeping feedback that never pinged
-  chomper). Pushed to the fork after a `[y]es push / [d]iscard` prompt. The summary
+  opilot). Pushed to the fork after a `[y]es push / [d]iscard` prompt. The summary
   is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
 - **`wp pull [<id>...]`** — mirror WPs into the local cache for later `chat`. With
   ids, exactly those; without, the op-agent filter wizard plus a bulk mirror.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
-  fetching, planning, or shipping. `.chomper/` is mounted read-only at `/state`, so
+  fetching, planning, or shipping. `.opilot/` is mounted read-only at `/state`, so
   `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
   Fresh per-run session; needs no tokens or allowlist.
 
 ### pd (product development)
 
-`./chomper pd <subcommand>` is a spec-driven pipeline, separate from the bug-fix
+`./opilot pd <subcommand>` is a spec-driven pipeline, separate from the bug-fix
 modes: OpenProject Documents → an [OpenSpec](https://github.com/Fission-AI/OpenSpec)
 change proposal reviewed as a PR → generated work packages → one implementation run
 per WP → archive. It has its own namespace because the bug-fix verbs also take a
@@ -191,44 +191,44 @@ as the contributor bot. Implemented: M0–M3.
 
 The stages (`init`, `intake`, `propose`, `generate-wp`, `implement`), the
 three-copy spec store, attachment conversion, and the `openspec` CLI wrapper are
-documented in **[`lib/chomper/pd/CLAUDE.md`](lib/chomper/pd/CLAUDE.md)** — read that
-before touching anything under `lib/chomper/pd/`.
+documented in **[`lib/opilot/pd/CLAUDE.md`](lib/opilot/pd/CLAUDE.md)** — read that
+before touching anything under `lib/opilot/pd/`.
 
 ## Commands
 
 ```bash
-# Run both agent loops (polls every 20s) — the normal way to run chomper.
+# Run both agent loops (polls every 20s) — the normal way to run opilot.
 # `agent op` / `agent gh` run one; the old op-agent / gh-agent names still work.
-./chomper agent
+./opilot agent
 
 # Plan and ship work packages by id (terminal approval; `wp fix` is an alias)
-./chomper wp ship <id>...
-./chomper wp build <id>...   # stop after the local commit — no push, no PR
-./chomper wp plan <id>...    # stop at the approved plan
+./opilot wp ship <id>...
+./opilot wp build <id>...   # stop after the local commit — no push, no PR
+./opilot wp plan <id>...    # stop at the approved plan
 
 # Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
-./chomper wp pr <id|pr-url>...
+./opilot wp pr <id|pr-url>...
 
 # Mirror WPs into the local cache (no plan/ship); no ids → filter wizard
-./chomper wp pull [<id>...]
+./opilot wp pull [<id>...]
 
 # Free read-only chat about the local mirrors
-./chomper chat [message]
+./opilot chat [message]
 
 # Product development (spec-driven)
-./chomper pd init <project-id> [--repo <name>]
-./chomper pd intake <project-id> <change-id> [--doc-id <id>]...
-./chomper pd propose <change-id>
-./chomper pd generate-wp <change-id>
-./chomper pd implement <wp-id>...
+./opilot pd init <project-id> [--repo <name>]
+./opilot pd intake <project-id> <change-id> [--doc-id <id>]...
+./opilot pd propose <change-id>
+./opilot pd generate-wp <change-id>
+./opilot pd implement <wp-id>...
 
-./chomper status    # list planned/shipped work packages
-./chomper usage     # OpenRouter spend: account balance, this key, model pricing
-./chomper reset     # delete .chomper/ (clones included)
+./opilot status    # list planned/shipped work packages
+./opilot usage     # OpenRouter spend: account balance, this key, model pricing
+./opilot reset     # delete .opilot/ (clones included)
 
 # Tests
 docker compose run --no-deps --rm runner bundle exec rake
-docker compose run --no-deps --rm runner bundle exec ruby -Itest test/chomper/agent_test.rb
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/agent_test.rb
 
 # Rebuild runner image (required after editing Gemfile)
 docker compose run --no-deps --rm runner bundle lock
@@ -244,8 +244,8 @@ Four Docker containers orchestrated by `compose.yml`:
 - **Harness** (Node 22 + [pi], compose service `harness`, `Dockerfile.harness`) —
   wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
   never published), which translates pi's JSON event stream into the frame
-  shapes `lib/chomper/harness.rb` (`Chomper::Harness`) parses. Runs against
-  OpenRouter, so any model is one `CHOMPER_MODEL` away. Working directory is
+  shapes `lib/opilot/harness.rb` (`OPilot::Harness`) parses. Runs against
+  OpenRouter, so any model is one `OPILOT_MODEL` away. Working directory is
   `/repos` with every worktree at
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
@@ -254,13 +254,13 @@ Four Docker containers orchestrated by `compose.yml`:
   `pi-guards.ts` (loaded via `--no-extensions -e`, pi's only PreToolUse-style
   hook), enforces both: blocks writes outside `/repos`, allows only read-only
   git. `pi-models.json` routes the `openrouter` provider through authgw,
-  resolving its `apiKey` to `CHOMPER_GW_TOKEN` (a fixed handshake value, not a
+  resolving its `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a
   secret) — the real key never reaches this container.
 - **Authgw** (Node 20, `authgw.js`) — holds the real `OPENROUTER_API_KEY`,
-  validates the fixed gateway token (`CHOMPER_GW_TOKEN`, non-secret), swaps it
+  validates the fixed gateway token (`OPILOT_GW_TOKEN`, non-secret), swaps it
   for the real key in the same `Authorization: Bearer` header, forwards to a
   hardcoded `openrouter.ai`. Not an open proxy, so it egresses directly. It is a
-  raw forwarder rather than an inference-only proxy, so `./chomper usage`
+  raw forwarder rather than an inference-only proxy, so `./opilot usage`
   (`Clients::OpenRouter`) reaches `/api/v1/credits` and `/api/v1/key` through it
   the same way pi reaches chat completions — the runner never holds the key
   either, only the same non-secret handshake token.
@@ -270,13 +270,13 @@ Four Docker containers orchestrated by `compose.yml`:
 
 [pi]: https://github.com/badlogic/pi-mono
 
-`./chomper` handles first-run setup (`.env` wizard, cloning each repo) then invokes
+`./opilot` handles first-run setup (`.env` wizard, cloning each repo) then invokes
 the runner. `compose.yml` mounts key on `SCRIPT_DIR`, exported as an absolute host
 path so clones mount at their real paths (the agent computes host paths that must
 resolve identically inside the container); it defaults to the current project, so
 bare `docker compose run …` works from the repo root.
 
-### Core Ruby modules (`lib/chomper/`)
+### Core Ruby modules (`lib/opilot/`)
 
 | File | Role |
 |------|------|
@@ -284,27 +284,27 @@ bare `docker compose run …` works from the repo root.
 | `ui.rb` | Help text, `status`, `reset` — the single home for every command description; `PD::Runner#usage!` renders `#pd_usage_text` rather than duplicating it |
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
-| `pull.rb` | Polls OpenProject; parses `@chomper` comments into `Intent`s |
+| `pull.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
 | `agent.rb` | Main event loop — dispatches the two intents, `:chat` and `:ship` |
-| `gh_pull.rb` | Polls chomper's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
-| `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning chomper; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
+| `gh_pull.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
+| `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `wp ship`/`build`/`plan` |
-| `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@chomper refresh` via `#refresh_one` |
+| `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
-| `prompts.rb` | All LLM prompts in one place. Everything chomper publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#post_activity` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
-### The `pd` pipeline (`lib/chomper/pd/`, namespace `Chomper::PD`)
+### The `pd` pipeline (`lib/opilot/pd/`, namespace `OPilot::PD`)
 
 Its own namespace and its own doc — see
-**[`lib/chomper/pd/CLAUDE.md`](lib/chomper/pd/CLAUDE.md)** for the file table and
+**[`lib/opilot/pd/CLAUDE.md`](lib/opilot/pd/CLAUDE.md)** for the file table and
 every stage. It shares nothing with the bug-fix flow but the core above, and
-`lib/chomper/pd.rb` keeps that boundary load-bearing: nothing under `pd/` is
+`lib/opilot/pd.rb` keeps that boundary load-bearing: nothing under `pd/` is
 required at boot (`CLI#pd` requires it on demand), and `pd/intake` is lazier still,
 keeping roo/nokogiri/rubyzip out of runs that never read a document. The one
 exception is `PD::ChangeStore`, required by `gh_pull.rb` because identifying a spec
@@ -313,12 +313,12 @@ PR needs the store's layout on every tick.
 ### Per-work-package state machine
 
 1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by
-   `last_acted_comment_at`. A WP whose Developers include chomper, with no fresh comment, yields a synthetic
+   `last_acted_comment_at`. A WP whose Developers include opilot, with no fresh comment, yields a synthetic
    `:ship` (`source: :developer`, de-duped by `developer_acted_at`).
 2. **Plan** — the LLM (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
    one comment) until a reply names a number. Every clone is first synced to current upstream
-   (`sync_bases_for_reading` → `#sync_base!`) because `./chomper` fetches each base
+   (`sync_bases_for_reading` → `#sync_base!`) because `./opilot` fetches each base
    once at launch and no run checks the tree back off its fix branch — without this a
    long-lived loop plans against the original clone commit or another WP's leftover
    branch, with nothing in the tree saying so. The whole registry is synced at plan
@@ -329,7 +329,7 @@ PR needs the store's layout on every tick.
    clone on `bug/<id>-<slug>` in one resumed session; the runner commits
    `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
    ids, bare `STC-162` for semantic ones).
-4. **Publish** — chomper has **one GitHub identity**, the contributor
+4. **Publish** — opilot has **one GitHub identity**, the contributor
    (`GITHUB_CONTRIBUTOR_TOKEN`, a bot with no access to the canonical repos); every
    mode publishes as it and commits are authored by it. The branch goes to the bot's
    fork, a draft PR is opened against the repo's upstream and `base` with a
@@ -338,13 +338,13 @@ PR needs the store's layout on every tick.
 
    The body's WP link is **defanged** (`http`→`hxxp`) so OpenProject's GitHub
    integration doesn't clutter the activity tab with a fork PR nobody has adopted;
-   `PrRunner#op_ticket_id` accepts `hxxp` so chomper reads it back, and `gh adopt`
+   `PrRunner#op_ticket_id` accepts `hxxp` so opilot reads it back, and `gh adopt`
    re-fangs it. The body opens with a bot-only preamble — the AI-prototype disclaimer
    plus an **adopt note** (`gh adopt <number>`) telling maintainers how to re-publish
    under their own account, since fork PRs can't run secret-gated CI
    (`#add_adopt_note`; the number only exists post-create, hence the follow-up body
    edit). Both are fenced between `Publish::BANNER_OPEN`/`BANNER_CLOSE`
-   (`<!-- chomper:banner -->` … `<!-- /chomper:banner -->`), because neither is true
+   (`<!-- opilot:banner -->` … `<!-- /opilot:banner -->`), because neither is true
    of an adopted PR: `gh adopt` deletes exactly that range and prepends
    `Adapted from #<bot-pr>`. **The fence is a published interface** — the alias lives
    in the README and in maintainers' shells, so changing a marker orphans every PR
@@ -354,7 +354,7 @@ PR needs the store's layout on every tick.
    The one push-safety rule is **target-based**: any push targeting a registry
    upstream (`#canonical_repo?`) is **refused outright** (`#refuse_canonical_push?`,
    shared by `open_pr`/`open_spec_pr`, gh-agent's `push_followup`, and the `pr`
-   refresh) — the fork is the only place chomper writes, so a canonical target is
+   refresh) — the fork is the only place opilot writes, so a canonical target is
    always a mistake rather than a mode. The commit stays in the clone and, for a `pr`
    refresh, the branch is reset. There is deliberately no confirmation prompt to
    answer "yes" to. `protected_branch?` (`dev`/`main`/`master`/`release*`) is the
@@ -363,14 +363,14 @@ PR needs the store's layout on every tick.
 **Preflight, shared across commands.** `ship` refuses without its publishing token
 up front rather than after a full plan and implement run (`build`/`plan` need none).
 `Helpers#require_clone!` is called from **`Helpers#worktree`**, the funnel every git
-operation goes through, because a per-command check gets forgotten — `./chomper`
+operation goes through, because a per-command check gets forgotten — `./opilot`
 only *warns* when a clone fails, and `Git.open`'s error names neither the repo nor
 the fix. `#ensure_claude!` fails with "start the container" at every entry point that
 will call the LLM, not mid-run with a connection error.
 
-`:ship` (`@chomper build`, alias `fix`) is the only working intent: it plans and
+`:ship` (`@opilot build`, alias `fix`) is the only working intent: it plans and
 implements in one pass, unless the plan call answers with `OPTIONS` and waits for
-`@chomper build <n>`. The separate `:plan`/`:approve` intents are **gone** — the
+`@opilot build <n>`. The separate `:plan`/`:approve` intents are **gone** — the
 options step replaced plan-and-wait, and the code is reviewed as a prototype on the
 PR. The intent keeps the name `:ship` (publishing the prototype is what it does, and
 `:build` already names the terminal mode that stops before the push), so the comment
@@ -378,7 +378,7 @@ word and the symbol differ on purpose. The terminal verbs are unchanged — `wp 
 `wp build` and `wp ship` all have an operator at the console. Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
-### State on disk (`.chomper/` — gitignored)
+### State on disk (`.opilot/` — gitignored)
 
 Per-instance state is namespaced so a different `OPENPROJECT_URL` can't collide (WP
 #42 on instance A ≠ #42 on B): work packages and saved filters live under
@@ -386,7 +386,7 @@ Per-instance state is namespaced so a different `OPENPROJECT_URL` can't collide 
 globally unique, so `pr_reviews/` is flat.
 
 ```
-.chomper/
+.opilot/
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── chat_session_id          # LLM session for the current `chat` REPL (reset each run)
@@ -411,9 +411,9 @@ globally unique, so `pr_reviews/` is flat.
 │           ├── gh_pr.json       # act-state: last_acted_comment_at, reply ids, ci_acted_sha,
 │           │                    #   ci_quiet_sha, ci_attempts, ci_gave_up, pr_done
 │           └── gh_session_id    # gh-agent's LLM session
-├── pr_reviews/<owner>-<repo>/<number>/   # tracked upstream PR (chomper didn't open it)
+├── pr_reviews/<owner>-<repo>/<number>/   # tracked upstream PR (opilot didn't open it)
 │   └── pr.json / ci.json / gh_pr.json / gh_session_id
-├── changes/ , openspec/     # `pd` state — see lib/chomper/pd/CLAUDE.md
+├── changes/ , openspec/     # `pd` state — see lib/opilot/pd/CLAUDE.md
 ├── repos/<repo_name>/       # this repo's standalone clone (mounted at /repos/<name>)
 ├── pi-agent/                # pi's config dir (settings.json/models.json seeded by
 │                            #   server.js from pi-settings.json/pi-models.json, auth.json)
@@ -448,17 +448,17 @@ inherits `/repos`. See `translate()`'s comment in server.js for the full event-s
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
-| `CHOMPER_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
-| `CHOMPER_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on chomper's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
-| `CHOMPER_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@chomper` mentions (read-only answers). **Off by default** — the only source reaching outside chomper's own PRs. Also needs `CHOMPER_ALLOWED_GH_USERS` |
+| `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
+| `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
+| `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
 | `OPENROUTER_API_KEY` | Required to run the harness container. Lives only in authgw — never reaches the harness container |
-| `CHOMPER_MODEL` | Optional; overrides the work model (default `openrouter/anthropic/claude-opus-4.8`) |
-| `CHOMPER_TRIAGE_MODEL` | Optional; overrides the fast model (default `openrouter/anthropic/claude-haiku-4.5`) |
-| `CHOMPER_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `CHOMPER_ASSIGN_TRIGGER` is still honoured as a fallback |
-| `CHOMPER_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
-| `CHOMPER_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
-| `CHOMPER_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
-| `CHOMPER_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |
-| `CHOMPER_PD_IMPLEMENTED_STATUS` | Optional; status set once the draft PR is open (default `Developed`) |
-| `CHOMPER_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
-| `CHOMPER_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
+| `OPILOT_MODEL` | Optional; overrides the work model (default `openrouter/anthropic/claude-opus-4.8`) |
+| `OPILOT_TRIAGE_MODEL` | Optional; overrides the fast model (default `openrouter/anthropic/claude-haiku-4.5`) |
+| `OPILOT_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `OPILOT_ASSIGN_TRIGGER` is still honoured as a fallback |
+| `OPILOT_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
+| `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
+| `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
+| `OPILOT_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |
+| `OPILOT_PD_IMPLEMENTED_STATUS` | Optional; status set once the draft PR is open (default `Developed`) |
+| `OPILOT_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
+| `OPILOT_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
