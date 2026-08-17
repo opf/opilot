@@ -17,7 +17,7 @@ AI tools help us design and implement faster. Nevertheless, outside that creativ
 Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with `@OPilot` in OpenProject and GitHub PRs!
 
 * **Work package refinement**: Discuss & refine work packages via `@OPilot grill` & free-form chatting
-* **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-chomper) within the PR.
+* **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
   * **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
 * **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
 * **Product development**: Use the experimental `pd` product development pipeline to automatically deliver entire features end-to-end, using OpenProject as the work tracking backend.
@@ -111,27 +111,10 @@ cd opilot
 ### Security model
 
 The harness container processes untrusted text (work package descriptions and
-comments), so it is boxed in from several directions:
-
-* **No host or LAN exposure** — port 47291 stays unpublished. The container
-  sits on an internal Docker network reachable only by the runner.
-* **Server-side tool allowlist** — `server.js` accepts only two known
-  `X-Harness-Tools` grants, and validates every session ID.
-* **Egress allowlist** — model calls go straight to `authgw`. All other
-  traffic passes through a tinyproxy allowlist (Rails docs only). A prompt
-  injection has no path to send data out.
-* **API key isolation** — the real `OPENROUTER_API_KEY` stays in the `authgw`
-  gateway. The harness container holds only a fixed, non-secret handshake
-  token. A prompt injection can trigger API calls but cannot read the key.
-* **Write confinement** — `pi-guards.ts` blocks file writes outside `/repos`
-  and allows only read-only git in Bash. The `.opilot` state dir is also
-  mounted read-only, so plans and session files stay safe even if the guard
-  fails.
-* **Container hardening** — read-only rootfs, `cap_drop: ALL`,
-  `no-new-privileges`. No OpenProject token, GitHub token, or OpenRouter key
-  is present in the environment.
-* **Human gate** — everything ships as a *draft* PR. Review it as untrusted
-  code — WP content can attempt prompt injection.
+comments), so it is locked down: no host/LAN exposure, an egress allowlist, an
+isolated OpenRouter key, writes confined to `/repos`, a hardened container, and
+everything ships only as a *draft* PR for human review. See `CLAUDE.md` for
+the full model.
 
 ---
 
@@ -161,30 +144,14 @@ Simply run `./opilot agent`
 On a watched **work package** (gated by `OPILOT_ALLOWED_OP_USER_IDS`):
 `@opilot build` plans and ships in one step. `@opilot grill` stress-tests the
 ticket or plan. `@opilot summarize` recaps a long thread. Any other comment
-just chats. Naming opilot in a WP's **Developers** field also triggers
-`build`, once per WP, from any user. Set `OPILOT_DEVELOPER_TRIGGER=0` to
-disable this, or `OPILOT_DEVELOPER_FIELD` to use a different field.
-
-When a fix has more than one defensible shape, `build` **offers options
-first**: two or three numbered one-liners, with no code until someone replies
-`@opilot build <number>`. Extra words after the number become direction for
-that option. A single-shape fix, or a reply with free-text direction (`@opilot
-build use a toast instead`), skips straight to shipping. `./opilot wp ship`
-offers the same options at the console.
-
-Once the prototype is open, review happens on the pull request. Ask for
-changes there, and opilot reads the comments and pushes. A later `@opilot
-build` on a shipped work package just answers with the link.
+just chats.
 
 On an opilot-opened **GitHub PR** (gated by `OPILOT_ALLOWED_GH_USERS`): any
-`@opilot` comment gets a reply, and code when asked. `@opilot refresh` runs
-the full `wp pr` refresh — forced base merge, CI fix, feedback sweep. Opilot
-picks up failing CI on its own.
+`@opilot` comment gets a reply, and code when asked. `@opilot refresh` forces
+a full refresh — base merge, CI fix, feedback sweep.
 
-Set `OPILOT_TRACK_UPSTREAM_PRS=1` to also track the product repos' **upstream**
-PRs: opilot has no write access there, so it replies in text and offers
-applicable changes as one-click GitHub suggestions. Off by default — the only way
-opilot looks outside its own PRs.
+See `CLAUDE.md` for the Developers-field trigger, the options-first flow for
+multi-shape fixes, and tracking upstream PRs (`OPILOT_TRACK_UPSTREAM_PRS`).
 
 ### Product development (`pd`)
 
@@ -264,20 +231,16 @@ The opilot agent will pick up on this and close its PR, pointing to yours.
 
 ## Configuration
 
-Everything lives in `.env`, which the first run writes interactively — the table
-below is for editing it afterwards, and `.env.example` carries the same set with
-fuller comments. `CLAUDE.md` documents each one's rationale.
+Everything lives in `.env`, which the first run writes interactively. See
+`.env.example` for the full list of variables, with comments; `CLAUDE.md`
+documents each one's rationale.
 
-| Variable | Purpose |
-|---|---|
-| `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token — read work packages, comment on them |
-| `OPENROUTER_API_KEY` | Required. Held by the authgw gateway, never by the harness container |
-| `GITHUB_CONTRIBUTOR_TOKEN` | The bot account's classic token (`public_repo`, `workflow`, `gist`) — opilot's only identity |
-| `OP_REPO_PATH` | Optional. A local openproject checkout to seed that clone from, for a faster first clone |
-| `OPILOT_ALLOWED_OP_USER_IDS` | OpenProject user ids allowed to trigger `@opilot` (comma-separated). Empty = anyone |
-| `OPILOT_ALLOWED_GH_USERS` | GitHub logins allowed to trigger `gh-agent` (comma-separated). Empty = any GitHub user, on opilot's own PRs |
-| `OPILOT_TRACK_UPSTREAM_PRS` | `1` to also track the product repos' upstream PRs, so an `@opilot` mention on one gets answered (read-only). Off by default; needs the allowlist too |
+### Models
+
+opilot talks to models through OpenRouter, so any model OpenRouter carries is
+one config change away — swap `OPILOT_MODEL_HEAVY` (planning, chat,
+implementation) and `OPILOT_MODEL_LIGHT` (one-shot passes like commit
+subjects) in `.env`, no code changes needed.
 
 ### Repos
 
