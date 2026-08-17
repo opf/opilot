@@ -1,3 +1,6 @@
+<img width="100" height="100" alt="opilot" src="https://github.com/user-attachments/assets/1a0383fb-7c98-4cea-b3b6-8c8ef638f9b6" />
+
+
 # OPilot
 
 > ⚠️ **Proof of concept — use at your own risk!**
