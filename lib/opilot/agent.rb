@@ -54,11 +54,10 @@ module OPilot
 
     # One poll-and-handle pass over OpenProject @opilot triggers (no sleep).
     def tick(filters)
-      log_script "Polling OpenProject (#{@ctx.op_url})…"
       intents = @pull.poll_intents(filters)
       n = intents.length
-      log_script "Polled #{@pull.scanned_count} work package(s) — " \
-                 "#{@pull.changed_count} changed — #{n} @opilot trigger#{n == 1 ? "" : "s"}"
+      log_script "Polled OpenProject (#{@ctx.op_url}) — #{@pull.scanned_count} work package(s), " \
+                 "#{@pull.changed_count} changed, #{n} @opilot trigger#{n == 1 ? "" : "s"}"
       intents.each { |intent| handle_and_ack(intent) }
     end
 

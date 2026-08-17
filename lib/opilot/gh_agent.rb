@@ -73,7 +73,6 @@ module OPilot
 
     # One poll-and-handle pass over the active PR sources (no sleep).
     def tick(scan_from_at)
-      log_script "Polling #{sources} (incl. CI status)…"
       intents = @pull.poll_intents(scan_from_at) + @upstream_pull.poll_intents(scan_from_at)
       ci      = intents.count { |i| i.kind == :ci }
       trig    = intents.length - ci
@@ -81,7 +80,7 @@ module OPilot
       summary += ", #{ci} CI fix#{ci == 1 ? "" : "es"}"
       scanned = "#{@pull.scanned_count} opilot PR(s)"
       scanned += " + #{@upstream_pull.scanned_count} upstream PR(s)" if @upstream_pull.enabled?
-      log_script "Polled #{scanned} — #{summary}"
+      log_script "Polled #{sources} — #{scanned} — #{summary}"
       intents.each { |intent| handle_and_ack(intent) }
     end
 
