@@ -4,23 +4,36 @@
 
 # OPilot
 
-**Your friendly neighborhood OpenProject software development agent**
+**Your friendly neighborhood OpenProject agent**
 
-⚠️ _Proof of concept — use at your own risk!_
+⚠️ _PROOF OF CONCEPT — use at your own risk!_
 
 </div>
 
 ## What is this?
 
+A standalone secure "OpenProject copilot" that uses the [Pi agent harness](https://pi.dev/) to automate various tasks. Chat with it via OpenProject interface and let it work in the background.
+
+## Who is this for?
+
+
+### Software developers
+
 AI tools help us design and implement faster. Nevertheless, outside that creative process, there is still some inevitable legwork: checking out branches, running local AI coding assistants by hand, and managing pull requests.
 
 Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with `@OPilot` in OpenProject and GitHub PRs!
 
-* **Work package refinement**: Discuss & refine work packages via `@OPilot grill` & free-form chatting
 * **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
   * **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
 * **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
 * **Product development**: Use the experimental `pd` product development pipeline to automatically deliver entire features end-to-end, using OpenProject as the work tracking backend.
+
+### General audience
+
+
+* **Free-form work package refinement**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
+
+### ...and others?
 
 ---
 
