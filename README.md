@@ -12,7 +12,9 @@
 
 ## What is this?
 
-A standalone secure "OpenProject copilot" that uses the [Pi agent harness](https://pi.dev/) to automate various tasks. Chat with it via OpenProject interface and let it work in the background.
+A standalone & secure "OpenProject copilot" that uses an open-source agent harness to automate various tasks. 
+
+Chat with it through the OpenProject interface and let it work in the background!
 
 ## Who is this for?
 
