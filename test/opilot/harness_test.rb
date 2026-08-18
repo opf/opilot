@@ -110,6 +110,8 @@ module OPilot
       end
     end
 
+    # A harness image predating timeout_kind sends none — still an error, just
+    # without naming which bound fired.
     def test_run_reports_timeout_kill
       stub_harness(ndjson(
         { type: "exit", code: nil, signal: "SIGTERM", timed_out: true, stderr: "" }
@@ -118,6 +120,30 @@ module OPilot
       capture_io do
         err = assert_raises(Harness::Error) { @harness.run("prompt") }
         assert_match(/timed out/, err.message)
+      end
+    end
+
+    def test_run_names_the_idle_timeout
+      stub_harness(ndjson(
+        { type: "exit", code: nil, signal: "SIGTERM", timed_out: true,
+          timeout_kind: "idle", stderr: "" }
+      ))
+
+      capture_io do
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        assert_match(/stalled with no output/, err.message)
+      end
+    end
+
+    def test_run_names_the_max_run_timeout
+      stub_harness(ndjson(
+        { type: "exit", code: nil, signal: "SIGTERM", timed_out: true,
+          timeout_kind: "max", stderr: "" }
+      ))
+
+      capture_io do
+        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        assert_match(/maximum run time/, err.message)
       end
     end
 

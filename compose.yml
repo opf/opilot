@@ -53,6 +53,10 @@ services:
       - OPILOT_ASSIGN_TRIGGER
       - OPILOT_CI_MAX_ATTEMPTS
       - OPILOT_CI_IGNORE_CHECKS
+      # Read by server.js to bound a run, and by Harness::READ_TIMEOUT to stay
+      # the outer bound over it — so both containers need them.
+      - OPILOT_PI_IDLE_TIMEOUT_MIN
+      - OPILOT_PI_MAX_RUN_MIN
       - OPILOT_TRACK_UPSTREAM_PRS
       - OPILOT_PD_PARENT_TYPE
       - OPILOT_PD_CHILD_TYPE
@@ -121,6 +125,10 @@ services:
       # key) and authenticates with this non-secret handshake token.
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
       - PI_OFFLINE=1
+      # Optional run bounds, in minutes (server.js). Bare form, so unset means
+      # "use the default" — server.js falls back on anything non-numeric anyway.
+      - OPILOT_PI_IDLE_TIMEOUT_MIN
+      - OPILOT_PI_MAX_RUN_MIN
       - HTTP_PROXY=http://proxy:8888
       - HTTPS_PROXY=http://proxy:8888
       # authgw is reached directly over the internal network, not via tinyproxy.

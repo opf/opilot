@@ -39,6 +39,30 @@ module OPilot
     MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5")
     MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
+    # How long to wait on a silent socket. This must be the OUTER of the two
+    # bounds — server.js kills the run and reports an `exit` frame, and that
+    # frame is the only place the real cause is written; giving up before it
+    # arrives turns a named timeout into a bare Net::ReadTimeout.
+    #
+    # Net::HTTP's read_timeout is per-read, so a streaming run keeps resetting
+    # it, but the harness writes NOTHING until the run actually starts: it runs
+    # one call at a time, so a request queued behind another run is a silent
+    # socket for the whole of that run. The bound therefore has to cover the
+    # server's own ceiling plus one full idle window — the worst case is
+    # "queued behind a run that goes the distance, then stalls". Both knobs are
+    # read from the same env vars server.js reads, so raising the ceiling can't
+    # leave this behind.
+    def self.env_minutes(name, fallback)
+      value = ENV.fetch(name, "").to_f
+      value.positive? ? value : fallback
+    end
+    private_class_method :env_minutes
+
+    READ_TIMEOUT = (
+      (env_minutes("OPILOT_PI_MAX_RUN_MIN", 45) +
+       env_minutes("OPILOT_PI_IDLE_TIMEOUT_MIN", 5) + 2) * 60
+    ).round
+
     def initialize(ctx)
       @ctx = ctx
       @uri = URI(@ctx.harness_url)
@@ -140,7 +164,7 @@ module OPilot
         req["X-Harness-Session"] = session_id if session_id
         req.body = prompt
 
-        Net::HTTP.start(@uri.host, @uri.port, read_timeout: 600) do |http|
+        Net::HTTP.start(@uri.host, @uri.port, read_timeout: READ_TIMEOUT) do |http|
           http.request(req) do |res|
             unless res.is_a?(Net::HTTPSuccess)
               # e.g. 403 "unknown tool grant" when the harness image predates a
@@ -230,7 +254,15 @@ module OPilot
       # crash) — treat that as an error too, so the caller doesn't pass empty
       # text off as a finished answer.
       if !error && exit_info && exit_info["timed_out"]
-        error = "pi run timed out and was killed"
+        # server.js bounds a run twice (see its PROC_IDLE_TIMEOUT_MS comment):
+        # "idle" is a wedged run, "max" a run that stayed busy past the ceiling.
+        # They call for different answers — retry vs. a smaller ask — so name
+        # which one fired. A harness image predating timeout_kind sends none.
+        error = case exit_info["timeout_kind"]
+                when "idle" then "pi run stalled with no output and was killed"
+                when "max"  then "pi run hit the maximum run time and was killed"
+                else "pi run timed out and was killed"
+                end
       elsif !error && exit_info && exit_info["code"].to_i != 0 && text.to_s.strip.empty?
         error = "pi exited #{exit_signal_desc(exit_info)} with no result"
       end

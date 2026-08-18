@@ -12,7 +12,37 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const PORT = 47291;
-const PROC_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+// Two independent bounds on one pi run, because "too long" and "stuck" are not
+// the same failure. A real implementation run streams tool calls and text the
+// whole way through, so *silence* is the signal that a run has wedged — a total
+// wall-clock cap instead kills a productive run purely for being big, which is
+// exactly what a multi-repo fix on a large product repo is. So the tight bound
+// is on idle time, rearmed on every byte pi writes.
+//
+// The absolute ceiling is the backstop under it, and it exists because this
+// server is serialized (the queue below): one run that never falls silent but
+// never finishes would block every other tick's LLM call — the op-agent poll,
+// the CI fixer, every other PR — for as long as it ran.
+//
+// Both bounds sit INSIDE harness.rb's READ_TIMEOUT, which derives itself from
+// these same two env vars for exactly that reason — the runner must not give up
+// on a run this server is still about to report an `exit` frame for, and a
+// queued request sees a silent socket for the whole of the run ahead of it.
+//
+// Both knobs are in MINUTES — the unit an operator actually reasons in for
+// "how long may one fix take". Fractions are accepted (0.5 = 30s), and any
+// non-numeric or non-positive value falls back to the default.
+const minutes = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return (Number.isFinite(value) && value > 0 ? value : fallback) * 60 * 1000;
+};
+const PROC_IDLE_TIMEOUT_MS = minutes('OPILOT_PI_IDLE_TIMEOUT_MIN', 5);
+const PROC_MAX_MS = minutes('OPILOT_PI_MAX_RUN_MIN', 45);
+// SIGTERM is a request. A pi that ignores it would never fire 'close', so
+// `done()` never runs and `busy` stays set for the life of the container —
+// every later request queues behind a process that is already gone.
+const PROC_KILL_GRACE_MS = 10 * 1000;
 
 // Server-side allowlist of tool grants. The header is client-controlled, so
 // only the exact grants the runner uses are accepted. pi's tool names are
@@ -195,12 +225,34 @@ function runPi(body, tools, model, sessionId, res, done) {
 
   const proc = spawn('pi', args, { env: process.env });
 
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    process.stderr.write('pi process timed out — killing\n');
+  // Non-null once a bound has fired, and which one ("idle"/"max") — one
+  // variable, because "did it time out" is just "is this set".
+  let timeoutKind = null;
+  let idleTimer = null;
+  let killTimer = null;
+
+  const killPi = kind => {
+    timeoutKind = kind;
+    process.stderr.write(`pi process ${kind} timeout — killing\n`);
     proc.kill('SIGTERM');
-  }, PROC_TIMEOUT_MS);
+    killTimer = setTimeout(() => proc.kill('SIGKILL'), PROC_KILL_GRACE_MS);
+  };
+
+  const maxTimer = setTimeout(() => killPi('max'), PROC_MAX_MS);
+  // Rearm the idle bound on every byte pi writes (see the constants above).
+  // Once a kill is under way the timers are done — do not rearm on the output
+  // pi flushes while it shuts down.
+  const bumpIdle = () => {
+    if (timeoutKind) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => killPi('idle'), PROC_IDLE_TIMEOUT_MS);
+  };
+  const clearTimers = () => {
+    clearTimeout(idleTimer);
+    clearTimeout(maxTimer);
+    clearTimeout(killTimer);
+  };
+  bumpIdle();
 
   proc.stdin.end(body);
 
@@ -208,18 +260,25 @@ function runPi(body, tools, model, sessionId, res, done) {
 
   const state = {};
   let lineBuffer = '';
+  // One line of pi's stdout → zero or more frames on the wire. A blank or
+  // unparseable line is skipped rather than fatal: pi's stdout is a stream we
+  // translate, not a contract we validate. Used for both the complete lines
+  // below and the trailing partial one at 'close'.
+  const emit = line => {
+    if (!line.trim()) return;
+    let parsed;
+    try { parsed = JSON.parse(line); } catch (e) { return; }
+    for (const frame of translate(parsed, state)) {
+      res.write(JSON.stringify(frame) + '\n');
+    }
+  };
+
   proc.stdout.on('data', chunk => {
+    bumpIdle();
     lineBuffer += chunk.toString();
     const lines = lineBuffer.split('\n');
     lineBuffer = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let parsed;
-      try { parsed = JSON.parse(line); } catch (e) { continue; }
-      for (const frame of translate(parsed, state)) {
-        res.write(JSON.stringify(frame) + '\n');
-      }
-    }
+    lines.forEach(emit);
   });
 
   // Mirror stderr to the container log AND keep a bounded tail to forward to
@@ -230,19 +289,16 @@ function runPi(body, tools, model, sessionId, res, done) {
   const STDERR_TAIL_MAX = 8000;
   let stderrTail = '';
   proc.stderr.on('data', chunk => {
+    // Counts as progress too: a run whose only output is a warning or a
+    // provider retry on stderr is working, not wedged.
+    bumpIdle();
     process.stderr.write(chunk);
     stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_MAX);
   });
 
   proc.on('close', (code, signal) => {
-    clearTimeout(timer);
-    if (lineBuffer.trim()) {
-      try {
-        for (const frame of translate(JSON.parse(lineBuffer), state)) {
-          res.write(JSON.stringify(frame) + '\n');
-        }
-      } catch (e) {}
-    }
+    clearTimers();
+    emit(lineBuffer);
     if (state.sessionId) {
       res.write(JSON.stringify({ type: 'session_id', session_id: state.sessionId }) + '\n');
     }
@@ -252,7 +308,10 @@ function runPi(body, tools, model, sessionId, res, done) {
       type: 'exit',
       code,
       signal,
-      timed_out: timedOut,
+      timed_out: timeoutKind !== null,
+      // Which bound fired ("idle" or "max"), so the runner's error names the
+      // real cause: a stalled run and an over-long one need different answers.
+      timeout_kind: timeoutKind,
       stderr: stderrTail.trim(),
     }) + '\n');
     res.end();
@@ -260,7 +319,7 @@ function runPi(body, tools, model, sessionId, res, done) {
   });
 
   proc.on('error', err => {
-    clearTimeout(timer);
+    clearTimers();
     process.stderr.write(`spawn error: ${err.message}\n`);
     if (!res.headersSent) res.writeHead(500);
     res.end();

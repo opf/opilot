@@ -450,6 +450,23 @@ above), translates its JSON event stream into the assistant/result/session_id/ex
 frame shapes harness.rb parses, and persists the session ID. It sets no `cwd`, so it
 inherits `/repos`. See `translate()`'s comment in server.js for the full event-shape mapping.
 
+A run is bounded **twice**, because "stuck" and "long" are different failures. The
+tight bound is on **idle** time (`OPILOT_PI_IDLE_TIMEOUT_MIN`, default 5 min),
+rearmed on every byte pi writes to stdout *or* stderr: a real implementation run
+streams tool calls the whole way, so only a wedged run falls silent. Under it sits
+an absolute ceiling (`OPILOT_PI_MAX_RUN_MIN`, default 45 min), which exists because
+the server is serialized one-run-at-a-time — a run that never finishes blocks every
+other tick's LLM call. A single total cap was the earlier design and it killed
+productive multi-repo fixes for being big. SIGTERM escalates to SIGKILL after 10s,
+or a pi that ignored it would hold the queue's `busy` flag forever. The exit frame
+carries `timeout_kind` (`idle`/`max`) so the runner's error names which fired.
+
+`Harness::READ_TIMEOUT` derives itself from those same two env vars (ceiling + one
+idle window + slack) and must stay the **outer** bound: the server writes nothing
+until a run starts, so a queued request sees a silent socket for the whole run ahead
+of it, and a runner that gives up first turns a named timeout into a bare
+`Net::ReadTimeout` — which `#http_stream` does not rescue.
+
 ### Required environment variables (`.env`)
 
 | Variable | Purpose |
@@ -473,3 +490,5 @@ inherits `/repos`. See `translate()`'s comment in server.js for the full event-s
 | `OPILOT_PD_IMPLEMENTED_STATUS` | Optional; status set once the draft PR is open (default `Developed`) |
 | `OPILOT_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
 | `OPILOT_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
+| `OPILOT_PI_IDLE_TIMEOUT_MIN` | Optional; minutes one LLM run may produce **no output** before `server.js` kills it (default `5`) |
+| `OPILOT_PI_MAX_RUN_MIN` | Optional; absolute ceiling in minutes on one LLM run (default `45`). Raise for very large fixes — but the harness runs one call at a time, so this is also how long one run may block every other poll. Both values are read by the runner too (`Harness::READ_TIMEOUT`), so its socket timeout follows on its own |
