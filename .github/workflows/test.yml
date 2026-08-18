@@ -1,5 +1,8 @@
 name: Test
 
+permissions:
+  contents: read
+
 on:
   # Only the default branch on push (post-merge); PR branches are covered by
   # pull_request below. Without this, a push to a branch with an open PR runs
