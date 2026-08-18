@@ -6,7 +6,7 @@
 
 **Your friendly neighborhood OpenProject agent**
 
-⚠️ _PROOF OF CONCEPT — use at your own risk!_
+⚠️ _EXPERIMENTAL PROOF OF CONCEPT — use at your own risk!_
 
 </div>
 
