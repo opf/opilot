@@ -130,6 +130,13 @@ module OPilot
       assert_nil pull(gh).poll_intents("2026-08-01T00:00:00Z").first.command
     end
 
+    def test_close_is_the_one_command_a_spec_pr_recognises
+      # Unlike refresh, closing applies: the proposal PR is opilot's own, so
+      # retiring it is the same need as retiring a code prototype.
+      gh = FakeGitHub.new(pr: pr, issue: [comment(body: "@opilot close — we dropped this idea")])
+      assert_equal :close, pull(gh).poll_intents("2026-08-01T00:00:00Z").first.command
+    end
+
     def test_a_closed_proposal_pr_is_dropped_from_polling
       gh = FakeGitHub.new(pr: pr(state: "closed"))
       assert_empty pull(gh).poll_intents("2026-08-01T00:00:00Z")
@@ -176,6 +183,28 @@ module OPilot
       assert_equal "openproject", kwargs[:repo_name]
       assert_includes kwargs[:comment_section], "@opilot split it"
       assert_includes kwargs[:comment_section], "thykel"
+    end
+
+    def test_close_on_a_spec_pr_closes_it_instead_of_revising_the_proposal
+      agent  = GhAgent.new(@ctx, pull: Object.new, upstream_pull: Object.new,
+                           harness: Object.new, github: Object.new)
+      runner = RecordingRunner.new
+      agent.instance_variable_set(:@product_runner, runner)
+
+      intent = GhIntent.new(item_id: "add-x", spec_change_id: "add-x", repo_name: "openproject",
+                            repo: "op-opilot/openproject", head_repo: "op-opilot/openproject",
+                            pr_number: 14, pr_url: "u", branch: "spec/add-x", kind: :issue,
+                            command: :close, comment_id: 900, text: "@opilot close",
+                            user_login: "thykel", comment_at: "2026-08-03T11:00:00Z")
+
+      closed = []
+      agent.define_singleton_method(:post_reply) { |*| nil }
+      agent.instance_variable_get(:@github).define_singleton_method(:close_pr) { |r, n| closed << [r, n] }
+
+      capture_io { agent.handle(intent) }
+
+      assert_equal [["op-opilot/openproject", 14]], closed, "the proposal PR is closed unmerged"
+      assert_empty runner.calls, "no revision call is spent answering \"close this\""
     end
   end
 end

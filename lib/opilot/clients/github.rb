@@ -215,6 +215,13 @@ module OPilot
         with_retry { @octokit.update_pull_request(repo, number, body: body) }
       end
 
+      # Close a pull request without merging it. Needs no push access to the base
+      # repo: GitHub lets a PR's own author close it, and opilot only ever closes
+      # the PRs it opened itself (gh-agent's "@opilot close").
+      def close_pr(repo, number)
+        with_retry { @octokit.close_pull_request(repo, number) }
+      end
+
       # Search PRs across GitHub (PRs are issues in the search API). `query` is a
       # GitHub search string, e.g. `repo:opf/openproject is:pr is:open "@opilot"
       # updated:>=2026-06-01`. Returns the matching items (capped to the first

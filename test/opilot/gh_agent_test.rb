@@ -20,9 +20,13 @@ module OPilot
     end
 
     class FakeGitHub
-      attr_reader :issue_posts, :review_posts, :reviews_created, :fetched, :pushed
+      attr_reader :issue_posts, :review_posts, :reviews_created, :fetched, :pushed, :closed
       def initialize
         @issue_posts = []; @review_posts = []; @reviews_created = []; @fetched = []; @pushed = []
+        @closed = []
+      end
+      def close_pr(repo, num)
+        @closed << [repo, num]
       end
       def fetch_branch(repo, branch:, worktree_path:)
         @fetched << [repo, branch, worktree_path]
@@ -328,6 +332,34 @@ module OPilot
       assert_empty @github.issue_posts, "PrRunner posts the summary itself"
       assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted,
                    "the trigger comment is acked so it doesn't replay"
+    end
+
+    def test_close_command_closes_the_pr_replies_and_acks_the_trigger
+      intent = gh_intent(text: "@opilot close").tap { |i| i.command = :close }
+      capture_io { @agent.handle_and_ack(intent) }
+
+      assert_equal [["o/r", 7]], @github.closed, "the PR opilot opened is closed unmerged"
+      assert_empty @harness.runs, "closing spends no LLM call"
+      assert_empty @github.pushed, "nothing is pushed for a close"
+      assert_equal 1, @github.issue_posts.length, "the commenter is told the PR is closed"
+      assert_includes @github.issue_posts.first.last, "closed this pull request"
+      assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted,
+                   "the trigger comment is acked so it doesn't replay"
+    end
+
+    def test_close_is_never_acted_on_for_an_upstream_pr
+      # An upstream PR is somebody else's: a "close" there is read as prose and
+      # answered in text, exactly like any other reply_only comment.
+      agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
+                          harness: @harness, github: @github)
+      inject_worktree(agent, FakeWorktree.new(has_changes: false))
+
+      capture_io { agent.handle(review_intent(text: "@opilot close").tap { |i| i.command = :close }) }
+
+      assert_empty @github.closed, "opilot must not close a PR it did not open"
+      review_run = @harness.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      refute_nil review_run, "it falls through to the read-only review pass"
+      assert_equal Harness::TOOLS_READ, review_run[:tools]
     end
 
     def test_canonical_head_push_is_refused

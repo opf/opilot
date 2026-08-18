@@ -13,7 +13,9 @@ module OPilot
   #    access to these branches, so those intents are `reply_only`: it reviews and
   #    answers in text but never pushes code.
   # Either way merging stays gated on a maintainer, so a person is always in the
-  # loop on anything that lands.
+  # loop on anything that lands. opilot never merges; on its own PRs it may
+  # *close* one when asked ("@opilot close"), which merges nothing and only
+  # retires a prototype it opened itself.
   class GhAgent
     include Helpers
 
@@ -102,6 +104,18 @@ module OPilot
       if intent.kind == :ci
         log_script "#{intent.repo}##{intent.pr_number} — CI failed on #{intent.head_sha.to_s[0, 7]}"
         return handle_ci(intent)
+      end
+      # Both command words are gated on `!reply_only`: an upstream PR is somebody
+      # else's, so a "refresh"/"close" there is read as prose and answered in text
+      # (GhPull leaves `command` nil for one). `close` is checked ahead of the spec
+      # branch on purpose: a `pd` proposal PR is opilot's own, so retiring it is
+      # the same need as retiring a code prototype, and falling through to
+      # #handle_spec would spend a revision call and push a spec edit in answer to
+      # "close this". `refresh` never reaches a spec intent at all
+      # (GhPull#command_for), so the spec branch may sit above it.
+      if intent.command == :close && !intent.reply_only
+        log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} asked to close it"
+        return handle_close(intent)
       end
       if intent.spec?
         log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} on spec #{intent.spec_change_id}"
@@ -262,6 +276,26 @@ module OPilot
     # cutoff; handle_and_ack then acks the trigger comment as usual.
     def handle_refresh(intent)
       pr_runner.refresh_one(intent.item_id, intent.repo_name)
+    end
+
+    # "@opilot close" on one of opilot's own PRs: close it unmerged and say so.
+    # This is the one way to retire a prototype nobody wants without a
+    # maintainer opening GitHub — opilot is the PR's author, so the bot token
+    # can close it with no access to the canonical repo.
+    #
+    # The close comes first and the reply second, so the reply only ever states
+    # something that already happened: #post_reply swallows its own errors, and a
+    # close that raises is reported by #handle_and_ack's rescue instead.
+    #
+    # Nothing is written to gh_pr.json here. The next poll reads the PR as
+    # `closed` and marks `pr_done` itself (#intents_for_dir), which is the same
+    # path a human closing the PR takes — and it keeps the flag set in one place,
+    # so `wp pr` can still clear it if the PR is ever reopened.
+    def handle_close(intent)
+      @github.close_pr(intent.repo, intent.pr_number)
+      log_script "Closed #{intent.repo}##{intent.pr_number}"
+      post_reply(intent, "I closed this pull request without a merge, as @#{intent.user_login} asked. " \
+                         "Reopen it if you need the work again.")
     end
 
     # A comment on a `pd` change proposal's PR. `pd propose` is first-shot only,

@@ -189,11 +189,30 @@ module OPilot
       assert_equal :refresh, gh.poll_intents("2000-01-01T00:00:00Z").first.command
     end
 
+    def test_close_comment_carries_the_close_command
+      gh = pull(issue: [issue_c(id: 1, body: "@opilot close", login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal :close, gh.poll_intents("2000-01-01T00:00:00Z").first.command
+    end
+
+    def test_close_wins_over_refresh_when_a_comment_asks_for_both
+      gh = pull(issue: [issue_c(id: 1, body: "@opilot close it, no need to refresh",
+                                login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_equal :close, gh.poll_intents("2000-01-01T00:00:00Z").first.command,
+                   "a command pair has one outcome, and the close is the terminal one"
+    end
+
     def test_ordinary_comments_carry_no_command
       gh = pull(issue: [issue_c(id: 1, body: "@opilot refreshing take — please guard nil",
                                 login: "thykel", at: "2026-06-18T18:05:00Z")])
       assert_nil gh.poll_intents("2000-01-01T00:00:00Z").first.command,
                  "\"refreshing\" must not word-boundary-match the refresh command"
+    end
+
+    def test_close_needs_a_word_boundary_too
+      gh = pull(issue: [issue_c(id: 1, body: "@opilot the closest match is nil",
+                                login: "thykel", at: "2026-06-18T18:05:00Z")])
+      assert_nil gh.poll_intents("2000-01-01T00:00:00Z").first.command,
+                 "\"closest\" must not word-boundary-match the close command"
     end
 
     def test_allowlist_rejects_other_users_and_advances_cutoff

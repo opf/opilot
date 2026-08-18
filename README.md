@@ -163,7 +163,8 @@ just chats.
 
 On an opilot-opened **GitHub PR** (gated by `OPILOT_ALLOWED_GH_USERS`): any
 `@opilot` comment gets a reply, and code when asked. `@opilot refresh` forces
-a full refresh — base merge, CI fix, feedback sweep.
+a full refresh — base merge, CI fix, feedback sweep. `@opilot close` closes the
+PR without a merge, to retire a prototype you do not want.
 
 See `CLAUDE.md` for the Developers-field trigger, the options-first flow for
 multi-shape fixes, and tracking upstream PRs (`OPILOT_TRACK_UPSTREAM_PRS`).

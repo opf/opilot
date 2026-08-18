@@ -117,11 +117,36 @@ gated by the GitHub-login allowlist, and never merge. Shared caching and
 mention-matching live in `GhPrCache`.
 
 **OPilot's own PRs** (`GhPull`, those with a `repos/<name>/pr_url.txt`) — always
-reply, code if asked, pushing to the fork. The one command word is **`@opilot
-refresh`**: the full `pr`-command treatment (`PrRunner#refresh_one`) with the base
-merge forced and the CI fix run regardless of act-state or cap. Built
-`interactive: false`, so fork pushes go straight through while a canonical-repo
-target is refused and the refresh discarded.
+reply, code if asked, pushing to the fork. There are two command words
+(`GhPull#parse_command`), and both are acted on **only here** — `!reply_only` — so
+an upstream PR's "refresh"/"close" is read as prose and answered in text.
+
+**`@opilot refresh`** is the full `pr`-command treatment
+(`PrRunner#refresh_one`) with the base merge forced and the CI fix run regardless of
+act-state or cap. Built `interactive: false`, so fork pushes go straight through
+while a canonical-repo target is refused and the refresh discarded.
+
+**`@opilot close`** closes the PR unmerged (`GhAgent#handle_close`) — the one way to
+retire a prototype nobody wants without a maintainer opening GitHub. It needs no
+access to the canonical repo: GitHub lets a PR's own author close it, and opilot
+opened this one. Closing is not merging, so nothing lands and the "never merge"
+rule is untouched. It spends no LLM call, pushes nothing, and writes no state —
+the next poll reads the PR as `closed` and sets `pr_done` itself
+(`#intents_for_dir`), the same path a human closing it takes, which keeps the flag
+in one place so `wp pr` can still clear it on a reopen. The close runs **before**
+the reply, so the reply only states something that already happened; a close that
+raises is reported by `#handle_and_ack`'s rescue instead. `close` is matched before
+`refresh`, so "close it and refresh" closes — one comment has one outcome, and
+refreshing a PR about to close spends a call and a push on a branch nobody reads.
+The command is allowlist-gated like every other trigger, and the WP stays shipped:
+a closed prototype does not re-open its work package for planning.
+
+`close` is also the **one command word a `pd` spec PR recognises**
+(`GhPull#command_for`), and `GhAgent#handle` checks it *ahead of* the spec branch: a
+proposal PR is opilot's own too, so retiring it is the same need — and without the
+reorder, "close this" would spend a `revise_proposal` call and push a spec edit.
+`refresh` stays off spec PRs, since `PrRunner` is keyed by work package and a change
+id names no WP dir.
 
 It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 failure,
 the detail (annotations, output summaries, failed-job log tails) is cached to

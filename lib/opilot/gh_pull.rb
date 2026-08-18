@@ -18,7 +18,9 @@ module OPilot
   #   branch lives (the bot's fork): what gh-agent fetches from and pushes to.
   # `reply_only` — an upstream PR opilot did NOT open: answer, never push.
   # `command` — :refresh for "@opilot refresh" (the full `pr` treatment instead
-  #   of a reply). Never set on a reply_only intent.
+  #   of a reply), :close for "@opilot close" (close the PR unmerged). Only ever
+  #   set for a PR opilot opened itself, never on a reply_only intent; a spec PR
+  #   gets :close only (see GhPull#command_for).
   # `spec_change_id` — the PR is a `pd` proposal, so `item_id` is a change id and
   #   the act-state lives under changes/<host>/<change-id>/, not work_packages/.
   GhIntent = Struct.new(:item_id, :repo_name, :subject, :branch, :repo, :head_repo, :pr_number, :pr_url,
@@ -199,7 +201,7 @@ module OPilot
         GhIntent.new(
           item_id: item_id, repo_name: repo_name, subject: subject, branch: content["head_ref"], repo: repo,
           head_repo: content["head_repo"], pr_number: number, pr_url: pr_url,
-          kind: c["kind"].to_sym, command: (parse_command(c["body"]) unless spec),
+          kind: c["kind"].to_sym, command: command_for(c["body"], spec: spec),
           comment_id: c["id"], in_reply_to: c["in_reply_to"],
           text: c["body"], user_login: c["author"], comment_at: c["created_at"],
           spec_change_id: (item_id if spec)
@@ -341,11 +343,31 @@ module OPilot
       item["subject"].to_s.empty? ? content["title"].to_s : item["subject"].to_s
     end
 
-    # The one recognised PR command word: "@opilot refresh" asks for the full
-    # `pr`-command treatment of this PR (GhAgent hands it to PrRunner). Any
-    # other trigger text is a plain comment for the LLM to converse over.
+    # The two recognised PR command words. "@opilot refresh" asks for the full
+    # `pr`-command treatment of this PR (GhAgent hands it to PrRunner);
+    # "@opilot close" closes the PR unmerged. Any other trigger text is a plain
+    # comment for the LLM to converse over.
+    #
+    # `close` is tested first, so "close it and refresh" closes: a command pair
+    # only has one outcome, and refreshing a PR that is about to be closed
+    # spends an LLM call and a push on a branch nobody will read.
     def parse_command(body)
-      :refresh if body.to_s.match?(/#{mention_re.source}\s+refresh\b/i)
+      text = body.to_s
+      return :close   if text.match?(/#{mention_re.source}\s+close\b/i)
+      return :refresh if text.match?(/#{mention_re.source}\s+refresh\b/i)
+      nil
+    end
+
+    # The command word for one comment. A `pd` spec PR recognises `close` only:
+    # a proposal PR is opilot's own on opilot's own fork, so retiring it is the
+    # same need as retiring a code prototype — but `refresh` hands the PR to
+    # PrRunner, which is keyed by work package, and a change id names no
+    # work-package dir. Filtering here rather than in GhAgent keeps `:refresh`
+    # from ever reaching a spec intent, whatever order the handlers run in.
+    def command_for(body, spec:)
+      command = parse_command(body)
+      return nil if spec && command != :close
+      command
     end
 
     def allowed?(login, pr_url)

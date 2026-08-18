@@ -116,7 +116,8 @@ module OPilot
                                        one shape; reply `build <n>` to build one
                                        (one alias: fix)
                    on a opilot PR:    any @opilot comment gets a reply — and
-                                       code, if asked; refresh re-runs `wp pr`
+                                       code, if asked; refresh re-runs `wp pr`;
+                                       close closes the PR without a merge
       TRIGGERS
     end
 
