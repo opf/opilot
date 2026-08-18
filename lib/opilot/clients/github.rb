@@ -338,7 +338,8 @@ module OPilot
       def job_log(repo, job_id, tail: 400, max_bytes: 50_000)
         url = with_retry { @octokit.workflow_run_job_logs(repo, job_id) }
         return nil unless url
-        text = URI.open(url, &:read).to_s
+        uri = URI.parse(url.to_s)
+        text = uri.open(&:read).to_s
         text = (text.byteslice(-max_bytes..) || text) if text.bytesize > max_bytes
         text.scrub.lines.last(tail).join
       rescue StandardError
