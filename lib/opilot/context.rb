@@ -10,7 +10,7 @@ module OPilot
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :harness_url, :contributor_token,
                 :state_container, :op_url, :token,
-                :authgw_url, :gw_token
+                :authgw_url, :gw_token, :inference_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
     def self.build(script_dir = nil)
@@ -34,12 +34,21 @@ module OPilot
       # container an unset token arrives as "", which is TRUTHY.
       @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
       @harness_url        = ENV.fetch("HARNESS_URL", "http://harness:47291")
-      # authgw is the only sidecar holding the real OpenRouter key; `usage`
+      # authgw is the only sidecar holding the real inference key; `usage`
       # queries it for account/key balance the same non-secret way pi does —
       # a Bearer OPILOT_GW_TOKEN, never the real key. nil (not "") when unset,
       # so `usage` can tell "not running via ./opilot" from "token is blank".
       @authgw_url         = ENV.fetch("AUTHGW_URL", "http://authgw:47292")
       @gw_token           = presence(ENV["OPILOT_GW_TOKEN"])
+      # Which upstream authgw forwards to. The runner never calls it directly —
+      # this is for reporting, so `usage` can name the endpoint it is (or is
+      # not) reading spend from. The default keeps an untouched .env on
+      # OpenRouter.
+      # presence(), not ENV.fetch with a default: compose passes this through
+      # as a bare `- VAR`, and ./opilot exports it as "" when .env doesn't set
+      # it. An empty string beats a fetch default and would print a blank
+      # upstream.
+      @inference_url      = presence(ENV["OPILOT_INFERENCE_URL"]) || "https://openrouter.ai/api/v1"
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
       # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),

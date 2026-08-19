@@ -68,18 +68,55 @@ if _runs_op && _need OPILOT_ALLOWED_OP_USER_IDS; then
   echo ""
 fi
 
-if _need OPENROUTER_API_KEY; then
-  # Held only by the authgw gateway — never passed to the harness container.
-  # Required: there's no interactive-login fallback for this path.
-  echo "  OpenRouter API key — kept out of the harness container (held by authgw)."
-  echo "  Get one at https://openrouter.ai/keys"
-  OPENROUTER_API_KEY_ENTRY=""
-  while [ -z "$OPENROUTER_API_KEY_ENTRY" ]; do
-    printf "  OpenRouter API key (sk-or-…): "
-    read -rs OPENROUTER_API_KEY_ENTRY; echo ""
-    [ -z "$OPENROUTER_API_KEY_ENTRY" ] && echo "  A key is required — please enter a value."
-  done
-  _save OPENROUTER_API_KEY "$OPENROUTER_API_KEY_ENTRY"
+# Where the models come from. One URL plus an optional key covers OpenRouter
+# and any self-hosted OpenAI-compatible endpoint alike — there is no "mode"
+# here, because the URL already says everything the gateway needs. Both prompts
+# reuse shapes already used above: a default-carrying free-text read, and (for
+# the key) the same optional single-shot read as the GitHub token below.
+#
+# OPILOT_INFERENCE_AUTH is deliberately NOT prompted for. Its default covers
+# every endpoint except Azure OpenAI, which wants `api-key:` instead of a
+# Bearer header; .env.example documents that one rather than spending a third
+# prompt on it. Same for OPILOT_MODEL_API, which only a non-OpenAI-shaped
+# upstream needs.
+if _need OPILOT_INFERENCE_URL; then
+  echo "  Inference endpoint — an OpenRouter URL, or your own OpenAI-compatible server."
+  echo "  Whatever you pick, the key is held only by the authgw gateway and never"
+  echo "  reaches the harness container that reads untrusted work-package text."
+  printf "  Inference URL [https://openrouter.ai/api/v1]: "
+  read -r OPILOT_INFERENCE_URL_ENTRY
+  OPILOT_INFERENCE_URL_ENTRY="${OPILOT_INFERENCE_URL_ENTRY:-https://openrouter.ai/api/v1}"
+  _save OPILOT_INFERENCE_URL "$OPILOT_INFERENCE_URL_ENTRY"
+
+  # A key is required on OpenRouter (it rejects an unauthenticated call, and a
+  # blank one would surface three calls later as a confusing 401) and optional
+  # everywhere else — most self-hosted servers ignore it entirely.
+  OPILOT_INFERENCE_KEY_ENTRY=""
+  case "$OPILOT_INFERENCE_URL_ENTRY" in
+    *openrouter.ai*)
+      echo "  Get a key at https://openrouter.ai/keys"
+      while [ -z "$OPILOT_INFERENCE_KEY_ENTRY" ]; do
+        printf "  OpenRouter API key (sk-or-…): "
+        read -rs OPILOT_INFERENCE_KEY_ENTRY; echo ""
+        [ -z "$OPILOT_INFERENCE_KEY_ENTRY" ] && echo "  A key is required — please enter a value."
+      done
+      ;;
+    *)
+      printf "  API key (leave empty if the server needs none): "
+      read -rs OPILOT_INFERENCE_KEY_ENTRY; echo ""
+      # http means the key AND every prompt cross the network in clear. Worth
+      # saying once, at the moment the choice is made.
+      case "$OPILOT_INFERENCE_URL_ENTRY" in
+        http://*)
+          [ -n "$OPILOT_INFERENCE_KEY_ENTRY" ] &&
+            echo "  ⚠ Plain http — that key and every prompt travel unencrypted. Prefer https."
+          ;;
+      esac
+      echo "  Set the model with OPILOT_MODEL_HEAVY=<provider>/<model-id> in .env"
+      echo "  (see .env.example — the prefix you choose names the provider pi uses)."
+      ;;
+  esac
+  _save OPILOT_INFERENCE_KEY "$OPILOT_INFERENCE_KEY_ENTRY"
   echo ""
 fi
 
@@ -214,15 +251,22 @@ if _needs_repos; then
 fi
 
 if _needs_authgw; then
-  # The OpenRouter key is held only by the authgw gateway and never reaches
-  # the harness container; pi (and `usage`) authenticate to it with this
-  # fixed, non-secret handshake token instead (pi-models.json resolves it via
+  # The inference key is held only by the authgw gateway and never reaches the
+  # harness container; pi (and `usage`) authenticate to it with this fixed,
+  # non-secret handshake token instead (pi-models.json resolves it via
   # $OPILOT_GW_TOKEN; the runner gets it via compose.yml).
-  : "${OPENROUTER_API_KEY:=$(_env_get OPENROUTER_API_KEY)}"
-  export OPENROUTER_API_KEY
+  #
+  # authgw is needed whatever the upstream is: holding the key is only one of
+  # its four jobs, and the other three — fixed upstream, pinned address, path
+  # allowlist — are what keep the harness contained. A keyless self-hosted
+  # endpoint still goes through it.
+  : "${OPILOT_INFERENCE_URL:=$(_env_get OPILOT_INFERENCE_URL)}"
+  : "${OPILOT_INFERENCE_KEY:=$(_env_get OPILOT_INFERENCE_KEY)}"
+  : "${OPILOT_INFERENCE_AUTH:=$(_env_get OPILOT_INFERENCE_AUTH)}"
+  export OPILOT_INFERENCE_URL OPILOT_INFERENCE_KEY OPILOT_INFERENCE_AUTH
   export OPILOT_GW_TOKEN="opilot-internal-gateway"
   if _needs_harness; then
-    # proxy starts as harness's dependency; authgw needs the real key or it exits.
+    # proxy starts as harness's dependency.
     dc up -d --wait --remove-orphans authgw harness
     trap 'dc stop harness proxy authgw 2>/dev/null || true' EXIT INT TERM
   else

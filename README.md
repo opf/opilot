@@ -55,7 +55,8 @@ Use OPilot to remove that friction from your development workflow. It can automa
 ## Requirements
 
 - **Docker**
-- [OpenRouter](https://openrouter.ai/keys) API key
+- An inference endpoint: an [OpenRouter](https://openrouter.ai/keys) API key, or
+  your own OpenAI-compatible server (see [Models](#models))
 - GitHub auth token tied to a permission-less contributor account (we currently use [op-opilot](https://github.com/op-opilot))
 - Project-scoped OpenProject API token
 
@@ -111,25 +112,41 @@ cd opilot
 │ │  * Delegates chat to the LLM      │                      │                     │          │
 │ └───────┬──────────────────┬────────┘                      ▼                     ▼          │
 │         │                  │                     ┌─ proxy ───────────┐ ┌─ authgw ─────────┐ │
-│         │                  │                     │ tinyproxy (:8888) │ │ replaces gateway │ │
-│         │                  │                     │ egress allowlist  │ │ token = real key │ │
+│         │                  │                     │ tinyproxy (:8888) │ │ fixed upstream   │ │
+│         │                  │                     │ egress allowlist  │ │ pinned address   │ │
+│         │                  │                     │                   │ │ path allowlist   │ │
+│         │                  │                     │                   │ │ attaches the key │ │
 │         │                  │                     └─────────┬─────────┘ └─────────┬────────┘ │
 │         │                  │                               │                     │          │
 └─────────┼──────────────────┼───────────────────────────────┼─────────────────────┼──────────┘
           ▼                  ▼                               ▼                     ▼
-    ┌──────────┐      ┌────────────┐                  ┌─────────────┐      ┌───────────────┐
-    │ OP API   │      │ GitHub API │                  │ Rails docs  │      │ openrouter.ai │
-    └──────────┘      └────────────┘                  │ (allowlist) │      │ (any model)   │
-                                                      └─────────────┘      └───────────────┘
+    ┌──────────┐      ┌────────────┐                  ┌─────────────┐   ┌──────────────────────┐
+    │ OP API   │      │ GitHub API │                  │ Rails docs  │   │ OPILOT_INFERENCE_URL │
+    └──────────┘      └────────────┘                  │ (allowlist) │   │ OpenRouter, or your  │
+                                                      └─────────────┘   │ own OpenAI-compatible│
+                                                                        │ endpoint             │
+                                                                        └──────────────────────┘
 ```
 
 ### Security model
 
 The harness container processes untrusted text (work package descriptions and
 comments), so it is locked down: no host/LAN exposure, an egress allowlist, an
-isolated OpenRouter key, writes confined to `/repos`, a hardened container, and
-everything ships only as a *draft* PR for human review. See `CLAUDE.md` for
-the full model.
+isolated API key, writes confined to `/repos` (and never into a `.git/`
+directory), resource caps, a hardened container, and everything ships only as a
+*draft* PR for human review. Every model call goes through **authgw**, which
+holds the key, forwards to one fixed upstream at an address pinned at boot, and
+allows only the inference paths — so a prompt injection has no route out even
+when the upstream needs no key at all. See `CLAUDE.md` for the full model.
+
+**One channel this does not close.** The harness cannot reach the network, but
+its *output* becomes the PR description and the work-package comments that the
+runner publishes to GitHub. A crafted work package can ask for repository
+contents to be quoted there, and no egress from the harness is needed for that
+to work. Draft status, the bot-only account and human review are what stand in
+the way today. Treat a public prototype PR as something a human reads before it
+matters, and do not point opilot at repositories whose contents you could not
+tolerate in a draft PR body.
 
 ---
 
@@ -144,7 +161,7 @@ the full model.
 | `./opilot wp pull <id>...` | Mirror work packages into the local cache |
 | `./opilot chat [message]` | Free read-only chat about the local mirrors |
 | `./opilot status` / `reset` | List planned/shipped work packages / wipe `.opilot/` for a fresh start |
-| `./opilot usage` | OpenRouter spend: account balance, this key's usage/limit, and pricing for the configured models |
+| `./opilot usage` | On OpenRouter: account balance, this key's usage/limit, and pricing for the configured models. On a self-hosted upstream: the endpoint and models in use — there is no spend to report |
 
 Everything keyed on a work-package id lives under `wp` (`./opilot wp` lists the
 group); the spec-driven pipeline lives under `pd`.
@@ -253,10 +270,53 @@ documents each one's rationale.
 
 ### Models
 
-opilot talks to models through OpenRouter, so any model OpenRouter carries is
-one config change away — swap `OPILOT_MODEL_HEAVY` (planning, chat,
-implementation) and `OPILOT_MODEL_LIGHT` (one-shot passes like commit
-subjects) in `.env`, no code changes needed.
+opilot reaches models through **authgw**, a small gateway container that is the
+harness's only route out. Any model OpenRouter carries is one config change
+away — swap `OPILOT_MODEL_HEAVY` (planning, chat, implementation) and
+`OPILOT_MODEL_LIGHT` (one-shot passes like commit subjects) in `.env`.
+
+#### Your own endpoint
+
+Point `OPILOT_INFERENCE_URL` at any OpenAI-compatible server — vLLM, Ollama,
+llama.cpp, TGI, LM Studio — and give the models a provider prefix of your
+choosing:
+
+```
+OPILOT_INFERENCE_URL=http://10.0.0.5:8000/v1
+OPILOT_INFERENCE_KEY=                       # empty if the server needs none
+OPILOT_MODEL_HEAVY=local/qwen2.5-coder:32b
+OPILOT_MODEL_LIGHT=local/qwen2.5-coder:7b
+```
+
+That prefix is the only switch: `openrouter/…` uses the provider config
+committed in `pi-models.json`, anything else makes the harness generate one
+pointing at your endpoint. There is no separate mode variable to keep in sync.
+
+Two upstreams need more than a URL. **Azure OpenAI** wants its key in an
+`api-key` header rather than a Bearer token, so set
+`OPILOT_INFERENCE_AUTH=api-key: {key}`. A **native Anthropic or Google**
+endpoint differs in wire format too, not just the header — set
+`OPILOT_MODEL_API=anthropic-messages` (or `google-generative-ai`) alongside the
+matching `x-api-key:`/`x-goog-api-key:` template. Everything else works on the
+defaults.
+
+Sanity-check a new endpoint with `./opilot chat "list the repos you can see"`
+before running a real fix — it exercises the whole path for one cheap call.
+`./opilot usage` reports spend on OpenRouter and the configured upstream
+otherwise. Be aware that a local model has to hold a large context and call
+tools reliably across many turns; that, rather than the plumbing, is what
+decides whether a given model can drive opilot.
+
+#### Wanting cost attribution
+
+If you need per-work-package spend or hard budget caps, [LiteLLM
+proxy](https://docs.litellm.ai/docs/proxy/virtual_keys) is the component for
+it. Put it **behind** authgw (`harness → authgw → LiteLLM → providers`) rather
+than in place of it: its management surface is exactly what must never be
+reachable from the harness — an unauthenticated `POST /key/generate` mints an
+unlimited key, and `/model/update` lets an attacker repoint `api_base` to
+intercept traffic and forge tool calls. Keep `store_prompts_in_spend_logs`
+off; opilot's prompts carry private repository source.
 
 ### Repos
 

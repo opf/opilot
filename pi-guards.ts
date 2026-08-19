@@ -36,13 +36,40 @@ function resolvePath(p) {
   return "/" + out.join("/");
 }
 
-function withinRepos(p) {
+export function withinRepos(p) {
   const resolved = resolvePath(p);
   return resolved === "/repos" || (resolved !== null && resolved.startsWith("/repos/"));
 }
 
+// /repos/<name>/.git is inside /repos, so confining writes to /repos is not
+// enough on its own: writing .git/config turns the read-only-git allowlist
+// below into arbitrary code execution, because several allowlisted
+// subcommands run operator-configured helper programs. Both are verified:
+//
+//   [diff] external = <cmd>   runs on `git diff`
+//   [core] fsmonitor = <cmd>  runs on `git status`
+//
+// (core.pager does NOT fire — git skips the pager when stdout is not a TTY,
+// and pi always pipes. It is not a vector here.)
+//
+// Worse than exec in this container: .git/hooks/pre-commit runs in the RUNNER,
+// which holds GITHUB_CONTRIBUTOR_TOKEN and has full network egress. Anthropic's
+// sandbox-runtime hard-denies exactly this set (.git/hooks/, .gitconfig) as
+// paths no configuration can re-enable.
+//
+// The model never needs to write here — the runner does all real git.
+//
+// Exact segment equality, never startsWith(".git"): a prefix test would also
+// block .gitignore, .gitattributes and .github/, which real fixes do edit, and
+// that failure would look like an implement run that mysteriously cannot touch
+// CI config. The check runs on the RESOLVED path, so ../ cannot walk into it.
+export function touchesGitDir(p) {
+  const resolved = resolvePath(p);
+  return resolved !== null && resolved.split("/").includes(".git");
+}
+
 // Returns a denial reason string, or null to allow.
-function checkBash(command) {
+export function checkBash(command) {
   if (typeof command !== "string" || command.trim() === "") {
     return "no command in tool input";
   }
@@ -87,6 +114,9 @@ export default function (pi) {
     if (toolName === "write" || toolName === "edit") {
       if (!withinRepos(input.path)) {
         return { block: true, reason: `pi-guards: writes are only allowed inside /repos (got ${input.path})` };
+      }
+      if (touchesGitDir(input.path)) {
+        return { block: true, reason: `pi-guards: writes into a .git directory are not allowed (got ${input.path})` };
       }
       return undefined;
     }

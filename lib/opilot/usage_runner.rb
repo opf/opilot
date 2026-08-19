@@ -1,10 +1,17 @@
 require "rainbow"
 
 module OPilot
-  # `./opilot usage` — reports OpenRouter spend without ever handling the real
+  # `./opilot usage` — reports inference spend without ever handling the real
   # API key: it asks authgw, the sidecar that holds it, the same way pi asks
   # for inference. No OpenProject/GitHub config needed, so unlike the other
   # terminal modes this never calls Context#load_config!.
+  #
+  # Spend only exists on OpenRouter — `/credits` and `/key` are its own
+  # endpoints, not part of any OpenAI-compatible API — so a self-hosted
+  # upstream gets a configuration summary instead. The signal is the model
+  # slug's provider prefix, the same one server.js reads to decide which pi
+  # provider config to write; there is no separate mode variable that could
+  # disagree with it.
   class UsageRunner
     def initialize(ctx)
       @ctx = ctx
@@ -16,6 +23,8 @@ module OPilot
         (`bin/opilot usage` alone has no OPILOT_GW_TOKEN to authenticate with).
       MSG
 
+      return print_self_hosted_report unless openrouter?
+
       client  = Clients::OpenRouter.new(@ctx.authgw_url, @ctx.gw_token)
       credits = client.credits
       key     = client.key
@@ -26,6 +35,26 @@ module OPilot
     end
 
     private
+
+    def openrouter?
+      Harness::MODEL_HEAVY.split("/").first == "openrouter"
+    end
+
+    # No account, no balance, no catalog — a self-hosted endpoint bills nothing
+    # and publishes no pricing. Report what opilot is configured to call, so
+    # `usage` still answers "what is this run actually using" rather than
+    # failing or printing "not found" three times.
+    def print_self_hosted_report
+      puts ""
+      puts Rainbow("Inference configuration").bold
+      puts ""
+      puts "  Upstream    #{@ctx.inference_url}"
+      puts "  Heavy model #{Harness::MODEL_HEAVY}"
+      puts "  Light model #{Harness::MODEL_LIGHT}"
+      puts ""
+      puts "  This is a self-hosted upstream, so there is no spend to report."
+      puts ""
+    end
 
     def print_report(credits, key, catalog)
       puts ""

@@ -35,8 +35,10 @@ jobs:
         run: bundle exec rake
 
   test-harness-js:
-    # server.js's pi -> opilot translation (harness.rb's counterpart) has no
-    # Ruby coverage; this is its only test. Node version matches Dockerfile.harness.
+    # The container-side JS has no Ruby coverage; these are its only tests.
+    # Node version matches Dockerfile.harness — pi-guards.ts is imported
+    # directly (it carries no type annotations), so that has to keep working on
+    # the same runtime the harness image ships.
     runs-on: ubuntu-latest
     container:
       image: node:22-slim
@@ -45,3 +47,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run translate() tests
         run: node test/js/translate_test.js
+      - name: Run authgw tests
+        run: node test/js/authgw_test.js
+      - name: Run models.json generation tests
+        run: node test/js/models_json_test.js
+      - name: Run pi-guards tests
+        run: node test/js/pi_guards_test.js

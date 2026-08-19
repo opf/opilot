@@ -222,7 +222,7 @@ module OPilot
           ./opilot pd <command>     product development: the spec-driven pipeline
           ./opilot chat [message]   read-only chat about your local mirrors
           ./opilot status           what opilot has planned or shipped
-          ./opilot usage            OpenRouter spend: account, this key, model pricing
+          ./opilot usage            Inference spend (OpenRouter), else the configured upstream
           ./opilot reset            delete .opilot/, clones included
 
         `./opilot wp` and `./opilot pd` list their own commands, and --help works

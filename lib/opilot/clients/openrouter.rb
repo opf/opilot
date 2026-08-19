@@ -5,10 +5,16 @@ require "json"
 module OPilot
   module Clients
     # Reads OpenRouter's own account/key endpoints through authgw — the only
-    # sidecar holding the real OPENROUTER_API_KEY. The runner never sees that
-    # key; it authenticates to authgw with the non-secret gateway handshake
-    # token (OPILOT_GW_TOKEN), exactly as pi does for inference calls, and
-    # authgw swaps it for the real key before forwarding to openrouter.ai.
+    # sidecar holding the real API key. The runner never sees that key; it
+    # authenticates to authgw with the non-secret gateway handshake token
+    # (OPILOT_GW_TOKEN), exactly as pi does for inference calls, and authgw
+    # swaps it for the real key before forwarding upstream.
+    #
+    # Paths are /v1/… , not OpenRouter's own /api/v1/… : authgw owns the
+    # upstream's path prefix now (it varies per upstream) and re-applies it,
+    # so every client of the gateway speaks one uniform /v1. Only reachable
+    # when the upstream IS OpenRouter — `credits` and `key` exist nowhere else
+    # — which UsageRunner decides before constructing this.
     class OpenRouter
       Error = Class.new(StandardError)
 
@@ -18,26 +24,26 @@ module OPilot
       end
 
       # { total_credits:, total_usage: } — the account's whole purchased
-      # balance and lifetime spend, from GET /api/v1/credits.
+      # balance and lifetime spend, from GET /v1/credits.
       def credits
-        get("/api/v1/credits")
+        get("/v1/credits")
       end
 
       # { label:, usage:, limit:, limit_remaining:, is_free_tier:, rate_limit: }
-      # for the key authgw is configured with, from GET /api/v1/key. `limit` is
+      # for the key authgw is configured with, from GET /v1/key. `limit` is
       # null when the key itself has no spend cap set (the account-wide balance
       # still applies) — that's OpenRouter's answer, not a lookup failure here.
       def key
-        get("/api/v1/key")
+        get("/v1/key")
       end
 
       # The full model catalog (pricing, context length, …) from GET
-      # /api/v1/models. Public upstream (no key needed for this one), but still
+      # /v1/models. Public upstream (no key needed for this one), but still
       # routed through authgw so the runner never opens its own connection to
       # openrouter.ai. Returns the raw array — callers look up the one or two
       # ids they care about rather than this fetching per-id.
       def models
-        get("/api/v1/models")
+        get("/v1/models")
       end
 
       private

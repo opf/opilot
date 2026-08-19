@@ -54,30 +54,107 @@ const ALLOWED_TOOL_GRANTS = new Set([
 ]);
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
-// A model id now carries an OpenRouter vendor slug behind a provider prefix,
-// e.g. "openrouter/anthropic/claude-opus-4.8" (harness.rb supplies the full
-// string; server.js does no prefixing of its own). Validated by shape, not an
-// allowlist: it grants no privilege (unlike the tool grants above), so the
-// only risk is a malformed value reaching --model. Forbids spaces and a
-// leading dash so it can't smuggle extra CLI args.
-const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+// A model id carries a vendor slug behind a provider prefix, e.g.
+// "openrouter/anthropic/claude-opus-4.8" or "local/qwen2.5-coder:7b"
+// (harness.rb supplies the full string; server.js does no prefixing of its
+// own). Validated by shape, not an allowlist: it grants no privilege (unlike
+// the tool grants above), so the only risk is a malformed value reaching
+// --model. Forbids spaces and a leading dash so it can't smuggle extra CLI
+// args. The colon is required for self-hosted ids — every Ollama tag has one
+// (qwen2.5-coder:7b), and pi also reads a trailing ":<thinking>" suffix.
+const MODEL_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 
 const PI_AGENT_DIR   = process.env.PI_CODING_AGENT_DIR || '/pi-agent';
 const PI_SESSION_DIR = process.env.PI_CODING_AGENT_SESSION_DIR || '/sessions';
 
+// The wire protocols pi can speak. OPILOT_MODEL_API selects one; it is the
+// axis the auth header does NOT cover, and the reason an Anthropic-native or
+// Google-native upstream needs both settings rather than just a header swap.
+const PI_APIS = new Set([
+  'openai-completions', 'openai-responses', 'anthropic-messages', 'google-generative-ai',
+]);
+
+// The provider prefix on the configured model slug decides which provider
+// config pi gets: "openrouter/..." uses the file in git, anything else is
+// generated below. One signal, stated once — no separate mode variable that
+// could disagree with the slug.
+function providerPrefix(slug) {
+  const i = (slug || '').indexOf('/');
+  return i === -1 ? '' : slug.slice(0, i);
+}
+
+// Builds a models.json for a self-hosted upstream, from the two slugs already
+// in the environment. The ids are the slugs minus their provider prefix,
+// deduped — a self-hosted server usually serves one model, so heavy and light
+// normally collapse to a single entry.
+//
+// baseUrl is authgw, not the model server: the harness has no other route out,
+// and authgw re-applies the upstream's own path prefix. That is why this is
+// always /v1 regardless of what the upstream serves.
+function buildModelsJson(env = process.env) {
+  const heavy = env.OPILOT_MODEL_HEAVY || '';
+  const light = env.OPILOT_MODEL_LIGHT || '';
+  const provider = providerPrefix(heavy);
+  if (!provider) throw new Error(`OPILOT_MODEL_HEAVY needs a provider prefix (got: ${heavy || '<empty>'})`);
+
+  const api = env.OPILOT_MODEL_API || 'openai-completions';
+  if (!PI_APIS.has(api)) {
+    throw new Error(`OPILOT_MODEL_API must be one of ${[...PI_APIS].join(', ')} (got: ${api})`);
+  }
+
+  const ids = [...new Set([heavy, light]
+    .filter(slug => providerPrefix(slug) === provider)
+    .map(slug => slug.slice(provider.length + 1))
+    .filter(Boolean))];
+  if (ids.length === 0) throw new Error(`no model id in OPILOT_MODEL_HEAVY (got: ${heavy})`);
+
+  const contextWindow = Number(env.OPILOT_MODEL_CONTEXT_WINDOW);
+  const model = id => (Number.isFinite(contextWindow) && contextWindow > 0
+    ? { id, contextWindow }
+    : { id });
+
+  const config = {
+    baseUrl: 'http://authgw:47292/v1',
+    api,
+    // A dummy value, and the convention rather than a workaround: pi hides
+    // models that have no auth configured, and keyless servers ignore it.
+    // This is the same non-secret handshake authgw already expects.
+    apiKey: '$OPILOT_GW_TOKEN',
+    models: ids.map(model),
+  };
+
+  // Only meaningful for openai-completions: Ollama, vLLM and SGLang understand
+  // neither the `developer` role nor `reasoning_effort` (pi's docs/models.md).
+  // The other protocols have their own compat keys, so emitting these there
+  // would be noise at best.
+  if (api === 'openai-completions') {
+    config.compat = { supportsDeveloperRole: false, supportsReasoningEffort: false };
+  }
+
+  return { providers: { [provider]: config } };
+}
+
 // Copies the image's baked-in config into the writable agent dir on every
 // boot, so pi-settings.json/pi-models.json stay in version control and the
-// first-run wizard needs no change. Unconditional, not "if missing": these two
+// first-run wizard needs no change. Unconditional, not "if missing": these
 // files are meant to be exactly what's in git — an edit to pi-models.json (e.g.
 // adding a compat flag) must take effect on the next container start, not be
 // masked forever by a copy seeded before the edit existed. Neither file is
 // meant to be hand-edited in the running container (unlike pi's own
 // auth.json, untouched here), so this can't discard anything meant to persist.
-function seedAgentDir() {
+//
+// models.json is GENERATED instead of copied when the configured model is not
+// an openrouter/… slug, and generated with exactly the same unconditional
+// rule — a file written before a config change must never mask it either.
+function seedAgentDir(env = process.env) {
   fs.mkdirSync(PI_AGENT_DIR, { recursive: true });
-  const seeds = [['pi-settings.json', 'settings.json'], ['pi-models.json', 'models.json']];
-  for (const [src, destName] of seeds) {
-    fs.copyFileSync(path.join('/app', src), path.join(PI_AGENT_DIR, destName));
+  fs.copyFileSync(path.join('/app', 'pi-settings.json'), path.join(PI_AGENT_DIR, 'settings.json'));
+
+  const modelsPath = path.join(PI_AGENT_DIR, 'models.json');
+  if (providerPrefix(env.OPILOT_MODEL_HEAVY || 'openrouter/') === 'openrouter') {
+    fs.copyFileSync(path.join('/app', 'pi-models.json'), modelsPath);
+  } else {
+    fs.writeFileSync(modelsPath, JSON.stringify(buildModelsJson(env), null, 2) + '\n');
   }
 }
 
@@ -378,4 +455,7 @@ function startServer() {
 
 if (require.main === module) startServer();
 
-module.exports = { translate, settleResult, extractText, lastAssistantOf };
+module.exports = {
+  translate, settleResult, extractText, lastAssistantOf,
+  buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS,
+};

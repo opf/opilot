@@ -270,26 +270,52 @@ Four Docker containers orchestrated by `compose.yml`:
 - **Harness** (Node 22 + [pi], compose service `harness`, `Dockerfile.harness`) —
   wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
   never published), which translates pi's JSON event stream into the frame
-  shapes `lib/opilot/harness.rb` (`OPilot::Harness`) parses. Runs against
-  OpenRouter, so any model is one `OPILOT_MODEL_HEAVY` away. Working directory is
+  shapes `lib/opilot/harness.rb` (`OPilot::Harness`) parses. Any model is one
+  `OPILOT_MODEL_HEAVY` away. Working directory is
   `/repos` with every worktree at
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
   target repo's directly instead. Its Bash grant is **read-only git** —
   history for context, but no commit, push, or non-git command. One extension,
   `pi-guards.ts` (loaded via `--no-extensions -e`, pi's only PreToolUse-style
-  hook), enforces both: blocks writes outside `/repos`, allows only read-only
-  git. `pi-models.json` routes the `openrouter` provider through authgw,
-  resolving its `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a
-  secret) — the real key never reaches this container.
-- **Authgw** (Node 20, `authgw.js`) — holds the real `OPENROUTER_API_KEY`,
-  validates the fixed gateway token (`OPILOT_GW_TOKEN`, non-secret), swaps it
-  for the real key in the same `Authorization: Bearer` header, forwards to a
-  hardcoded `openrouter.ai`. Not an open proxy, so it egresses directly. It is a
-  raw forwarder rather than an inference-only proxy, so `./opilot usage`
-  (`Clients::OpenRouter`) reaches `/api/v1/credits` and `/api/v1/key` through it
-  the same way pi reaches chat completions — the runner never holds the key
-  either, only the same non-secret handshake token.
+  hook), enforces that plus the write confinement: no writes outside `/repos`,
+  and **none into any `.git/` directory** — that one is not cosmetic, since
+  `.git/config`'s `diff.external` and `core.fsmonitor` run programs on
+  allowlisted read-only subcommands, and `.git/hooks/pre-commit` would execute
+  in the *runner*, which holds the GitHub token. Writes are checked on the
+  resolved path by exact segment match, so `.gitignore`/`.github/` stay
+  editable.
+
+  pi always talks to authgw at `http://authgw:47292/v1`, resolving its
+  `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a secret) — the
+  real key never reaches this container. `server.js` decides which provider
+  config pi gets from **the provider prefix on `OPILOT_MODEL_HEAVY`**:
+  `openrouter/…` copies `pi-models.json` from git, anything else generates one
+  (`buildModelsJson`). That prefix is the only signal, deliberately — a second
+  "mode" variable could disagree with the slug.
+- **Authgw** (Node 20, `authgw.js`) — the harness's **only** route to a model,
+  and **containment is its load-bearing job, not authentication**. The name
+  predates that. It does four things, and holding the key is the only optional
+  one: a **fixed upstream** (`OPILOT_INFERENCE_URL`, default
+  `https://openrouter.ai/api/v1`), an **address pinned at boot** and re-used
+  per request (closing DNS rebinding; re-resolved only after a connection
+  fails), a **path allowlist** (`chat/completions`, `messages`, `responses`,
+  `models…`, `credits`, `key` — everything else 403s, notably Ollama's
+  `/api/pull`, which takes an arbitrary registry host), and the key swap.
+
+  It validates the fixed gateway token, then **deletes** the incoming
+  `Authorization` before setting whatever `OPILOT_INFERENCE_AUTH` names
+  (default `Authorization: Bearer {key}`, `api-key: {key}` for Azure OpenAI).
+  The delete is unconditional and load-bearing: a set-without-delete on a
+  differently-named header would ship the gateway token to a third party.
+
+  Every client speaks a uniform `/v1`; authgw re-applies the upstream's own
+  path prefix, so `/v1/chat/completions` reaches `/api/v1/chat/completions` on
+  OpenRouter. That is why `./opilot usage` (`Clients::OpenRouter`) asks for
+  `/v1/credits` and `/v1/key`. It converts **headers, never protocols** — the
+  wire format is pi's `api` field (`OPILOT_MODEL_API`), not authgw's concern.
+  A keyless self-hosted endpoint still goes through it; "no secret to hide" is
+  not a reason to bypass containment.
 - **Proxy** (tinyproxy) — egress allowlist for the harness container
   (`tinyproxy-filter`); everything else denied. Model calls don't go through it
   (they reach authgw directly over the internal network).
@@ -454,9 +480,11 @@ Runner POSTs to `http://harness:47291` with headers:
   other grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
-  OpenRouter slugs behind pi's provider prefix (`openrouter/anthropic/claude-sonnet-5`),
-  not Anthropic API ids. Validated by format, not an allowlist — model choice grants
-  no privilege.
+  always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5`,
+  `local/qwen2.5-coder:32b`), not bare Anthropic API ids. **The provider prefix
+  selects which pi provider config `seedAgentDir()` writes.** Validated by
+  format, not an allowlist — model choice grants no privilege. The format
+  permits `:` because every Ollama tag carries one.
 - `X-Harness-Session` — session ID (omit on first call; save from the response).
 
 `server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/pi-guards.ts`,
@@ -494,9 +522,14 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
-| `OPENROUTER_API_KEY` | Required to run the harness container. Lives only in authgw — never reaches the harness container |
-| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`) |
+| `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot |
+| `OPILOT_INFERENCE_KEY` | The key authgw presents upstream, if the upstream wants one. Lives only in authgw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
+| `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). authgw always deletes the inbound `Authorization` first, whatever this names |
+| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
+| `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |
+| `OPILOT_MODEL_CONTEXT_WINDOW` | Optional; context window for a self-hosted model. Omitted leaves pi's default |
+| `OPILOT_HARNESS_MEM` / `OPILOT_HARNESS_CPUS` | Optional; caps on the harness container (defaults `4g` / `2`, generous and unmeasured). Too low reads as an idle timeout, not an OOM — measure a real `wp build` before tightening |
 | `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
 | `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
 | `OPILOT_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |

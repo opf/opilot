@@ -10,7 +10,7 @@ module OPilot
       end
 
       def test_credits_sends_the_gateway_token_and_returns_the_data_hash
-        stub_request(:get, "#{URL}/api/v1/credits")
+        stub_request(:get, "#{URL}/v1/credits")
           .with(headers: { "Authorization" => "Bearer gw-token" })
           .to_return(status: 200, body: '{"data":{"total_credits":100,"total_usage":1.5}}')
 
@@ -20,7 +20,7 @@ module OPilot
       end
 
       def test_key_returns_the_data_hash
-        stub_request(:get, "#{URL}/api/v1/key")
+        stub_request(:get, "#{URL}/v1/key")
           .to_return(status: 200, body: '{"data":{"label":"sk-or-…","usage":0.28,"limit":100,"limit_remaining":99.7,"is_free_tier":false}}')
 
         data = @client.key
@@ -29,7 +29,7 @@ module OPilot
       end
 
       def test_models_returns_the_catalog_array
-        stub_request(:get, "#{URL}/api/v1/models")
+        stub_request(:get, "#{URL}/v1/models")
           .to_return(status: 200, body: '{"data":[{"id":"anthropic/claude-opus-4.8","pricing":{"prompt":"0.000005","completion":"0.000025"}}]}')
 
         catalog = @client.models
@@ -38,17 +38,17 @@ module OPilot
       end
 
       def test_non_200_raises
-        stub_request(:get, "#{URL}/api/v1/key").to_return(status: 401, body: "unauthorized")
+        stub_request(:get, "#{URL}/v1/key").to_return(status: 401, body: "unauthorized")
         assert_raises(OpenRouter::Error) { @client.key }
       end
 
       def test_malformed_json_raises
-        stub_request(:get, "#{URL}/api/v1/key").to_return(status: 200, body: "not json")
+        stub_request(:get, "#{URL}/v1/key").to_return(status: 200, body: "not json")
         assert_raises(OpenRouter::Error) { @client.key }
       end
 
       def test_network_failure_raises_wrapped_error
-        stub_request(:get, "#{URL}/api/v1/key").to_raise(SocketError.new("no route"))
+        stub_request(:get, "#{URL}/v1/key").to_raise(SocketError.new("no route"))
         err = assert_raises(OpenRouter::Error) { @client.key }
         assert_includes err.message, "authgw"
       end

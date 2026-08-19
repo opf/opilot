@@ -26,10 +26,17 @@ module OPilot
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
     # Models, pinned so behaviour doesn't drift when the catalog's default
-    # changes. Values are OpenRouter slugs behind pi's provider prefix
-    # (openrouter/<vendor>/<model>), not bare Anthropic API ids — a bare id
-    # (e.g. "claude-opus-4-8") is not a valid slug and must be corrected in
-    # any existing .env. A WP's heavy model is shared by every session-bound phase
+    # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>
+    # for the default upstream, or <provider>/<model-id> for a self-hosted one
+    # (e.g. "local/qwen2.5-coder:32b"). A bare id ("claude-opus-4-8") is not a
+    # valid slug and must be corrected in any existing .env.
+    #
+    # THE PREFIX IS LOAD-BEARING beyond naming: server.js reads it to decide
+    # whether to hand pi the provider config committed in pi-models.json or to
+    # generate one for the configured upstream. It is the only signal for that,
+    # deliberately — a second "mode" variable could disagree with the slug.
+    #
+    # A WP's heavy model is shared by every session-bound phase
     # (chat, plan, review, implement) — they resume one per-WP session, and
     # switching models mid-session would discard the cache and resumed context.
     # MODEL_LIGHT is for stateless one-shot passes where a cheaper model

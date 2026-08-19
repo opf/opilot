@@ -35,6 +35,9 @@ services:
       # non-secret handshake pi uses for inference — never the real key.
       - AUTHGW_URL=http://authgw:47292
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
+      # Reporting only — the runner never calls the upstream directly. `usage`
+      # names the endpoint it is (or is not) reading spend from.
+      - OPILOT_INFERENCE_URL
       - GIT_AUTHOR_NAME
       - GIT_AUTHOR_EMAIL
       - GIT_COMMITTER_NAME
@@ -125,6 +128,15 @@ services:
       # key) and authenticates with this non-secret handshake token.
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
       - PI_OFFLINE=1
+      # server.js reads the model slugs to decide whether to copy the
+      # openrouter provider config from git or generate one for a self-hosted
+      # upstream — the provider prefix on OPILOT_MODEL_HEAVY is the only signal.
+      # OPILOT_MODEL_API picks the wire protocol (default openai-completions);
+      # it is the axis the auth header does not cover.
+      - OPILOT_MODEL_HEAVY
+      - OPILOT_MODEL_LIGHT
+      - OPILOT_MODEL_API
+      - OPILOT_MODEL_CONTEXT_WINDOW
       # Optional run bounds, in minutes (server.js). Bare form, so unset means
       # "use the default" — server.js falls back on anything non-numeric anyway.
       - OPILOT_PI_IDLE_TIMEOUT_MIN
@@ -135,6 +147,20 @@ services:
       - NO_PROXY=localhost,127.0.0.1,authgw
     networks:
       - internal
+    # Resource limits are the fourth defense-in-depth layer, beside compute
+    # isolation, the filesystem guard (pi-guards.ts) and the network controls
+    # above. They also bound a denial-of-service the queue in server.js makes
+    # worse: one run that eats the box blocks every other tick, because the
+    # harness serves one call at a time.
+    #
+    # These defaults are deliberately GENEROUS and unmeasured. A mem_limit set
+    # too low produces OOM-killed runs that look exactly like the idle timeout
+    # firing, which is the most expensive way to get this wrong. Measure a real
+    # multi-repo `wp build` with `docker stats`, then tighten to roughly twice
+    # the observed peak via the env vars below.
+    mem_limit: ${OPILOT_HARNESS_MEM:-4g}
+    cpus: ${OPILOT_HARNESS_CPUS:-2}
+    pids_limit: 512
     <<: *hardened
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:47291/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
@@ -142,18 +168,24 @@ services:
       timeout: 5s
       retries: 15
 
-  # Auth gateway — holds the real OPENROUTER_API_KEY and injects it as the
-  # Authorization bearer token on requests forwarded to openrouter.ai. pi's
-  # models.json override (pi-models.json) points the openrouter provider's
-  # baseUrl here and authenticates with the fixed gateway token, so the real
-  # key never lives alongside untrusted work-package content. Always forwards
-  # to a hardcoded host, so it is not an open proxy.
+  # Inference gateway — the harness's only route to a model, and CONTAINMENT is
+  # its load-bearing job rather than authentication (the name predates that).
+  # It pins one upstream and its resolved address at boot, allows only the
+  # inference paths, and attaches the real key — which therefore never lives
+  # alongside untrusted work-package content. pi points its provider baseUrl
+  # here and authenticates with the fixed gateway token. A keyless self-hosted
+  # upstream still goes through it: it is never an open proxy, whether or not
+  # there is a secret to hold.
   authgw:
     build:
       context: .
       dockerfile: Dockerfile.authgw
     environment:
-      - OPENROUTER_API_KEY
+      # Which upstream this gateway forwards to, and how it presents the key.
+      # The defaults live in authgw.js and point at OpenRouter.
+      - OPILOT_INFERENCE_URL
+      - OPILOT_INFERENCE_KEY
+      - OPILOT_INFERENCE_AUTH
       # Fixed handshake value (not a secret); must match the value
       # pi-models.json resolves $OPILOT_GW_TOKEN to in the harness container.
       # opilot exports this (the single source for the value).
