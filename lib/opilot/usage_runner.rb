@@ -7,11 +7,9 @@ module OPilot
   # terminal modes this never calls Context#load_config!.
   #
   # Spend only exists on OpenRouter — `/credits` and `/key` are its own
-  # endpoints, not part of any OpenAI-compatible API — so a self-hosted
-  # upstream gets a configuration summary instead. The signal is the model
-  # slug's provider prefix, the same one server.js reads to decide which pi
-  # provider config to write; there is no separate mode variable that could
-  # disagree with it.
+  # endpoints, not part of any OpenAI-compatible API — so a self-hosted upstream
+  # gets a configuration summary instead. The signal is the model slug's provider
+  # prefix (see Harness::MODEL_HEAVY).
   class UsageRunner
     def initialize(ctx)
       @ctx = ctx

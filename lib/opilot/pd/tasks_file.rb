@@ -43,7 +43,6 @@ module OPilot
         sections
       end
 
-      # Every work-package id currently bound in this text.
       def wp_ids(text)
         parse(text).filter_map(&:wp_id)
       end

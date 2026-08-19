@@ -210,31 +210,22 @@ module OPilot
       TEXT
     end
 
-    # The second gate on a `ship` plan call: opilot always names the approach
-    # it's about to take, in the same short format, before writing the plan.
-    # When there's a real choice of approach, the writer stops after naming
-    # 2-3 of them instead of continuing — that choice belongs to the reporter,
-    # not to opilot. `Agent#produce_plan` turns a stopped multi-option answer
-    # into options.json plus one work-package comment; a single named approach
-    # is read straight through into the plan that follows it in the same
-    # response.
-    #
-    # Folded into the plan call rather than run as a call of its own: the writer
-    # has already read the repos to judge the fix, which is exactly what naming
-    # the approach needs, and — since the common single-approach case continues
-    # straight into the plan in the same response — a simple ticket still costs
-    # no extra call. The bar for offering more than one is stated explicitly
-    # because a model that is asked for options will find some in any ticket.
-    #
-    # The option line(s) are pipe-delimited data, not prose: a stopped
-    # multi-option answer is turned into a comment by Agent#post_options, so
-    # its wording and reply instructions are identical every time and cannot
-    # pick up a heading or a sign-off.
     # First line of an answer that names the approach before (or instead of) a
     # plan. Shared by every reader of that answer (Agent, FixRunner) so the
     # word is written once.
     OPTIONS_SENTINEL = "OPTIONS"
 
+    # The second gate on a `ship` plan call: name the approach before writing
+    # the plan, and stop after naming 2-3 when there is a real choice — that
+    # choice belongs to the reporter. `Agent#produce_plan` turns a stopped
+    # multi-option answer into options.json plus one comment; a single named
+    # approach reads straight through into the plan behind it.
+    #
+    # Folded into the plan call rather than run as its own call: the writer has
+    # already read the repos, so the single-approach case costs no extra call.
+    #
+    # The option lines are pipe-delimited data, not prose — Agent#post_options
+    # composes the comment, so its wording cannot pick up a heading or sign-off.
     OPTIONS_CONTRACT = <<~TEXT.strip
       Before the plan, always name the approach you're about to take as one
       option line:
@@ -266,15 +257,10 @@ module OPilot
 
     # WRITER: produce a fresh implementation plan for an issue.
     #
-    # The first instruction is a sufficiency gate: rather than hallucinate a plan
-    # from a vague WP, the writer emits a NEEDS_INFO block and stops.
-    # Agent#produce_plan detects that sentinel on the first line and posts the
-    # questions back to the WP instead of saving a plan.
-    #
-    # `allow_options:` adds the second gate (OPTIONS_CONTRACT) whenever no human
-    # has chosen an approach yet — a fresh trigger, whether from a work package
-    # or the terminal. It stays off once an option or a direction is given (a
-    # replan, or a plan call that follows a chosen option).
+    # Two gates. NEEDS_INFO is the sufficiency gate: on a vague WP the writer
+    # emits it instead of a plan, and Agent#produce_plan posts the questions back
+    # to the WP. `allow_options:` adds OPTIONS_CONTRACT whenever no human has
+    # chosen an approach yet; it stays off once an option or a direction is given.
     def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
                   allow_options: false)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
@@ -666,11 +652,6 @@ module OPilot
       PROMPT
     end
 
-    # Free terminal chat over the local mirrors (read-only tools). Unlike `chat`
-    # and `plan_chat`, it is not scoped to one work package: opilot's whole
-    # on-disk cache is mounted at `state` and the model finds the relevant files
-    # itself from the user's question. `repos` is an array of { name:, path:, … }
-    # for the product clones mounted at /repos/<name>.
     # --- pd (product development) -----------------------------------------
 
     # The write scope every propose/revise run is held to. Enforced afterwards by
@@ -839,6 +820,10 @@ module OPilot
       PROMPT
     end
 
+    # Free terminal chat over the local mirrors (read-only tools). Unlike `chat`
+    # and `plan_chat`, it is not scoped to one work package: opilot's whole
+    # on-disk cache is mounted at `state` and the model finds the relevant files
+    # itself from the user's question.
     def self.free_chat(state:, wp_root:, repos:, message:)
       repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
       <<~PROMPT

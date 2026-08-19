@@ -64,17 +64,14 @@ module OPilot
 
       log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}, via #{target_repo}) — #{subject}"
 
-      # Keep the PR body compact; attach the full plan as a (secret) gist and
-      # link it under the banner for anyone who wants to read deeper.
-      # The bot-specific preamble (disclaimer + adopt note) is fenced in HTML
-      # comments so `gh adopt` can lift exactly that block out and say "Adapted
-      # from #<n>" instead — a maintainer's own PR is not AI-generated and can't
-      # be adopted twice. Matching on the banner's prose would break the moment
-      # its wording changed; the markers are a contract. The plan link sits
-      # OUTSIDE the fence: it documents the change, so it survives adoption.
-      # A line of framing, then one bullet per thing a reader can do — the adopt
-      # note lands as the second bullet (#add_adopt_note, post-create). Cramming
-      # both into one sentence read as fine print on a wide GitHub body.
+      # Keep the PR body compact; the full plan is attached as a secret gist and
+      # linked below the banner. The bot-specific preamble (disclaimer + adopt
+      # note) is fenced in HTML comments so `gh adopt` can lift exactly that block
+      # out — a maintainer's own PR is not AI-generated and cannot be adopted
+      # twice. The markers are a contract; matching on the prose would break the
+      # moment its wording changed. The plan link sits OUTSIDE the fence, so it
+      # survives adoption. The adopt note lands as a second bullet
+      # (#add_adopt_note, post-create, once the PR number exists).
       banner    = "🤖 This is an AI-generated prototype.\n\n" \
                   "* To ask for a change, write a comment to @#{@github.login} on this PR."
       gist_url  = plan_gist_url(st)

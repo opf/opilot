@@ -291,7 +291,6 @@ module OPilot
       text.to_s.split(/^REPLY:[ \t]*/, -1).last.to_s.strip
     end
 
-    # The bracketed prefix every log line starts with, e.g. "[ 14:23:01 ]".
     def log_prefix
       "[ #{log_timestamp} ]"
     end
@@ -495,8 +494,7 @@ module OPilot
     # track origin/<base>, which is dangerous: a bare `git pull` merges the base
     # into the fix branch, and with push.default=upstream a bare `git push`
     # targets the base itself. Re-point tracking at the branch's own name — the
-    # PR branch it is pushed to — on every checkout, which also repairs branches
-    # created before this fix.
+    # PR branch it is pushed to — on every checkout.
     def checkout_branch(st, repo)
       wt   = worktree(repo)
       base = st.base_for(repo)
@@ -528,18 +526,14 @@ module OPilot
     # Point `repo`'s clone at current upstream before a READ-ONLY phase (plan,
     # chat). Nothing else does: `./opilot` fetches each base once at launch
     # without moving the tree, and no run checks the tree back off its fix branch
-    # — so a plan would otherwise be written against the original `git clone`
-    # commit, or against another WP's leftover branch with its changes applied,
-    # and nothing in the tree would tell the LLM either.
+    # — so a plan would otherwise be written against the original clone commit,
+    # or against another WP's leftover branch, with nothing in the tree saying so.
     #
-    # Detached at origin/<base>: between runs the clone is a read-only mirror, and
-    # a local base branch would be a second thing to keep in sync.
-    # #checkout_branch cuts fix branches from origin/<base> regardless of HEAD.
-    #
-    # Never fatal — a stale answer beats no answer, so failures warn and move on.
-    # A DIRTY tree is left strictly alone: it means an implement run died after
-    # the LLM wrote files but before #commit, and a checkout would discard work
-    # recorded nowhere else.
+    # Detached at origin/<base>, since a local base branch would be a second thing
+    # to keep in sync; #checkout_branch cuts fix branches from origin/<base>
+    # regardless of HEAD. Never fatal — a stale answer beats no answer. A DIRTY
+    # tree is left strictly alone: it means an implement run died after the LLM
+    # wrote files but before #commit, and a checkout would discard that work.
     def sync_base!(repo)
       wt = worktree(repo)
       if dirty_worktree?(wt)
@@ -590,7 +584,6 @@ module OPilot
       end
     end
 
-    # Append a pipe-delimited line to the session progress log.
     def record_progress(id, branch, note)
       @ctx.progress_file.open("a") do |f|
         f.puts "#{Time.now.strftime("%Y-%m-%dT%H:%M")}|#{id}|#{branch}|#{note}"

@@ -763,9 +763,8 @@ module OPilot
       #
       # Bookkeeping, never the deliverable: an instance that renamed or dropped the
       # status, a workflow that forbids the transition, or a plain API failure all
-      # report and return. Failing an implementation that is already committed
-      # because a status field wouldn't move would be absurd — and unlike the work
-      # itself, a status is trivial for a human to set.
+      # report and return. An implementation that is already committed must not
+      # fail because a status field would not move.
       #
       # `item` is the mirror fetched at the start of the run, so the current status
       # is already known: re-asserting the status a work package is already in would

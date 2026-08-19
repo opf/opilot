@@ -251,7 +251,6 @@ module OPilot
         with_retry { @octokit.pull_request_reviews(repo, number) }
       end
 
-      # Post a comment to the PR's conversation thread; returns the new comment.
       def add_issue_comment(repo, number, body)
         @octokit.add_comment(repo, number, body)
       end
@@ -324,7 +323,6 @@ module OPilot
         []
       end
 
-      # The jobs of a workflow run (each with name/status/conclusion/id).
       def workflow_run_jobs(repo, run_id)
         with_retry { paginated { @octokit.workflow_run_jobs(repo, run_id, per_page: 100).jobs } }
       rescue Octokit::Error, Faraday::Error
@@ -352,7 +350,6 @@ module OPilot
         url.to_s[%r{/pull/(\d+)\b}, 1]&.to_i
       end
 
-      # The "owner/repo" embedded in a PR URL, or nil.
       def self.repo_from_url(url)
         url.to_s[%r{github\.com/([^/]+/[^/]+)/pull/\d+}, 1]
       end

@@ -28,39 +28,32 @@ module OPilot
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
     # Models, pinned so behaviour doesn't drift when the catalog's default
-    # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>
-    # for the default upstream, or <provider>/<model-id> for a self-hosted one
-    # (e.g. "local/qwen2.5-coder:32b"). A bare id ("claude-opus-4-8") is not a
-    # valid slug and must be corrected in any existing .env.
+    # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>,
+    # or <provider>/<model-id> for a self-hosted one ("local/qwen2.5-coder:32b").
+    # A bare id ("claude-opus-4-8") is not a valid slug.
     #
     # THE PREFIX IS LOAD-BEARING beyond naming: server.js reads it to decide
     # whether to hand pi the provider config committed in pi-models.json or to
     # generate one for the configured upstream. It is the only signal for that,
     # deliberately — a second "mode" variable could disagree with the slug.
     #
-    # A WP's heavy model is shared by every session-bound phase
-    # (chat, plan, review, implement) — they resume one per-WP session, and
-    # switching models mid-session would discard the cache and resumed context.
-    # MODEL_LIGHT is for stateless one-shot passes where a cheaper model
-    # suffices (e.g. crafting a gh-agent commit subject, or a PR description).
-    # server.js validates the value by format, not an allowlist — model choice
-    # grants no privilege (unlike the tool grants above).
+    # MODEL_HEAVY is shared by every session-bound phase (chat, plan, review,
+    # implement): they resume one per-WP session, and switching models mid-session
+    # would discard the cache and resumed context. MODEL_LIGHT is for stateless
+    # one-shot passes. server.js validates the value by format, not an allowlist —
+    # model choice grants no privilege (unlike the tool grants above).
     MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5")
     MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
     # How long to wait on a silent socket. This must be the OUTER of the two
-    # bounds — server.js kills the run and reports an `exit` frame, and that
-    # frame is the only place the real cause is written; giving up before it
-    # arrives turns a named timeout into a bare Net::ReadTimeout.
+    # bounds — server.js kills the run and reports an `exit` frame naming the
+    # real cause; giving up first turns that into a bare Net::ReadTimeout.
     #
-    # Net::HTTP's read_timeout is per-read, so a streaming run keeps resetting
-    # it, but the harness writes NOTHING until the run actually starts: it runs
-    # one call at a time, so a request queued behind another run is a silent
-    # socket for the whole of that run. The bound therefore has to cover the
-    # server's own ceiling plus one full idle window — the worst case is
-    # "queued behind a run that goes the distance, then stalls". Both knobs are
-    # read from the same env vars server.js reads, so raising the ceiling can't
-    # leave this behind.
+    # The harness writes NOTHING until a run starts, and it runs one call at a
+    # time, so a queued request sees a silent socket for the whole run ahead of
+    # it. The bound must therefore cover the server's ceiling plus one full idle
+    # window. Both knobs read the same env vars server.js reads, so raising the
+    # ceiling cannot leave this behind.
     def self.env_minutes(name, fallback)
       value = ENV.fetch(name, "").to_f
       value.positive? ? value : fallback

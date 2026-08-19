@@ -9,7 +9,6 @@ module OPilot
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
                       :user, :user_href, :internal, keyword_init: true)
 
-  # How long the agent loops sleep between polling passes.
   POLL_INTERVAL = 20
 
   # The whole program: poll OpenProject for @opilot comments, turn each into an
@@ -148,8 +147,8 @@ module OPilot
       end
 
       # 2. A plan is on file and nobody gave new direction: build it as it reads.
-      #    This is what the retired `approve` did, and the only way to get a
-      #    prototype of the exact plan a human has already read.
+      #    This is the only way to get a prototype of the exact plan a human has
+      #    already read.
       return ship(st) if Helpers.file_has_content?(st.plan_file) && direction.empty?
 
       # 3. An offer is standing and the reply names no option: post the same list

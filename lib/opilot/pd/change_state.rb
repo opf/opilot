@@ -278,7 +278,6 @@ module OPilot
         candidates.reject { |rel| same_content?(rel) }.sort
       end
 
-      # Every change id present in the store.
       def change_ids
         return [] unless changes_dir.directory?
         changes_dir.children
@@ -328,7 +327,6 @@ module OPilot
         a.file? && b.file? && a.read == b.read
       end
 
-      # Every file under `root`, as paths relative to it.
       def paths_under(root)
         return [] unless root.directory?
         Pathname.glob(root / "**" / "*").select(&:file?).map { |p| p.relative_path_from(root).to_s }

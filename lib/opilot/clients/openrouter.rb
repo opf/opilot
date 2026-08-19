@@ -4,17 +4,15 @@ require "json"
 
 module OPilot
   module Clients
-    # Reads OpenRouter's own account/key endpoints through authgw — the only
-    # sidecar holding the real API key. The runner never sees that key; it
-    # authenticates to authgw with the non-secret gateway handshake token
-    # (OPILOT_GW_TOKEN), exactly as pi does for inference calls, and authgw
-    # swaps it for the real key before forwarding upstream.
+    # Reads OpenRouter's own account/key endpoints through authgw, which holds
+    # the real API key. The runner never sees it: it authenticates with the
+    # non-secret gateway token (OPILOT_GW_TOKEN), exactly as pi does, and authgw
+    # swaps in the real key before forwarding.
     #
-    # Paths are /v1/… , not OpenRouter's own /api/v1/… : authgw owns the
-    # upstream's path prefix now (it varies per upstream) and re-applies it,
-    # so every client of the gateway speaks one uniform /v1. Only reachable
-    # when the upstream IS OpenRouter — `credits` and `key` exist nowhere else
-    # — which UsageRunner decides before constructing this.
+    # Paths are /v1/…, not OpenRouter's own /api/v1/…: authgw owns the upstream's
+    # path prefix and re-applies it, so every client speaks one uniform /v1. Only
+    # reachable when the upstream IS OpenRouter, which UsageRunner decides before
+    # constructing this.
     class OpenRouter
       Error = Class.new(StandardError)
 
