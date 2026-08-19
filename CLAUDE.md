@@ -263,7 +263,7 @@ docker compose build runner
 
 ## Architecture
 
-Four Docker containers orchestrated by `compose.yml`:
+Three Docker containers orchestrated by `compose.yml`:
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
   the LLM, pushes branches, opens PRs. Does all real git.
@@ -316,9 +316,15 @@ Four Docker containers orchestrated by `compose.yml`:
   wire format is pi's `api` field (`OPILOT_MODEL_API`), not authgw's concern.
   A keyless self-hosted endpoint still goes through it; "no secret to hide" is
   not a reason to bypass containment.
-- **Proxy** (tinyproxy) — egress allowlist for the harness container
-  (`tinyproxy-filter`); everything else denied. Model calls don't go through it
-  (they reach authgw directly over the internal network).
+**There is no egress proxy.** A tinyproxy sidecar used to sit beside authgw,
+allowlisting a couple of documentation hosts for Claude Code's WebFetch. pi
+ships no fetch tool — its built-ins are `bash, edit, find, grep, ls, read,
+write`, and Bash is confined to read-only git — so nothing could use it, and
+its logs showed zero requests across every recorded run. It was also the only
+service straddling `internal` and `egress`, which made it a bridge *out* of the
+contained network rather than a restriction on one. Removing it made the
+harness's egress strictly zero-except-authgw, and means any future outbound
+path has to be added deliberately instead of already being there.
 
 [pi]: https://github.com/badlogic/pi-mono
 

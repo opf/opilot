@@ -21,7 +21,9 @@ module OPilot
     # instead, which is denied and kills the run. Bash is granted so pi can
     # browse git history (log/show/blame/diff) across the repos for context;
     # the pi-guards.ts tool_call hook confines it to read-only git — no commit,
-    # push, remote, or non-git command — and the egress proxy blocks exfiltration.
+    # push, remote, or non-git command (and no writes into any .git/, which
+    # would turn those read-only subcommands into code execution). The harness
+    # has no network egress but authgw, so there is nowhere to exfiltrate to.
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 

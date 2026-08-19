@@ -192,7 +192,7 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 
 # ── Run ───────────────────────────────────────────────────────────────────
-# status/reset work from local state — no worktree, harness, or proxy needed.
+# status/reset work from local state — no worktree or harness needed.
 # Unknown subcommands are passed through to Ruby.
 #
 # Two separate questions, because `pd` splits them: every pd subcommand works
@@ -211,7 +211,7 @@ _needs_harness() {
 }
 
 # `usage` needs only authgw (it reads OpenRouter's account/key balance through
-# it) — not the full harness/proxy pair a real pi run needs.
+# it) — not the harness a real pi run needs.
 _needs_authgw() { _needs_harness || _is usage; }
 
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
@@ -266,9 +266,8 @@ if _needs_authgw; then
   export OPILOT_INFERENCE_URL OPILOT_INFERENCE_KEY OPILOT_INFERENCE_AUTH
   export OPILOT_GW_TOKEN="opilot-internal-gateway"
   if _needs_harness; then
-    # proxy starts as harness's dependency.
     dc up -d --wait --remove-orphans authgw harness
-    trap 'dc stop harness proxy authgw 2>/dev/null || true' EXIT INT TERM
+    trap 'dc stop harness authgw 2>/dev/null || true' EXIT INT TERM
   else
     dc up -d --wait --remove-orphans authgw
     trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM

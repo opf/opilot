@@ -98,46 +98,53 @@ cd opilot
                     │
                     │ docker compose run
                     │
-┌── Docker ─────────┼─────────────────────────────────────────────────────────────────────────┐
-│                   ▼                                                                         │
-│ ┌─ runner container ────────────────┐            ┌─ harness container ────────────────────┐ │
-│ │                                   │            │                                        │ │
-│ │ Ruby 4.0 script                   │            │ Node.js server (:47291)                │ │
-│ │  * Pulls WP content from OP API   │◀── json ──▶│   POST / -> `pi --mode json`           │ │
-│ │  * Manages metadata in .opilot/   │            │ volumes: .opilot/                      │ │
-│ │      * WP metadata mirror         │            │                                        │ │
-│ │      * Plan files                 │            │                                        │ │
-│ │      * Draft PR data              │            └─────────┬─────────────────────┬────────┘ │
-│ │  * Pushes branches, opens PRs     │                      │                     │          │
-│ │  * Delegates chat to the LLM      │                      │                     │          │
-│ └───────┬──────────────────┬────────┘                      ▼                     ▼          │
-│         │                  │                     ┌─ proxy ───────────┐ ┌─ authgw ─────────┐ │
-│         │                  │                     │ tinyproxy (:8888) │ │ fixed upstream   │ │
-│         │                  │                     │ egress allowlist  │ │ pinned address   │ │
-│         │                  │                     │                   │ │ path allowlist   │ │
-│         │                  │                     │                   │ │ attaches the key │ │
-│         │                  │                     └─────────┬─────────┘ └─────────┬────────┘ │
-│         │                  │                               │                     │          │
-└─────────┼──────────────────┼───────────────────────────────┼─────────────────────┼──────────┘
-          ▼                  ▼                               ▼                     ▼
-    ┌──────────┐      ┌────────────┐                  ┌─────────────┐   ┌──────────────────────┐
-    │ OP API   │      │ GitHub API │                  │ Rails docs  │   │ OPILOT_INFERENCE_URL │
-    └──────────┘      └────────────┘                  │ (allowlist) │   │ OpenRouter, or your  │
-                                                      └─────────────┘   │ own OpenAI-compatible│
-                                                                        │ endpoint             │
-                                                                        └──────────────────────┘
+┌── Docker ─────────┼───────────────────────────────────────────────────────────────────┐
+│                   ▼                                                                   │
+│ ┌─ runner container ────────────────┐        ┌─ harness container ────────────────┐   │
+│ │                                   │        │                                    │   │
+│ │ Ruby 4.0 script                   │  json  │ Node.js server (:47291)            │   │
+│ │  * Pulls WP content from OP API   │◀──────▶│   POST / -> `pi --mode json`       │   │
+│ │  * Manages metadata in .opilot/   │        │ volumes: .opilot/                  │   │
+│ │      * WP metadata mirror         │        │                                    │   │
+│ │      * Plan files                 │        │                                    │   │
+│ │      * Draft PR data              │        └───────────────────┬────────────────┘   │
+│ │  * Pushes branches, opens PRs     │                            │                    │
+│ │  * Delegates chat to the LLM      │                            │                    │
+│ └───────┬──────────────────┬────────┘                            ▼                    │
+│         │                  │                          ┌─ authgw ──────────────┐       │
+│         │                  │                          │ * attach real API key │       │
+│         │                  │                          │ * limit access to     │       │
+│         │                  │                          │   inference API-only  │       │
+│         │                  │                          │                       │       │
+│         │                  │                          └───────────┬───────────┘       │
+│         │                  │                                      │                   │
+└─────────┼──────────────────┼──────────────────────────────────────┼───────────────────┘
+          ▼                  ▼                                      ▼
+  ┌─────────────────┐  ┌────────────┐                     ┌───────────────────────┐
+  │ OpenProject API │  │ GitHub API │                     │ Inference API:        │   
+  └─────────────────┘  └────────────┘                     │ OpenRouter, or your   │
+                                                          │ own OpenAI-compatible │
+                                                          │ endpoint              │
+                                                          └───────────────────────┘
 ```
+
+The harness has **no other way out**. It sits on an internal Docker network
+with no default route, so authgw — one pinned upstream, one small set of
+allowed paths — is its entire egress.
 
 ### Security model
 
 The harness container processes untrusted text (work package descriptions and
-comments), so it is locked down: no host/LAN exposure, an egress allowlist, an
-isolated API key, writes confined to `/repos` (and never into a `.git/`
-directory), resource caps, a hardened container, and everything ships only as a
-*draft* PR for human review. Every model call goes through **authgw**, which
-holds the key, forwards to one fixed upstream at an address pinned at boot, and
-allows only the inference paths — so a prompt injection has no route out even
-when the upstream needs no key at all. See `CLAUDE.md` for the full model.
+comments), so it is locked down: no host/LAN exposure, **no network egress at
+all except authgw**, an isolated API key, writes confined to `/repos` (and
+never into a `.git/` directory), Bash confined to read-only git, resource caps,
+a hardened container, and everything ships only as a *draft* PR for human
+review.
+
+authgw is the whole of that egress. It holds the key, forwards to one fixed
+upstream at an address pinned at boot, and allows only the inference paths — so
+a prompt injection has nowhere to send anything, even when the upstream needs
+no key at all. See `CLAUDE.md` for the full model.
 
 **One channel this does not close.** The harness cannot reach the network, but
 its *output* becomes the PR description and the work-package comments that the

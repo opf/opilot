@@ -1,4 +1,4 @@
-# Shared hardening for the sidecar containers (harness/authgw/proxy). The runner
+# Shared hardening for the sidecar containers (harness/authgw). The runner
 # is the trusted orchestrator and deliberately not hardened this way.
 x-hardened: &hardened
   read_only: true
@@ -75,18 +75,22 @@ services:
       - egress
 
   # The harness container is deliberately not published on the host and sits on
-  # an internal-only network: server.js is unauthenticated, so its only client
-  # must be the runner. Model calls reach OpenRouter via authgw over the
-  # internal network (NO_PROXY below); anything else goes through the egress
-  # proxy, which allows only the hosts in tinyproxy-filter — work-package text
-  # is untrusted, and this closes the exfiltration channel a prompt injection
-  # would need.
+  # an internal-only network with NO default route: server.js is
+  # unauthenticated, so its only client must be the runner, and work-package
+  # text is untrusted, so a prompt injection must have nowhere to send anything.
+  #
+  # authgw is its ONLY egress, reachable over the internal network, and that
+  # gateway forwards to one pinned upstream on an allowlisted set of paths.
+  # There is deliberately no general-purpose proxy beside it: a tinyproxy
+  # sidecar used to straddle internal and egress for Claude Code's WebFetch,
+  # but pi ships no fetch tool (bash is confined to read-only git), so it
+  # carried zero traffic and served only as a bridge out of the contained
+  # network. Removing it made egress strictly zero-except-authgw. Restoring
+  # any outbound path is a deliberate decision, not a default.
   harness:
     build:
       context: .
       dockerfile: Dockerfile.harness
-    depends_on:
-      - proxy
     # Run as the host user (exported by ./opilot) so files pi writes into the
     # bind-mounted .opilot/pi-agent and .opilot/pi-sessions are owned by —
     # and persist for — you. The image's baked node user is uid 1000; on a
@@ -141,10 +145,6 @@ services:
       # "use the default" — server.js falls back on anything non-numeric anyway.
       - OPILOT_PI_IDLE_TIMEOUT_MIN
       - OPILOT_PI_MAX_RUN_MIN
-      - HTTP_PROXY=http://proxy:8888
-      - HTTPS_PROXY=http://proxy:8888
-      # authgw is reached directly over the internal network, not via tinyproxy.
-      - NO_PROXY=localhost,127.0.0.1,authgw
     networks:
       - internal
     # Resource limits are the fourth defense-in-depth layer, beside compute
@@ -200,20 +200,12 @@ services:
       timeout: 5s
       retries: 15
 
-  # Egress allowlist proxy for the harness container (tinyproxy, CONNECT to
-  # the hosts in tinyproxy-filter only — model calls bypass it entirely,
-  # reaching authgw directly over the internal network).
-  proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile.proxy
-    networks:
-      - internal
-      - egress
-    <<: *hardened
-
 networks:
-  # No route to the outside world — harness can only talk to runner and proxy.
+  # No route to the outside world. The harness holds untrusted work-package
+  # text and sits here alone with the runner and authgw, so its only reachable
+  # outbound path is the gateway — which pins one upstream and allows only the
+  # inference paths. Verify with `docker compose exec harness cat
+  # /proc/net/route`: there must be no row with destination 00000000.
   internal:
     internal: true
   egress:

@@ -1,6 +1,0 @@
-# Hosts the claude container may reach (extended regex, one per line).
-# Model calls go to authgw over the internal network (NO_PROXY in
-# compose.yml), not through this proxy — this list is for anything else pi
-# might reach, plus Rails docs for reference during planning. Everything else
-# is denied.
-^(guides|api)\.rubyonrails\.org$
