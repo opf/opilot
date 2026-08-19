@@ -33,8 +33,8 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * Agent operations: Selective operations leveraging the primitives
     * Example flow:
       * `@OPilot create wp to implement Rosanna's suggestion`
-      * LLM generates WP spec in JSON
-      * The harness creates the WP based on the JSON
+      * LLM (via harness) generates WP spec in JSON
+      * The runner creates the WP based on the JSON
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
