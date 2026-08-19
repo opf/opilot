@@ -29,6 +29,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 ## Feature ideas
 * Introduce secure OpenProject write operations:
   * Primitives: CRUD on work packages & GitHub PRs
+    * Exposed via the CLI (e.g. `./opilot wp create`) but also reusable in agent operations
   * Agent operations: Selective operations leveraging the primitives
     * Example flow:
       * `@OPilot create wp to implement Rosanna's suggestion`
