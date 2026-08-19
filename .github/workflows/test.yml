@@ -45,11 +45,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Run translate() tests
-        run: node test/js/translate_test.js
-      - name: Run authgw tests
-        run: node test/js/authgw_test.js
-      - name: Run models.json generation tests
-        run: node test/js/models_json_test.js
-      - name: Run pi-guards tests
-        run: node test/js/pi_guards_test.js
+
+      # Globbed rather than one step per file: a new test/js/*_test.js is picked
+      # up on its own, instead of running only if someone remembers to add a step
+      # for it here. The shell runs with -e, so the first failure stops the job.
+      - name: Run harness JS tests
+        run: |
+          for f in test/js/*_test.js; do
+            echo "== $f"
+            node "$f"
+          done

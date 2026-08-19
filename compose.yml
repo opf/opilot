@@ -53,7 +53,6 @@ services:
       # reader (Context, Harness). Unset must mean absent, not blank.
       - OPILOT_MODEL_HEAVY
       - OPILOT_MODEL_LIGHT
-      - OPILOT_ASSIGN_TRIGGER
       - OPILOT_CI_MAX_ATTEMPTS
       - OPILOT_CI_IGNORE_CHECKS
       # Read by server.js to bound a run, and by Harness::READ_TIMEOUT to stay

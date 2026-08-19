@@ -2,7 +2,6 @@ FROM ruby:4.0-slim
 
 RUN apt-get update && apt-get install -y \
       build-essential \
-      curl \
       git \
     && rm -rf /var/lib/apt/lists/*
 
@@ -13,11 +12,20 @@ RUN apt-get update && apt-get install -y \
 # this is the right home — but it does hold both API tokens, hence the pin and
 # the build-time-only install (no runtime package fetches).
 # Node >= 20.19 is required by openspec's engines field; setup_20.x satisfies it.
+#
+# curl is installed and purged inside this one layer: nothing at runtime shells
+# out to it, and the runner holds both API tokens, so it does not need a general
+# HTTP client sitting in the image. ca-certificates is marked manual first, or
+# --auto-remove would take it along with curl and break every HTTPS call.
 ENV OPENSPEC_VERSION=1.7.0
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-mark manual ca-certificates \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y nodejs \
  && npm install -g "@fission-ai/openspec@${OPENSPEC_VERSION}" \
  && npm cache clean --force \
+ && apt-get purge -y --auto-remove curl \
  && rm -rf /var/lib/apt/lists/*
 
 # --system (not --global): the runner runs as the host uid at runtime, not root,
