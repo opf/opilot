@@ -468,7 +468,7 @@ module OPilot
 
     # Fail with Harness#ensure_available!'s "start the container" message before a
     # command that will call the LLM does any work — interactive prompts, WP
-    # fetches, a filter wizard — rather than mid-run with a connection error.
+    # fetches — rather than mid-run with a connection error.
     # `respond_to?` because every runner's tests inject a fake harness.
     def ensure_harness!
       @harness.ensure_available! if @harness.respond_to?(:ensure_available!)

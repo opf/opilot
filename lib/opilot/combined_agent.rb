@@ -25,15 +25,15 @@ module OPilot
         puts "  GITHUB_CONTRIBUTOR_TOKEN not set — running OpenProject only (no PR watching)."
       end
 
-      # GitHub first, so its scan-window prompt and OpenProject's filter prompt
-      # are both resolved before the loop starts.
-      scan_from_at = @gh_agent.setup if gh_enabled
-      filters      = @agent.setup
+      # GitHub first, so both scan-window prompts are resolved before the loop
+      # starts.
+      gh_scan_from_at = @gh_agent.setup if gh_enabled
+      op_scan_from_at = @agent.setup
       puts "  Agent started — polling opilot PRs + OpenProject every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       loop do
-        guarded_tick("PR poll") { @gh_agent.tick(scan_from_at) } if gh_enabled
-        guarded_tick("OpenProject poll") { @agent.tick(filters) }
+        guarded_tick("PR poll") { @gh_agent.tick(gh_scan_from_at) } if gh_enabled
+        guarded_tick("OpenProject poll") { @agent.tick(op_scan_from_at) }
         sleep POLL_INTERVAL
       end
     end

@@ -1,8 +1,7 @@
 module OPilot
-  # The terminal `pull` command: mirror OpenProject work packages into the local
-  # cache so they can be discussed via `chat`, without planning or shipping.
-  # With ids it fetches exactly those WPs; with none it runs the filter wizard
-  # and mirrors every match (the same project scope op-agent uses).
+  # The terminal `pull` command: mirror the given OpenProject work packages
+  # into the local cache so they can be discussed via `chat`, without
+  # planning or shipping.
   class PullRunner
     include Helpers
 
@@ -12,12 +11,6 @@ module OPilot
     end
 
     def run(*wp_ids)
-      wp_ids.empty? ? pull_by_filter : pull_by_ids(wp_ids)
-    end
-
-    private
-
-    def pull_by_ids(wp_ids)
       ok = 0
       wp_ids.each do |wp_id|
         log_script "Fetching work package #{wp_label(wp_id)}…"
@@ -32,13 +25,7 @@ module OPilot
       summary(ok, wp_ids.length)
     end
 
-    def pull_by_filter
-      filters = @pull.load_or_prompt_agent_filters
-      scanned, changed = @pull.mirror(filters)
-      puts ""
-      puts "  Scanned #{scanned} work package(s); refreshed #{changed}."
-      puts "  Discuss them with: ./opilot chat"
-    end
+    private
 
     def summary(ok, total)
       puts ""

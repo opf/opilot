@@ -141,7 +141,7 @@ the full model.
 |---|---|
 | `./opilot wp ship <id>...` | Plan → approve → implement → draft PR, per work package. `wp plan` stops at the approved plan, `wp build` at the local commit. Publishes via the contributor bot's fork |
 | `./opilot wp pr <id\|url>...` | Refresh a shipped PR: merge in the base branch, fix failing CI, address review feedback, push |
-| `./opilot wp pull [<id>...]` | Mirror work packages into the local cache |
+| `./opilot wp pull <id>...` | Mirror work packages into the local cache |
 | `./opilot chat [message]` | Free read-only chat about the local mirrors |
 | `./opilot status` / `reset` | List planned/shipped work packages / wipe `.opilot/` for a fresh start |
 | `./opilot usage` | OpenRouter spend: account balance, this key's usage/limit, and pricing for the configured models |
@@ -166,8 +166,8 @@ On an opilot-opened **GitHub PR** (gated by `OPILOT_ALLOWED_GH_USERS`): any
 a full refresh — base merge, CI fix, feedback sweep. `@opilot close` closes the
 PR without a merge, to retire a prototype you do not want.
 
-See `CLAUDE.md` for the Developers-field trigger, the options-first flow for
-multi-shape fixes, and tracking upstream PRs (`OPILOT_TRACK_UPSTREAM_PRS`).
+See `CLAUDE.md` for the options-first flow for multi-shape fixes, and
+tracking upstream PRs (`OPILOT_TRACK_UPSTREAM_PRS`).
 
 ### Product development (`pd`)
 
@@ -276,7 +276,7 @@ State lives in `.opilot/` (gitignored) and is safe to delete with
 | Path | What's in it |
 |---|---|
 | `work_packages/<host>/<id>/` | Per-work-package mirror: `item.json`, `plan.md`, `pr.md`, `pr_url.txt`, session ids |
-| `work_packages/<host>/op_agent_filters.json` | The saved search filters, written on the first `agent op` run |
+| `work_packages/<host>/op_agent_scan.json` | op-agent's saved scan-window watermark, written on the first `agent op` run |
 | `pr_reviews/<owner>-<repo>/<number>/` | Review state for an upstream PR opilot didn't open |
 | `openspec/<repo>/`, `changes/<host>/<id>/` | The `pd` pipeline's canonical spec store and per-change state |
 | `repos/<name>/` | Each product repo's standalone clone, mounted into the harness container |
@@ -339,7 +339,6 @@ CI (`.github/workflows/test.yml`) runs the same suite in a bare `ruby:4.0-slim` 
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ### Feature ideas
-* Better polling mechanism
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)

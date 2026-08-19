@@ -6,11 +6,8 @@ module OPilot
   # `user` / `user_href` identify the commenter, so replies can address them.
   # `internal` is the trigger comment's visibility, so the reply can mirror it
   # (an internal @opilot prompt gets an internal answer, a public one a public).
-  # `source` is nil for comment triggers and :developer for a WP whose Developers
-  # field names opilot (see Pull#intent_from_developer) — those intents carry no
-  # comment fields, so replies are unaddressed and acked via the once-per-WP marker.
   Intent = Struct.new(:item_id, :subject, :type, :command, :text, :comment_at,
-                      :user, :user_href, :internal, :source, keyword_init: true)
+                      :user, :user_href, :internal, keyword_init: true)
 
   # How long the agent loops sleep between polling passes.
   POLL_INTERVAL = 20
@@ -31,30 +28,34 @@ module OPilot
 
     def run
       ensure_harness!
-      filters = setup
+      scan_from_at = setup
       puts "  Agent started — polling every #{POLL_INTERVAL}s. Ctrl-C to stop."
 
       loop do
-        guarded_tick("OpenProject poll") { tick(filters) }
+        guarded_tick("OpenProject poll") { tick(scan_from_at) }
         sleep POLL_INTERVAL
       end
     end
 
-    # Resolve the search filters and print the allowlist banner. Returned filters
-    # are passed to #tick. Split out from #run so CombinedAgent can drive the loop.
+    # Resolve the scan window, verify opilot's own OpenProject identity is
+    # resolvable (fails loudly here, before the loop starts — see
+    # Pull#ensure_bot_identity!), and print the allowlist banner. The returned
+    # scan window is passed to #tick. Split out from #run so CombinedAgent can
+    # drive the loop.
     def setup
-      filters = @pull.load_or_prompt_agent_filters
+      scan_from_at = @pull.load_or_prompt_scan_from
+      @pull.ensure_bot_identity!
       if @ctx.allowed_op_user_ids.any?
         puts "  Allowlist active — only triggers from user ids: #{@ctx.allowed_op_user_ids.join(", ")}"
       else
         puts "  No allowlist set (OPILOT_ALLOWED_OP_USER_IDS) — any user can trigger @opilot."
       end
-      filters
+      scan_from_at
     end
 
     # One poll-and-handle pass over OpenProject @opilot triggers (no sleep).
-    def tick(filters)
-      intents = @pull.poll_intents(filters)
+    def tick(scan_from_at)
+      intents = @pull.poll_intents(scan_from_at)
       n = intents.length
       log_script "Polled OpenProject (#{@ctx.op_url}) — #{@pull.scanned_count} work package(s), " \
                  "#{@pull.changed_count} changed, #{n} @opilot trigger#{n == 1 ? "" : "s"}"
@@ -76,16 +77,9 @@ module OPilot
       ack(intent)
     end
 
-    # Route act-state to the trigger's source: a comment trigger is keyed by its
-    # timestamp, a Developers trigger by the once-per-WP marker (reusing
-    # mark_acted with the intent's nil comment_at would null out
-    # last_acted_comment_at and reopen old comment triggers).
+    # Mark the trigger comment acted, so it is not re-emitted on the next poll.
     def ack(intent)
-      if intent.source == :developer
-        @pull.mark_developer_acted(intent.item_id)
-      else
-        @pull.mark_acted(intent.item_id, intent.comment_at)
-      end
+      @pull.mark_acted(intent.item_id, intent.comment_at)
     end
 
     def handle(intent)
@@ -101,7 +95,7 @@ module OPilot
     private
 
     # An OpenProject mention of the commenter, so replies notify and address them
-    # by name. Empty for a Developers handover, which carries no commenter.
+    # by name.
     def requester_mention(intent)
       Helpers.mention(intent.user, intent.user_href)
     end
@@ -132,9 +126,8 @@ module OPilot
 
     # The one working intent: plan, implement, and open the prototype.
     #
-    # This is where every trigger lands — `@opilot build` (alias `fix`) and a
-    # Developers handover. There is no
-    # separate plan-and-wait command any more: a fix with more than one defensible
+    # This is where every trigger lands — `@opilot build` (alias `fix`). There is
+    # no separate plan-and-wait command any more: a fix with more than one defensible
     # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
     # fix with one shape is announced (#post_approach_note) and shipped in the
     # same call — so a simple ticket still costs exactly one plan call, just
@@ -162,13 +155,13 @@ module OPilot
       # 3. An offer is standing and the reply names no option: post the same list
       #    again (no LLM call), because the question is still the question.
       if direction.empty? && Helpers.file_has_content?(st.options_file)
-        post_options(st, intent)
+        post_options(st)
         return
       end
 
       # 4. Nothing has settled the approach: this is the one call that may ask.
       case produce_plan(st, direction, allow_options: direction.empty?)
-      when :options then post_options(st, intent)
+      when :options then post_options(st)
       when :ok      then ship(st)
       end
     end
@@ -285,10 +278,8 @@ module OPilot
     # Composed here rather than by the LLM so the wording, the numbering and the
     # reply instructions are the same every time, and so no heading or sign-off
     # can reach the activity tab; the writer supplies only the title and the
-    # sentence. A Developers handover addresses nobody (the intent carries no
-    # commenter), so its offer is posted publicly instead — an internal comment
-    # that mentions nobody reaches nobody who can answer it.
-    def post_options(st, intent)
+    # sentence.
+    def post_options(st)
       options = Helpers.safe_json_read(st.options_file) || []
       return if options.empty?
 
@@ -307,7 +298,7 @@ module OPilot
               "Reply `@opilot build` with your own approach if no option fits."
       body << "\n\nOnly a user on opilot's allowlist can select an option." if @ctx.allowed_op_user_ids.any?
 
-      post_note(st.item_id, addressed(body), internal: intent.source == :developer ? false : nil)
+      post_note(st.item_id, addressed(body))
     end
 
     # ── an existing prototype ─────────────────────────────────────────────────
@@ -396,10 +387,9 @@ module OPilot
     # Replies mirror the trigger comment's visibility: an internal @opilot prompt
     # gets an internal answer, a public one a public answer. Defaults to internal
     # (the safer side) when visibility is unknown — e.g. an error before #handle
-    # set @reply_internal. `internal:` overrides that for the one comment that
-    # must reach a reader the trigger cannot name (see #post_options).
-    def post_note(item_id, raw, internal: nil)
-      internal = @reply_internal.nil? ? true : @reply_internal if internal.nil?
+    # set @reply_internal.
+    def post_note(item_id, raw)
+      internal = @reply_internal.nil? ? true : @reply_internal
       code, body = @api.post_activity(item_id, comment: raw, internal: internal)
       if code == 201
         log_script "Note posted to WP #{wp_label(item_id)}"

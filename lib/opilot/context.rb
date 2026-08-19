@@ -101,28 +101,6 @@ module OPilot
       raise FatalError, "Invalid repos.json — #{e.message}"
     end
 
-    # Act on opilot being named in a WP's Developers field as if that person commented
-    # `@opilot build` (default on; set OPILOT_DEVELOPER_TRIGGER=0 to disable —
-    # the older OPILOT_ASSIGN_TRIGGER still works, since it was this same
-    # switch). Setting the field needs OpenProject's edit-work-package
-    # permission, but is not gated by the comment allowlist — turn this off on
-    # instances where WP edit rights are broad.
-    def developer_trigger?
-      raw = ENV.fetch("OPILOT_DEVELOPER_TRIGGER") { ENV["OPILOT_ASSIGN_TRIGGER"] }
-      !%w[0 false no off].include?(raw.to_s.strip.downcase)
-    end
-
-    # The work-package field that fires the trigger, matched against the schema's
-    # field *names* (case-insensitively) rather than a hardcoded `customFieldN`:
-    # "Developers" is a custom field, so its numeric id differs per instance and
-    # naming it here would be unportable. Matching by name also means a stock
-    # field works — `OPILOT_DEVELOPER_FIELD=Assignee` restores the pre-Developers
-    # behaviour without a code change.
-    def developer_field_name
-      name = ENV["OPILOT_DEVELOPER_FIELD"].to_s.strip
-      name.empty? ? "Developers" : name
-    end
-
     # Track the registry repos' upstream PRs, so an `@opilot` mention on one gets
     # answered — read-only there, so opilot replies (or offers suggestions)
     # instead of pushing.

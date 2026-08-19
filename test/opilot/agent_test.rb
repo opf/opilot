@@ -60,11 +60,10 @@ module OPilot
     end
 
     class FakePull
-      attr_reader :acted, :developer_acted
+      attr_reader :acted
       attr_accessor :related
-      def initialize; @acted = []; @developer_acted = []; @related = []; end
+      def initialize; @acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
-      def mark_developer_acted(id); @developer_acted << id; end
       def record_opilot_comment(*, **); end
       def related_work_packages(_id); @related; end
     end
@@ -162,10 +161,9 @@ module OPilot
     end
 
     def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil,
-               user_href: nil, internal: nil, comment_at: "2024-02-01T00:00:00Z", source: nil)
+               user_href: nil, internal: nil, comment_at: "2024-02-01T00:00:00Z")
       Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
-                 comment_at: comment_at, user: user, user_href: user_href, internal: internal,
-                 source: source)
+                 comment_at: comment_at, user: user, user_href: user_href, internal: internal)
     end
 
     # Make worktree(repo) return the same fake for every repo, so tests can drive
@@ -294,13 +292,6 @@ module OPilot
 
       assert plan_path.exist?, "free text is direction, not a selection"
       assert pr_url_path.exist?
-    end
-
-    # A Developers handover names no commenter, so an internal offer would reach
-    # nobody who can answer it.
-    def test_developer_handover_offers_options_publicly
-      agent_answering(OPTIONS_ANSWER).handle(intent(:ship, source: :developer))
-      assert_equal false, @note_visibility.last
     end
 
     def test_offer_from_an_internal_comment_stays_internal
@@ -637,33 +628,6 @@ module OPilot
       # A handled error is logged, not posted — no error note left on the WP.
       refute(@notes.any? { |n| n.include?("hit an error") }, "must not post an error note on the WP")
       refute pr_url_path.exist?
-    end
-
-    # ── Developer trigger ────────────────────────────────────────────────────
-
-    def developer_intent
-      intent(:ship, source: :developer, comment_at: nil, text: "")
-    end
-
-    def test_developer_intent_plans_ships_and_acks_the_marker
-      @agent.send(:handle_and_ack, developer_intent)
-
-      assert plan_path.exist?
-      assert pr_url_path.exist?
-      assert_equal ["42"], @pull.developer_acted
-      assert_empty @pull.acted, "must not touch last_acted_comment_at — that would reopen old comment triggers"
-      refute(@notes.any? { |n| n.include?("<mention") }, "no commenter to address")
-      assert(@note_visibility.all?, "Developer-trigger replies default to internal")
-    end
-
-    def test_developer_intent_acks_the_marker_on_error
-      agent = Agent.new(@ctx, pull: @pull, harness: @harness, publish: BoomPublish.new)
-      inject_worktree(agent, FakeWorktree.new)
-
-      agent.send(:handle_and_ack, developer_intent)
-
-      assert_equal ["42"], @pull.developer_acted
-      assert_empty @pull.acted
     end
 
     def test_replies_mention_the_requesting_user

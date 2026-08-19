@@ -11,26 +11,18 @@ module OPilot
       end
 
       # Returns [code, response_hash]. Hits the global work-packages endpoint;
-      # the project scope (one or many) is carried in filters_json as a
-      # `project_id` filter (see Pull#filters_json), so a single sorted sweep
-      # spans every selected project. includeSubprojects=true expands each
-      # selected project with its visible descendants, so scanning a parent
-      # project also covers its child projects' work packages.
+      # opilot's only caller is op-agent's poll, which scopes it with a
+      # `comment` filter keyed on opilot's own display name (see
+      # Pull#mention_filter_json) rather than any project scope — the API
+      # token's own project access is the trust boundary instead.
+      # includeSubprojects=true expands any project-scoped filter a caller does
+      # send with its visible descendants; harmless when none is present.
       def work_packages(filters_json:, page: 1, page_size: 50)
         filters = HTTP.encode_filters(filters_json)
         sort    = HTTP.encode_filters(SORT_UPDATED_AT)
         url = "#{@base}/api/v3/work_packages" \
               "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}&includeSubprojects=true"
         HTTP.get_json(url, token: @token)
-      end
-
-      # A work package's schema, fetched by the href its `_links.schema` carries
-      # (`/api/v3/work_packages/schemas/<project>-<type>`). The schema is what
-      # names each `customFieldN`, so it is the only way to find a field the user
-      # knows as "Developers". One schema covers every WP of a project+type, so
-      # callers should cache by href rather than by work package.
-      def work_package_schema(href)
-        HTTP.get_json("#{@base}#{href}", token: @token)
       end
 
       def project_types(project_id)

@@ -3,12 +3,6 @@ require "time"
 require_relative "clients"
 
 module OPilot
-  # `project_ids` / `project_idents` / `project_names` are parallel arrays.
-  # `project_ids` (numeric) scope the query; `project_idents` are the semantic
-  # identifiers, used for display when present (see Pull#describe_filters).
-  FilterSet = Struct.new(:project_ids, :project_idents, :project_names, :scan_from_at,
-                         keyword_init: true)
-
   class Pull
     # Stats from the most recent poll (for logging): total scanned, and how many
     # had changed (were re-fetched rather than served from cache).
@@ -21,102 +15,28 @@ module OPilot
       @changed_count = 0
     end
 
-    # Poll OpenProject for the watched work packages and turn any unacted
+    # Poll OpenProject for work packages whose comments mention opilot's own
+    # account (OpenProject's server-side `comment` filter, keyed on the bot's
+    # real display name — see #mention_filter_json) and turn any unacted
     # @opilot comment into a OPilot::Intent. De-duplication is by
     # `last_acted_comment_at` in item.json, which the agent sets only AFTER a
     # handle succeeds — so an unprocessed trigger is re-emitted on the next poll
     # (at-least-once delivery). Every matching WP is scanned each poll so a
     # re-fire after a crash is not missed.
-    def poll_intents(filters)
+    def poll_intents(scan_from_at)
+      ensure_bot_identity!
       intents = []
-      each_filtered_wp(filters, label: "Polling") do |wp, _cached, comments|
-        intent = intent_from_comments(wp, comments) || intent_from_developer(wp)
+      each_page(mention_filter_json, scan_from_at) do |wp, _cached, comments|
+        intent = intent_from_comments(wp, comments)
         intents << intent if intent
       end
       intents
-    end
-
-    # Mirror every work package matching `filters` into the local cache (its own
-    # item.json), without parsing comments into intents — the bulk form of the
-    # `pull` command, so WPs can be discussed via `chat` without planning or
-    # shipping. Returns [scanned, changed].
-    def mirror(filters)
-      each_filtered_wp(filters, label: "Fetching") { }   # caching is the side effect
-      [@scanned_count, @changed_count]
-    end
-
-    # Paginate the filtered work-package list, refresh each WP's item.json, and
-    # yield [wp, cached, comments]. Stops at the scan-window floor (results are
-    # updatedAt desc) and records scan/change stats in @scanned_count /
-    # @changed_count. Shared by #poll_intents and #mirror; `label` names the
-    # tty heartbeat ("Polling" / "Fetching").
-    def each_filtered_wp(filters, label:)
-      @scan_from_at = filters.scan_from_at
-      fj = filters_json(filters)
-
-      changed = 0
-      processed = 0; progressed = false; reached_floor = false
-      page = 1; page_size = 50; total_written = 0; total = 0
-      loop do
-        code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
-        raise OPilot::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
-        raise OPilot::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
-
-        count = resp["count"].to_i
-        total = resp["total"].to_i
-        break if count == 0
-
-        (resp.dig("_embedded", "elements") || []).each do |wp|
-          # Results are sorted updatedAt desc, and posting a @opilot comment bumps
-          # the WP's updatedAt — so a WP last touched before the scan floor can't
-          # carry a trigger newer than the floor, and neither can any WP after it.
-          # Stop here instead of re-listing every work package every cycle.
-          if @scan_from_at && wp["updatedAt"] && wp["updatedAt"] < @scan_from_at
-            reached_floor = true
-            break
-          end
-          cached, comments = fetch_work_package_item(wp)
-          changed += 1 unless cached
-          processed += 1
-          # Each changed WP costs two more API calls; on a first or large poll
-          # that's a long, silent stretch. Show a self-clearing heartbeat (only the
-          # moment we actually hit the network, and only on a tty) so it's clearly
-          # working rather than hung.
-          if !cached && $stdout.tty?
-            print "\r  #{label} OpenProject — #{processed} work package(s)…"
-            $stdout.flush
-            progressed = true
-          end
-          yield wp, cached, comments
-        end
-
-        break if reached_floor
-        total_written += count
-        break if total_written >= total
-        page += 1
-      end
-      print "\r\033[K" if progressed   # clear the heartbeat before the summary
-
-      @scanned_count = processed
-      @changed_count = changed
     end
 
     # Record that a trigger comment has been fully handled, so it is not
     # re-emitted on later polls. Called by the agent after a successful handle.
     def mark_acted(item_id, comment_at)
       mark_opilot_acted(item_id, comment_at)
-    end
-
-    # Record that opilot being named a Developer on this WP has been acted on —
-    # the trigger fires once per WP, ever (clearing and re-setting the field does
-    # not re-fire; later re-work goes through @opilot comments). Called by the
-    # agent after a handle, like #mark_acted.
-    def mark_developer_acted(wp_id)
-      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
-      return unless item_path.exist?
-      data = JSON.parse(item_path.read)
-      data["developer_acted_at"] = Time.now.utc.iso8601
-      item_path.write(JSON.generate(data))
     end
 
     # Tell a non-allowlisted commenter, once per work package, that their trigger
@@ -157,26 +77,28 @@ module OPilot
       item_path.write(JSON.generate(data))
     end
 
-    # A FilterSet is project scope plus the scan window, and nothing else: opilot
-    # acts only on explicit @opilot triggers, and a user may @opilot a WP of any
-    # type or status, so there is nothing to narrow by. (Type/status/version
-    # members existed once, were never set, and were removed.)
-    def load_or_prompt_agent_filters
-      if (saved = read_agent_filters)
-        puts "  Saved filters: #{describe_filters(saved)}"
-        print "  Reuse saved filters? [Y/n]: "
-        if $stdin.gets.chomp.downcase != "n"
-          # The scan window is a per-session choice, but persist whatever was
-          # picked so the next run can offer it as the default and resume from
-          # where this session started rather than skipping ahead to now.
-          saved.scan_from_at = prompt_scan_from(saved.scan_from_at)
-          save_agent_filters(saved)
-          return saved
-        end
-      end
-      filters = prompt_agent_filters
-      save_agent_filters(filters)
-      filters
+    # The scan window op-agent resumes from, prompted interactively and
+    # persisted so the next run offers it as the default. No project scope any
+    # more (see #poll_intents) — the API token's own project access is the
+    # trust boundary.
+    def load_or_prompt_scan_from
+      scan_from_at = prompt_scan_from(saved_scan_from_at)
+      save_scan_from(scan_from_at)
+      scan_from_at
+    end
+
+    # Raise unless opilot's own OpenProject display name is known — the poll's
+    # only search term (see #mention_filter_json). There is no project-scope
+    # fallback left underneath it, so a failed /users/me lookup must stop the
+    # poll rather than send an empty/malformed filter value. Called from
+    # Agent#setup (so a broken identity fails loudly once, before the loop
+    # starts, instead of being silently retried forever by guarded_tick) and
+    # from #poll_intents itself (so a direct call is guarded too).
+    def ensure_bot_identity!
+      return unless bot_display_name.empty?
+      raise OPilot::FatalError,
+            "could not resolve opilot's own OpenProject display name (GET /users/me) — " \
+            "op-agent can't search for its own @mentions without it"
     end
 
     # Fetch one work package by id (ignoring filters), refresh its item.json,
@@ -261,53 +183,12 @@ module OPilot
       id.to_s.empty? ? nil : id
     end
 
-    # Prompt for the project scope and the scan window — the whole FilterSet, so
-    # #filters_json scopes the poll to the chosen projects and nothing else.
-    def prompt_agent_filters
-      puts ""
-      puts "=== Search filters ==="
-      puts ""
-      project_ids, project_idents, project_names = prompt_projects
-      scan_from_at = prompt_scan_from(saved_scan_from_at)
-      puts ""
-      FilterSet.new(
-        project_ids:    project_ids,
-        project_idents: project_idents,
-        project_names:  project_names,
-        scan_from_at:   scan_from_at
-      )
-    end
-
-    # Prompt for one or more projects, validating each and resolving it to the
-    # numeric id the project_id filter requires while keeping the semantic
-    # identifier (and name) for display. Returns [ids, idents, names].
-    def prompt_projects
-      loop do
-        print "  Project(s), comma-separated [TTP2]: "
-        reply = $stdin.gets.chomp
-        reply = "TTP2" if reply.empty?
-        idents = reply.split(",").map(&:strip).reject(&:empty?).uniq
-
-        resolved = idents.map { |ident| [ident, *@api.project(ident)] }   # [ident, code, data]
-        bad = resolved.select { |_ident, code, _| code != 200 }.map(&:first)
-        unless bad.empty?
-          puts "  Project(s) not found: #{bad.join(", ")} — please try again."
-          next
-        end
-        ids    = resolved.map { |_ident, _code, data| data["id"].to_s }
-        # Prefer the canonical identifier; fall back to whatever the user typed.
-        idents = resolved.map { |ident, _code, data| data["identifier"] || ident }
-        names  = resolved.map { |_ident, _code, data| data["name"] }
-        return [ids, idents, names]
-      end
-    end
+    private
 
     # Ask how far back the comment scanner should look, returning the parsed
-    # floor timestamp (nil = from now). Shared by the fresh-filter flow and the
-    # reuse-saved-filters flow, so the window is always chosen interactively.
-    # `previous` (the last session's chosen floor, if any) becomes the offered
-    # default, so pressing Enter resumes from where the previous run left off
-    # instead of jumping forward to now.
+    # floor timestamp (nil = from now). `previous` (the last session's chosen
+    # floor, if any) becomes the offered default, so pressing Enter resumes
+    # from where the previous run left off instead of jumping forward to now.
     def prompt_scan_from(previous = nil)
       print %(  How far back should the comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [#{previous || "now"}]: )
       reply = $stdin.gets.chomp
@@ -315,12 +196,64 @@ module OPilot
       parse_scan_from_input(reply)
     end
 
-    private
+    # Paginate the filtered work-package list (raw filters JSON `fj`), refresh
+    # each WP's item.json, and yield [wp, cached, comments]. Stops at the
+    # scan-window floor (results are updatedAt desc) and records scan/change
+    # stats in @scanned_count / @changed_count.
+    def each_page(fj, scan_from_at)
+      @scan_from_at = scan_from_at
+
+      changed = 0
+      processed = 0; progressed = false; reached_floor = false
+      page = 1; page_size = 50; total_written = 0; total = 0
+      loop do
+        code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
+        raise OPilot::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
+        raise OPilot::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
+
+        count = resp["count"].to_i
+        total = resp["total"].to_i
+        break if count == 0
+
+        (resp.dig("_embedded", "elements") || []).each do |wp|
+          # Results are sorted updatedAt desc, and posting a @opilot comment bumps
+          # the WP's updatedAt — so a WP last touched before the scan floor can't
+          # carry a trigger newer than the floor, and neither can any WP after it.
+          # Stop here instead of re-listing every work package every cycle.
+          if @scan_from_at && wp["updatedAt"] && wp["updatedAt"] < @scan_from_at
+            reached_floor = true
+            break
+          end
+          cached, comments = fetch_work_package_item(wp)
+          changed += 1 unless cached
+          processed += 1
+          # Each changed WP costs two more API calls; on a first or large poll
+          # that's a long, silent stretch. Show a self-clearing heartbeat (only the
+          # moment we actually hit the network, and only on a tty) so it's clearly
+          # working rather than hung.
+          if !cached && $stdout.tty?
+            print "\r  Polling OpenProject — #{processed} work package(s)…"
+            $stdout.flush
+            progressed = true
+          end
+          yield wp, cached, comments
+        end
+
+        break if reached_floor
+        total_written += count
+        break if total_written >= total
+        page += 1
+      end
+      print "\r\033[K" if progressed   # clear the heartbeat before the summary
+
+      @scanned_count = processed
+      @changed_count = changed
+    end
 
     # The scan floor chosen on the last run, read straight from the saved
-    # filters file. Offered as the default when re-prompting (even when the user
-    # declines to reuse the rest of the saved filters), so a fresh session resumes
-    # from where the previous one stopped rather than skipping ahead to now.
+    # scan-window file. Offered as the default when re-prompting, so a fresh
+    # session resumes from where the previous one stopped rather than skipping
+    # ahead to now.
     def saved_scan_from_at
       return nil unless agent_filters_path.exist?
       JSON.parse(agent_filters_path.read)["scan_from_at"]
@@ -328,65 +261,16 @@ module OPilot
       nil
     end
 
-    # Saved filters. Reads named keys off the parsed hash rather than splatting it
-    # into the struct, which is what makes a file written by an older opilot safe:
-    # its extra keys (type_ids, status_names, …) are inert here, where a splat
-    # would raise ArgumentError on the unknown keywords.
-    def read_agent_filters
-      return nil unless agent_filters_path.exist?
-      data = JSON.parse(agent_filters_path.read)
-      project_ids, project_idents, project_names = saved_projects(data)
-      return nil if project_ids.empty?
-      FilterSet.new(
-        project_ids:    project_ids,
-        project_idents: project_idents,
-        project_names:  project_names,
-        scan_from_at:   data["scan_from_at"]
-      )
-    rescue JSON::ParserError
-      nil
+    def save_scan_from(scan_from_at)
+      agent_filters_path.dirname.mkpath
+      Helpers.write_json_atomic(agent_filters_path, { "scan_from_at" => scan_from_at }, "op_agent_scan")
     end
 
-    # The saved project selection as [ids, idents, names]. Upgrades the
-    # pre-multi-project format on the fly: an old file stored a single
-    # `project_id` identifier, but the project_id filter now needs a numeric id,
-    # so resolve it via the API. Returns [[], [], []] when nothing usable is
-    # saved (caller then re-prompts).
-    def saved_projects(data)
-      if data["project_ids"]
-        ids = Array(data["project_ids"])
-        # Older multi-project files predate project_idents — resolve each id to
-        # its semantic identifier so the display matches a fresh selection.
-        idents = data["project_idents"] ? Array(data["project_idents"]) : ids.map { |id| resolve_ident(id) }
-        return [ids, idents, Array(data["project_names"])]
-      end
-
-      ident = data["project_id"]
-      return [[], [], []] if ident.to_s.empty?
-      code, project = @api.project(ident)
-      return [[], [], []] unless code == 200 && project
-      [[project["id"].to_s], [project["identifier"] || ident], [project["name"]]]
-    rescue => e
-      puts "  Warning: could not upgrade saved project filter (#{e.message}); please re-select."
-      [[], [], []]
-    end
-
-    # The semantic identifier for a project, looked up by its (numeric) id.
-    # Falls back to the id itself if the lookup fails, so a hiccup only costs the
-    # nicer label, never the saved filter.
-    def resolve_ident(id)
-      code, project = @api.project(id)
-      (code == 200 && project && project["identifier"]) || id
-    rescue
-      id
-    end
-
-    def describe_filters(f)
-      # Show the semantic identifier when we have it, else the numeric id.
-      labels = Array(f.project_idents).empty? ? Array(f.project_ids) : Array(f.project_idents)
-      projects = labels.zip(Array(f.project_names))
-        .map { |id, name| name ? "#{id} — #{name}" : id }.join("; ")
-      "projects=[#{projects}]"
+    # op-agent's scan-window watermark lives alongside the WP mirror, under the
+    # per-instance work_packages/<op_host>/ dir: a scan floor is only valid on
+    # the instance it was chosen on, so it must not bleed across instances.
+    def agent_filters_path
+      Helpers.items_dir(@ctx) / "op_agent_scan.json"
     end
 
     # Detect the latest unacted @opilot trigger on a WP and turn it into an
@@ -421,107 +305,6 @@ module OPilot
       )
     end
 
-    # Naming opilot in a WP's Developers field means "just ship it": synthesize the
-    # same :ship intent a `@opilot build` comment produces (plan + implement +
-    # draft PR, no approval gate). Deliberately not allowlist-gated — setting the
-    # field requires OpenProject's edit-work-package permission — and fires at
-    # most once per WP, ever (developer_acted_at in item.json). A WP that already
-    # shipped a PR is marked acted without firing, so a comment-shipped WP
-    # handed over later does no double work.
-    def intent_from_developer(wp)
-      return nil unless @ctx.developer_trigger?
-      return nil unless developer_is_opilot?(wp)
-
-      wp_id = wp_display_id(wp)
-      saved = Helpers.safe_json_read(Helpers.item_dir(@ctx, wp_id) / "item.json") || {}
-      return nil if developer_acted?(saved)
-      if shipped?(wp_id)
-        mark_developer_acted(wp_id)
-        return nil
-      end
-
-      Intent.new(
-        item_id: wp_id,
-        subject: wp["subject"],
-        type:    wp.dig("_embedded", "type", "name").to_s,
-        command: :ship,
-        text:    "",
-        source:  :developer
-      )
-    end
-
-    # `assignee_acted_at` is the pre-Developers marker. It is still honoured on
-    # read so that switching the trigger field doesn't re-fire on every WP that
-    # already consumed its one shot under the old field.
-    def developer_acted?(saved)
-      !saved["developer_acted_at"].nil? || !saved["assignee_acted_at"].nil?
-    end
-
-    # A Developers link must be a *user* matching opilot's own id: the field
-    # can also hold a group or placeholder user, whose numeric id could collide
-    # with the bot's under a different resource type. A multi-value field renders
-    # as an array of links, so any of them naming opilot counts.
-    def developer_is_opilot?(wp)
-      return false if own_user_id.empty?
-      developer_links(wp).any? { |l| l["href"].to_s[%r{/users/(\d+)\z}, 1] == own_user_id }
-    end
-
-    # The display names in that field, for the WP mirror. Empty when the field is
-    # absent or unset.
-    def developer_names(wp)
-      developer_links(wp).filter_map { |l| l["title"] }
-    end
-
-    # The field's link(s), normalised to an array: a single-value field renders as
-    # one link object, a multi-value one as an array (`resource` vs `resources` in
-    # OpenProject's representer) — and "Developers" is typically the latter.
-    # Array() on a Hash would splat it into key/value pairs, hence the branch.
-    def developer_links(wp)
-      key = developer_field_key(wp)
-      return [] unless key
-      value = wp.dig("_links", key)
-      (value.is_a?(Hash) ? [value] : Array(value)).select { |l| l.is_a?(Hash) }
-    end
-
-    # Resolve the configured field name (default "Developers") to the key it takes
-    # in a WP payload — `customFieldN` for a custom field, or the plain name for a
-    # stock one. Only the schema knows that mapping, and a custom field's id
-    # differs per instance, so it cannot be hardcoded.
-    #
-    # Memoized per schema href (one schema covers a whole project+type), so a poll
-    # over many work packages costs at most one extra call per distinct type, and
-    # a nil result is cached too — an instance without the field must not re-ask
-    # (or re-warn) on every WP of that type.
-    def developer_field_key(wp)
-      href = wp.dig("_links", "schema", "href").to_s
-      return nil if href.empty?
-      @developer_field_keys ||= {}
-      return @developer_field_keys[href] if @developer_field_keys.key?(href)
-      @developer_field_keys[href] = resolve_developer_field_key(href)
-    end
-
-    def resolve_developer_field_key(href)
-      code, schema = @api.work_package_schema(href)
-      wanted = @ctx.developer_field_name
-      if code != 200 || schema.nil?
-        puts "  Warning: could not read the work-package schema at #{href} (HTTP #{code}) — " \
-             "the #{wanted} trigger is off for these work packages"
-        return nil
-      end
-
-      key = schema.find do |name, field|
-        field.is_a?(Hash) && field["name"].to_s.casecmp?(wanted) && !name.start_with?("_")
-      end&.first
-      puts "  Note: no \"#{wanted}\" field on #{href} — the trigger is off there" if key.nil?
-      key
-    end
-
-    # Any repo's pr_url.txt with content — the WP already shipped a PR.
-    def shipped?(wp_id)
-      Dir.glob((Helpers.item_dir(@ctx, wp_id) / "repos" / "*" / "pr_url.txt").to_s)
-         .any? { |p| Helpers.file_has_content?(Pathname.new(p)) }
-    end
-
     # Map @opilot trigger text to a [command, free-text] pair. Anything that is
     # not a known command word becomes a :chat carrying the message body.
     def parse_command(raw)
@@ -551,14 +334,6 @@ module OPilot
       text = raw.to_s.sub(%r{\A\s*<mention\b[^>]*>.*?</mention>}im, "@opilot")
       text = text.gsub(%r{<mention\b[^>]*>(.*?)</mention>}im) { $1 }
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
-    end
-
-    # Builds the raw filters JSON for a FilterSet — one `project_id` clause, which
-    # scopes the global work-packages endpoint to the selected projects. Its values
-    # must be NUMERIC project ids: OpenProject coerces them with to_i, so an
-    # identifier would match nothing rather than erroring.
-    def filters_json(filters)
-      %Q([{"project_id":{"operator":"=","values":#{JSON.generate(Array(filters.project_ids))}}}])
     end
 
     # The user-facing work package id: semantic ("PROJ-123") when the instance
@@ -596,7 +371,7 @@ module OPilot
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
-        %w[last_acted_comment_at last_opilot_comment_id developer_acted_at assignee_acted_at].each do |key|
+        %w[last_acted_comment_at last_opilot_comment_id].each do |key|
           full[key] = prev[key] if prev.key?(key)
         end
       end
@@ -636,11 +411,6 @@ module OPilot
         "priority"    => wp.dig("_embedded", "priority", "name"),
         "assignee"    => wp.dig("_embedded", "assignee", "name") || "unassigned",
         "responsible" => wp.dig("_embedded", "responsible", "name") || "unassigned",
-        # The field that hands work to opilot (see #developer_is_opilot?) — worth
-        # mirroring so a prompt can see who else is on the ticket. Link titles
-        # carry the display names, so this needs no extra call beyond the schema
-        # lookup the trigger already does.
-        "developers"  => developer_names(wp),
         "author"      => wp.dig("_embedded", "author", "name"),
         "version"     => wp.dig("_embedded", "version", "name"),
         "category"    => wp.dig("_embedded", "category", "name"),
@@ -649,28 +419,6 @@ module OPilot
         "description" => wp.dig("description", "raw") || "",
         "comments"    => comments
       }
-    end
-
-    # Saved search filters live alongside the WP mirror, under the per-instance
-    # work_packages/<op_host>/ dir: a filter's project ids are only valid on the
-    # instance they were chosen on, so they must not bleed across instances.
-    def agent_filters_path
-      Helpers.items_dir(@ctx) / "op_agent_filters.json"
-    end
-
-    # Persist the filters. A save MERGES into whatever the file already holds
-    # rather than replacing it, so keys opilot no longer writes (an older
-    # version's type/status filters) survive instead of being dropped.
-    def save_agent_filters(filters)
-      existing = (agent_filters_path.exist? && Helpers.safe_json_read(agent_filters_path)) || {}
-      data = existing.merge(
-        "project_ids"    => filters.project_ids,
-        "project_idents" => filters.project_idents,
-        "project_names"  => filters.project_names,
-        "scan_from_at"   => filters.scan_from_at
-      )
-      agent_filters_path.dirname.mkpath   # work_packages/<op_host>/ may not exist yet
-      Helpers.write_json_atomic(agent_filters_path, data, "agent_filters")
     end
 
     def parse_scan_from_input(input)
@@ -720,21 +468,36 @@ module OPilot
       str.match?(%r{<mention\b[^>]*\bdata-id="#{Regexp.escape(id)}"})
     end
 
-    # OPilot's own OpenProject user id, derived from /users/me and memoized for
-    # the lifetime of this Pull (the nil result is cached too, so a failed lookup
-    # is not retried every comment). Used to recognise an OP-native @-mention of
-    # the bot. Returns "" when it can't be resolved, so detection falls back to
-    # the literal "@opilot" match.
-    def own_user_id
-      return @own_user_id if defined?(@own_user_id)
-      @own_user_id = begin
+    # The raw filters JSON for the poll: one `comment` clause (operator `~`,
+    # "contains"), keyed on opilot's own OpenProject display name. There is no
+    # OR across independent terms for this filter type (OpenProject's `contains`
+    # operator takes only the first value and ANDs its whitespace-split tokens),
+    # so this is deliberately the bot's one real name rather than trying to also
+    # match a literal "@opilot"/"@chomper" — see CLAUDE.md for the accepted
+    # narrowing this implies.
+    def mention_filter_json
+      %Q([{"comment":{"operator":"~","values":#{JSON.generate([bot_display_name])}}}])
+    end
+
+    # OPilot's own OpenProject identity, resolved from /users/me and memoized
+    # for the lifetime of this Pull (a failed lookup is cached too, so it's not
+    # retried every comment/poll). `id` recognises an OP-native @-mention by
+    # data-id (see #opilot_mentioned?); `name` is the poll's search term (see
+    # #mention_filter_json). Both fall back to "" when the lookup fails.
+    def own_user
+      return @own_user if defined?(@own_user)
+      @own_user = begin
         _, me = @api.me
-        me&.dig("_links", "self", "href").to_s.split("/").last.to_s
+        { "id" => me&.dig("_links", "self", "href").to_s.split("/").last.to_s,
+          "name" => me&.dig("name").to_s }
       rescue => e
-        puts "  Warning: could not resolve opilot's own user id: #{e.message}"
-        ""
+        puts "  Warning: could not resolve opilot's own OpenProject identity: #{e.message}"
+        { "id" => "", "name" => "" }
       end
     end
+
+    def own_user_id;      own_user["id"];   end
+    def bot_display_name; own_user["name"]; end
 
     def mark_opilot_acted(wp_id, created_at)
       item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"

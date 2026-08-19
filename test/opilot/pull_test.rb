@@ -56,28 +56,6 @@ module OPilot
       assert_equal "Core",   item["category"]
     end
 
-    # The Developers field is what hands work to opilot, so the mirror carries it
-    # (from the link titles — no extra call beyond the schema lookup).
-    def test_build_full_item_mirrors_the_developers_field
-      ctx = Struct.new(:op_url, :token, :developer_field_name).new("https://example.com", nil, "Developers")
-      pull = Pull.new(ctx)
-      stub_request(:get, "https://example.com/api/v3/work_packages/schemas/7-1")
-        .to_return(status: 200, body: JSON.generate({ "customField12" => { "name" => "Developers" } }))
-      wp = WP.merge("_links" => {
-        "schema"        => { "href" => "/api/v3/work_packages/schemas/7-1" },
-        "customField12" => [{ "href" => "/api/v3/users/1", "title" => "OPilot" },
-                            { "href" => "/api/v3/users/2", "title" => "Alice" }]
-      })
-
-      assert_equal ["OPilot", "Alice"], pull.send(:build_full_item, wp, [])["developers"]
-    end
-
-    # A WP with no schema link costs no request at all — WebMock would raise if it
-    # tried, so this also pins that the mirror doesn't fetch schemas speculatively.
-    def test_build_full_item_developers_is_empty_without_the_field
-      assert_equal [], @pull.send(:build_full_item, WP, [])["developers"]
-    end
-
     def test_build_full_item_has_no_state_field
       item = @pull.send(:build_full_item, WP, [])
       refute item.key?("state")
@@ -290,8 +268,6 @@ module OPilot
   end
 
   class PullPollIntentsTest < Minitest::Test
-    FILTERS = FilterSet.new(project_ids: ["123"])
-
     def wp(id, updated_at)
       { "id" => id, "subject" => "Bug ##{id}", "updatedAt" => updated_at, "createdAt" => "2024-01-01T00:00:00Z" }
     end
@@ -321,26 +297,25 @@ module OPilot
       notes
     end
 
-    def build_pull(allowed_op_user_ids = [], developer_trigger: true, developer_field_name: "Developers")
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids,
-                       :developer_trigger, :developer_field_name) do
+    def build_pull(allowed_op_user_ids = [])
+      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) do
         def op_host; "example.com"; end
-        def developer_trigger?; developer_trigger; end
-      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids,
-              developer_trigger, developer_field_name)
+      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids)
       Pull.new(ctx)
     end
 
     def setup
       @tmpdir = Dir.mktmpdir
       @pull   = build_pull
-      # The per-instance WP dir holds op_agent_filters.json; tests that seed that
+      # The per-instance WP dir holds op_agent_scan.json; tests that seed that
       # file write it directly, so make sure its parent exists.
       (Pathname(@tmpdir) / "work_packages" / "example.com").mkpath
-      # /users/me identifies opilot as user 1, so an OP-native @-mention by
-      # data-id is recognised as a trigger.
+      # /users/me identifies opilot as user 1 with display name "OPilot" — the
+      # id lets an OP-native @-mention be recognised by data-id, the name is
+      # the poll's own search term (see #mention_filter_json).
       stub_request(:get, "https://example.com/api/v3/users/me")
-        .to_return(status: 200, body: JSON.generate({ "_links" => { "self" => { "href" => "/api/v3/users/1" } } }))
+        .to_return(status: 200, body: JSON.generate(
+          { "_links" => { "self" => { "href" => "/api/v3/users/1" } }, "name" => "OPilot" }))
     end
 
     def teardown
@@ -362,25 +337,25 @@ module OPilot
 
     def test_returns_empty_when_no_work_packages
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([], total: 0))
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
     end
 
     def test_url_includes_sort_by_param
       stub_request(:get, /sortBy=/).to_return(status: 200, body: page_response([], total: 0))
-      @pull.poll_intents(FILTERS)
+      @pull.poll_intents(nil)
     end
 
     # Scanning a parent project should also cover its child projects' WPs.
     def test_url_includes_subprojects_param
       stub_request(:get, /includeSubprojects=true/).to_return(status: 200, body: page_response([], total: 0))
-      @pull.poll_intents(FILTERS)
+      @pull.poll_intents(nil)
     end
 
     def test_stops_paging_at_first_wp_below_scan_floor
       # Sorted updatedAt desc: WP 1 is above the floor, WP 2 below it. WP 2's
       # activities are deliberately left unstubbed — if the poll tried to fetch
       # it, WebMock would raise. So a clean run proves we stopped at the floor.
-      filters = FilterSet.new(project_ids: ["123"], scan_from_at: "2024-02-01T00:00:00Z")
+      scan_from_at = "2024-02-01T00:00:00Z"
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
         [wp(1, "2024-03-01T00:00:00Z"), wp(2, "2024-01-01T00:00:00Z")], total: 2))
       stub_request(:get, %r{/work_packages/1/activities\z})
@@ -388,7 +363,7 @@ module OPilot
       stub_request(:get, %r{/work_packages/1/activities_emoji_reactions\z})
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
 
-      assert_equal [], @pull.poll_intents(filters)
+      assert_equal [], @pull.poll_intents(scan_from_at)
       assert_equal 1, @pull.scanned_count   # only WP 1 examined; stopped at WP 2
     end
 
@@ -406,7 +381,7 @@ module OPilot
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      intents = @pull.poll_intents(FILTERS)
+      intents = @pull.poll_intents(nil)
       assert_equal 1, intents.length
       assert_equal 1, @pull.scanned_count
       assert_equal 0, @pull.changed_count   # seeded item.json is current → cached
@@ -426,7 +401,7 @@ module OPilot
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
       notes = capture_notes
 
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
       # marked acted so it is not re-evaluated next poll
       on_disk = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
       assert_equal "2024-02-01T00:00:00Z", on_disk["last_acted_comment_at"]
@@ -446,7 +421,7 @@ module OPilot
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
       notes = capture_notes
 
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
       assert_empty notes, "a second rejected trigger must not add another comment"
     end
 
@@ -460,7 +435,7 @@ module OPilot
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      intents = @pull.poll_intents(FILTERS)
+      intents = @pull.poll_intents(nil)
       assert_equal 1, intents.length
       assert_equal "1", intents[0].item_id
     end
@@ -477,7 +452,7 @@ module OPilot
       item_path.write(JSON.generate(data))
 
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
     end
 
     def test_record_opilot_comment_persists_id
@@ -509,7 +484,7 @@ module OPilot
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      intents = @pull.poll_intents(FILTERS)
+      intents = @pull.poll_intents(nil)
       assert_equal 1, intents.length
       assert_equal :ship, intents[0].command
     end
@@ -520,7 +495,7 @@ module OPilot
           "created_at" => "2024-02-01T00:00:00Z", "text" => "just a normal comment" }
       ])
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
     end
 
     def test_emits_intent_for_op_native_mention_without_literal_handle
@@ -531,7 +506,7 @@ module OPilot
       stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
 
-      intents = @pull.poll_intents(FILTERS)
+      intents = @pull.poll_intents(nil)
       assert_equal 1, intents.length
       assert_equal :ship,              intents[0].command
       assert_equal "watch the edges",  intents[0].text
@@ -544,7 +519,7 @@ module OPilot
           "created_at" => "2024-02-01T00:00:00Z", "text" => "#{other} please take a look" }
       ])
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
-      assert_equal [], @pull.poll_intents(FILTERS)
+      assert_equal [], @pull.poll_intents(nil)
     end
 
     def test_opilot_mentioned_recognises_op_native_mention_by_id
@@ -554,326 +529,20 @@ module OPilot
       refute @pull.send(:opilot_mentioned?, "just a normal comment")
     end
 
-    # ── Developer trigger ─────────────────────────────────────────────────────
-
-    SCHEMA_HREF = "/api/v3/work_packages/schemas/7-1".freeze
-
-    # A WP whose Developer field (customField12 on this fake instance) names a
-    # user. `value:` overrides the whole link — an array for a multi-value field,
-    # nil for an empty one.
-    def wp_developed(id, updated_at, href: "/api/v3/users/1", value: :unset)
-      link = value == :unset ? { "href" => href } : value
-      wp(id, updated_at).merge(
-        "_links" => { "schema" => { "href" => SCHEMA_HREF }, "customField12" => link }
-      )
+    # The poll's own query: one `comment` clause (`~`, contains) keyed on
+    # opilot's real OpenProject display name (stubbed as "OPilot" in #setup).
+    def test_mention_filter_json_scopes_on_the_bot_display_name
+      clauses = JSON.parse(@pull.send(:mention_filter_json))
+      assert_equal [{ "comment" => { "operator" => "~", "values" => ["OPilot"] } }], clauses
     end
 
-    # The schema is the only thing that maps the name "Developers" to customField12.
-    def stub_schema(fields = { "customField12" => { "type" => "User", "name" => "Developers" } })
-      stub_request(:get, "https://example.com#{SCHEMA_HREF}")
-        .to_return(status: 200, body: JSON.generate({ "_type" => "Schema" }.merge(fields)))
-    end
-
-    def item_path(id)
-      Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s / "item.json"
-    end
-
-    def test_developer_emits_ship_intent_bypassing_allowlist
-      # The allowlist gates comment triggers only — setting Developer needs edit rights.
-      @pull = build_pull(["99"])
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      intents = @pull.poll_intents(FILTERS)
-      assert_equal 1, intents.length
-      assert_equal "1",        intents[0].item_id
-      assert_equal :ship,      intents[0].command
-      assert_equal "",         intents[0].text
-      assert_equal :developer, intents[0].source
-      assert_nil intents[0].comment_at
-      assert_nil intents[0].user
-    end
-
-    # The field's customFieldN id differs per instance, so the schema — not a
-    # hardcoded key — is what identifies it.
-    def test_developer_field_is_resolved_by_name_from_the_schema
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema("customField12" => { "type" => "User", "name" => "Product owner" })
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    # One schema covers a whole project+type; re-asking per work package would
-    # double the poll's API calls on a big scan.
-    def test_schema_is_fetched_once_per_href
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      seed_item(2, "2024-01-02T00:00:00Z", [])
-      schema = stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp_developed(1, "2024-01-02T00:00:00Z"), wp_developed(2, "2024-01-02T00:00:00Z")], total: 2))
-
-      assert_equal 2, @pull.poll_intents(FILTERS).length
-      assert_requested schema, times: 1
-    end
-
-    # A user custom field can be multi-value, in which case the link is an array.
-    def test_developer_matches_inside_a_multi_value_field
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp_developed(1, "2024-01-02T00:00:00Z",
-                      value: [{ "href" => "/api/v3/users/2" }, { "href" => "/api/v3/users/1" }])], total: 1))
-
-      assert_equal 1, @pull.poll_intents(FILTERS).length
-    end
-
-    def test_developer_does_not_refire_after_acted
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_developer_acted("1")
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    # The pre-Developer marker still counts as consumed, so switching the trigger
-    # field doesn't re-fire on every WP that already had its one shot.
-    def test_legacy_assignee_marker_still_counts_as_acted
-      dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "1"
-      dir.mkpath
-      (dir / "item.json").write(JSON.generate(
-        { "updated_at" => "2024-01-02T00:00:00Z", "comments" => [],
-          "assignee_acted_at" => "2024-01-01T00:00:00Z" }))
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    def test_developer_ignores_other_users_and_groups
-      # User 2 is not opilot; a *group* with opilot's numeric id must not match.
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      seed_item(2, "2024-01-02T00:00:00Z", [])
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp_developed(1, "2024-01-02T00:00:00Z", href: "/api/v3/users/2"),
-         wp_developed(2, "2024-01-02T00:00:00Z", href: "/api/v3/groups/1")], total: 2))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    def test_developer_ignores_an_empty_field
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp_developed(1, "2024-01-02T00:00:00Z", value: nil)], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    def test_developer_disabled_by_kill_switch
-      @pull = build_pull(developer_trigger: false)
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-    end
-
-    # Naming a stock field is a supported way back to the old behaviour.
-    def test_field_name_is_configurable
-      @pull = build_pull(developer_field_name: "Assignee")
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema("assignee" => { "type" => "User", "name" => "Assignee" })
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp(1, "2024-01-02T00:00:00Z").merge("_links" => {
-          "schema" => { "href" => SCHEMA_HREF }, "assignee" => { "href" => "/api/v3/users/1" }
-        })], total: 1))
-
-      assert_equal 1, @pull.poll_intents(FILTERS).length
-    end
-
-    # An instance without the field must degrade quietly, not crash the poll —
-    # and say so once, not once per work package (the nil result is memoized).
-    def test_missing_field_leaves_the_trigger_off_and_says_so_once
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_schema({})
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      out, = capture_io { assert_equal [], @pull.poll_intents(FILTERS) }
-      assert_match(/no "Developers" field/, out)
-      second, = capture_io { assert_equal [], @pull.poll_intents(FILTERS) }
-      assert_empty second.strip, "the missing field is reported once, not per work package"
-    end
-
-    def test_comment_trigger_wins_over_developer_in_same_tick
-      seed_item(1, "2024-01-02T00:00:00Z", [
-        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "@opilot build watch the edges" }
-      ])
-      stub_request(:patch, %r{/activities/9/emoji_reactions}).to_return(status: 200, body: "{}")
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      intents = @pull.poll_intents(FILTERS)
-      assert_equal 1, intents.length
-      assert_equal :ship, intents[0].command
-      assert_nil intents[0].source
-    end
-
-    def test_developer_on_shipped_wp_is_marked_acted_without_intent
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      pr_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "repos" / "openproject"
-      pr_dir.mkpath
-      (pr_dir / "pr_url.txt").write("https://github.com/opf/openproject/pull/1")
-      stub_schema
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp_developed(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      assert_equal [], @pull.poll_intents(FILTERS)
-      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
-    end
-
-    def test_mark_developer_acted_persists
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_developer_acted("1")
-      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
-    end
-
-    def test_developer_marker_survives_item_refresh
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.mark_developer_acted("1")
-      # Simulate a re-fetch that rewrites item.json (updated_at changes).
-      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stale_wp = wp(1, "2024-03-01T00:00:00Z")
-      @pull.send(:fetch_work_package_item, stale_wp)
-      refute_nil JSON.parse(item_path(1).read)["developer_acted_at"]
-    end
-
-    # mirror caches every matched WP (no intent parsing) and reports counts.
-    def test_mirror_caches_all_matched_work_packages
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp(1, "2024-01-02T00:00:00Z"), wp(2, "2024-01-02T00:00:00Z")], total: 2))
-      [1, 2].each do |id|
-        stub_request(:get, %r{/work_packages/#{id}/activities\z})
-          .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-        stub_request(:get, %r{/work_packages/#{id}/activities_emoji_reactions\z})
-          .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      end
-
-      scanned, changed = @pull.mirror(FILTERS)
-      assert_equal 2, scanned
-      assert_equal 2, changed
-      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").exist?
-      assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "2" / "item.json").exist?
-    end
-
-    # A WP already current in the cache is scanned but not re-fetched (changed 0).
-    def test_mirror_skips_already_current_work_packages
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response(
-        [wp(1, "2024-01-02T00:00:00Z")], total: 1))
-
-      scanned, changed = @pull.mirror(FILTERS)
-      assert_equal 1, scanned
-      assert_equal 0, changed
-    end
-
-    def test_filters_json_scopes_to_all_selected_projects
-      filters = FilterSet.new(project_ids: ["10", "20"])
-      clauses = JSON.parse(@pull.send(:filters_json, filters))
-      project = clauses.find { |c| c.key?("project_id") }
-      refute_nil project, "the query must carry a project_id filter"
-      assert_equal "=",          project.dig("project_id", "operator")
-      assert_equal ["10", "20"], project.dig("project_id", "values")
-    end
-
-    def test_read_agent_filters_upgrades_legacy_single_project
-      # Pre-multi-project file: one identifier under "project_id". It must be
-      # resolved to a numeric id (the project_id filter coerces values with to_i)
-      # while keeping the semantic identifier for display.
-      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
-        "project_id" => "TTP2", "project_name" => "Trial", "scan_from_at" => nil
-      ))
-      stub_request(:get, "https://example.com/api/v3/projects/TTP2")
-        .to_return(status: 200, body: JSON.generate({ "id" => 42, "identifier" => "ttp2", "name" => "Trial" }))
-
-      filters = @pull.send(:read_agent_filters)
-      assert_equal ["42"],    filters.project_ids
-      assert_equal ["ttp2"],  filters.project_idents
-      assert_equal ["Trial"], filters.project_names
-    end
-
-    def test_read_agent_filters_upgrades_multi_project_file_without_idents
-      # A file written after multi-project support but before project_idents:
-      # has project_ids but no project_idents. Each id is resolved to its
-      # identifier on read so the display shows the semantic id.
-      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
-        "project_ids" => ["1182"], "project_names" => ["OPilot testing area"]
-      ))
-      stub_request(:get, "https://example.com/api/v3/projects/1182")
-        .to_return(status: 200, body: JSON.generate({ "id" => 1182, "identifier" => "opilot-testing", "name" => "OPilot testing area" }))
-
-      filters = @pull.send(:read_agent_filters)
-      assert_equal ["1182"],            filters.project_ids
-      assert_equal ["opilot-testing"], filters.project_idents
-    end
-
-    def test_describe_filters_prefers_semantic_identifier
-      filters = FilterSet.new(project_ids: ["1182"], project_idents: ["opilot-testing"],
-                              project_names: ["OPilot testing area"])
-      assert_includes @pull.send(:describe_filters, filters), "opilot-testing — OPilot testing area"
-      refute_includes @pull.send(:describe_filters, filters), "1182"
-    end
-
-    def test_save_and_reload_agent_filters
-      @pull.send(:save_agent_filters, FILTERS)
-      path = Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json"
-      assert path.exist?
-      data = JSON.parse(path.read)
-      assert_equal FILTERS.project_ids, data["project_ids"]
-    end
-
-    # A poll is scoped by project and nothing else, so filters_json must emit
-    # exactly one clause — this is the guard against a second one creeping back.
-    def test_filters_json_emits_only_the_project_clause
-      filters = FilterSet.new(project_ids: ["10"])
-      clauses = JSON.parse(@pull.send(:filters_json, filters))
-      assert_equal 1, clauses.length
-      assert clauses.first.key?("project_id")
-    end
-
-    # A file written before type/status/version filtering was removed still carries
-    # those keys. The read looks up named keys and never splats the hash into
-    # FilterSet — a splat would raise ArgumentError on the unknown keywords, i.e.
-    # every previously-saved file would have become a hard crash.
-    def test_read_agent_filters_ignores_keys_from_an_older_opilot
-      (Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json").write(JSON.generate(
-        "project_ids" => ["1182"], "project_idents" => ["opilot-testing"],
-        "project_names" => ["OPilot testing area"], "scan_from_at" => "2024-01-01T00:00:00Z",
-        "type_ids" => ["1"], "status_ids" => ["2"], "version_ids" => [],
-        "type_names" => "bug", "status_names" => "new", "version_names" => nil
-      ))
-      filters = @pull.send(:read_agent_filters)
-      assert_equal ["1182"], filters.project_ids
-      assert_equal ["opilot-testing"], filters.project_idents
-      assert_equal "2024-01-01T00:00:00Z", filters.scan_from_at
-    end
-
-    # A save merges into whatever the file already holds rather than replacing it,
-    # so keys an older opilot wrote survive (and a rollback still finds them).
-    def test_save_agent_filters_merges_rather_than_clobbering
-      path = Pathname(@tmpdir) / "work_packages" / "example.com" / "op_agent_filters.json"
-      path.dirname.mkpath
-      path.write(JSON.generate("project_ids" => ["1"], "type_ids" => ["7"]))
-
-      @pull.send(:save_agent_filters, FilterSet.new(project_ids: ["999"]))
-
-      data = JSON.parse(path.read)
-      assert_equal ["999"], data["project_ids"]
-      assert_equal ["7"], data["type_ids"], "a key this opilot no longer writes is not dropped"
+    # There is no project-scope fallback left underneath the search, so a
+    # failed identity lookup must stop the poll rather than send a
+    # malformed/empty filter value — and it must fail before ever touching the
+    # work-packages endpoint.
+    def test_poll_intents_raises_when_the_bot_identity_cannot_be_resolved
+      stub_request(:get, "https://example.com/api/v3/users/me").to_return(status: 500, body: "{}")
+      assert_raises(OPilot::FatalError) { @pull.poll_intents(nil) }
     end
   end
 

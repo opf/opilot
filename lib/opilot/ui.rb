@@ -77,8 +77,7 @@ module OPilot
             Run both loops together: PRs first, then work packages.
 
         ./opilot agent op
-            OpenProject only: act on @opilot comments, and on opilot being set
-            as one of a work package's Developers.
+            OpenProject only: act on @opilot comments.
 
         ./opilot agent gh
             GitHub only: opilot's own PRs (reply, write code when asked, fix
@@ -141,9 +140,8 @@ module OPilot
             Refresh a shipped PR: merge the base branch in, fix failing CI,
             address new review comments, push (with confirmation).
 
-        ./opilot wp pull [<id>...]
-            Mirror work packages into the local cache for later chat. With no
-            ids, the filter wizard runs.
+        ./opilot wp pull <id>...
+            Mirror work packages into the local cache for later chat.
       WP
     end
 

@@ -111,31 +111,6 @@ module OPilot
       end
     end
 
-    def test_developer_trigger_is_on_by_default_and_opt_out
-      env = { "OPILOT_DEVELOPER_TRIGGER" => nil, "OPILOT_ASSIGN_TRIGGER" => nil }
-      with_env(env) { assert Context.build(@tmpdir).developer_trigger? }
-      with_env(env.merge("OPILOT_DEVELOPER_TRIGGER" => "1")) { assert Context.build(@tmpdir).developer_trigger? }
-      with_env(env.merge("OPILOT_DEVELOPER_TRIGGER" => "0")) { refute Context.build(@tmpdir).developer_trigger? }
-      with_env(env.merge("OPILOT_DEVELOPER_TRIGGER" => "false")) { refute Context.build(@tmpdir).developer_trigger? }
-    end
-
-    # The switch predates the Developer field; an .env that still names it must
-    # keep working, and the new name wins when both are set.
-    def test_legacy_assign_trigger_env_still_disables_the_trigger
-      with_env("OPILOT_DEVELOPER_TRIGGER" => nil, "OPILOT_ASSIGN_TRIGGER" => "0") do
-        refute Context.build(@tmpdir).developer_trigger?
-      end
-      with_env("OPILOT_DEVELOPER_TRIGGER" => "1", "OPILOT_ASSIGN_TRIGGER" => "0") do
-        assert Context.build(@tmpdir).developer_trigger?
-      end
-    end
-
-    def test_developer_field_name_defaults_to_developer
-      with_env("OPILOT_DEVELOPER_FIELD" => nil) { assert_equal "Developers", Context.build(@tmpdir).developer_field_name }
-      with_env("OPILOT_DEVELOPER_FIELD" => "  ") { assert_equal "Developers", Context.build(@tmpdir).developer_field_name }
-      with_env("OPILOT_DEVELOPER_FIELD" => " Assignee ") { assert_equal "Assignee", Context.build(@tmpdir).developer_field_name }
-    end
-
     def test_ci_max_attempts_defaults_to_five_and_is_floored_at_one
       with_env("OPILOT_CI_MAX_ATTEMPTS" => nil) { assert_equal 5, Context.build(@tmpdir).ci_max_attempts }
       with_env("OPILOT_CI_MAX_ATTEMPTS" => "3") { assert_equal 3, Context.build(@tmpdir).ci_max_attempts }

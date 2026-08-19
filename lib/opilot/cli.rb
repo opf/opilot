@@ -83,8 +83,7 @@ module OPilot
       when "ship", "fix" then with_ids("wp ship", rest) { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
       when "build"       then with_ids("wp build", rest) { |ids| FixRunner.new(@ctx).build_ids(*ids) }
       when "plan"        then with_ids("wp plan", rest) { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
-      # `wp pull` with no ids falls back to the saved/prompted filter wizard.
-      when "pull"        then with_ids("wp pull", rest, allow_empty: true) { |ids| PullRunner.new(@ctx).run(*ids) }
+      when "pull"        then with_ids("wp pull", rest) { |ids| PullRunner.new(@ctx).run(*ids) }
       when "pr"          then pr(rest)
       else
         $stderr.puts "unknown wp subcommand #{sub.inspect}"
@@ -106,15 +105,13 @@ module OPilot
     end
 
     # `ship` / `build` / `plan` / `pull`: a list of work-package ids, validated
-    # before anything loads or connects. `pull` alone accepts none (it then runs
-    # the filter wizard).
-    def with_ids(name, args, allow_empty: false)
+    # before anything loads or connects.
+    def with_ids(name, args)
       ids = args.map { |a| wp_id_arg(a) }
-      if (ids.empty? && !allow_empty) || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
-        arg_spec = allow_empty ? "[<work-package-id>...]" : "<work-package-id>..."
-        usage!(name, arg_spec, "e.g. 59942 or PROJ-123 STC-7")
+      if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
+        usage!(name, "<work-package-id>...", "e.g. 59942 or PROJ-123 STC-7")
       end
-      session(name, ids.empty? ? ["by filter"] : ids.map { |id| Helpers.wp_label(id) }) { yield ids }
+      session(name, ids.map { |id| Helpers.wp_label(id) }) { yield ids }
     end
 
     # `wp pr` refreshes shipped PRs, targeted by work-package id and/or pasted

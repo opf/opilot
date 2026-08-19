@@ -33,15 +33,24 @@ Polls work packages, driven by `@opilot` comments. The one command word is
 replaced — `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too,
 so an old habit gets an answer that names the real command rather than silence.
 
-Naming opilot in a WP's **Developers** field is a second trigger, synthesizing the same
-`:ship` intent (`Pull#intent_from_developer`). It fires **once per WP, ever**
-(`developer_acted_at` — clearing and re-setting the field doesn't re-fire; later
-re-work goes through comments) from **anyone** (not allowlist-gated: setting the
-field already needs edit-WP permission; disable with `OPILOT_DEVELOPER_TRIGGER=0`).
-A same-tick comment wins, an already-shipped WP is marked acted without firing, and
-the reply is unaddressed/internal with no 👀 pickup signal. The de-dup gate is the
-WP's `updatedAt` vs the scan floor (the list payload carries no per-field
-timestamp), so a WP handed over long ago but bumped inside the window fires once.
+**Discovery is server-side comment search, not project scanning.** Each tick,
+`Pull#poll_intents` asks OpenProject's own `comment` filter (`~`, "contains") for
+work packages whose comments mention opilot — keyed on the bot's own OpenProject
+display name, fetched dynamically from `/users/me` (`Pull#mention_filter_json`),
+never hardcoded. There is no project scope in this query at all: the API token's
+own project access is the trust boundary instead, so op-agent needs no
+project-picker setup. This is a **hard dependency** — a failed identity lookup
+(`Pull#ensure_bot_identity!`) raises before the loop starts (`Agent#setup`, so it
+fails loudly once rather than being silently retried forever by `guarded_tick`)
+and again at the top of every `poll_intents` call.
+
+OpenProject's `contains` filter takes only one value and ANDs its
+whitespace-split tokens — there is no way to OR in a second literal term in the
+same query — so the search is deliberately the bot's one real display name
+rather than also trying to match literal `"@opilot"`/`"@chomper"` text. The
+accepted narrowing: plain text typed without using the mention picker (so it
+never contains the bot's actual display name) is no longer a recognized
+trigger — the mention picker is the real-world path.
 
 **Once a prototype exists, the work package is done.** `#handle_ship` answers a
 shipped WP with the PR link and spends no LLM call: code review belongs on the
@@ -87,24 +96,7 @@ silent: `Pull#note_refused_trigger` answers the commenter **once per WP**
 (`refusal_noted_at`), because opilot offers options to anyone who can comment while
 only allowlisted users may choose one, and because a reply is the one thing an
 unlisted user can make opilot do — a per-comment answer would let anyone fill the
-activity tab. A **Developers** handover names no
-commenter, so its offer is posted **publicly** (the one visibility override in
-`#post_note`): an internal comment that mentions nobody reaches nobody who can
-answer it. That handover has only its one shot, so an offer nobody answers waits
-for a human — by design, with no reminder.
-
-"Developers" is a **user custom field**, not a stock one, so its `customFieldN` key
-differs per instance and can't be hardcoded: `#developer_field_key` reads the WP's
-`_links.schema` and matches the schema's field *names* against
-`OPILOT_DEVELOPER_FIELD` (default `Developers`, case-insensitive), memoized per
-schema href so a poll costs at most one extra call per project+type. Matching by
-name also means a stock field works — `OPILOT_DEVELOPER_FIELD=Assignee` restores
-the old assignee behaviour with no code change. Being multi-value, the field
-renders as an array of links, and any entry naming opilot counts; the link must be a **user**
-(`/users/<id>`), since a group or placeholder user could share the bot's numeric id.
-An instance without the field logs one note and leaves the trigger off. The
-pre-Developers marker `assignee_acted_at` is still honoured on read, so switching the
-field doesn't re-fire on every WP that already had its one shot.
+activity tab.
 
 Planning or chatting also pulls in the WP's **related** WPs (relations plus
 parent/children), each cached as its own `item.json` with a `related.json` index the
@@ -208,8 +200,7 @@ nothing" and "not scanning" look identical in the log.
   mention or allowlist gate — the point is sweeping feedback that never pinged
   opilot). Pushed to the fork after a `[y]es push / [d]iscard` prompt. The summary
   is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
-- **`wp pull [<id>...]`** — mirror WPs into the local cache for later `chat`. With
-  ids, exactly those; without, the op-agent filter wizard plus a bulk mirror.
+- **`wp pull <id>...`** — mirror the given WPs into the local cache for later `chat`.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
   fetching, planning, or shipping. `.opilot/` is mounted read-only at `/state`, so
   `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
@@ -244,8 +235,8 @@ before touching anything under `lib/opilot/pd/`.
 # Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
 ./opilot wp pr <id|pr-url>...
 
-# Mirror WPs into the local cache (no plan/ship); no ids → filter wizard
-./opilot wp pull [<id>...]
+# Mirror the given WPs into the local cache (no plan/ship)
+./opilot wp pull <id>...
 
 # Free read-only chat about the local mirrors
 ./opilot chat [message]
@@ -347,9 +338,8 @@ PR needs the store's layout on every tick.
 
 ### Per-work-package state machine
 
-1. **Poll** — `Pull#poll_intents` fetches WPs and comments, de-dupes by
-   `last_acted_comment_at`. A WP whose Developers include opilot, with no fresh comment, yields a synthetic
-   `:ship` (`source: :developer`, de-duped by `developer_acted_at`).
+1. **Poll** — `Pull#poll_intents` fetches WPs matching the comment-search filter and
+   their comments, de-dupes by `last_acted_comment_at`.
 2. **Plan** — the LLM (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
    one comment) until a reply names a number. Every clone is first synced to current upstream
@@ -426,10 +416,10 @@ globally unique, so `pr_reviews/` is flat.
 ├── chomp.log                # full prompt/response log
 ├── chat_session_id          # LLM session for the current `chat` REPL (reset each run)
 ├── work_packages/<op_host>/
-│   ├── op_agent_filters.json   # saved op-agent search filters
+│   ├── op_agent_scan.json      # op-agent's saved scan-window watermark
 │   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
 │   └── <wp_id>/
-│       ├── item.json            # WP metadata (incl. developers[]) + poll cache + acted_at
+│       ├── item.json            # WP metadata + poll cache + acted_at
 │       │                        #   + refusal_noted_at (the one allowlist note per WP)
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
@@ -507,8 +497,6 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPENROUTER_API_KEY` | Required to run the harness container. Lives only in authgw — never reaches the harness container |
 | `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`) |
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
-| `OPILOT_DEVELOPER_TRIGGER` | Optional (`0`/`false`); disable the Developers trigger. Turn off where WP edit rights are broad. The older `OPILOT_ASSIGN_TRIGGER` is still honoured as a fallback |
-| `OPILOT_DEVELOPER_FIELD` | Optional; the WP field whose value fires that trigger, matched against the schema's field names (default `Developers`, a user custom field). Set to a stock field name (e.g. `Assignee`) to trigger on that instead |
 | `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
 | `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
 | `OPILOT_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |

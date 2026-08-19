@@ -282,7 +282,7 @@ module OPilot
       <<~PROMPT
         #{repos_section(repos_summary, repos)}
 
-        ISSUE:        #{item}  (JSON — fields: subject, description, comments[], type, status, version, assignee, developers[])#{related_line(related)}#{focus}
+        ISSUE:        #{item}  (JSON — fields: subject, description, comments[], type, status, version, assignee)#{related_line(related)}#{focus}
         You are the WRITER. Produce a plan only.
         #{READ_ONLY}
 
