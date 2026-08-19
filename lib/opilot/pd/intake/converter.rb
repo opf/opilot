@@ -235,7 +235,7 @@ module OPilot
 
         def table_markdown(node)
           rows = node.xpath("./tr").map do |tr|
-            tr.xpath("./tc").map { |tc| tc.xpath(".//t").map(&:text).join.strip.gsub("|", "\\|") }
+            tr.xpath("./tc").map { |tc| tc.xpath(".//t").map(&:text).join.strip.gsub("\\", "\\\\").gsub("|", "\\|") }
           end
           return nil if rows.empty?
           header, *body = rows
