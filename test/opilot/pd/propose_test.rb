@@ -63,7 +63,7 @@ module OPilot
           @create_code == 201 ? [201, { "id" => @create_id }] : [@create_code, nil]
         end
 
-        def post_activity(wp_id, comment:, internal: true)
+        def add_comment(wp_id, comment:, internal: true)
           @comments << [wp_id, comment]
           [201, {}]
         end

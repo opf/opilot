@@ -100,7 +100,7 @@ activity tab.
 
 Planning or chatting also pulls in the WP's **related** WPs (relations plus
 parent/children), each cached as its own `item.json` with a `related.json` index the
-prompts reference. `wp ship`/`build`/`plan` share this.
+prompts reference. `dev build`/`commit`/`plan` share this.
 
 ### gh-agent
 
@@ -113,7 +113,7 @@ reply, code if asked, pushing to the fork. There are two command words
 (`GhPull#parse_command`), and both are acted on **only here** — `!reply_only` — so
 an upstream PR's "refresh"/"close" is read as prose and answered in text.
 
-**`@opilot refresh`** is the full `pr`-command treatment
+**`@opilot refresh`** is the full `dev refresh` treatment
 (`PrRunner#refresh_one`) with the base merge forced and the CI fix run regardless of
 act-state or cap. Built `interactive: false`, so fork pushes go straight through
 while a canonical-repo target is refused and the refresh discarded.
@@ -125,7 +125,7 @@ opened this one. Closing is not merging, so nothing lands and the "never merge"
 rule is untouched. It spends no LLM call, pushes nothing, and writes no state —
 the next poll reads the PR as `closed` and sets `pr_done` itself
 (`#intents_for_dir`), the same path a human closing it takes, which keeps the flag
-in one place so `wp pr` can still clear it on a reopen. The close runs **before**
+in one place so `dev refresh` can still clear it on a reopen. The close runs **before**
 the reply, so the reply only states something that already happened; a close that
 raises is reported by `#handle_and_ack`'s rescue instead. `close` is matched before
 `refresh`, so "close it and refresh" closes — one comment has one outcome, and
@@ -172,9 +172,9 @@ predates this framing; renaming it orphans every tracked PR's act-state).
 The startup banner names which of the three states the run is in, since "scanned
 nothing" and "not scanning" look identical in the log.
 
-### Terminal modes
+### Terminal modes (`dev`)
 
-- **`wp ship <id>...`** (alias `wp fix`) — fetch by id (ignoring filters), run a
+- **`dev build <id>...`** (alias `dev fix`) — fetch by id (ignoring filters), run a
   plan/approve loop (`[y]es / [s]kip / [d]rop / [c]hat / [r]e-plan`) per id, ship each
   approved plan as a draft PR. One failure doesn't abort the rest. A fix with more than
   one shape is offered as the same numbered options first
@@ -183,10 +183,10 @@ nothing" and "not scanning" look identical in the log.
   one-shape fix names its approach the same way, but the operator already sees it
   streamed live and still has to say `[y]es` before anything is built — there is
   no auto-ship at the console.
-- **`wp build <id>...`** — stop after the local commit. A later `ship` finds the
+- **`dev commit <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
-- **`wp plan <id>...`** — stop at the approved plan.
-- **`wp pr <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
+- **`dev plan <id>...`** — stop at the approved plan.
+- **`dev refresh <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
   against local state, else *adopted* via the OpenProject ticket link in the
   description's top 15 lines; a WP id with no state is *discovered* by searching each
   upstream for open bot-authored PRs mentioning the id, adopted only after verifying
@@ -200,11 +200,13 @@ nothing" and "not scanning" look identical in the log.
   mention or allowlist gate — the point is sweeping feedback that never pinged
   opilot). Pushed to the fork after a `[y]es push / [d]iscard` prompt. The summary
   is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
-- **`wp pull <id>...`** — mirror the given WPs into the local cache for later `chat`.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
   fetching, planning, or shipping. `.opilot/` is mounted read-only at `/state`, so
   `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
-  Fresh per-run session; needs no tokens or allowlist.
+  Fresh per-run session; needs no tokens or allowlist. **It reads only what another
+  run already mirrored** — a `dev` verb or an agent tick. Nothing seeds the cache on
+  its own: `op wp get` prints a work package but caches nothing, so a WP opilot has
+  never worked on is not visible to `chat`.
 
 ### pd (product development)
 
@@ -227,19 +229,21 @@ before touching anything under `lib/opilot/pd/`.
 # `agent op` / `agent gh` run one; the old op-agent / gh-agent names still work.
 ./opilot agent
 
-# Plan and ship work packages by id (terminal approval; `wp fix` is an alias)
-./opilot wp ship <id>...
-./opilot wp build <id>...   # stop after the local commit — no push, no PR
-./opilot wp plan <id>...    # stop at the approved plan
+# Plan and ship work packages by id (terminal approval; `dev fix` is an alias)
+./opilot dev build <id>...
+./opilot dev commit <id>...   # stop after the local commit — no push, no PR
+./opilot dev plan <id>...    # stop at the approved plan
 
 # Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
-./opilot wp pr <id|pr-url>...
-
-# Mirror the given WPs into the local cache (no plan/ship)
-./opilot wp pull <id>...
+./opilot dev refresh <id|pr-url>...
 
 # Free read-only chat about the local mirrors
 ./opilot chat [message]
+
+# Read the OpenProject API directly — one command per client method, JSON on
+# stdout. `./opilot op --help` lists all 13.
+./opilot op wp get <id>
+./opilot op wp list --filter 'subject~login'
 
 # Product development (spec-driven)
 ./opilot pd init <project-id> [--repo <name>]
@@ -248,7 +252,7 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot pd generate-wp <change-id>
 ./opilot pd implement <wp-id>...
 
-./opilot status    # list planned/shipped work packages
+./opilot dev status   # list planned/shipped work packages
 ./opilot usage     # OpenRouter spend: account balance, this key, model pricing
 ./opilot reset     # delete .opilot/ (clones included)
 
@@ -348,12 +352,13 @@ bare `docker compose run …` works from the repo root.
 | `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
-| `fix_runner.rb` | Terminal `wp ship`/`build`/`plan` |
-| `pr_runner.rb` | Terminal `wp pr`, and gh-agent's `@opilot refresh` via `#refresh_one` |
+| `fix_runner.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
+| `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
+| `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` read method. The only mode whose **stdout is data**: JSON only, diagnostics to stderr, no `log_script`, nothing written to `chomp.log` (the wrapper passes `-T` so no pty can undo that). Read-only by construction, so it keeps `wp`/`chat`'s read-scoped-token guarantee, and it loads only `Context#load_openproject_config!` — a clone it never resolves must not stop it |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
-| `clients/openproject.rb` | OpenProject REST API. `#post_activity` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
+| `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
@@ -429,10 +434,11 @@ will call the LLM, not mid-run with a connection error.
 implements in one pass, unless the plan call answers with `OPTIONS` and waits for
 `@opilot build <n>`. The separate `:plan`/`:approve` intents are **gone** — the
 options step replaced plan-and-wait, and the code is reviewed as a prototype on the
-PR. The intent keeps the name `:ship` (publishing the prototype is what it does, and
-`:build` already names the terminal mode that stops before the push), so the comment
-word and the symbol differ on purpose. The terminal verbs are unchanged — `wp plan`,
-`wp build` and `wp ship` all have an operator at the console. Chat lenses (`grill`, `summarize`) are preset instructions over
+PR. The intent keeps the name `:ship` because publishing the prototype is what it
+does; only the word people type is `build`, and `./opilot dev build` takes the same
+word for the same operation, so one thing has one name wherever it is typed. The
+difference is who is watching: the terminal verbs have an operator at the console.
+Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
 ### State on disk (`.opilot/` — gitignored)
@@ -535,7 +541,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |
 | `OPILOT_MODEL_CONTEXT_WINDOW` | Optional; context window for a self-hosted model. Omitted leaves pi's default |
-| `OPILOT_HARNESS_MEM` / `OPILOT_HARNESS_CPUS` | Optional; caps on the harness container (defaults `4g` / `2`, generous and unmeasured). Too low reads as an idle timeout, not an OOM — measure a real `wp build` before tightening |
+| `OPILOT_HARNESS_MEM` / `OPILOT_HARNESS_CPUS` | Optional; caps on the harness container (defaults `4g` / `2`, generous and unmeasured). Too low reads as an idle timeout, not an OOM — measure a real `dev commit` before tightening |
 | `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
 | `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
 | `OPILOT_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |

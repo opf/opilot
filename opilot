@@ -23,8 +23,9 @@ dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 
 # True when the wizard should prompt for KEY (not yet in .env). Teardown
 # commands like `reset` never prompt — the wizard would ask for config (and
-# tokens) reset is about to discard.
-_need() { ! _is reset && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
+# tokens) reset is about to discard. Nor does `op`: its stdout is JSON for a
+# pipe, and a prompt behind one hangs with no visible question.
+_need() { ! _is reset op && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 
 # ── First-run setup ───────────────────────────────────────────────────────
 if _need OPENPROJECT_URL; then
@@ -45,7 +46,7 @@ fi
 
 
 # The OP allowlist only gates the OpenProject loop's @opilot comment triggers —
-# the terminal modes (`wp …`, `pd …`, `chat`) are operator-driven and never read
+# the terminal modes (`dev …`, `pd …`, `op …`, `chat`) are operator-driven and never read
 # it, so only a run that starts that loop should demand it during setup.
 if _runs_op && _need OPILOT_ALLOWED_OP_USER_IDS; then
   echo "  Without an allowlist, ANY OpenProject user can trigger @opilot."
@@ -148,7 +149,7 @@ if _need GITHUB_CONTRIBUTOR_TOKEN; then
   echo ""
 fi
 
-# The GH allowlist only gates the GitHub loop's PR triggers (`wp pr` ignores it),
+# The GH allowlist only gates the GitHub loop's PR triggers (`dev refresh` ignores it),
 # so only a run that starts that loop should demand it — and only once a token is
 # set (the loop needs it).
 if _runs_gh && _need OPILOT_ALLOWED_GH_USERS && [ -n "$(_env_get GITHUB_CONTRIBUTOR_TOKEN)" ]; then
@@ -198,14 +199,16 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # Two separate questions, because `pd` splits them: every pd subcommand works
 # inside a product clone, but only the ones that call the LLM need the harness
 # container started. Starting it for `pd init`/`pd intake` would be pure latency.
-# The grouped commands (`wp`, `pd`) carry the verb in $2, so both are matched on
-# the subcommand: `wp pull` only mirrors work packages and needs neither.
+# The grouped commands (`dev`, `pd`) carry the verb in $2, so both are matched on
+# the subcommand. `dev` verbs are listed one by one rather than matched as a
+# group so a bare `./opilot dev`, which only prints help, starts no container.
+# `op` needs nothing at all.
 
 _needs_harness() {
   _is agent op-agent gh-agent chat && return 0
   case "$CMD" in
-    wp) case "$SUB" in ship|fix|build|plan|pr) return 0 ;; esac ;;
-    pd) case "$SUB" in propose|implement) return 0 ;; esac ;;
+    dev) case "$SUB" in build|fix|commit|plan|refresh) return 0 ;; esac ;;
+    pd)  case "$SUB" in propose|implement) return 0 ;; esac ;;
   esac
   return 1
 }
@@ -273,4 +276,10 @@ if _needs_authgw; then
     trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM
   fi
 fi
-dc --progress quiet run --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/opilot" "$@"
+# `op` prints JSON for a pipe, so it must never run under a pty: compose.yml
+# sets `tty: true`, and a pty merges stderr into stdout, turns "\n" into "\r\n"
+# and re-enables Rainbow. Compose auto-detects too, but the contract must not
+# depend on that. A scalar, not an array — an empty array expansion under
+# `set -u` is a bash 3.2 trap on macOS.
+RUN_TTY=""; _is op && RUN_TTY="-T"
+dc --progress quiet run $RUN_TTY --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/opilot" "$@"

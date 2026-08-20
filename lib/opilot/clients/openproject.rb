@@ -10,18 +10,30 @@ module OPilot
         @token = token
       end
 
+      # The `filters` query value: a JSON array of single-key objects. Values are
+      # stringified because the encoded string identifies the request — an
+      # Integer here would silently move every URL built through this.
+      def self.filter(field, operator, *values)
+        JSON.generate([{ field.to_s => { "operator" => operator.to_s,
+                                         "values" => values.flatten.map(&:to_s) } }])
+      end
+
       # Returns [code, response_hash]. Hits the global work-packages endpoint;
-      # opilot's only caller is op-agent's poll, which scopes it with a
-      # `comment` filter keyed on opilot's own display name (see
-      # Pull#mention_filter_json) rather than any project scope — the API
-      # token's own project access is the trust boundary instead.
-      # includeSubprojects=true expands any project-scoped filter a caller does
-      # send with its visible descendants; harmless when none is present.
-      def work_packages(filters_json:, page: 1, page_size: 50)
+      # op-agent's poll scopes it with a `comment` filter keyed on opilot's own
+      # display name (see Pull#mention_filter_json) rather than any project
+      # scope — the API token's own project access is the trust boundary.
+      #
+      # The sort and subproject values are that poll's policy, not API facts, so
+      # they are defaults rather than constants: it stops at the first WP older
+      # than its scan floor, and includeSubprojects expands a project-scoped
+      # filter with its visible descendants (harmless when none is sent).
+      def work_packages(filters_json:, page: 1, page_size: 50,
+                        sort_by: SORT_UPDATED_AT, include_subprojects: true)
         filters = HTTP.encode_filters(filters_json)
-        sort    = HTTP.encode_filters(SORT_UPDATED_AT)
+        sort    = HTTP.encode_filters(sort_by)
         url = "#{@base}/api/v3/work_packages" \
-              "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}&includeSubprojects=true"
+              "?pageSize=#{page_size}&offset=#{page}&filters=#{filters}&sortBy=#{sort}" \
+              "&includeSubprojects=#{include_subprojects}"
         HTTP.get_json(url, token: @token)
       end
 
@@ -49,7 +61,7 @@ module OPilot
       # endpoint only returns relations whose BOTH sides are visible to the
       # token, so an unreachable related WP is filtered out server-side.
       def work_package_relations(involved_id)
-        filters = HTTP.encode_filters(%Q([{"involved":{"operator":"=","values":["#{involved_id}"]}}]))
+        filters = HTTP.encode_filters(self.class.filter("involved", "=", involved_id))
         HTTP.get_json("#{@base}/api/v3/relations?filters=#{filters}&pageSize=100", token: @token)
       end
 
@@ -65,7 +77,10 @@ module OPilot
         HTTP.get_json("#{@base}/api/v3/users/me", token: @token)
       end
 
-      def post_emoji_reaction(activity_id, reaction:)
+      # Acknowledge a comment before opilot starts working — the same operation
+      # as Clients::GitHub#react, named to match. `reaction:` is the wire field.
+      # Note the verb: this endpoint is a PATCH, surprising for a create.
+      def react(activity_id, reaction:)
         HTTP.patch_json(
           "#{@base}/api/v3/activities/#{activity_id}/emoji_reactions",
           { "reaction" => reaction },
@@ -87,10 +102,15 @@ module OPilot
         code, numeric = project_numeric_id(project_id)
         return [code, nil] unless numeric
 
-        filters = HTTP.encode_filters(%Q([{"project":{"operator":"=","values":["#{numeric}"]}}]))
+        filters = HTTP.encode_filters(self.class.filter("project", "=", numeric))
         HTTP.get_json("#{@base}/api/v3/documents?pageSize=#{page_size}&offset=#{page}&filters=#{filters}",
                       token: @token)
       end
+
+      # --- Derived ----------------------------------------------------------
+      #
+      # A convenience over an endpoint rather than one itself. It lives here
+      # because the documents flow above is its only external caller.
 
       # Numeric id for a project given either its id or its identifier. Returns
       # [code, id], with id nil when the project could not be read, so callers
@@ -127,8 +147,24 @@ module OPilot
 
       # Raw attachment bytes. Returns [code, bytes]; the download location 302s
       # to wherever the file actually lives, which HTTP.get_binary follows.
+      #
+      # The token rides along ONLY for a URL on this instance. get_binary already
+      # drops it from hop 2 onward; hop 1 needs the same rule, because
+      # `downloadLocation` is a direct presigned URL on S3-backed storage and
+      # `op doc download` takes it from a caller. Withheld, not refused, so the
+      # presigned shape keeps working.
       def download_attachment(download_url)
-        HTTP.get_binary(download_url, token: @token)
+        HTTP.get_binary(download_url, token: on_this_instance?(download_url) ? @token : nil)
+      end
+
+      # Whether a URL points at the instance this client is configured for —
+      # scheme, host and port all matching. A URL that cannot be parsed is not.
+      def on_this_instance?(url)
+        given = URI(url.to_s)
+        base  = URI(@base.to_s)
+        given.scheme == base.scheme && given.host == base.host && given.port == base.port
+      rescue URI::InvalidURIError
+        false
       end
 
       # --- Work-package writes --------------------------------------------
@@ -161,6 +197,7 @@ module OPilot
         code, body = work_package(wp_id)
         code == 200 ? body["lockVersion"] : nil
       end
+      private :lock_version
 
       # Re-reads the lockVersion immediately before each attempt — that freshness
       # is the whole point, since a stale one is what produced the 409.
@@ -173,10 +210,14 @@ module OPilot
 
       # Posts a comment to a work package. Returns [code, response_hash].
       #
+      # OpenProject models a comment as an activity, but this only ever creates a
+      # comment, and every layer above already calls the returned id a comment id.
+      # Named to match Clients::GitHub#add_issue_comment.
+      #
       # Headings are demoted to bold on the way out (Helpers.demote_headings):
       # the activity tab is a narrow column, and this is the one funnel every
       # comment passes through — the LLM's replies, a posted plan, the pd links.
-      def post_activity(wp_id, comment:, internal: true)
+      def add_comment(wp_id, comment:, internal: true)
         HTTP.post_json(
           "#{@base}/api/v3/work_packages/#{wp_id}/activities",
           { "comment" => { "raw" => Helpers.demote_headings(comment) }, "internal" => internal },

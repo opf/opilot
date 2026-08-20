@@ -695,7 +695,7 @@ module OPilot
       # "up for review:" with nothing after it is worse than no comment.
       def comment_pr_link(wp_id, state, pr_url)
         return wp_id if pr_url.to_s.empty?
-        @op.post_activity(wp_id, comment: "🤖 Change proposal `#{state.change_id}` is up for review: #{pr_url}")
+        @op.add_comment(wp_id, comment: "🤖 Change proposal `#{state.change_id}` is up for review: #{pr_url}")
         wp_id
       rescue StandardError => e
         log_script "Could not comment the PR link on ##{wp_id}: #{e.message}"
@@ -713,7 +713,7 @@ module OPilot
         st   = state_for(wp_id, item["subject"].to_s.empty? ? found[:section].title : item["subject"],
                          item["type"].to_s.empty? ? @ctx.pd_child_type : item["type"])
         # Recorded even though `pd` resolves the repo from the store: everything
-        # downstream (`./opilot wp pr <id>`, gh-agent) reads target_repos.json to find
+        # downstream (`./opilot dev refresh <id>`, gh-agent) reads target_repos.json to find
         # which clone a work package's PR belongs to.
         set_target_repos(st, [repo.name])
 
@@ -867,7 +867,7 @@ module OPilot
       # plan.md, written by the runner rather than the LLM: for a `pd` work package
       # the spec IS the plan. It exists because everything downstream of a shipped
       # PR expects one — the PR body's gist link, and the prompts gh-agent and
-      # `wp pr` build (`plan:`) — so without it a pd PR would be the one kind
+      # `dev refresh` build (`plan:`) — so without it a pd PR would be the one kind
       # of opilot PR that can't explain itself.
       def write_plan_file(st, state, section)
         body = +"# #{section.title}\n\n"
@@ -909,7 +909,7 @@ module OPilot
 
       # Publish the branch as a draft PR the same way the bug-fix flow does, so the
       # result is an ordinary opilot PR: gh-agent picks it up from pr_url.txt, and
-      # `./opilot wp pr <id>` can refresh it.
+      # `./opilot dev refresh <id>` can refresh it.
       def ship_task(st, state, repo, wp_id, item)
         generate_pr_description(st, repo)
         url = publish.open_pr(st.item_id, st.subject, st.branch, repo)
@@ -927,7 +927,7 @@ module OPilot
       end
 
       def comment_implementation_pr(wp_id, state, url)
-        @op.post_activity(wp_id, comment: "🤖 Implementation PR for `#{state.change_id}`: #{url}")
+        @op.add_comment(wp_id, comment: "🤖 Implementation PR for `#{state.change_id}`: #{url}")
       rescue StandardError => e
         log_script "Could not comment the PR link on #{Helpers.wp_label(wp_id)}: #{e.message}"
       end

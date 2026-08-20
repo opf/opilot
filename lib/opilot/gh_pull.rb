@@ -86,7 +86,7 @@ module OPilot
       @scan_from_at = scan_from_at
       # A dir whose PR was already seen merged/closed (pr_done, set below when
       # the closure is first observed) costs nothing — not even the metadata
-      # call. `./opilot wp pr <url>` clears the flag if the PR is ever reopened.
+      # call. `./opilot dev refresh <url>` clears the flag if the PR is ever reopened.
       shipped = shipped_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
       specs   = spec_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
       @scanned_count = shipped.length + specs.length

@@ -102,9 +102,15 @@ module OPilot
       end
     end
 
-    def load_config!
+    # Just the OpenProject credentials. Split out so `op`, which resolves no
+    # clone, is not killed by a repos.json it never reads.
+    def load_openproject_config!
       raise FatalError, "Config not found — add OPENPROJECT_URL and OPENPROJECT_TOKEN to .env and re-run." \
         unless @op_url && @token
+    end
+
+    def load_config!
+      load_openproject_config!
       repos # build + validate the registry now, so a bad repos.json fails fast
     rescue Registry::Error => e
       raise FatalError, "Invalid repos.json — #{e.message}"

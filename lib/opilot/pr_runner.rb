@@ -45,7 +45,7 @@ module OPilot
     # adopted the same way.
     def run(*targets)
       unless @ctx.contributor_token
-        raise FatalError, "No GitHub token is set — `wp pr` needs GITHUB_CONTRIBUTOR_TOKEN to read and update PRs."
+        raise FatalError, "No GitHub token is set — `dev refresh` needs GITHUB_CONTRIBUTOR_TOKEN to read and update PRs."
       end
       ensure_harness!
       targets.each do |target|
@@ -71,7 +71,7 @@ module OPilot
       dirs = adopt_wp_prs(wp_id) if dirs.empty?
       if dirs.empty?
         log_script "#{wp_label(wp_id)} — no shipped PR found, locally or on GitHub. " \
-                   "Ship one first with `./opilot wp ship #{wp_id}`."
+                   "Ship one first with `./opilot dev build #{wp_id}`."
         return
       end
       mirror_wp(wp_id)
@@ -358,7 +358,7 @@ module OPilot
         fetch_ci_content(dir, base_repo, head_sha, checks, ignore: ignore)
         container_path(dir / "ci.json")
       when :pending
-        log_script "CI is still running — refreshing without it (re-run `wp pr` once it finishes)."
+        log_script "CI is still running — refreshing without it (re-run `dev refresh` once it finishes)."
         nil
       end
     end

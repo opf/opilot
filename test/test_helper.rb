@@ -23,6 +23,7 @@ require "opilot/fix_runner"
 require "opilot/pr_runner"
 require "opilot/chat_runner"
 require "opilot/usage_runner"
+require "opilot/op_runner"
 # The `pd` pipeline is lazily required in production (see bin/opilot); the suite
 # loads all of it, intake converter included, since it tests every stage.
 require "opilot/pd"

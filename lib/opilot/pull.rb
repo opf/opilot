@@ -60,7 +60,7 @@ module OPilot
       body = "#{who} I do not act on this comment. On this instance only the users in " \
              "opilot's allowlist can trigger me. Ask one of them to comment, or ask an " \
              "administrator to add you.".strip
-      code, _body = @api.post_activity(wp_id, comment: body, internal: trigger["internal"] == true)
+      code, _body = @api.add_comment(wp_id, comment: body, internal: trigger["internal"] == true)
       return unless code == 201
 
       data["refusal_noted_at"] = Time.now.utc.iso8601
@@ -310,12 +310,10 @@ module OPilot
     def parse_command(raw)
       text = strip_mention(raw)
       case text
-      # `build` is the word, `fix` its one alias. The list is deliberately short:
-      # every extra synonym is one more word a reader must know is special, and a
-      # word that is not on it still gets an answer — it falls through to :chat,
-      # whose prompt lists the real command (see Prompts.chat). The intent keeps
-      # the name `:ship`, because publishing the prototype is what it does, and
-      # `:build` already names the terminal mode that stops before the push.
+      # `build`, alias `fix` — the same pair `./opilot dev` takes. The list is
+      # deliberately short: an unknown word still gets an answer, falling through
+      # to :chat, whose prompt names the real command. The intent stays `:ship`
+      # because publishing is what the handler does.
       when /\A@opilot\s+(?:build|fix)\b\s*(.*)/im
         [:ship, $1.strip]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
@@ -436,7 +434,7 @@ module OPilot
 
     def react_eyes(activity_id)
       return unless activity_id.to_s.length > 0
-      @api.post_emoji_reaction(activity_id, reaction: "eyes")
+      @api.react(activity_id, reaction: "eyes")
     rescue => e
       puts "  Warning: could not post 👀 reaction: #{e.message}"
     end
@@ -476,7 +474,7 @@ module OPilot
     # match a literal "@opilot"/"@chomper" — see CLAUDE.md for the accepted
     # narrowing this implies.
     def mention_filter_json
-      %Q([{"comment":{"operator":"~","values":#{JSON.generate([bot_display_name])}}}])
+      Clients::OpenProject.filter("comment", "~", bot_display_name)
     end
 
     # OPilot's own OpenProject identity, resolved from /users/me and memoized

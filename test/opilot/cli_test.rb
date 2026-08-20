@@ -17,13 +17,13 @@ module OPilot
       assert_equal "PROJ-123", cli.send(:wp_id_arg, "proj-123")
     end
 
-    def test_pr_rejects_targets_that_are_neither_wp_ids_nor_pr_urls
+    def test_refresh_rejects_targets_that_are_neither_wp_ids_nor_pr_urls
       cli = CLI.new(nil)
       [[],                                                     # no targets
        ["not-a-target"],                                        # neither form
        ["https://github.com/opf/openproject/issues/5"],         # not a PR URL
        ["59942", "garbage"]].each do |targets|                  # one bad target spoils the call
-        assert_raises(OPilot::FatalError) { capture_io { cli.send(:pr, targets) } }
+        assert_raises(OPilot::FatalError) { capture_io { cli.send(:refresh, targets) } }
       end
     end
 
@@ -32,8 +32,16 @@ module OPilot
     # Enough context for the paths that never reach the network. load_config!
     # raises unless `configured`, so a test can prove a command took the runner
     # path (which needs config) rather than the help path.
-    CtxDouble = Struct.new(:pd_parent_type, :pd_child_type, :log_file, :configured, keyword_init: true) do
+    CtxDouble = Struct.new(:pd_parent_type, :pd_child_type, :log_file, :configured,
+                           :op_url, :token, keyword_init: true) do
       def load_config!
+        raise OPilot::FatalError, "Config not found" unless configured
+      end
+
+      # `op` loads only the OpenProject half, so it must be defined here too —
+      # attributes alone would make an op dispatch test fail with NoMethodError
+      # instead of proving it reached the runner.
+      def load_openproject_config!
         raise OPilot::FatalError, "Config not found" unless configured
       end
     end
@@ -43,13 +51,13 @@ module OPilot
     end
 
     def test_a_help_flag_is_honoured_after_the_command_too
-      # `./opilot wp ship --help` would otherwise be parsed as a work-package id
+      # `./opilot dev build --help` would otherwise be parsed as a work-package id
       # and die on the id validator.
       %w[--help -h].each do |flag|
-        out, = capture_io { CLI.new(ctx_double).run(["wp", "ship", flag]) }
-        assert_includes out, "Usage: ./opilot wp <command>"
+        out, = capture_io { CLI.new(ctx_double).run(["dev", "build", flag]) }
+        assert_includes out, "Usage: ./opilot dev <command>"
       end
-      out, = capture_io { CLI.new(ctx_double).run(["status", "--help"]) }
+      out, = capture_io { CLI.new(ctx_double).run(["reset", "--help"]) }
       assert_includes out, "Usage: ./opilot <command>"
     end
 
@@ -68,7 +76,7 @@ module OPilot
     end
 
     def test_the_pre_group_agent_names_still_run
-      # Unlike the moved wp verbs, breaking these means a stopped agent — a
+      # Unlike the renamed dev verbs, breaking these means a stopped agent — a
       # service unit or a shell history calls them. They must reach the runner
       # path (which fails here only because ctx_double has no config).
       ["op-agent", "gh-agent", %w[agent op], %w[agent gh]].each do |argv|
@@ -82,17 +90,69 @@ module OPilot
       end
     end
 
-    def test_a_bare_wp_is_a_help_request_and_needs_no_config
-      out, = capture_io { CLI.new(ctx_double).run(["wp"]) }
-      assert_includes out, "Usage: ./opilot wp <command>"
-      assert_includes out, "./opilot wp ship <id>..."
+    def test_a_bare_dev_is_a_help_request_and_needs_no_config
+      out, = capture_io { CLI.new(ctx_double).run(["dev"]) }
+      assert_includes out, "Usage: ./opilot dev <command>"
+      assert_includes out, "./opilot dev build <id>..."
     end
 
-    def test_an_unknown_wp_subcommand_lists_the_group
+    def test_an_unknown_dev_subcommand_lists_the_group
       cli = CLI.new(ctx_double)
-      out, err = capture_io { assert_raises(OPilot::FatalError) { cli.run(["wp", "bogus"]) } }
-      assert_includes err, "unknown wp subcommand \"bogus\""
-      assert_includes out, "Usage: ./opilot wp <command>"
+      out, err = capture_io { assert_raises(OPilot::FatalError) { cli.run(["dev", "bogus"]) } }
+      assert_includes err, "unknown dev subcommand \"bogus\""
+      assert_includes out, "Usage: ./opilot dev <command>"
+    end
+
+    def test_build_and_fix_both_reach_the_publishing_path
+      # The same pair `@opilot` takes on a work package, so one operation has one
+      # name wherever it is typed.
+      %w[build fix].each do |verb|
+        cli = CLI.new(ctx_double)
+        capture_io do
+          error = assert_raises(OPilot::FatalError) { cli.run(["dev", verb, "42"]) }
+          assert_match(/Config not found/, error.message, "`dev #{verb}` reached the runner")
+        end
+      end
+    end
+
+    def test_a_bare_op_is_a_help_request_and_needs_no_config
+      out, = capture_io { CLI.new(ctx_double).run(["op"]) }
+      assert_includes out, "Usage: ./opilot op <resource> <action>"
+      assert_includes out, "./opilot op wp get <id>"
+    end
+
+    def test_op_help_answers_for_its_own_group
+      out, = capture_io { CLI.new(ctx_double).run(["op", "wp", "get", "--help"]) }
+      assert_includes out, "Usage: ./opilot op <resource> <action>"
+      refute_includes out, "Agent mode", "the group answers, not the whole screen"
+    end
+
+    def test_op_reaches_the_runner_rather_than_the_unknown_command_arm
+      cli = CLI.new(ctx_double)
+      out, err = capture_io do
+        error = assert_raises(OPilot::FatalError) { cli.run(["op", "wp", "get", "42"]) }
+        assert_match(/Config not found/, error.message, "it got as far as loading config")
+      end
+      refute_includes err, "Unknown argument"
+      refute_includes out, "Usage:"
+    end
+
+    def test_op_never_stamps_a_log_header
+      # Its stdout is JSON for a pipe, and an inspection read is not part of
+      # opilot's audit trail — so unlike every other command it skips #session.
+      #
+      # `configured: true` is what makes this test mean anything: #session writes
+      # its header only AFTER load_config! succeeds, so an unconfigured double
+      # would produce no header whichever path `op` took.
+      Dir.mktmpdir do |dir|
+        log = Pathname(dir) / "chomp.log"
+        ctx = ctx_double(log_file: log, configured: true, op_url: "https://op.test", token: "tok")
+        stub_request(:get, "https://op.test/api/v3/users/me").to_return(status: 200, body: "{}")
+
+        capture_io { CLI.new(ctx).run(["op", "me"]) }
+
+        refute log.exist?, "the command ran to completion and still stamped no header"
+      end
     end
 
     def test_the_top_level_help_is_a_map_and_leaves_detail_to_the_groups
@@ -101,12 +161,12 @@ module OPilot
       out, = capture_io { ui.usage }
       assert_operator out.lines.length, :<, 30, "the top-level help is a one-screen map"
       assert_includes out, "./opilot agent"
-      assert_includes out, "./opilot wp <command>"
+      assert_includes out, "./opilot dev <command>"
       assert_includes out, "./opilot pd <command>"
       refute_includes out, "op | gh", "one plain agent line; `agent --help` has the split"
       refute_includes out, "./opilot agent op", "the agent group lists its own commands"
       assert_includes out, "Triggers", "what agent mode acts on stays on the front page"
-      refute_includes out, "./opilot wp ship <id>...", "the wp group lists its own commands"
+      refute_includes out, "./opilot dev build <id>...", "the dev group lists its own commands"
       refute_includes out, "./opilot pd propose", "the pd group lists its own commands"
     end
 
@@ -133,10 +193,10 @@ module OPilot
     end
 
     def test_each_group_help_renders_its_one_command_list
-      # Each list is written once (UI#wp_commands / UI#pd_commands) — the pd copy
+      # Each list is written once (UI#dev_commands / UI#pd_commands) — the pd copy
       # used to be duplicated in PD::Runner and had drifted out of date.
       ui = UI.new(ctx_double)
-      { ui.wp_commands => -> { CLI.new(ctx_double).run(["wp"]) },
+      { ui.dev_commands => -> { CLI.new(ctx_double).run(["dev"]) },
         ui.pd_commands => -> { CLI.new(ctx_double).run(["pd"]) } }.each do |commands, show|
         out, = capture_io { show.call }
         commands.lines.map(&:strip).reject(&:empty?).each { |line| assert_includes out, line }
@@ -147,8 +207,8 @@ module OPilot
       Dir.mktmpdir do |dir|
         log = Pathname(dir) / "chomp.log"
         ctx = ctx_double(log_file: log, configured: true)
-        CLI.new(ctx).send(:session, "wp pr", ["#42"]) { nil }
-        assert_match(/\A\n=== wp pr #42 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} ===\n\z/, log.read)
+        CLI.new(ctx).send(:session, "dev refresh", ["#42"]) { nil }
+        assert_match(/\A\n=== dev refresh #42 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} ===\n\z/, log.read)
       end
     end
 

@@ -85,7 +85,7 @@ module OPilot
           @patch_code  = patch_code
         end
 
-        def post_activity(wp_id, comment:, internal: true)
+        def add_comment(wp_id, comment:, internal: true)
           @comments << [wp_id, comment]
           [201, {}]
         end

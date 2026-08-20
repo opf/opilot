@@ -14,25 +14,26 @@ module OPilot
       rest = argv[1..].to_a
 
       return @ui.usage if cmd.empty? || help_flag?(cmd)
-      # --help anywhere, not only as the first argument: `./opilot wp ship --help`
+      # --help anywhere, not only as the first argument: `./opilot dev build --help`
       # would otherwise be parsed as a work-package id and die on the validator.
       return help_for(cmd) if rest.any? { |a| help_flag?(a) } && cmd != "chat"
 
       case cmd
-      when "status" then @ui.status
       when "reset"  then @ui.reset
       when "usage"  then UsageRunner.new(@ctx).run
       # The agent loops — opilot's main mode. No arguments: they poll.
       when "agent"    then agent(rest)
-      # Pre-group names for `agent op` / `agent gh`. Kept working rather than
-      # redirected like the moved `wp` verbs: these are what a service unit or a
-      # shell history calls, and the cost of breaking them is a stopped agent.
+      # Pre-group names for `agent op` / `agent gh`, kept because these are what
+      # a service unit or a shell history calls, and the cost of breaking them is
+      # a stopped agent.
       when "op-agent" then session("agent op") { Agent.new(@ctx).run }
       when "gh-agent" then session("agent gh") { GhAgent.new(@ctx).run }
       when "chat"     then session(cmd) { ChatRunner.new(@ctx).run(rest.join(" ")) }
-      # The command groups, each owning its own subcommands and help.
-      when "wp"       then wp(rest)
+      # The command groups. `dev` and `pd` are the two specializations — the kind
+      # of work opilot does; `op` is an integration — the system it reads.
+      when "dev"      then dev(rest)
       when "pd"       then pd(rest)
+      when "op"       then op(rest)
       else
         $stderr.puts "Unknown argument: #{cmd}"
         @ui.usage
@@ -46,13 +47,14 @@ module OPilot
       %w[--help -h].include?(arg)
     end
 
-    # A group answers for itself, so `./opilot wp --help` doesn't print the
+    # A group answers for itself, so `./opilot dev --help` doesn't print the
     # whole screen to show five commands.
     def help_for(cmd)
       case cmd
       when "agent", "op-agent", "gh-agent" then @ui.agent_usage
-      when "wp" then @ui.wp_usage
+      when "dev" then @ui.dev_usage
       when "pd" then @ui.pd_usage
+      when "op" then @ui.op_usage
       else @ui.usage
       end
     end
@@ -72,22 +74,25 @@ module OPilot
       end
     end
 
-    # `wp` is the work-package group: everything keyed on a work-package id.
-    def wp(args)
-      # A bare `./opilot wp` is a request for help, so answer it before
+    # `dev` is the software-development specialization: one pipeline named by
+    # where each verb stops — plan ⊂ commit ⊂ build. `build` and `refresh` are
+    # the words `@opilot` already takes, so one operation has one name.
+    def dev(args)
+      # A bare `./opilot dev` is a request for help, so answer it before
       # load_config! can fail at it for an unrelated reason.
-      return @ui.wp_usage if args.empty?
+      return @ui.dev_usage if args.empty?
       sub, *rest = args
       case sub
-      # `wp fix` stays as an alias of `wp ship`, logged and reported as `ship`.
-      when "ship", "fix" then with_ids("wp ship", rest) { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
-      when "build"       then with_ids("wp build", rest) { |ids| FixRunner.new(@ctx).build_ids(*ids) }
-      when "plan"        then with_ids("wp plan", rest) { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
-      when "pull"        then with_ids("wp pull", rest) { |ids| PullRunner.new(@ctx).run(*ids) }
-      when "pr"          then pr(rest)
+      # `dev fix` mirrors `@opilot fix`; logged and reported as `build`.
+      when "build", "fix" then with_ids("dev build", rest) { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
+      when "commit"       then with_ids("dev commit", rest) { |ids| FixRunner.new(@ctx).commit_ids(*ids) }
+      when "plan"         then with_ids("dev plan", rest) { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
+      when "refresh"      then refresh(rest)
+      # Reads .opilot/ only — no config, no network, no log header.
+      when "status"       then @ui.status
       else
-        $stderr.puts "unknown wp subcommand #{sub.inspect}"
-        @ui.wp_usage
+        $stderr.puts "unknown dev subcommand #{sub.inspect}"
+        @ui.dev_usage
         raise OPilot::FatalError
       end
     end
@@ -104,8 +109,8 @@ module OPilot
       yield
     end
 
-    # `ship` / `build` / `plan` / `pull`: a list of work-package ids, validated
-    # before anything loads or connects.
+    # `build` / `commit` / `plan`: a list of work-package ids, validated before
+    # anything loads or connects.
     def with_ids(name, args)
       ids = args.map { |a| wp_id_arg(a) }
       if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
@@ -114,22 +119,29 @@ module OPilot
       session(name, ids.map { |id| Helpers.wp_label(id) }) { yield ids }
     end
 
-    # `wp pr` refreshes shipped PRs, targeted by work-package id and/or pasted
-    # GitHub PR URL (a URL is resolved to its WP via opilot's own state, else via
-    # the OpenProject ticket link at the top of the PR description).
-    def pr(args)
+    # Refresh shipped PRs by work-package id and/or pasted PR URL (a URL resolves
+    # to its WP via opilot's own state, else via the ticket link in the PR body).
+    def refresh(args)
       targets = args.map(&:strip).map { |a| a.match?(%r{\Ahttps?://}) ? a : wp_id_arg(a) }
       unless targets.any? && targets.all? { |t| t.match?(Helpers::WP_ID_PATTERN) || pr_url?(t) }
-        usage!("wp pr", "<work-package-id | pr-url>...",
+        usage!("dev refresh", "<work-package-id | pr-url>...",
                "e.g. 59942, PROJ-123, or https://github.com/opf/openproject/pull/123")
       end
-      session("wp pr", targets.map { |t| t.match?(Helpers::WP_ID_PATTERN) ? Helpers.wp_label(t) : t }) do
+      session("dev refresh", targets.map { |t| t.match?(Helpers::WP_ID_PATTERN) ? Helpers.wp_label(t) : t }) do
         PrRunner.new(@ctx).run(*targets)
       end
     end
 
     def pr_url?(target)
       !!(Clients::GitHub.repo_from_url(target) && Clients::GitHub.pr_number_from_url(target))
+    end
+
+    # `op` reads the OpenProject API directly; OpRunner owns its own dispatch,
+    # like PD::Runner. Deliberately NOT in #session: its stdout is JSON for a
+    # pipe, so no log header, and it loads only the OpenProject credentials.
+    def op(args)
+      return @ui.op_usage if args.empty?
+      OpRunner.new(@ctx).run(args)
     end
 
     # `pd` is the product-development (spec-driven) pipeline; PD::Runner owns its

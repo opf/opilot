@@ -382,7 +382,7 @@ module OPilot
     # Demote every ATX markdown heading to bold, for anything posted to a work
     # package: the activity tab is a narrow column, so a plan with five `##`
     # sections spends most of its width on its own titles. Bold reads the same and
-    # costs one line. Applied centrally in `#post_activity` rather than per caller,
+    # costs one line. Applied centrally in `#add_comment` rather than per caller,
     # since the text comes from the LLM as often as from opilot and prompt guidance
     # alone doesn't hold.
     #

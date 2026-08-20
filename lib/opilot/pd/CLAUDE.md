@@ -129,7 +129,7 @@ PR needs the store's layout on every agent tick.
   (`TasksFile.set_section_done`) and **only after a commit exists** — a run that
   produced nothing leaves them unticked and opens no PR, which is the honest record.
   Publishing goes through the same `Publish#open_pr` as the bug-fix flow, so
-  `gh-agent` picks the result up from `pr_url.txt` and `./opilot wp pr <id>` can
+  `gh-agent` picks the result up from `pr_url.txt` and `./opilot dev refresh <id>` can
   refresh it. The work package is **transitioned twice** (`#transition!`): to
   `OPILOT_PD_IMPLEMENTING_STATUS` when the LLM run starts (inside the
   `branch_has_commits?` guard, so a re-run that only publishes an already-built

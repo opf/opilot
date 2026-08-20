@@ -1,11 +1,12 @@
 require "json"
 
 module OPilot
-  # The terminal `ship`, `build`, and `plan` commands: plan/approve/(optionally
-  # build and ship) one or more work packages named by id, outside any filter
-  # set. Each WP is fetched live; `ship` (alias `fix`) publishes an approved
-  # plan as a draft PR, `build` stops after committing the fix locally, and
-  # `plan` stops once the plan is approved.
+  # The terminal `dev build`, `dev commit`, and `dev plan` commands: plan,
+  # approve, then optionally implement and publish one or more work packages
+  # named by id, outside any filter set. Each WP is fetched live. The three
+  # verbs are one pipeline named by where it stops: `plan` at the approved plan,
+  # `commit` at the local commit, `build` (alias `fix`) at the draft PR — the
+  # words `@opilot` also takes. Internally the publishing path is still `ship`.
   class FixRunner
     include Helpers
 
@@ -29,9 +30,9 @@ module OPilot
     end
 
     # Like `ship`, but stops after committing the fix locally — nothing is
-    # pushed and no PR is opened; `wp ship <id>` later publishes the built branch.
-    def build_ids(*wp_ids)
-      process_ids(wp_ids, mode: :build)
+    # pushed and no PR is opened; `dev build <id>` later publishes that branch.
+    def commit_ids(*wp_ids)
+      process_ids(wp_ids, mode: :commit)
     end
 
     # Like `ship`, but stops once each plan is approved instead of building.
@@ -41,18 +42,18 @@ module OPilot
 
     private
 
-    # `wp ship` ends in a push and a PR, and it only gets there after a full plan and
+    # `dev build` ends in a push and a PR, and it only gets there after a full plan and
     # implement pass — so a missing token has to fail before that LLM work, not
     # after it (`Publish#open_pr` reported it at the very end). `pr` has always
     # checked its token up front; this brings its sibling into line.
     #
-    # Deliberately not in the constructor: `build` and `plan` publish nothing and
-    # must keep working with no GitHub token at all.
+    # Deliberately not in the constructor: `commit` and `plan` publish nothing
+    # and must keep working with no GitHub token at all.
     def require_publish_token!
       return if @publish.author_token
       raise OPilot::FatalError,
             "No GitHub token — set #{@publish.token_env_var} in .env to ship. " \
-            "(`wp build` and `wp plan` need no token: they stop before publishing.)"
+            "(`dev commit` and `dev plan` need no token: they stop before publishing.)"
     end
 
     def process_ids(wp_ids, mode:)
@@ -240,9 +241,9 @@ module OPilot
             # Leave the approved plan.md in place (no outcome marker) so a later
             # `build`/`ship` picks it up.
             log_script "#{wp_label(id)} — plan approved; build or ship it later with " \
-                       "`wp build #{id}` / `wp ship #{id}`."
-          when :build then build(st, model)
-          when :ship  then ship(st, model)
+                       "`dev commit #{id}` / `dev build #{id}`."
+          when :commit then commit(st, model)
+          when :ship   then ship(st, model)
           end
           break
         when :chat    then run_chat(st, model)
@@ -322,7 +323,7 @@ module OPilot
 
     def prompt_approval(id, mode: :ship)
       ping_terminal("opilot: plan for #{wp_label(id)} ready for review")
-      yes = { plan: "[y]es accept plan", build: "[y]es build", ship: "[y]es ship" }.fetch(mode)
+      yes = { plan: "[y]es accept plan", commit: "[y]es commit", ship: "[y]es build" }.fetch(mode)
       loop do
         print "  #{yes} / [s]kip / [d]rop / [c]hat / [r]e-plan: "
         response = $stdin.gets&.chomp&.downcase || ""
@@ -392,14 +393,14 @@ module OPilot
       changed
     end
 
-    # `build`: implement and commit, then stop — nothing is pushed and no PR is
+    # `commit`: implement and commit, then stop — nothing is pushed and no PR is
     # opened. The committed branch sits in the local clone for review; a later
-    # `wp ship <id>` finds it via branch_has_commits? and goes straight to publish.
-    def build(st, model = Harness::MODEL_HEAVY)
+    # `dev build <id>` finds it via branch_has_commits? and goes straight to publish.
+    def commit(st, model = Harness::MODEL_HEAVY)
       return if report_already_shipped(st)
       implement(st, model).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
-        puts "  ✓ Built #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./opilot wp ship #{st.item_id}`"
+        puts "  ✓ Committed #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./opilot dev build #{st.item_id}`"
       end
     end
 

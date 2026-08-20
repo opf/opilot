@@ -123,16 +123,16 @@ module OPilot
       @ctx.contributor_token = nil
       err = assert_raises(OPilot::FatalError) { capture_io { runner.ship_ids("42") } }
       assert_match(/set GITHUB_CONTRIBUTOR_TOKEN in \.env to ship/, err.message)
-      assert_match(/build.*plan.*need no token/, err.message)
+      assert_match(/commit.*plan.*need no token/, err.message)
     end
 
-    def test_build_and_plan_still_work_without_a_token
+    def test_commit_and_plan_still_work_without_a_token
       # They stop before publishing, so requiring one would be gratuitous.
       @ctx.contributor_token = nil
       data = write_item(7, "Local only")
       # Skipped at the approval prompt: what matters is that neither command
       # refused before getting there.
-      %i[build_ids plan_ids].each do |mode|
+      %i[commit_ids plan_ids].each do |mode|
         run = NoGitRunner.new(@ctx, pull: FakePull.new(single: data), harness: FakePlanHarness.new)
         capture_io { with_stdin("s\n") { run.public_send(mode, "7") } }
       end
@@ -175,21 +175,21 @@ module OPilot
       assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
     end
 
-    def test_build_ids_commits_locally_without_publishing
+    def test_commit_ids_commits_locally_without_publishing
       harness = FakePlanHarness.new
       r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "8" => item(8, "Buildable") }),
                              harness: harness, publish: nil)
 
-      out, = with_stdin("y\n") { capture_io { r.build_ids("8") } }
+      out, = with_stdin("y\n") { capture_io { r.commit_ids("8") } }
 
-      assert_includes out, "[y]es build", "approval prompt reflects build mode"
-      assert_includes out, "✓ Built task/8-buildable (openproject)"
-      assert_includes out, "ship it with `./opilot wp ship 8`"
+      assert_includes out, "[y]es commit", "approval prompt reflects commit mode"
+      assert_includes out, "✓ Committed task/8-buildable (openproject)"
+      assert_includes out, "ship it with `./opilot dev build 8`"
       refute (@ctx.state_dir / "work_packages" / "op.example.com" / "8" / "repos" / "openproject" / "pr_url.txt").exist?,
-             "build must not ship"
+             "commit must not ship"
     end
 
-    def test_build_ids_reports_an_already_shipped_wp
+    def test_commit_ids_reports_an_already_shipped_wp
       harness = FakePlanHarness.new
       pr_dir = @ctx.state_dir / "work_packages" / "op.example.com" / "9" / "repos" / "openproject"
       pr_dir.mkpath
@@ -198,7 +198,7 @@ module OPilot
       r = PrebuiltRunner.new(@ctx, pull: FakePull.new(singles: { "9" => item(9, "Done one") }),
                              harness: harness, publish: nil)
 
-      out, = with_stdin("y\n") { capture_io { r.build_ids("9") } }
+      out, = with_stdin("y\n") { capture_io { r.commit_ids("9") } }
 
       assert_includes out, "Already shipped (openproject): https://github.com/o/r/pull/12"
       refute_includes out, "✓ Built", "a shipped WP is not rebuilt"

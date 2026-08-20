@@ -288,7 +288,7 @@ module OPilot
     #
     # Nothing is written to gh_pr.json here. The next poll reads the PR as
     # `closed` and marks `pr_done` itself (#intents_for_dir) — the same path a
-    # human closing it takes, which keeps the flag set in one place so `wp pr`
+    # human closing it takes, which keeps the flag set in one place so `dev refresh`
     # can still clear it on a reopen.
     def handle_close(intent)
       @github.close_pr(intent.repo, intent.pr_number)

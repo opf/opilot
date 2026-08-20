@@ -70,7 +70,7 @@ module OPilot
 
     # The agent loops. `./opilot agent` with no subcommand runs both — that is
     # how opilot is normally run, so the group's bare form acts instead of
-    # printing help the way `wp`/`pd` do.
+    # printing help the way `dev`/`pd` do.
     def agent_commands
       <<~AGENT.strip
         ./opilot agent
@@ -115,50 +115,108 @@ module OPilot
                                        one shape; reply `build <n>` to build one
                                        (one alias: fix)
                    on an opilot PR:    any @opilot comment gets a reply — and
-                                       code, if asked; refresh re-runs `wp pr`;
+                                       code, if asked; refresh is `dev refresh`;
                                        close closes the PR without a merge
       TRIGGERS
     end
 
-    # The `wp` (work-package) command list. Every entry is spelled as the whole
-    # command, so a line can be copied straight to a shell. One or two lines of
-    # description each — the reasoning behind them belongs in CLAUDE.md, not on
-    # someone's terminal.
-    def wp_commands
-      <<~WP.strip
-        ./opilot wp plan <id>...
+    # The `dev` command list. Each entry is the whole command, so a line can be
+    # copied straight to a shell; the reasoning belongs in CLAUDE.md.
+    def dev_commands
+      <<~DEV.strip
+        The first three are one pipeline, named by where each one stops:
+
+        ./opilot dev plan <id>...
             Plan with approval, then stop.
 
-        ./opilot wp build <id>...
+        ./opilot dev commit <id>...
             Plan, approve, implement, commit locally. Nothing pushed, no PR.
 
-        ./opilot wp ship <id>...
+        ./opilot dev build <id>...
             Same, then open a draft PR from the bot's fork; picks up a branch an
-            earlier build committed. (`wp fix` is an alias.)
+            earlier commit left behind. (`dev fix` is an alias.)
 
-        ./opilot wp pr <id | pr-url>...
+        ./opilot dev refresh <id | pr-url>...
             Refresh a shipped PR: merge the base branch in, fix failing CI,
-            address new review comments, push (with confirmation).
+            address new review comments, push (with confirmation). Same thing
+            `@opilot refresh` does on the PR itself.
 
-        ./opilot wp pull <id>...
-            Mirror work packages into the local cache for later chat.
-      WP
+        ./opilot dev status
+            What opilot has planned or shipped, read from .opilot/.
+      DEV
     end
 
-    # `./opilot wp` with no (or a bad) subcommand, and `wp --help`.
-    def wp_usage_text
+    # The `op` command list: one entry per Clients::OpenProject read method, so
+    # this table and that class stay checkable against each other by eye.
+    def op_commands
+      <<~OP.strip
+        ./opilot op me                        who the token authenticates as
+
+        ./opilot op wp get <id>               one work package (alias: inspect)
+        ./opilot op wp list [flags]           search — see the flags below
+        ./opilot op wp activities <id>        its comments and history
+        ./opilot op wp reactions <id>         emoji reactions on its activities
+        ./opilot op wp relations <id>         relations it takes part in
+
+        ./opilot op project get <id>          one project (alias: inspect)
+        ./opilot op project types <id>        the work-package types it allows
+        ./opilot op status list               every status on the instance
+
+        ./opilot op doc list <project-id>     documents in a project
+        ./opilot op doc get <id>              one document (alias: inspect)
+        ./opilot op doc attachments <id>      its attachments
+        ./opilot op doc download <url> --out <path>
+                                              attachment bytes, written to a file
+
+        Flags for `wp list`:
+          --filter <field>~<value>            repeatable; `~` contains, `=` equals
+          --filter-json <json>                raw filters JSON, for anything else
+          --page <n> / --page-size <n>        default 1 / 50
+      OP
+    end
+
+    # `./opilot op` with no (or a bad) subcommand, and `op --help`.
+    def op_usage_text
       <<~USAGE.strip
-        Usage: ./opilot wp <command>
+        Usage: ./opilot op <resource> <action>
 
-        #{indent(wp_commands, 2)}
+        Read the OpenProject API directly — one command per operation, for
+        checking what the API actually returns. Output is JSON on stdout, so it
+        pipes: `./opilot op wp get 59942 | jq .subject`.
 
-        Ids may carry a pasted "#" (#59942) and semantic ids may be lowercase.
+        #{indent(op_commands, 2)}
+
+        Read-only by design, so a read-scoped OPENPROJECT_TOKEN is enough.
+        Ids may be numeric or semantic (59942, PROJ-123) and may carry a "#".
+        `wp relations` resolves to the numeric id itself — the API filter behind
+        it takes no other kind. A failed request exits 1 with the response body
+        still on stdout; with `| jq`, add `set -o pipefail` to see that status.
       USAGE
     end
 
-    def wp_usage
+    def op_usage
       puts ""
-      puts wp_usage_text
+      puts op_usage_text
+      puts ""
+    end
+
+    # `./opilot wp` with no (or a bad) subcommand, and `wp --help`.
+    def dev_usage_text
+      <<~USAGE.strip
+        Usage: ./opilot dev <command>
+
+        Software development: take a work package from a plan to a draft PR.
+
+        #{indent(dev_commands, 2)}
+
+        Ids may carry a pasted "#" (#59942) and semantic ids may be lowercase.
+        To read a work package without working on it, use `./opilot op wp get <id>`.
+      USAGE
+    end
+
+    def dev_usage
+      puts ""
+      puts dev_usage_text
       puts ""
     end
 
@@ -218,15 +276,15 @@ module OPilot
         #{indent(triggers, 2)}
 
         Terminal:
-          ./opilot wp <command>     work packages by id: plan, build, ship, pr, pull
+          ./opilot dev <command>    software development: plan, commit, build, refresh, status
           ./opilot pd <command>     product development: the spec-driven pipeline
+          ./opilot op <command>     read the OpenProject API directly (JSON out)
           ./opilot chat [message]   read-only chat about your local mirrors
-          ./opilot status           what opilot has planned or shipped
           ./opilot usage            Inference spend (OpenRouter), else the configured upstream
           ./opilot reset            delete .opilot/, clones included
 
-        `./opilot wp` and `./opilot pd` list their own commands, and --help works
-        after any of them. Configuration lives in .env (the first run sets it up)
+        `./opilot dev`, `./opilot pd` and `./opilot op` list their own commands, and
+        --help works after any of them. Configuration lives in .env (the first run sets it up)
         and state in .opilot/ — both are documented in README.md.
 
       USAGE

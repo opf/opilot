@@ -389,7 +389,7 @@ module OPilot
     # set @reply_internal.
     def post_note(item_id, raw)
       internal = @reply_internal.nil? ? true : @reply_internal
-      code, body = @api.post_activity(item_id, comment: raw, internal: internal)
+      code, body = @api.add_comment(item_id, comment: raw, internal: internal)
       if code == 201
         log_script "Note posted to WP #{wp_label(item_id)}"
         comment_id = body&.dig("id")&.to_s
