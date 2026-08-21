@@ -28,10 +28,13 @@ Agent loops: `./opilot agent` (both), `agent op`, `agent gh` — the older
 
 ### op-agent
 
-Polls work packages, driven by `@opilot` comments. The one command word is
-**`@opilot build`** (alias `fix`); every other word is chat. The words this
-replaced — `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too,
-so an old habit gets an answer that names the real command rather than silence.
+Polls work packages, driven by `@opilot` comments. There are two command words —
+**`@opilot build`** (alias `fix`) and **`@opilot create wp`** (long form
+`create work package`); every other word is chat. The words `build` replaced —
+`ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too, so an old
+habit gets an answer that names the real command rather than silence. `create`
+without the noun is chat as well: alone it could mean a branch, a PR or a comment,
+and the noun is what makes it one operation.
 
 **Discovery is server-side comment search, not project scanning.** Each tick,
 `Pull#poll_intents` asks OpenProject's own `comment` filter (`~`, "contains") for
@@ -244,6 +247,9 @@ before touching anything under `lib/opilot/pd/`.
 # stdout. `./opilot op --help` lists all 13.
 ./opilot op wp get <id>
 ./opilot op wp list --filter 'subject~login'
+./opilot op wp create --project <id> --type <name> --subject <text> [--dry-run]   # the one write
+./opilot op wp form --project <id> --type <name> --required   # what it demands; creates nothing
+./opilot op cf items <id>            # a hierarchy custom field's allowed values
 
 # Product development (spec-driven)
 ./opilot pd init <project-id> [--repo <name>]
@@ -347,14 +353,14 @@ bare `docker compose run …` works from the repo root.
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
 | `pull.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
-| `agent.rb` | Main event loop — dispatches the two intents, `:chat` and `:ship` |
+| `agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
 | `gh_pull.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
 | `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
-| `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` read method. The only mode whose **stdout is data**: JSON only, diagnostics to stderr, no `log_script`, nothing written to `chomp.log` (the wrapper passes `-T` so no pty can undo that). Read-only by construction, so it keeps `wp`/`chat`'s read-scoped-token guarantee, and it loads only `Context#load_openproject_config!` — a clone it never resolves must not stop it |
+| `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. The only mode whose **stdout is data**: JSON only, diagnostics to stderr, no `log_script`, nothing written to `chomp.log` (the wrapper passes `-T` so no pty can undo that). Every action reads except `wp create`, so a read-scoped token still covers all the others (`wp form` is a POST that writes nothing — the API's own dry run). `wp create` carries `--dry-run` rather than a prompt, because stdout belongs to the JSON and a prompt would break the scripts it exists for; the flag posts the **form**, so the verdict comes from the instance rather than from opilot's own JSON. `--field`/`--link` fill the custom fields a project requires; `wp form --required` is how you learn which those are, and `cf items` reads the allowed values of a hierarchy field, whose schema renders a link instead of the values. **`--type` is required of every payload**, though the API would pick a default: a schema is per project AND type, and the payload representer reads a custom field only when the type is named — its accessors come from the (project, type) pair while the default type is assigned later, so an unnamed type makes a `--field`/`--link` value vanish and come back as "can't be blank" (verified against a live instance). One rule for every payload, rather than one that holds only when custom fields are present. It loads only `Context#load_openproject_config!` — a clone it never resolves must not stop it |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
@@ -430,7 +436,7 @@ only *warns* when a clone fails, and `Git.open`'s error names neither the repo n
 the fix. `#ensure_claude!` fails with "start the container" at every entry point that
 will call the LLM, not mid-run with a connection error.
 
-`:ship` (`@opilot build`, alias `fix`) is the only working intent: it plans and
+`:ship` (`@opilot build`, alias `fix`) is the fix intent: it plans and
 implements in one pass, unless the plan call answers with `OPTIONS` and waits for
 `@opilot build <n>`. The separate `:plan`/`:approve` intents are **gone** — the
 options step replaced plan-and-wait, and the code is reviewed as a prototype on the
@@ -440,6 +446,66 @@ word for the same operation, so one thing has one name wherever it is typed. The
 difference is who is watching: the terminal verbs have an operator at the console.
 Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
+
+**`:create_wp` (`@opilot create wp <what>`)** splits something out of the thread into
+its own work package — `create wp for Rosanna's suggestion`. It is op-agent's **only
+non-comment write to OpenProject**, and every guard on it stands on one fact: a work
+package can never be deleted (the HTTP client has no DELETE verb anywhere), so
+nothing downstream can undo a wrong or duplicate create.
+
+- **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`Agent#create_wp_enabled?`),
+  said once per work package (`create_wp_refusal_noted_at`) and folded into the
+  no-allowlist line of the startup banner, since "created nothing" and "cannot create
+  anything" look identical in a log — only in that state, because a line confirming the
+  normal state is noise on every start.
+  With no allowlist every user who can comment could mint work packages without limit.
+  The requirement also makes the allowlist gate *unconditional* for this command:
+  `Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
+  so every create that reaches the handler is from a listed user.
+- **The draft is one LLM call, gated by `NEEDS_INFO`** (`Prompts.create_wp`). When the
+  request points at nothing in the thread, or at more than one thing, questions are the
+  only acceptable answer. An unreadable draft buys one retry — safe, because nothing is
+  created yet — and then stops.
+- **It is idempotent on the trigger comment's timestamp** (`created_wps.json`, written
+  the instant the POST returns 201, before the relation and before the reply). `Intent`
+  carries no comment id, and `comment_at` is the key `Pull#mark_acted` already de-dupes
+  on. A re-fired trigger finds the record and re-reports the link.
+- **The project is the source work package's**, read from a *fresh* fetch: `item.json`
+  caches no project, and its `"id"` may be semantic while the relations route takes
+  only numeric ids. The type is one the project really offers (the draft names it, the
+  runner matches it case-insensitively); with no match the type link is omitted and
+  OpenProject assigns the project's own default.
+- **`:add_work_packages` is checked before the LLM call**, on a second GET of the
+  project — a work package carries only a link stub for its project, and
+  `Helpers.create_wp_allowed?` reads the `createWorkPackage*` links the project
+  resource renders only for a user who holds the permission.
+- **The drafted payload is preflighted through the create form**
+  (`Agent#payload_accepted?` → `POST /api/v3/work_packages/form`). A project can
+  *require* custom fields, per project **and type**, so without this the command
+  ends as a 422 in the log with the reader told nothing. The form runs the same
+  `SetAttributesService` the create runs and does not save, so a payload it accepts
+  is one the create accepts — and it answers **200 even for a payload it rejects**,
+  which is why `_embedded.validationErrors` decides and the status code does not.
+  opilot **must not fill a required custom field itself**: the value carries
+  business meaning only a person has, and the work package would be permanent. The
+  fields are named back in the instance's own wording, with the project's other
+  types listed, and nothing is created. A form that answers anything else (403, a
+  proxy's HTML) is not an answer about the payload, so the create proceeds and
+  reports its own failure.
+- **The two are linked with a `relates` relation, best-effort**
+  (`Clients::OpenProject#create_relation`, on the per-work-package route — the global
+  `/api/v3/relations` has no POST). It needs `:manage_work_package_relations`, a
+  *different* permission, so a failure is reported and recorded (`related: false`) for
+  the next ask to finish, never raised: the work package exists and cannot be deleted.
+  The new description also backlinks the source, which is what a reader sees when the
+  relation is the part that failed.
+- **Nothing is posted on the new work package, and no reply names `@opilot`.** The poll
+  filter searches comment *content*, and a new work package has no acted-state or
+  cutoff under it — a comment there naming opilot would make opilot read its own text
+  as a trigger forever. Same hazard as `Pull#note_refused_trigger`'s wording.
+- **This handler answers its own failures**, unlike every other one (`#handle_and_ack`
+  stays silent by design): a reader who asked for a work package waits for a link, and
+  silence reads as a broken bot.
 
 ### State on disk (`.opilot/` — gitignored)
 
@@ -459,9 +525,12 @@ globally unique, so `pr_reviews/` is flat.
 │   └── <wp_id>/
 │       ├── item.json            # WP metadata + poll cache + acted_at
 │       │                        #   + refusal_noted_at (the one allowlist note per WP)
+│       │                        #   + create_wp_refusal_noted_at (the one `create wp` off note)
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── options.json         # offered implementation options; present = waiting for a number
+│       ├── created_wps.json     # WPs `create wp` made FROM this one, keyed by the trigger's
+│       │                        #   comment_at; `related` says whether the relation landed
 │       ├── target_repos.json    # repo names from the plan's REPOS line
 │       ├── target_base.json     # optional per-repo base overrides ({repo: base})
 │       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR
@@ -527,11 +596,11 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token. Read access suffices for `wp`/`chat`; agent mode needs write (to comment), `pd` needs `:add_work_packages` |
+| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled and `:manage_work_package_relations` for its backlink (without the second one the work package is still created, only unlinked); `pd` needs `:add_work_packages` |
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
-| `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation |
+| `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
 | `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot |

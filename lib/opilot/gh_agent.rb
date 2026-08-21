@@ -356,9 +356,9 @@ module OPilot
 
     def prompt_scan_from
       previous = saved_scan_from_at
-      puts "  How far back should the PR comment scanner look?"
-      puts "  Formats: \"2h\", \"3 days\", \"1 week\", \"1 month\""
-      print "  Scan from [#{previous || "now"}]: "
+      # One line for the question, one for the answer — the same shape as
+      # op-agent's prompt (Pull#prompt_scan_from).
+      print %(  How far back should the PR comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [#{previous || "now"}]: )
       reply = $stdin.gets.to_s.chomp
       scan_from_at = (previous && reply.strip.empty?) ? previous : Helpers.parse_scan_from(reply)
       save_scan_from_at(scan_from_at)

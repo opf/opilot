@@ -43,6 +43,74 @@ module OPilot
       assert_equal "#42",      Helpers.wp_label(42)
     end
 
+    # ── parse_wp_draft (Prompts.create_wp's answer) ─────────────────────────
+
+    def test_parse_wp_draft_reads_the_subject_type_and_description
+      draft = Helpers.parse_wp_draft("SUBJECT: Add a toast\nTYPE: Feature\n\nRosanna asked for it.\n")
+      assert_equal "Add a toast", draft["subject"]
+      assert_equal "Feature",     draft["type"]
+      assert_equal "Rosanna asked for it.", draft["description"]
+    end
+
+    def test_parse_wp_draft_type_is_optional
+      draft = Helpers.parse_wp_draft("SUBJECT: Add a toast\n\nBody.\n")
+      assert_equal "Add a toast", draft["subject"]
+      assert_equal "", draft["type"]
+      assert_equal "Body.", draft["description"]
+    end
+
+    def test_parse_wp_draft_tolerates_leading_blank_lines_and_case
+      draft = Helpers.parse_wp_draft("\n\nsubject: Add a toast\ntype: Bug\n\nBody.")
+      assert_equal "Add a toast", draft["subject"]
+      assert_equal "Bug", draft["type"]
+    end
+
+    # No subject line means no usable draft. The caller must never POST a work
+    # package it could not read — one cannot be deleted.
+    def test_parse_wp_draft_without_a_subject_line_is_nil
+      assert_nil Helpers.parse_wp_draft("I think we should add a toast.")
+      assert_nil Helpers.parse_wp_draft("SUBJECT:\n\nBody.")
+      assert_nil Helpers.parse_wp_draft("")
+    end
+
+    # Only the LEADING lines are fields, so a description discussing its own
+    # "SUBJECT:" line cannot move the subject.
+    def test_parse_wp_draft_ignores_field_lines_inside_the_description
+      draft = Helpers.parse_wp_draft("SUBJECT: The real one\n\nWrite SUBJECT: something else on line 1.\n")
+      assert_equal "The real one", draft["subject"]
+      assert_includes draft["description"], "SUBJECT: something else"
+    end
+
+    def test_after_marker_takes_the_last_marked_section
+      text = "thinking\nDRAFT:\nfirst try\nDRAFT:\nthe real one"
+      assert_equal "the real one", Helpers.after_marker(text, "DRAFT")
+    end
+
+    def test_after_marker_returns_the_whole_text_when_the_marker_is_absent
+      assert_equal "SUBJECT: x", Helpers.after_marker("SUBJECT: x", "DRAFT")
+    end
+
+    # Anchored to the line end, so prose mentioning the marker inline cannot
+    # split the answer.
+    def test_after_marker_ignores_an_inline_mention_of_the_marker
+      text = "I will write DRAFT: below.\nDRAFT:\nthe answer"
+      assert_equal "the answer", Helpers.after_marker(text, "DRAFT")
+    end
+
+    def test_create_wp_allowed_reads_the_projects_own_links
+      assert Helpers.create_wp_allowed?("_links" => { "createWorkPackage" => { "href" => "/x" } })
+      assert Helpers.create_wp_allowed?("_links" => { "createWorkPackageImmediately" => { "href" => "/x" } })
+      refute Helpers.create_wp_allowed?("_links" => { "self" => { "href" => "/x" } })
+      refute Helpers.create_wp_allowed?({})
+      refute Helpers.create_wp_allowed?(nil)
+    end
+
+    def test_display_id_prefers_the_semantic_id
+      assert_equal "PROJ-12", Helpers.display_id("id" => 12, "displayId" => "PROJ-12")
+      assert_equal "12",      Helpers.display_id("id" => 12, "displayId" => "")
+      assert_equal "12",      Helpers.display_id("id" => 12)
+    end
+
     def test_adopt_github_author_sets_git_identity_from_the_bot
       Helpers.instance_variable_set(:@github_author_adopted, nil)
       stub_request(:get, "https://api.github.com/user").to_return(

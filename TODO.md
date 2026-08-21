@@ -27,11 +27,6 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ## Feature ideas
-* Introduce secure OpenProject write operations
-  * Example flow:
-    * `@OPilot create wp to implement Rosanna's suggestion`
-    * LLM (via harness) generates WP spec in JSON
-    * The runner creates the WP based on the JSON
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)

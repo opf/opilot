@@ -109,11 +109,13 @@ module OPilot
     # commands are useless without knowing what triggers them.
     def triggers
       <<~TRIGGERS.strip
-        Triggers — on a work package:  @opilot build | grill | summarize, or
-                                       anything else to just talk. build offers
-                                       numbered options when a fix has more than
-                                       one shape; reply `build <n>` to build one
-                                       (one alias: fix)
+        Triggers — on a work package:  @opilot build | create wp | grill |
+                                       summarize, or anything else to just talk.
+                                       build offers numbered options when a fix
+                                       has more than one shape; reply `build <n>`
+                                       to build one (one alias: fix). create wp
+                                       splits something out of the thread into a
+                                       new work package — it needs an allowlist
                    on an opilot PR:    any @opilot comment gets a reply — and
                                        code, if asked; refresh is `dev refresh`;
                                        close closes the PR without a merge
@@ -146,8 +148,9 @@ module OPilot
       DEV
     end
 
-    # The `op` command list: one entry per Clients::OpenProject read method, so
-    # this table and that class stay checkable against each other by eye.
+    # The `op` command list: one entry per Clients::OpenProject method `op`
+    # exposes, so this table and that class stay checkable against each other by
+    # eye. All reads but one — `wp create` writes.
     def op_commands
       <<~OP.strip
         ./opilot op me                        who the token authenticates as
@@ -157,10 +160,16 @@ module OPilot
         ./opilot op wp activities <id>        its comments and history
         ./opilot op wp reactions <id>         emoji reactions on its activities
         ./opilot op wp relations <id>         relations it takes part in
+        ./opilot op wp create [flags]         create one — see the flags below
+        ./opilot op wp form [flags]           what a project requires, and what
+                                              it allows — creates nothing
+                                              (--required for just that list)
 
         ./opilot op project get <id>          one project (alias: inspect)
         ./opilot op project types <id>        the work-package types it allows
         ./opilot op status list               every status on the instance
+        ./opilot op cf items <id>             the values a hierarchy custom
+                                              field allows
 
         ./opilot op doc list <project-id>     documents in a project
         ./opilot op doc get <id>              one document (alias: inspect)
@@ -172,6 +181,25 @@ module OPilot
           --filter <field>~<value>            repeatable; `~` contains, `=` equals
           --filter-json <json>                raw filters JSON, for anything else
           --page <n> / --page-size <n>        default 1 / 50
+
+        Flags for `wp create` (--project, --type and --subject are required;
+        `wp form` takes the same ones and needs no --subject):
+          --project <id>                      project id or identifier
+          --type <name|id>                    a name is resolved on the project;
+                                              `op project types <id>` lists them
+          --subject <text>                    the title
+          --description <text>                markdown body
+          --description-file <path|->         the body from a file, or "-" for stdin
+          --field <name>=<value>              repeatable; a plain field, e.g. a
+                                              required customField12
+          --link <name>=<href>                repeatable; a field whose value is a
+                                              resource (a select, list, user, version).
+                                              Repeat one name for a multi-value field
+          --relates <id>                      relate the new one to this work package
+          --parent <id>                       create it as a child of this one
+          --payload-json <json>               the whole v3 body, instead of the flags
+          --dry-run                           ask OpenProject whether the payload
+                                              works, and create nothing
       OP
     end
 
@@ -185,12 +213,6 @@ module OPilot
         pipes: `./opilot op wp get 59942 | jq .subject`.
 
         #{indent(op_commands, 2)}
-
-        Read-only by design, so a read-scoped OPENPROJECT_TOKEN is enough.
-        Ids may be numeric or semantic (59942, PROJ-123) and may carry a "#".
-        `wp relations` resolves to the numeric id itself — the API filter behind
-        it takes no other kind. A failed request exits 1 with the response body
-        still on stdout; with `| jq`, add `set -o pipefail` to see that status.
       USAGE
     end
 
@@ -208,9 +230,6 @@ module OPilot
         Software development: take a work package from a plan to a draft PR.
 
         #{indent(dev_commands, 2)}
-
-        Ids may carry a pasted "#" (#59942) and semantic ids may be lowercase.
-        To read a work package without working on it, use `./opilot op wp get <id>`.
       USAGE
     end
 

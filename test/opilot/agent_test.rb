@@ -7,8 +7,9 @@ module OPilot
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
       def initialize(plan: "## Plan\nDo the thing.\n",
-                     chat: "Here's my take.", impl: "", pr: "# PR title\nbody")
-        @plan, @chat, @impl, @pr = plan, chat, impl, pr
+                     chat: "Here's my take.", impl: "", pr: "# PR title\nbody",
+                     draft: "SUBJECT: Split the login toast out\nTYPE: Feature\n\nRosanna asks for a toast.\n")
+        @plan, @chat, @impl, @pr, @draft = plan, chat, impl, pr, draft
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
@@ -22,10 +23,16 @@ module OPilot
       def run(prompt, tools: nil, model: nil, session_file: nil)
         @runs << prompt
         @run_sessions << session_file
+        # Checked before the chat prompt: the create-wp draft prompt also opens
+        # with "You are opilot".
+        return draft_answer if prompt.include?("create a NEW work package")
         return @chat if prompt.include?("You are opilot")
         return @pr   if prompt.include?("PR description")
         @impl
       end
+
+      # The draft answer, so a subclass can vary it per call (a retry).
+      def draft_answer; @draft; end
     end
 
     # A harness that answers each successive #capture with the next entry in
@@ -43,6 +50,21 @@ module OPilot
         plan = @plans[@captures.length - 1] || @plans.last
         Pathname(outfile).write(plan)
         plan
+      end
+    end
+
+    # A harness whose create-wp draft differs per call, to drive the one bounded
+    # retry after an unusable answer.
+    class SequencedDraftHarness < FakeHarness
+      def initialize(drafts)
+        super()
+        @drafts = drafts
+        @draft_calls = 0
+      end
+
+      def draft_answer
+        @draft_calls += 1
+        @drafts[@draft_calls - 1] || @drafts.last
       end
     end
 
@@ -628,6 +650,318 @@ module OPilot
       # A handled error is logged, not posted — no error note left on the WP.
       refute(@notes.any? { |n| n.include?("hit an error") }, "must not post an error note on the WP")
       refute pr_url_path.exist?
+    end
+
+    # ── create wp ───────────────────────────────────────────────────────────
+    #
+    # Every assertion here guards one fact: a work package cannot be deleted.
+
+    OP = "https://op.example.com/api/v3".freeze
+
+    def allow_users(*ids); @ctx.allowed_op_user_ids = ids.map(&:to_s); end
+
+    def created_wps_path(id = "42")
+      @ctx.state_dir / "work_packages" / "op.example.com" / id / "created_wps.json"
+    end
+
+    def created_wps(id = "42")
+      created_wps_path(id).exist? ? JSON.parse(created_wps_path(id).read) : []
+    end
+
+    # The four requests a create walks through. `project_links` empty models a
+    # token without :add_work_packages.
+    def stub_create_wp(project_links: { "createWorkPackage" => { "href" => "/x" } },
+                       types: [{ "id" => 5, "name" => "Feature" }],
+                       create_status: 201, relation_status: 201,
+                       form_status: 200, validation_errors: {})
+      stub_request(:get, "#{OP}/work_packages/42")
+        .to_return(status: 200, body: JSON.generate(
+          "id" => 42, "_links" => { "project" => { "href" => "/api/v3/projects/7" } }
+        ))
+      stub_request(:get, "#{OP}/projects/7")
+        .to_return(status: 200, body: JSON.generate("name" => "Demo", "_links" => project_links))
+      stub_request(:get, "#{OP}/projects/7/types")
+        .to_return(status: 200, body: JSON.generate("_embedded" => { "elements" => types }))
+      # The preflight. The real endpoint answers 200 even for a payload it
+      # rejects — validation errors are its normal output.
+      @form_requests = []
+      stub_request(:post, "#{OP}/work_packages/form").to_return do |req|
+        @form_requests << JSON.parse(req.body)
+        { status: form_status,
+          body: JSON.generate("_type" => "Form",
+                              "_embedded" => { "validationErrors" => validation_errors }) }
+      end
+      @create_requests = []
+      stub_request(:post, "#{OP}/work_packages?notify=false").to_return do |req|
+        @create_requests << JSON.parse(req.body)
+        { status: create_status,
+          body: JSON.generate("id" => 99, "displayId" => "99", "subject" => "Split the login toast out") }
+      end
+      @relation_requests = []
+      stub_request(:post, "#{OP}/work_packages/99/relations?notify=false").to_return do |req|
+        @relation_requests << JSON.parse(req.body)
+        { status: relation_status, body: "{}" }
+      end
+    end
+
+    def test_create_wp_is_off_without_an_allowlist_and_says_so_once
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @notes.length
+      assert_includes @notes.last, "OPILOT_ALLOWED_OP_USER_IDS"
+      assert_empty @harness.runs, "no LLM call before the allowlist is checked"
+      assert_empty @create_requests, "and nothing is created"
+
+      # A second ask adds no second note: with no allowlist, anyone could
+      # otherwise fill the activity tab by repeating the trigger.
+      @agent.handle(intent(:create_wp, text: "again", comment_at: "2024-02-02T00:00:00Z"))
+      assert_equal 1, @notes.length
+    end
+
+    def test_create_wp_creates_relates_and_reports_the_link
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      payload = @create_requests.fetch(0)
+      assert_equal "Split the login toast out", payload["subject"]
+      assert_equal "/api/v3/projects/7", payload.dig("_links", "project", "href")
+      assert_equal "/api/v3/types/5", payload.dig("_links", "type", "href"), "the drafted type name resolved"
+      assert_includes payload.dig("description", "raw"), "/work_packages/42",
+                      "the description backlinks the source, so the origin survives a failed relation"
+
+      # The relation runs from the NEW work package, with numeric ids on both sides.
+      assert_equal [{ "type" => "relates",
+                      "_links" => { "to" => { "href" => "/api/v3/work_packages/42" } } }],
+                   @relation_requests
+
+      record = created_wps.fetch(0)
+      assert_equal "2024-02-01T00:00:00Z", record["comment_at"]
+      assert_equal "99", record["id"]
+      assert record["related"]
+
+      assert_includes @notes.last, "/work_packages/99"
+      refute_includes @notes.last, "@opilot",
+                      "a reply naming @opilot would make opilot read its own comment as a trigger"
+    end
+
+    def test_create_wp_is_idempotent_on_the_trigger_comment
+      allow_users(2)
+      stub_create_wp
+      trigger = intent(:create_wp, text: "for Rosanna's suggestion")
+      @agent.handle(trigger)
+      @agent.handle(trigger)   # a re-fired trigger — a crash before the ack, say
+
+      assert_equal 1, @create_requests.length, "one request, one work package — it can never be deleted"
+      assert_equal 1, @relation_requests.length, "and the recorded relation is not posted twice either"
+      assert_equal 1, created_wps.length
+      assert_includes @notes.last, "I already created"
+    end
+
+    # The writer narrates before it answers, whatever the prompt says — so the
+    # draft is what follows the last DRAFT: marker, and the deliberation above it
+    # is scratch. The first version of this prompt demanded SUBJECT: on line 1 and
+    # a real run burned its whole output limit getting ready to comply.
+    def test_create_wp_reads_the_draft_after_the_marker_and_discards_the_narration
+      allow_users(2)
+      stub_create_wp
+      narrated = "Let me think. Is this really a bug? SUBJECT: a decoy in my notes\n" \
+                 "I will go with the reporter's wording.\n\nDRAFT:\n" \
+                 "SUBJECT: The real subject\nTYPE: Feature\n\nThe real body.\n"
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: FakeHarness.new(draft: narrated))
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      payload = @create_requests.fetch(0)
+      assert_equal "The real subject", payload["subject"], "not the decoy above the marker"
+      assert_includes payload.dig("description", "raw"), "The real body."
+      refute_includes payload.dig("description", "raw"), "Let me think"
+    end
+
+    def test_create_wp_reads_needs_info_after_the_marker_too
+      allow_users(2)
+      stub_create_wp
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish,
+                        harness: FakeHarness.new(draft: "Thinking about it.\n\nDRAFT:\nNEEDS_INFO\nWhich one?\n"))
+      agent.handle(intent(:create_wp, text: "for the suggestion"))
+
+      assert_includes @notes.last, "Which one?"
+      assert_empty @create_requests
+    end
+
+    # A model that spends its whole output limit deliberating stops with
+    # `error_length` and returns nothing. The reader is waiting, so say that
+    # plainly rather than showing them the subtype.
+    def test_create_wp_explains_an_output_limit_instead_of_showing_error_length
+      allow_users(2)
+      stub_create_wp
+      boom = Class.new(FakeHarness) do
+        def run(prompt, **) = prompt.include?("create a NEW work package") ? raise(Harness::Error, "error_length") : super
+      end.new
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: boom)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "ran out of writing space"
+      refute_includes @notes.last, "error_length", "the subtype belongs in the log, not the thread"
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_needs_info_asks_and_creates_nothing
+      allow_users(2)
+      stub_create_wp
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish,
+                        harness: FakeHarness.new(draft: "NEEDS_INFO\nWhich suggestion? I see three.\n"))
+      agent.handle(intent(:create_wp, text: "for the suggestion"))
+
+      assert_includes @notes.last, "Which suggestion?"
+      assert_empty @create_requests
+      assert_empty created_wps
+    end
+
+    def test_create_wp_retries_an_unusable_draft_once_then_gives_up
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["I think we should do this.", "still no subject line"])
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 2, harness.runs.length, "one retry, then stop"
+      assert_empty @create_requests
+      assert_includes @notes.last, "could not draft"
+    end
+
+    def test_create_wp_retry_that_answers_properly_creates_it
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["no fields here", "SUBJECT: A real one\n\nBody.\n"])
+      agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal "A real one", @create_requests.fetch(0)["subject"]
+    end
+
+    # A drafted type name the project does not have falls back to the project's
+    # first type, NAMED in the payload. The API would pick its own default anyway,
+    # but a schema is per project and type, so a type nobody stated is a payload
+    # validated against something nobody chose — and `op wp create` requires one
+    # for the same reason.
+    def test_create_wp_names_a_fallback_type_when_the_draft_names_an_unknown_one
+      allow_users(2)
+      stub_create_wp(types: [{ "id" => 8, "name" => "Bug" }])
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal "/api/v3/types/8", @create_requests.fetch(0).dig("_links", "type", "href")
+    end
+
+    # Unless the type list could not be read at all — then the API's default beats
+    # no work package.
+    def test_create_wp_omits_the_type_only_when_no_type_is_known
+      allow_users(2)
+      stub_create_wp(types: [])
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      refute @create_requests.fetch(0)["_links"].key?("type")
+    end
+
+    def test_create_wp_refuses_without_the_add_work_packages_permission
+      allow_users(2)
+      stub_create_wp(project_links: {})
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "add_work_packages"
+      assert_empty @harness.runs, "the preflight runs before the LLM call, not after it"
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_with_no_request_asks_what_to_create
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: ""))
+
+      assert_includes @notes.last, "Tell me what to create"
+      assert_empty @harness.runs
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_reports_a_failed_relation_and_retries_it_next_time
+      allow_users(2)
+      stub_create_wp(relation_status: 403)
+      trigger = intent(:create_wp, text: "for Rosanna's suggestion")
+      @agent.handle(trigger)
+
+      assert_includes @notes.last, "could not link"
+      refute created_wps.fetch(0)["related"], "recorded as unlinked, so a later run can finish it"
+
+      # The work package stands; only the link is missing — so the next ask
+      # relates it instead of creating a second one.
+      stub_request(:post, "#{OP}/work_packages/99/relations?notify=false").to_return(status: 201, body: "{}")
+      @agent.handle(trigger)
+      assert_equal 1, @create_requests.length
+      assert created_wps.fetch(0)["related"]
+    end
+
+    # A project can REQUIRE custom fields, and required-ness is per project and
+    # type. Without the preflight this ends as a 422 in the log, after an LLM call
+    # has been spent, with the reader told nothing.
+    def test_create_wp_names_the_required_fields_it_must_not_invent
+      allow_users(2)
+      stub_create_wp(
+        types: [{ "id" => 5, "name" => "Feature" }, { "id" => 8, "name" => "Bug" }],
+        validation_errors: {
+          "customField205" => { "message" => "Cécile List Type Multi Select Custom Field can't be blank." },
+          "customField223" => { "message" => "Cécile Hierarchy SingleSelect Required CF can't be blank." }
+        }
+      )
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @form_requests.length, "the payload is checked before it is written"
+      assert_empty @create_requests, "nothing is created, and no value is guessed"
+      assert_empty created_wps
+
+      note = @notes.last
+      assert_includes note, "Cécile List Type Multi Select Custom Field can't be blank.",
+                      "the instance's own wording, not a paraphrase"
+      assert_includes note, "customField223"
+      assert_includes note, "Feature, Bug", "required-ness is per type, so name the alternatives"
+    end
+
+    def test_create_wp_preflights_before_every_create
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @form_requests.length
+      assert_equal @form_requests.fetch(0), @create_requests.fetch(0),
+                   "the same payload is sent on unchanged — the form applies no defaults the create won't"
+    end
+
+    # A form that answers something else about itself (403, an HTML proxy error)
+    # is not an answer about the payload, so it must not block the create.
+    def test_create_wp_creates_anyway_when_the_form_endpoint_is_unavailable
+      allow_users(2)
+      stub_create_wp(form_status: 403)
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @create_requests.length
+      assert_includes @notes.last, "/work_packages/99"
+    end
+
+    def test_create_wp_reports_a_failed_create
+      allow_users(2)
+      stub_create_wp(create_status: 422)
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "HTTP 422"
+      assert_empty created_wps
+    end
+
+    def test_chat_offers_create_wp_only_when_it_is_available
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      refute_includes @harness.runs.last, "create wp", "never offer a command that would be refused"
+
+      allow_users(2)
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      assert_includes @harness.runs.last, "@opilot create wp"
     end
 
     def test_replies_mention_the_requesting_user

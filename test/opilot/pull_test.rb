@@ -147,6 +147,39 @@ module OPilot
                    @pull.send(:parse_command, "@opilot what about tests?")
     end
 
+    # ── create wp ─────────────────────────────────────────────────────────────
+
+    def test_parse_command_create_wp_carries_the_request
+      assert_equal [:create_wp, "for Rosanna's suggestion"],
+                   @pull.send(:parse_command, "@opilot create wp for Rosanna's suggestion")
+    end
+
+    def test_parse_command_create_work_package_is_the_long_form
+      assert_equal [:create_wp, "for the toast idea"],
+                   @pull.send(:parse_command, "@opilot create work package for the toast idea")
+    end
+
+    def test_parse_command_create_wp_without_a_request
+      assert_equal [:create_wp, ""], @pull.send(:parse_command, "@opilot create wp")
+    end
+
+    # The noun is what makes it the command: `create` alone could mean a branch,
+    # a PR, or a comment, so it stays chat.
+    def test_parse_command_create_alone_is_chat
+      command, = @pull.send(:parse_command, "@opilot create a branch for this")
+      assert_equal :chat, command
+    end
+
+    # \b, not a prefix match — as with `build`/"building".
+    def test_parse_command_create_wp_needs_a_word_boundary
+      command, = @pull.send(:parse_command, "@opilot create wps for each of these")
+      assert_equal :chat, command
+    end
+
+    def test_parse_command_create_wp_is_case_insensitive_with_mention_markup
+      assert_equal [:create_wp, "for Rosanna"], @pull.send(:parse_command, "#{MENTION} Create WP for Rosanna")
+    end
+
     # ── chat lenses ───────────────────────────────────────────────────────────
 
     def test_parse_command_grill_is_a_chat_with_the_lens_instruction
@@ -252,6 +285,35 @@ module OPilot
       assert_equal [], comments
       on_disk = JSON.parse((item_dir / "item.json").read)
       assert_equal "2024-01-02T00:00:00Z", on_disk["updated_at"]
+    end
+
+    # item.json is rebuilt from the API whenever the work package changes, so
+    # opilot's own bookkeeping has to survive the rebuild. Both refusal markers
+    # promise ONE comment per work package, ever — dropped on a refresh, that
+    # becomes one comment per change, which a commenter can cause at will.
+    def test_a_refresh_keeps_opilots_own_bookkeeping
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate(
+        "updated_at"                 => "2024-01-01T00:00:00Z",
+        "subject"                    => "an old mirror of the subject",
+        "last_acted_comment_at"      => "2024-01-01T10:00:00Z",
+        "last_opilot_comment_id"     => "77",
+        "refusal_noted_at"           => "2024-01-01T11:00:00Z",
+        "create_wp_refusal_noted_at" => "2024-01-01T12:00:00Z"
+      ))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      @pull.send(:fetch_work_package_item, WP)
+
+      on_disk = JSON.parse((item_dir / "item.json").read)
+      Pull::CARRIED_KEYS.each do |key|
+        refute_nil on_disk[key], "#{key} must survive a refresh"
+      end
+      assert_equal "Fix login bug", on_disk["subject"], "while the API mirror itself is rebuilt"
     end
 
     def test_fetches_and_writes_when_no_item_json_exists

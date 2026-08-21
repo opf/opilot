@@ -152,6 +152,401 @@ module OPilot
       assert_equal({ "total" => 2 }, JSON.parse(out))
     end
 
+    # --- wp create ----------------------------------------------------------
+    #
+    # The one action that writes. A work package can never be deleted, so the
+    # payload must be exactly what the flags say and --dry-run must POST nothing.
+
+    def create_url;  "#{BASE}/api/v3/work_packages?notify=false"; end
+
+    def stub_create(status: 201, body: '{"id":99,"subject":"Add a toast"}')
+      stub_request(:post, create_url).to_return(status: status, body: body)
+    end
+
+    def created_payload
+      payload = nil
+      stub_request(:post, create_url).to_return do |req|
+        payload = JSON.parse(req.body)
+        { status: 201, body: '{"id":99,"subject":"Add a toast"}' }
+      end
+      yield
+      payload
+    end
+
+    def test_wp_create_sends_the_flags_as_the_v3_payload
+      payload = created_payload do
+        run_op("wp", "create", "--project", "demo", "--type", "5", "--subject", "Add a toast",
+               "--description", "Rosanna asked for it.")
+      end
+
+      assert_equal "Add a toast", payload["subject"]
+      assert_equal "/api/v3/projects/demo", payload.dig("_links", "project", "href")
+      assert_equal({ "format" => "markdown", "raw" => "Rosanna asked for it." }, payload["description"])
+      assert_equal "/api/v3/types/5", payload.dig("_links", "type", "href"), "every payload names its type"
+    end
+
+    def test_wp_create_prints_the_created_work_package_on_stdout
+      stub_create
+      out, err = run_op("wp", "create", "--project", "7", "--type", "5", "--subject", "Add a toast")
+      assert_equal({ "id" => 99, "subject" => "Add a toast" }, JSON.parse(out))
+      assert_empty err
+    end
+
+    def test_wp_create_needs_a_project_and_a_subject
+      never = stub_request(:post, create_url)
+
+      _out, err, = run_op!("wp", "create", "--type", "5", "--subject", "Add a toast")
+      assert_includes err, "Usage:"
+      _out, err, = run_op!("wp", "create", "--project", "7", "--type", "5")
+      assert_includes err, "Usage:"
+
+      assert_not_requested never
+    end
+
+    def test_wp_create_resolves_a_type_name_on_the_project
+      types = stub_request(:get, "#{BASE}/api/v3/projects/7/types").to_return(
+        status: 200, body: JSON.generate("_embedded" => { "elements" => [
+          { "id" => 5, "name" => "Feature" }, { "id" => 8, "name" => "BUG" }
+        ] })
+      )
+
+      payload = created_payload do
+        # Case-insensitive: instances style these names inconsistently.
+        run_op("wp", "create", "--project", "7", "--subject", "Add a toast", "--type", "bug")
+      end
+
+      assert_requested types
+      assert_equal "/api/v3/types/8", payload.dig("_links", "type", "href")
+    end
+
+    def test_wp_create_passes_a_numeric_type_straight_through
+      never = stub_request(:get, "#{BASE}/api/v3/projects/7/types")
+
+      payload = created_payload do
+        run_op("wp", "create", "--project", "7", "--subject", "Add a toast", "--type", "5")
+      end
+
+      assert_equal "/api/v3/types/5", payload.dig("_links", "type", "href")
+      assert_not_requested never
+    end
+
+    def test_wp_create_lists_the_projects_types_when_the_name_is_unknown
+      stub_request(:get, "#{BASE}/api/v3/projects/7/types").to_return(
+        status: 200, body: JSON.generate("_embedded" => { "elements" => [{ "id" => 5, "name" => "Feature" }] })
+      )
+      never = stub_request(:post, create_url)
+
+      _out, err, = run_op!("wp", "create", "--project", "7", "--subject", "x", "--type", "Epic")
+
+      assert_includes err, "no type named"
+      assert_includes err, "Feature", "and what it does offer"
+      # The name is resolved before the write, not turned into an opaque 422.
+      assert_not_requested never
+    end
+
+    def test_wp_create_takes_the_description_from_a_file
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "body.md")
+        File.write(path, "## Context\nRosanna asked for it.\n")
+
+        payload = created_payload do
+          run_op("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--description-file", path)
+        end
+
+        assert_includes payload.dig("description", "raw"), "Rosanna asked for it."
+      end
+    end
+
+    def test_wp_create_refuses_both_description_forms
+      never = stub_request(:post, create_url)
+      _out, err, = run_op!("wp", "create", "--project", "7", "--type", "5", "--subject", "x",
+                           "--description", "a", "--description-file", "b")
+      assert_includes err, "not both"
+      assert_not_requested never
+    end
+
+    def test_wp_create_payload_json_is_sent_whole
+      payload = created_payload do
+        run_op("wp", "create", "--payload-json", '{"subject":"Raw one"}')
+      end
+      assert_equal({ "subject" => "Raw one" }, payload)
+    end
+
+    # Rejected, not merged: a half-overridden payload is the kind of thing you
+    # only notice after a POST that cannot be undone.
+    def test_wp_create_refuses_payload_json_together_with_the_field_flags
+      never = stub_request(:post, create_url)
+
+      _out, err, = run_op!("wp", "create", "--payload-json", "{}", "--subject", "x")
+      assert_includes err, "not both"
+      assert_includes err, "--subject", "and which flag was the other one"
+
+      _out, err, = run_op!("wp", "create", "--payload-json", "not json")
+      assert_includes err, "not valid JSON"
+
+      assert_not_requested never
+    end
+
+    # The `parent` link setter resolves by primary key only
+    # (WorkPackage.visible.find_by(id:)), so a semantic id must be looked up here
+    # or it reaches the API as an unresolvable link.
+    def test_wp_create_resolves_a_semantic_parent_to_its_numeric_id
+      lookup = stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-12")
+        .to_return(status: 200, body: '{"id":42,"displayId":"PROJ-12"}')
+
+      payload = created_payload do
+        run_op("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--parent", "PROJ-12")
+      end
+
+      assert_requested lookup
+      assert_equal "/api/v3/work_packages/42", payload.dig("_links", "parent", "href")
+    end
+
+    # Resolved BEFORE the POST: a wrong id must fail while nothing exists yet.
+    def test_wp_create_resolves_the_references_before_creating_anything
+      stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-99").to_return(status: 404, body: "{}")
+      never = stub_request(:post, create_url)
+
+      _out, err, = run_op!("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--relates", "PROJ-99")
+
+      assert_includes err, "could not read that work package"
+      assert_not_requested never
+    end
+
+    def test_wp_create_relates_resolves_both_sides_to_numeric_ids
+      stub_create
+      lookup = stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-12")
+        .to_return(status: 200, body: '{"id":42}')
+      relation = stub_request(:post, "#{BASE}/api/v3/work_packages/99/relations?notify=false")
+        .with(body: { "type" => "relates",
+                      "_links" => { "to" => { "href" => "/api/v3/work_packages/42" } } })
+        .to_return(status: 201, body: "{}")
+
+      run_op("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--relates", "proj-12")
+
+      assert_requested lookup
+      assert_requested relation
+    end
+
+    def test_wp_create_prints_the_work_package_even_when_the_relation_fails
+      stub_create
+      stub_request(:get, "#{BASE}/api/v3/work_packages/42").to_return(status: 200, body: '{"id":42}')
+      stub_request(:post, "#{BASE}/api/v3/work_packages/99/relations?notify=false")
+        .to_return(status: 403, body: '{"message":"no permission"}')
+
+      out, err, = run_op!("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--relates", "42")
+
+      assert_includes out, '"id": 99', "the create cannot be undone, so the id must reach the operator"
+      assert_includes err, "created but not linked"
+    end
+
+    # --- wp form, and the fields a project requires -------------------------
+
+    def form_url; "#{BASE}/api/v3/work_packages/form"; end
+
+    FORM_BODY = JSON.generate(
+      "_type" => "Form",
+      "_embedded" => {
+        "validationErrors" => {
+          "customField205" => { "message" => "Cécile List Type Multi Select Custom Field can't be blank." }
+        }
+      }
+    ).freeze
+
+    def form_payload
+      payload = nil
+      stub_request(:post, form_url).to_return do |req|
+        payload = JSON.parse(req.body)
+        { status: 200, body: FORM_BODY }
+      end
+      yield
+      payload
+    end
+
+    # The form answers 200 for a payload it rejects — validation errors are its
+    # normal output — so the body must reach stdout, not a raised error.
+    def test_wp_form_prints_what_the_project_requires
+      stub_request(:post, form_url).to_return(status: 200, body: FORM_BODY)
+
+      out, err = run_op("wp", "form", "--project", "TTP2", "--type", "1")
+
+      assert_includes out, "customField205"
+      assert_includes JSON.parse(out).dig("_embedded", "validationErrors").keys, "customField205"
+      assert_empty err
+    end
+
+    # Only --project: being told what is missing is the point, so a missing
+    # subject is part of the answer rather than a reason to refuse the call.
+    def test_wp_form_needs_only_a_project
+      payload = form_payload { run_op("wp", "form", "--project", "TTP2", "--type", "1") }
+
+      refute payload.key?("subject")
+      assert_equal "/api/v3/projects/TTP2", payload.dig("_links", "project", "href")
+    end
+
+    # The schema object also holds _type, _links and _dependencies, so the
+    # summary must not treat a string value as a field.
+    SCHEMA_FORM = JSON.generate(
+      "_type" => "Form",
+      "_embedded" => {
+        "validationErrors" => {
+          "customField223" => { "message" => "Cécile Hierarchy SingleSelect Required CF can't be blank." }
+        },
+        "schema" => {
+          "_type" => "Schema",
+          "_dependencies" => [],
+          "subject" => { "type" => "String", "name" => "Subject", "required" => true, "writable" => true },
+          "createdAt" => { "type" => "DateTime", "name" => "Created on", "required" => true, "writable" => false },
+          "assignee" => { "type" => "User", "name" => "Assignee", "required" => false, "writable" => true },
+          # A list field carries its values; a hierarchy field carries one href.
+          "customField205" => {
+            "type" => "[]CustomOption", "name" => "Multi Select", "required" => true, "writable" => true,
+            "_links" => { "allowedValues" => [{ "href" => "/api/v3/custom_options/1", "title" => "A" }] }
+          },
+          "customField223" => {
+            "type" => "CustomField::Hierarchy::Item", "name" => "Hierarchy CF",
+            "required" => true, "writable" => true,
+            "_links" => { "allowedValues" => { "href" => "/api/v3/custom_fields/223/items" } }
+          }
+        }
+      }
+    ).freeze
+
+    def test_wp_form_required_lists_only_what_must_be_filled
+      stub_request(:post, form_url).to_return(status: 200, body: SCHEMA_FORM)
+
+      out, err = run_op("wp", "form", "--project", "TTP2", "--type", "1", "--required")
+
+      fields = JSON.parse(out).fetch("requiredFields")
+      names  = fields.map { |f| f["field"] }
+      assert_equal %w[subject customField205 customField223], names,
+                   "required and writable only — not createdAt, not the optional assignee"
+      assert_empty err
+
+      # The shape of allowedValues is the answer to "where are the values":
+      # an array means here, an object means fetch that href.
+      list = fields.find { |f| f["field"] == "customField205" }
+      assert_kind_of Array, list["allowedValues"]
+      hierarchy = fields.find { |f| f["field"] == "customField223" }
+      assert_equal "/api/v3/custom_fields/223/items", hierarchy.dig("allowedValues", "href")
+      assert_includes hierarchy["error"], "can't be blank", "and what the instance says about it now"
+    end
+
+    def test_cf_items_lists_a_hierarchy_fields_values
+      items = stub_request(:get, "#{BASE}/api/v3/custom_fields/223/items")
+        .to_return(status: 200, body: '{"_embedded":{"elements":[{"id":9,"label":"Tier one"}]}}')
+
+      out, err = run_op("cf", "items", "223")
+
+      assert_requested items
+      assert_equal "Tier one", JSON.parse(out).dig("_embedded", "elements", 0, "label")
+      assert_empty err
+    end
+
+    def test_cf_rejects_an_unknown_action
+      _out, err, = run_op!("cf", "options", "223")
+      assert_includes err, "unknown cf action"
+      assert_includes err, "items"
+    end
+
+    def test_wp_create_dry_run_asks_openproject_and_creates_nothing
+      never = stub_request(:post, create_url)
+      form = stub_request(:post, form_url).to_return(status: 200, body: FORM_BODY)
+
+      out, = run_op("wp", "create", "--project", "TTP2", "--type", "1", "--subject", "x", "--dry-run")
+
+      assert_requested form
+      assert_not_requested never
+      assert_includes out, "customField205", "the instance's verdict, not opilot's own JSON"
+    end
+
+    def test_wp_create_field_and_link_fill_custom_fields
+      payload = created_payload do
+        # --type is mandatory alongside a custom field; a numeric one needs no lookup.
+        run_op("wp", "create", "--project", "7", "--subject", "x", "--type", "5",
+               "--field", "customField12=some text",
+               "--link", "customField223=/api/v3/custom_options/9")
+      end
+
+      assert_equal "some text", payload["customField12"]
+      assert_equal({ "href" => "/api/v3/custom_options/9" }, payload.dig("_links", "customField223"))
+    end
+
+    # A repeated --link is a multi-value field. A single one stays an object,
+    # which the API accepts for those too (its setter flattens either shape).
+    def test_wp_create_repeated_link_becomes_an_array
+      payload = created_payload do
+        run_op("wp", "create", "--project", "7", "--subject", "x", "--type", "5",
+               "--link", "customField205=/api/v3/custom_options/1",
+               "--link", "customField205=/api/v3/custom_options/2")
+      end
+
+      assert_equal [{ "href" => "/api/v3/custom_options/1" }, { "href" => "/api/v3/custom_options/2" }],
+                   payload.dig("_links", "customField205")
+    end
+
+    # An id alone cannot become a link: the namespace differs per field type
+    # (custom_options for a list, users for a user field), so it would be a guess.
+    def test_wp_create_link_needs_an_href_and_says_where_to_find_one
+      never = stub_request(:post, create_url)
+
+      _out, err, = run_op!("wp", "create", "--project", "7", "--subject", "x", "--type", "5",
+                           "--link", "customField205=9")
+
+      assert_includes err, "needs an href"
+      assert_includes err, "op wp form", "and where to get one"
+      assert_not_requested never
+    end
+
+    def test_wp_create_accepts_custom_fields_alongside_a_type
+      stub_request(:get, "#{BASE}/api/v3/projects/TTP2/types").to_return(
+        status: 200, body: JSON.generate("_embedded" => { "elements" => [{ "id" => 1, "name" => "Task" }] })
+      )
+
+      payload = created_payload do
+        run_op("wp", "create", "--project", "TTP2", "--subject", "x", "--type", "Task",
+               "--link", "customField205=/api/v3/custom_options/685")
+      end
+
+      assert_equal "/api/v3/types/1", payload.dig("_links", "type", "href")
+      assert_equal({ "href" => "/api/v3/custom_options/685" }, payload.dig("_links", "customField205"))
+    end
+
+    # --type is required of every payload, not only one carrying custom fields.
+    # The API would pick a default, but a schema is per project AND type, and the
+    # payload representer reads a custom field only when the type is named — so an
+    # unnamed type is a value silently dropped waiting to happen.
+    def test_wp_create_and_form_both_require_a_type
+      never = stub_request(:post, create_url)
+      never_form = stub_request(:post, form_url)
+
+      _out, err, = run_op!("wp", "create", "--project", "7", "--subject", "x")
+      assert_includes err, "--type <name|id>"
+
+      _out, err, = run_op!("wp", "form", "--project", "7")
+      assert_includes err, "--type <name|id>"
+
+      assert_not_requested never
+      assert_not_requested never_form
+    end
+
+    def test_wp_create_rejects_a_malformed_field_pair
+      never = stub_request(:post, create_url)
+      _out, err, = run_op!("wp", "create", "--project", "7", "--subject", "x", "--type", "5",
+                           "--field", "customField12")
+      assert_includes err, "<name>=<value>"
+      assert_not_requested never
+    end
+
+    def test_wp_create_reports_a_rejected_payload_with_its_body
+      stub_create(status: 422, body: '{"message":"subject can\'t be blank"}')
+
+      out, err, = run_op!("wp", "create", "--project", "7", "--type", "5", "--subject", "x")
+
+      assert_equal({ "message" => "subject can't be blank" }, JSON.parse(out))
+      assert_includes err, "HTTP 422"
+    end
+
     # --- wp list flags ------------------------------------------------------
 
     def wp_list_url(filters_json, page: 1, page_size: 50)

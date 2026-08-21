@@ -171,12 +171,68 @@ module OPilot
       #
       # `notify` is a QUERY parameter, not a body field (the API reads
       # params[:notify] != "false"). Without it a generated tree of tasks mails
-      # every watcher, so both writers default it off.
+      # every watcher, so every writer here defaults it off.
 
       # Create a work package. `payload` is the full v3 body — subject,
       # description, and _links (type, project, parent). Returns [code, hash].
       def create_work_package(payload, notify: false)
         HTTP.post_json("#{@base}/api/v3/work_packages?notify=#{notify}", payload, token: @token)
+      end
+
+      # The values a hierarchy custom field allows, as a flat tree (each item
+      # carries `label`, `depth` and a self link — the href a payload link needs).
+      #
+      # A schema renders allowed values two ways: a list field embeds them
+      # (`schema_with_allowed_collection`), while a hierarchy, user or version
+      # field renders only a LINK to them (`schema_with_allowed_link`). So the
+      # values of a required hierarchy field cannot be read off the form at all,
+      # and this is the endpoint its link points at (`api_v3_paths
+      # .custom_field_items`). No query parameters: the route takes `parent` and
+      # `depth` only, and the whole tree is what a caller filling a field wants.
+      def custom_field_items(custom_field_id)
+        HTTP.get_json("#{@base}/api/v3/custom_fields/#{custom_field_id}/items", token: @token)
+      end
+
+      # Ask whether a create payload would be accepted, WITHOUT creating anything.
+      #
+      # This is the same validation the create runs: the form endpoint drives
+      # `WorkPackages::SetAttributesService` (API::Utilities::Endpoints::Bodied
+      # deduces it) and simply does not save. So a payload the form accepts is a
+      # payload the create accepts, and the defaults the form fills in are the
+      # ones the create fills in too — which is why callers read the errors and
+      # send their own payload unchanged.
+      #
+      # It answers **200 even when the payload is invalid**: validation errors are
+      # this endpoint's normal output (`Endpoints::Form#success?` accepts a call
+      # whose every error is a 422). So the answer is `_embedded.validationErrors`
+      # — keyed by property — and never the status code. `_embedded.schema` says
+      # which fields are `required` and what they allow, per project AND type.
+      def create_work_package_form(payload)
+        HTTP.post_json("#{@base}/api/v3/work_packages/form", payload, token: @token)
+      end
+
+      # Relate two work packages — `create wp` links the work package it creates
+      # back to the one whose comment asked for it.
+      #
+      # The URL is the PER-WORK-PACKAGE route, not the global /api/v3/relations
+      # this class reads from above: that collection has index, show, patch and
+      # delete, and no POST. Only the GET on this route is the 308 the read
+      # method's comment describes.
+      #
+      # Both ids must be NUMERIC (the route param is typed Integer, and the `to`
+      # link addresses a work-package id), so a semantic id must be resolved
+      # first. The route work package becomes the relation's `from` — the
+      # endpoint sets it — so the payload names only `to`.
+      #
+      # `relates` is the one symmetric type and carries no reverse in
+      # Relation::TYPES, so OpenProject stores the direction as written.
+      def create_relation(from_id, to_id, type: "relates", notify: false)
+        HTTP.post_json(
+          "#{@base}/api/v3/work_packages/#{from_id}/relations?notify=#{notify}",
+          { "type" => type,
+            "_links" => { "to" => { "href" => "/api/v3/work_packages/#{to_id}" } } },
+          token: @token
+        )
       end
 
       # Update a work package. v3 uses optimistic locking: the PATCH must carry

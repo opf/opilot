@@ -389,7 +389,12 @@ module OPilot
     end
 
     # Conversational reply to an @opilot comment on a work package (read-only tools).
-    def self.chat(item_id:, subject:, item:, plan:, message:, related: nil)
+    #
+    # `can_create_wp:` is whether `create wp` is available on this instance (it
+    # needs a non-empty allowlist — see Agent#create_wp_enabled?). It defaults to
+    # false so a caller nobody updated advertises nothing, rather than offering a
+    # command opilot would refuse.
+    def self.chat(item_id:, subject:, item:, plan:, message:, related: nil, can_create_wp: false)
       <<~PROMPT
         You are opilot, an AI code assistant working on OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
@@ -414,7 +419,7 @@ module OPilot
         Once the pull request exists, changes to the code are asked for **on the pull
         request**, not here — say so instead of promising a change on this work package.
         - @opilot grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions
-        - @opilot summarize [focus] — recap the thread: state, decisions, open questions
+        - @opilot summarize [focus] — recap the thread: state, decisions, open questions#{create_wp_line(can_create_wp)}
 
         USER: #{message}
 
@@ -424,6 +429,84 @@ module OPilot
         question's audience.
 
         #{OP_COMMENT_FORMAT}
+      PROMPT
+    end
+
+    # The `create wp` line of chat's command list, present only when the command
+    # is actually available. Never promise a command that will be refused.
+    def self.create_wp_line(enabled)
+      return "" unless enabled
+      "\n- @opilot create wp <what> — split something out of this thread into its own work package"
+    end
+
+    # Draft a NEW work package from something in this thread — `@opilot create wp
+    # for Rosanna's suggestion` (read-only tools; the runner does the POST).
+    #
+    # A work package can never be deleted: the API client has no DELETE verb, so
+    # nothing downstream can undo a wrong draft. That is why the NEEDS_INFO gate
+    # here is not a nicety — when the request points at nothing in the thread, a
+    # question is the only acceptable answer.
+    #
+    # `types` are the type names this project really offers, so the draft cannot
+    # name one that does not exist. The description is NOT written to
+    # OP_COMMENT_FORMAT: a description renders in the document pane, not the
+    # narrow activity column, and it does not pass through
+    # Clients::OpenProject#add_comment, so nothing demotes its headings.
+    #
+    # The answer sits after a trailing `DRAFT:` marker for REPLY_CONTRACT's
+    # reason, learned here the expensive way: the first version of this prompt
+    # demanded `SUBJECT:` on line 1, and a real run spent its entire output limit
+    # weighing whether a smoke-test ticket was "really a bug" — stopping with
+    # `length` having written no draft at all. A leading sentinel fights the
+    # narration instinct; a trailing one collects it.
+    def self.create_wp(item_id:, subject:, item:, request:, project:, types:, related: nil)
+      <<~PROMPT
+        You are opilot, an AI code assistant reading OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
+        #{READ_ONLY}
+        A reader asks you to create a NEW work package out of something in this
+        thread. Draft it. The runner creates it in project "#{project}" and links it
+        back to this work package.
+
+        ISSUE: #{item}  (JSON — fields: subject, description, comments[])#{related_line(related)}
+        (likely already in your session context — read the file only if it isn't;
+        on a fresh session read the issue, INCLUDING its comments, first)
+
+        WHAT THE READER ASKS FOR: #{request}
+
+        FIRST, find what they mean. The request points into this thread — a person's
+        name, a suggestion, an idea somebody raised. Find that content and use it.
+
+        END YOUR OUTPUT with a line containing exactly `DRAFT:`, and put the answer
+        after it. Only what follows the last `DRAFT:` line is used; everything
+        before it is discarded, so any thinking you need goes there — but keep it
+        to a few lines. You have a hard output limit: a run that spends it
+        deliberating produces NOTHING, and this task is not hard enough to be worth
+        that. Decide, then write the draft.
+
+        After `DRAFT:`, answer with EITHER
+
+        (a) the single word NEEDS_INFO, then the specific questions you need
+        answered — when you cannot find what the request points at, when more than
+        one thing matches, or when the request is too vague to name one piece of
+        work. Do NOT guess and do NOT invent the content. A work package cannot be
+        deleted, so a wrong one stays forever.
+
+        (b) or the draft, in EXACTLY this shape:
+          Line 1: `SUBJECT: <one line, under 120 characters, no ticket id>`
+          Line 2: `TYPE: <one of: #{types}>`
+          Then a blank line, then the description.
+
+        THE DESCRIPTION:
+        - State what the new work package is about, and what a person must do or
+          decide. Use short paragraphs or bullets.
+        - Take the content from THIS thread. Say who raised it and quote or
+          summarize what they wrote. Do not add requirements nobody asked for, and
+          do not invent reproduction steps, versions, or acceptance criteria.
+        - Keep anything the thread does not answer as an open question, named as one.
+        - Write no headings above `##`, and add no title line — the subject is the title.
+        - Do not write "@opilot" anywhere.
+
+        #{PLAIN_ENGLISH}
       PROMPT
     end
 

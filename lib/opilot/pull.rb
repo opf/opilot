@@ -316,6 +316,12 @@ module OPilot
       # because publishing is what the handler does.
       when /\A@opilot\s+(?:build|fix)\b\s*(.*)/im
         [:ship, $1.strip]
+      # The second command word. Two words, because `create` alone would read as
+      # a request to create anything at all — a branch, a PR, a comment — and the
+      # noun is what makes it one operation. #strip_mention has already collapsed
+      # the whitespace, so "create   wp" arrives normalised.
+      when /\A@opilot\s+create\s+(?:wp|work\s+package)\b\s*(.*)/im
+        [:create_wp, $1.strip]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
       # trailing text folded in as a focus hint (see Prompts::LENSES).
       when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts.lens($1, $2)]
@@ -334,14 +340,26 @@ module OPilot
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # The user-facing work package id: semantic ("PROJ-123") when the instance
-    # runs in semantic mode, numeric otherwise. The API accepts either form in
-    # work-package routes, so this is the only id opilot needs to keep.
-    # Falls back to "id" for instances that predate the displayId field.
+    # The user-facing work package id — see Helpers.display_id, which the agent's
+    # `create wp` reply shares.
     def wp_display_id(wp)
-      id = wp["displayId"]
-      (id.nil? || id.to_s.empty? ? wp["id"] : id).to_s
+      Helpers.display_id(wp)
     end
+
+    # The keys a refreshed item.json keeps. Everything else in the file is a
+    # mirror of the API and is rebuilt from the response, but these are opilot's
+    # own bookkeeping and exist nowhere else.
+    #
+    # The two "noted once" markers are here for the same reason they exist at all:
+    # both promise ONE comment per work package, ever, and dropping the marker on
+    # the next refresh would turn that into one comment per change to the work
+    # package — which a commenter can cause at will.
+    CARRIED_KEYS = %w[
+      last_acted_comment_at
+      last_opilot_comment_id
+      refusal_noted_at
+      create_wp_refusal_noted_at
+    ].freeze
 
     def fetch_work_package_item(wp)
       wp_id = wp_display_id(wp)
@@ -369,9 +387,7 @@ module OPilot
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
-        %w[last_acted_comment_at last_opilot_comment_id].each do |key|
-          full[key] = prev[key] if prev.key?(key)
-        end
+        CARRIED_KEYS.each { |key| full[key] = prev[key] if prev.key?(key) }
       end
       item_dir.mkpath
       item_path.write(JSON.generate(full))
@@ -404,7 +420,7 @@ module OPilot
         "id"          => wp_display_id(wp),
         "subject"     => wp["subject"],
         "type"        => wp.dig("_embedded", "type", "name"),
-        "url"         => "#{@ctx.op_url}/work_packages/#{wp_display_id(wp)}",
+        "url"         => Helpers.wp_url(@ctx, wp_display_id(wp)),
         "status"      => wp.dig("_embedded", "status", "name"),
         "priority"    => wp.dig("_embedded", "priority", "name"),
         "assignee"    => wp.dig("_embedded", "assignee", "name") || "unassigned",

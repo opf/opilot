@@ -78,14 +78,11 @@ module OPilot
 
       # `pd generate-wp` POSTs work packages into this project, and a token that can
       # read but not write only reveals that after a proposal has been written and a
-      # spec PR opened. OpenProject renders the `createWorkPackage*` links only for
-      # a user with :add_work_packages in the project, so their absence is a real
-      # answer rather than a guess.
-      WRITE_LINKS = %w[createWorkPackageImmediately createWorkPackage].freeze
-
+      # spec PR opened. The link check itself is Helpers.create_wp_allowed? —
+      # `@opilot create wp` asks the same question of an arbitrary project, and one
+      # definition cannot drift.
       def check_write_permission(project_id, body, problems)
-        links = body["_links"] || {}
-        return if WRITE_LINKS.any? { |name| links.key?(name) }
+        return if Helpers.create_wp_allowed?(body)
         problems << "this token cannot create work packages in project #{project_id} " \
                     "(no :add_work_packages) — `pd generate-wp` would fail"
       end
@@ -96,7 +93,7 @@ module OPilot
           problems << "could not list types for project #{project_id} (HTTP #{code})"
           return []
         end
-        (body&.dig("_embedded", "elements") || []).map { |t| { "id" => t["id"], "name" => t["name"].to_s } }
+        Helpers.type_list(body)
       end
 
       def fetch_statuses(problems)
@@ -111,10 +108,8 @@ module OPilot
         []
       end
 
-      # Case-insensitive: instances style these names inconsistently ("Feature",
-      # "FEATURE"), and an exact-match failure here would be pure friction.
       def find_type(types, name, problems)
-        found = types.find { |t| t["name"].casecmp?(name) }
+        found = Helpers.find_type(types, name)
         problems << "no work-package type named #{name.inspect} on this project" unless found
         found
       end

@@ -119,6 +119,58 @@ module OPilot
       [options.uniq { |o| o["n"] }.sort_by { |o| o["n"] }, lines.join.lstrip]
     end
 
+    # Read a `create wp` draft: a SUBJECT: line, an optional TYPE: line, then the
+    # description (Prompts.create_wp). Returns nil when there is no SUBJECT line,
+    # which the caller treats as an unusable answer — the same shape as an
+    # unusable OPTIONS block, and for the same reason: a work package cannot be
+    # deleted, so a draft opilot cannot read must never reach the POST.
+    #
+    # Only the LEADING lines are read as fields, so a description that discusses
+    # a "SUBJECT:" line of its own cannot move the subject.
+    def self.parse_wp_draft(body)
+      lines = body.to_s.lines
+      lines.shift while lines.first && lines.first.strip.empty?
+      subject = lines.first.to_s.strip[/\ASUBJECT:\s*(.+)\z/i, 1]
+      return nil if subject.nil? || subject.strip.empty?
+      lines.shift
+      type = lines.first.to_s.strip[/\ATYPE:\s*(.+)\z/i, 1]
+      lines.shift if type
+      { "subject"     => subject.strip,
+        "type"        => type.to_s.strip,
+        "description" => lines.join.strip }
+    end
+
+    # A project's work-package types as [{ "id", "name" }], from a
+    # Clients::OpenProject#project_types response.
+    def self.type_list(body)
+      ((body || {}).dig("_embedded", "elements") || [])
+        .map { |t| { "id" => t["id"], "name" => t["name"].to_s } }
+    end
+
+    # The type with this name, case-insensitively — instances style these names
+    # inconsistently ("Feature", "FEATURE"), so an exact match would be pure
+    # friction. One definition, because `pd init`, `@opilot create wp` and
+    # `./opilot op wp create` all resolve a type the operator or the writer named,
+    # and a name that resolves in one must resolve in all three.
+    def self.find_type(types, name)
+      return nil if name.to_s.strip.empty?
+      types.to_a.find { |t| t["name"].to_s.casecmp?(name.to_s) }
+    end
+
+    # Whether this token may create work packages in `project_json` (a project
+    # resource body). OpenProject renders these links only for a user who holds
+    # :add_work_packages, so their absence is a real answer rather than a guess —
+    # and a preflight beats a 403 raised after an LLM call has already run.
+    #
+    # It lives here, not in PD::ResolvedIds where it started, because agent.rb
+    # needs it too and nothing under pd/ may be required at boot.
+    CREATE_WP_LINKS = %w[createWorkPackageImmediately createWorkPackage].freeze
+
+    def self.create_wp_allowed?(project_json)
+      links = (project_json || {})["_links"] || {}
+      CREATE_WP_LINKS.any? { |name| links.key?(name) }
+    end
+
     # Resolve a reader's answer to the plan-call focus for the option they chose,
     # or nil when the answer names no option (it is then plain direction). A
     # **leading** number selects: "2", "option 2" and "2 but keep the toast" all
@@ -218,7 +270,8 @@ module OPilot
     # runners (agent and the terminal fix/plan flow) via #state_for.
     ItemState = Struct.new(:item_id, :subject, :branch, :repos, :bases, :item_dir, :plan_file,
                            :item_file, :related_file, :target_repos_file,
-                           :target_base_file, :options_file, :session_file, keyword_init: true) do
+                           :target_base_file, :options_file, :created_wps_file,
+                           :session_file, keyword_init: true) do
       # Per-repo artifact directory (<id>/repos/<name>/), created on demand.
       def repo_dir(repo)
         dir = item_dir / "repos" / repo_name(repo)
@@ -257,6 +310,23 @@ module OPilot
       "[#{label}](#{ctx.op_url}/documents/#{id})"
     end
 
+    # The user-facing id of a work-package resource: semantic ("PROJ-123") when
+    # the instance runs in semantic mode, numeric otherwise. The API accepts
+    # either form in work-package routes, so this is the only id opilot keeps.
+    # Falls back to "id" for instances that predate the displayId field.
+    #
+    # One definition, because the poll cache and every link opilot publishes must
+    # name a work package the same way.
+    def self.display_id(wp)
+      id = (wp || {})["displayId"]
+      (id.nil? || id.to_s.empty? ? (wp || {})["id"] : id).to_s
+    end
+
+    # The browser URL of a work package on this instance.
+    def self.wp_url(ctx, id)
+      "#{ctx.op_url}/work_packages/#{id}"
+    end
+
     # A work package id as the user types it: numeric ("59942") or semantic
     # ("PROJ-123", instances in semantic-identifier mode). Mirrors OpenProject's
     # WorkPackage::SemanticIdentifier::ID_ROUTE_CONSTRAINT.
@@ -282,11 +352,27 @@ module OPilot
       Time.now.strftime(LOG_TIME_FORMAT)
     end
 
+    # Everything after the LAST `<MARKER>:` line, or the whole text when the
+    # marker is absent.
+    #
+    # This is the shape every "the answer is the marked part" contract uses, and
+    # the reason is always the same: a model under pressure narrates before it
+    # answers, however firmly a prompt says not to. A LEADING sentinel fights that
+    # instinct — and loses expensively, since a model can spend its whole output
+    # budget getting ready to comply and stop with `length`, having produced
+    # nothing. A trailing marker turns the same narration into discarded scratch.
+    def self.after_marker(text, marker)
+      text.to_s.split(/^#{Regexp.escape(marker)}:[ \t]*$/, -1).last.to_s.strip
+    end
+
     # The PR-reply prompts (Prompts::REPLY_CONTRACT) mark the comment to post
     # with a final "REPLY:" line; anything the model produced before it —
     # narration about tooling trouble, "here's my reply:" framing — is discarded
     # rather than posted. Output without the marker is posted whole, and the
     # last marker wins if the text contains several.
+    #
+    # The marker may carry the reply on its own line here, so this one does not
+    # anchor the line end the way .after_marker does.
     def self.extract_reply(text)
       text.to_s.split(/^REPLY:[ \t]*/, -1).last.to_s.strip
     end
@@ -613,6 +699,11 @@ module OPilot
         # waiting for a number"; a chosen option leaves it in place, so the
         # reporter can read the list again after the prototype exists.
         options_file:      dir / "options.json",
+        # Work packages `@opilot create wp` has already created FROM this one,
+        # keyed by the trigger comment's timestamp. Written the moment a POST
+        # succeeds: a work package can never be deleted, so a re-fired trigger
+        # must find the record rather than create a second work package.
+        created_wps_file:  dir / "created_wps.json",
         session_file:      dir / "session_id"
       )
     end
