@@ -31,19 +31,13 @@ module OPilot
       def revparse(_ref); "sha"; end          # branch "exists"
     end
 
-    CtxStruct = Struct.new(:contributor_token, :state_dir, :log_file, :progress_file, :repos) do
-      def default_repo; repos.default; end
-      def op_host; "test.host"; end            # WP mirror namespace
-      def op_url; "https://test.host"; end     # instance URL (for WP-link matching)
-    end
+    include TestFixtures
 
     def setup
       @tmpdir = Pathname(Dir.mktmpdir)
-      state   = @tmpdir / ".opilot"
-      state.mkpath
-      registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: "/op")
-      @repo = registry.default
-      @ctx = CtxStruct.new("bot-tok", state, @tmpdir / "chomp.log", @tmpdir / "progress.txt", registry)
+      @ctx    = build_ctx(@tmpdir, host: "test.host", contributor_token: "bot-tok")
+      @repo   = @ctx.repos.default
+      state   = @ctx.state_dir
 
       @dir = state / "work_packages" / "test.host" / "42"
       (@dir / "repos" / @repo.name).mkpath

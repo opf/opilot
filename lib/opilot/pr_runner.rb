@@ -201,10 +201,7 @@ module OPilot
     # The <id>/repos/<name>/ dirs holding a shipped PR for this WP (mirrors
     # GhPull#shipped_pr_dirs, scoped to one WP).
     def pr_dirs_for(wp_id)
-      repos_dir = Helpers.item_dir(@ctx, wp_id) / "repos"
-      return [] unless repos_dir.exist?
-      repos_dir.children.select(&:directory?).sort
-               .select { |d| Helpers.file_has_content?(d / "pr_url.txt") }
+      Helpers.pr_dirs_in(Helpers.item_dir(@ctx, wp_id))
     end
 
     # Refresh one PR, reporting (not raising) failures so a WP that shipped to
@@ -428,15 +425,11 @@ module OPilot
         log_script "Merge conflicts resolved and committed."
         record_progress(wp_id, branch, "refresh-merge:#{repo.name}")
       else
-        wt.add(all: true)
-        diff = wt.diff("HEAD")
-        return if diff.entries.empty?
-        diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
+        diff = stage_all(wt)
+        return unless diff
         subject = generate_commit_subject(diff)
         label   = wp_label(wp_id)
-        wt.commit(subject.empty? ? "[#{label}] refresh PR" : "[#{label}] #{subject}")
-        c = wt.log(1).execute.first
-        log_script "Committed: #{c.sha[0, 7]} #{c.message}"
+        commit_and_log(wt, subject.empty? ? "[#{label}] refresh PR" : "[#{label}] #{subject}")
         record_progress(wp_id, branch, "refresh-commit:#{repo.name}")
       end
     end

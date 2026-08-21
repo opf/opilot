@@ -60,17 +60,9 @@ module OPilot
     def shipped_pr_dirs
       root = Helpers.items_dir(@ctx)
       return [] unless root.exist?
-      root.children.select(&:directory?).sort.flat_map do |item_dir|
-        repos_dir = item_dir / "repos"
-        next [] unless repos_dir.exist?
-        repos_dir.children.select(&:directory?).sort
-                 .select { |d| Helpers.file_has_content?(d / "pr_url.txt") }
-      end
+      root.children.select(&:directory?).sort.flat_map { |dir| Helpers.pr_dirs_in(dir) }
     end
 
-    # Poll every watched PR and return the new @opilot comments as GhIntents,
-    # oldest first so a review's several inline comments are each handled in turn.
-    # `scan_from_at` (ISO8601) is the floor cutoff entered at startup.
     # The per-change dirs holding a `pd` spec PR. Same cache/act-state shape as a
     # shipped PR dir, in the change namespace instead of the work-package one —
     # a proposal is keyed by change id and has no work package until it is
@@ -82,6 +74,9 @@ module OPilot
           .select { |d| Helpers.file_has_content?(d / "pr_url.txt") }
     end
 
+    # Poll every watched PR and return the new @opilot comments as GhIntents,
+    # oldest first so a review's several inline comments are each handled in turn.
+    # `scan_from_at` (ISO8601) is the floor cutoff entered at startup.
     def poll_intents(scan_from_at)
       @scan_from_at = scan_from_at
       # A dir whose PR was already seen merged/closed (pr_done, set below when
@@ -107,23 +102,13 @@ module OPilot
     # Advance a PR's replay cutoff past a comment we've acted on (mirrors
     # Pull#mark_acted). Keyed by item id + repo so each PR tracks its own state.
     def mark_acted(item_id, repo_name, comment_at, spec: false)
-      dir   = pr_dir(item_id, repo_name, spec: spec)
-      state = gh_state(dir)
-      state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(pr_dir(item_id, repo_name, spec: spec)) do |state|
+        state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
+      end
     end
 
-    # Remember a reply opilot posted so its own comment is never re-detected as
-    # a trigger (mirrors Pull#record_opilot_comment). Capped so the list can't
-    # grow without bound on a long-lived PR.
     def record_opilot_comment(item_id, repo_name, comment_id, spec: false)
-      return unless comment_id
-      dir   = pr_dir(item_id, repo_name, spec: spec)
-      state = gh_state(dir)
-      ids   = (state["opilot_comment_ids"] || []).map(&:to_s)
-      ids << comment_id.to_s unless ids.include?(comment_id.to_s)
-      state["opilot_comment_ids"] = ids.last(200)
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      append_opilot_comment(pr_dir(item_id, repo_name, spec: spec), comment_id)
     end
 
     # Record that this dir's PR has been seen merged/closed, so the poller stops
@@ -131,20 +116,16 @@ module OPilot
     # re-fetched forever). Merged is irreversible; a closed PR *can* be reopened,
     # which is what clear_pr_done (driven by the `pr` command) is for.
     def mark_pr_done(item_id, repo_name, spec: false)
-      dir   = pr_dir(item_id, repo_name, spec: spec)
-      state = gh_state(dir)
-      state["pr_done"] = true
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(pr_dir(item_id, repo_name, spec: spec)) { |state| state["pr_done"] = true }
     end
 
     # Resume polling a PR that turned out to be open again (reopened after a
-    # close). No-op when the flag isn't set, so routine refreshes don't churn
-    # the state file.
+    # close). Checked before the update rather than inside it, so an unset flag
+    # writes nothing and routine refreshes don't churn the state file.
     def clear_pr_done(item_id, repo_name)
-      dir   = pr_dir(item_id, repo_name)
-      state = gh_state(dir)
-      return unless state.delete("pr_done")
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      dir = pr_dir(item_id, repo_name)
+      return unless gh_state(dir)["pr_done"]
+      update_gh_state(dir) { |state| state.delete("pr_done") }
     end
 
     # Record that opilot has addressed a head SHA's CI failure. Unlike comment
@@ -152,11 +133,10 @@ module OPilot
     # twice on the same commit, and `ci_attempts` caps how many times opilot
     # will chase a PR's CI before giving up.
     def mark_ci_acted(item_id, repo_name, head_sha)
-      dir   = pr_dir(item_id, repo_name)
-      state = gh_state(dir)
-      state["ci_acted_sha"] = head_sha
-      state["ci_attempts"]  = (state["ci_attempts"] || 0) + 1
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(pr_dir(item_id, repo_name)) do |state|
+        state["ci_acted_sha"] = head_sha
+        state["ci_attempts"]  = (state["ci_attempts"] || 0) + 1
+      end
     end
 
     private
@@ -286,9 +266,7 @@ module OPilot
     # for it. Separate from ci_acted_sha (a failure we chased) since it must NOT
     # touch the attempt counter.
     def mark_ci_quiet(dir, head_sha)
-      state = gh_state(dir)
-      state["ci_quiet_sha"] = head_sha
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(dir) { |state| state["ci_quiet_sha"] = head_sha }
     end
 
     # Post a single "I'm giving up on CI" note once the attempt cap is hit, so a
@@ -301,8 +279,7 @@ module OPilot
         "🤖 CI still fails after #{@ctx.ci_max_attempts} automatic fix attempt(s). " \
         "This PR needs a human. I stop the automatic CI fixes for this PR."
       )
-      state["ci_gave_up"] = true
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(dir) { |s| s["ci_gave_up"] = true }
     rescue => e
       log_script "gh-agent: CI give-up notice failed on #{repo}##{number} — #{e.message}"
     end

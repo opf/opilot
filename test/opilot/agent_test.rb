@@ -4,6 +4,12 @@ module OPilot
   class AgentTest < Minitest::Test
     # ── fakes ──────────────────────────────────────────────────────────────────
 
+    # The git doubles are shared (test/support/fixtures.rb); aliased here so the
+    # nested FakeWorktree below resolves them lexically.
+    FakeCommit = TestFixtures::FakeCommit
+    FakeLog    = TestFixtures::FakeLog
+    FakeDiff   = TestFixtures::FakeDiff
+
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
       def initialize(plan: "## Plan\nDo the thing.\n",
@@ -96,24 +102,6 @@ module OPilot
       def open_pr(*); raise "git push failed for branch fix/x"; end
     end
 
-    class FakeCommit
-      def sha; "abcdef1234567"; end
-      def message; "fix: something"; end
-    end
-
-    class FakeLog
-      def initialize(has) @has = has end
-      def between(_a, _b); self; end
-      def execute; @has ? [FakeCommit.new] : []; end
-      def first; @has ? FakeCommit.new : nil; end
-    end
-
-    class FakeDiff
-      def initialize(has_changes) @has_changes = has_changes end
-      def entries; @has_changes ? [:change] : []; end
-      def stats; { files: { "app/x.rb" => { insertions: 2, deletions: 1 } } }; end
-    end
-
     # A clean tree, so Helpers#sync_base! is free to move HEAD to origin/<base>.
     class FakeStatus
       def changed; {}; end
@@ -134,7 +122,7 @@ module OPilot
       def fetch(remote, **opts); @fetched << [remote, opts]; end
       def status; FakeStatus.new; end
       def config(key, value); @configs << [key, value]; end
-      def log(*_args); FakeLog.new(@has_commits); end
+      def log(*_args); FakeLog.new(@has_commits ? [FakeCommit.new] : []); end
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end
       def commit(msg); @commits << msg; @has_commits = true; end
@@ -142,22 +130,12 @@ module OPilot
 
     # ── harness ────────────────────────────────────────────────────────────────
 
+    include TestFixtures
+
     def setup
       @tmpdir = Dir.mktmpdir
-      state_dir = Pathname(@tmpdir) / ".opilot"
-      state_dir.mkpath
-      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @ctx = Struct.new(
-        :script_dir, :state_dir, :op_url, :token, :state_container,
-        :allowed_op_user_ids, :log_file, :progress_file, :repos
-      ) do
-        def default_repo; repos.default; end
-        def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
-      end.new(
-        Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
-        "/state", [],
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
-      )
+      @ctx = build_ctx(@tmpdir)
+      registry = @ctx.repos
 
       @repo    = registry.default
       @harness  = FakeHarness.new

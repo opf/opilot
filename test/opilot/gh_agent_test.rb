@@ -60,21 +60,11 @@ module OPilot
       def refresh_one(wp_id, repo_name); @refreshed << [wp_id, repo_name]; end
     end
 
-    class FakeCommit
-      def sha; "abcdef1234567"; end
-      def message; "[#42] address PR feedback"; end
-    end
-
-    class FakeLog
-      def execute; [FakeCommit.new]; end
-    end
-
-    class FakeDiff
-      def initialize(has) @has = has end
-      def entries; @has ? [:change] : []; end
-      def stats; { files: { "app/x.rb" => { insertions: 2, deletions: 1 } } }; end
-      def patch; "diff --git a/app/x.rb b/app/x.rb\n+  return if total.nil?\n"; end
-    end
+    # Shared git doubles (test/support/fixtures.rb), aliased so the nested
+    # FakeWorktree below resolves them lexically.
+    FakeCommit = TestFixtures::FakeCommit
+    FakeLog    = TestFixtures::FakeLog
+    FakeDiff   = TestFixtures::FakeDiff
 
     class FakeWorktree
       attr_reader :commits, :configs, :fetched, :resets, :checkouts
@@ -90,27 +80,18 @@ module OPilot
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end
       def commit(msg); @commits << msg; end
-      def log(*_args); FakeLog.new; end
+      def log(*_args); FakeLog.new([FakeCommit.new]); end
     end
+
+    include TestFixtures
 
     def setup
       @tmpdir = Dir.mktmpdir
-      state_dir = Pathname(@tmpdir) / ".opilot"
-      state_dir.mkpath
-      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @repo = registry.default   # by_upstream("o/r") falls back to the default repo
-      @ctx = Struct.new(
-        :state_dir, :state_container,
-        :contributor_token, :allowed_gh_users, :log_file, :progress_file, :repos
-      ) do
-        def op_host; "test.host"; end   # WP mirror namespace
-      end.new(
-        state_dir, "/state",
-        # nil token: keeps Helpers.adopt_github_author! (called in commit_followup)
-        # a no-op so the suite never makes a real GitHub call; handle() uses the
-        # injected @github, not a ctx token.
-        nil, ["thykel"], Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry
-      )
+      # contributor_token stays nil: it keeps Helpers.adopt_github_author!
+      # (called in commit_followup) a no-op so the suite never makes a real
+      # GitHub call; handle() uses the injected @github, not a ctx token.
+      @ctx  = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"])
+      @repo = @ctx.repos.default   # by_upstream("o/r") falls back to the default repo
       (@ctx.state_dir / "work_packages" / "test.host" / "42").mkpath
 
       @harness  = FakeHarness.new

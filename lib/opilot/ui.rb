@@ -18,8 +18,7 @@ module OPilot
         # Only work packages opilot has acted on — not every polled (cached) WP.
         # options.json counts: opilot answered with implementation options and is
         # waiting for a number, which is action taken and work still open.
-        next unless (dir / "plan.md").exist? || (dir / "pr.md").exist? ||
-                    (dir / "options.json").exist? || pr_files.any?
+        next unless (dir / "plan.md").exist? || (dir / "options.json").exist? || pr_files.any?
         item = Helpers.safe_json_read(dir / "item.json") || {}
         {
           id:       dir.basename.to_s,

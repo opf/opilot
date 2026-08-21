@@ -62,6 +62,32 @@ module OPilot
       Helpers.safe_json_read(dir / "gh_pr.json") || {}
     end
 
+    # Read gh_pr.json, let the block mutate it, write it back — the shape every
+    # act-state update in both pollers takes.
+    #
+    # It always writes. A caller that must NOT write when nothing changed
+    # (GhPull#clear_pr_done — a routine `dev refresh` should not churn the state
+    # file of a PR that was never closed) checks the state before calling.
+    def update_gh_state(dir)
+      state = gh_state(dir)
+      yield state
+      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      state
+    end
+
+    # Remember a reply opilot posted so its own comment is never re-detected as
+    # a trigger (mirrors Pull#record_opilot_comment). Capped so the list cannot
+    # grow without bound on a long-lived PR. Identical for both pollers — only
+    # the way each resolves `dir` differs.
+    def append_opilot_comment(dir, comment_id)
+      return unless comment_id
+      update_gh_state(dir) do |state|
+        ids = (state["opilot_comment_ids"] || []).map(&:to_s)
+        ids << comment_id.to_s unless ids.include?(comment_id.to_s)
+        state["opilot_comment_ids"] = ids.last(200)
+      end
+    end
+
     # Check-run conclusions that mean the PR's CI is broken in a way worth a
     # fix attempt. `cancelled`/`skipped`/`neutral`/`success` are not actionable.
     CI_FAILURE_CONCLUSIONS = %w[failure timed_out action_required startup_failure].freeze

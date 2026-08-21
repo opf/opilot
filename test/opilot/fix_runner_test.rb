@@ -55,26 +55,13 @@ module OPilot
       private def branch_has_commits?(_st, _repo); true; end
     end
 
+    include TestFixtures
+
     def setup
       @tmpdir = Dir.mktmpdir
-      state_dir = Pathname(@tmpdir) / ".opilot"
-      state_dir.mkpath
-      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @ctx = Struct.new(
-        :script_dir, :state_dir, :op_url, :token, :state_container,
-        :log_file, :progress_file, :repos,
-        :contributor_token
-      ) do
-        def default_repo; repos.default; end
-        def op_host; "op.example.com"; end                 # WP mirror namespace (derived from op_url)
-      end.new(
-        Pathname(@tmpdir), state_dir, "https://op.example.com", "tok",
-        "/state",
-        Pathname(@tmpdir) / "chomp.log", Pathname(@tmpdir) / "progress.txt", registry,
-        # A contributor token, because `ship` now refuses without one — as it must,
-        # since it ends in a push. The token-less cases are tested explicitly below.
-        "contributor-tok"
-      )
+      # A contributor token, because `ship` refuses without one — as it must,
+      # since it ends in a push. The token-less cases are tested explicitly below.
+      @ctx = build_ctx(@tmpdir, contributor_token: "contributor-tok")
     end
 
     def teardown
@@ -93,6 +80,15 @@ module OPilot
       dir.mkpath
       (dir / "item.json").write(JSON.generate(data))
       data
+    end
+
+    # Mark a WP shipped the way Publish really does: per target repo, under
+    # <id>/repos/<name>/. The flat <id>/pr_url.txt these tests used to write
+    # has not existed since opilot became multi-repo.
+    def write_shipped(id, url, repo: "openproject")
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / id.to_s / "repos" / repo
+      dir.mkpath
+      (dir / "pr_url.txt").write(url)
     end
 
     def runner(single: nil, singles: nil, harness: nil)
@@ -153,12 +149,49 @@ module OPilot
 
     def test_ship_reports_already_shipped
       data = write_item(4, "Shipped one")
-      (@ctx.state_dir / "work_packages" / "op.example.com" / "4" / "pr_url.txt").write("https://github.com/o/r/pull/9")
+      write_shipped(4, "https://github.com/o/r/pull/9")
       r = runner(single: data)
 
       out, = capture_io { r.ship_ids("4") }
 
-      assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
+      assert_includes out, "Already shipped (openproject): https://github.com/o/r/pull/9"
+    end
+
+    # The guard runs before the plan call and before the approval prompt, for
+    # every verb — `plan` included, which used to fall through and report the
+    # plan as approved.
+    def test_plan_reports_already_shipped_without_planning
+      data = write_item(11, "Shipped one")
+      write_shipped(11, "https://github.com/o/r/pull/21")
+      harness = FakePlanHarness.new
+      r = FixRunner.new(@ctx, pull: FakePull.new(single: data), harness: harness, publish: nil)
+
+      out, = capture_io { r.plan_ids("11") }
+
+      assert_includes out, "Already shipped (openproject): https://github.com/o/r/pull/21"
+      refute_includes out, "plan approved", "a shipped WP is not re-planned"
+      assert_empty harness.prompts, "the guard must fire before any LLM call"
+    end
+
+    # A WP that shipped to only one of its two target repos still has work left,
+    # so the guard must not fire — `all?`, not `any?`.
+    def test_a_partially_shipped_wp_is_not_reported_as_shipped
+      @ctx = build_ctx(@tmpdir, contributor_token: "contributor-tok", repos: [
+        { "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev" },
+        { "name" => "ck", "upstream" => "opf/ck", "base" => "master" }
+      ])
+
+      data = write_item(12, "Half shipped")
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / "12"
+      (dir / "target_repos.json").write(JSON.generate(%w[openproject ck]))
+      write_shipped(12, "https://github.com/o/r/pull/22")   # openproject only
+      harness = FakePlanHarness.new
+      r = FixRunner.new(@ctx, pull: FakePull.new(single: data), harness: harness, publish: nil)
+
+      out, = with_stdin("s\n") { capture_io { r.plan_ids("12") } }
+
+      refute_includes out, "Already shipped", "the remaining repo still needs the fix"
+      refute_empty harness.prompts, "planning still runs"
     end
 
     # With several ids a fetch failure on one is logged, not fatal, and the
@@ -166,13 +199,13 @@ module OPilot
     # missing, one already shipped) so the run completes without an agent.
     def test_ship_with_multiple_ids_continues_past_a_fetch_failure
       shipped = write_item(7, "Shipped one")
-      (@ctx.state_dir / "work_packages" / "op.example.com" / "7" / "pr_url.txt").write("https://github.com/o/r/pull/9")
+      write_shipped(7, "https://github.com/o/r/pull/9")
       r = runner(singles: { "999" => nil, "7" => shipped })
 
       out, = capture_io { r.ship_ids("999", "7") }
 
       assert_match(/could not fetch work package #999/, out)
-      assert_includes out, "Already shipped: https://github.com/o/r/pull/9"
+      assert_includes out, "Already shipped (openproject): https://github.com/o/r/pull/9"
     end
 
     def test_commit_ids_commits_locally_without_publishing

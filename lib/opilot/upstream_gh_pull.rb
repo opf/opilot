@@ -60,20 +60,13 @@ module OPilot
     end
 
     def mark_acted(repo_str, number, comment_at)
-      dir   = pr_dir(repo_str, number)
-      state = gh_state(dir)
-      state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      update_gh_state(pr_dir(repo_str, number)) do |state|
+        state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
+      end
     end
 
     def record_opilot_comment(repo_str, number, comment_id)
-      return unless comment_id
-      dir   = pr_dir(repo_str, number)
-      state = gh_state(dir)
-      ids   = (state["opilot_comment_ids"] || []).map(&:to_s)
-      ids << comment_id.to_s unless ids.include?(comment_id.to_s)
-      state["opilot_comment_ids"] = ids.last(200)
-      Helpers.write_json_atomic(dir / "gh_pr.json", state, "gh_pr")
+      append_opilot_comment(pr_dir(repo_str, number), comment_id)
     end
 
     private

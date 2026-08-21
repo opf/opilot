@@ -142,14 +142,8 @@ module OPilot
           raise "Refusing to push to protected branch #{branch.inspect}"
         end
 
-        cred_helper = '!f() { echo username=x-access-token; echo "password=$OPILOT_GH_TOKEN"; }; f'
-        system(
-          { "OPILOT_GH_TOKEN" => @token },
-          "git", "-C", worktree_path.to_s,
-          "-c", "credential.helper=",           # clear any inherited helpers
-          "-c", "credential.helper=#{cred_helper}",
-          "push", "https://github.com/#{repo}.git", "#{branch}:#{branch}"
-        ) or raise "git push failed for branch #{branch}"
+        git_over_https(repo, worktree_path, "push", "#{branch}:#{branch}") \
+          or raise "git push failed for branch #{branch}"
       end
 
       # Fetches a branch's current head from GitHub into FETCH_HEAD, over HTTPS
@@ -158,14 +152,28 @@ module OPilot
       # container, dropping git into an interactive host-key prompt. Read-only,
       # so unlike push_branch it needs no protected-branch guard.
       def fetch_branch(repo, branch:, worktree_path:)
-        cred_helper = '!f() { echo username=x-access-token; echo "password=$OPILOT_GH_TOKEN"; }; f'
+        git_over_https(repo, worktree_path, "fetch", "--no-tags", branch) \
+          or raise "git fetch failed for branch #{branch}"
+      end
+
+      # Run one git command against `repo`'s HTTPS URL from `worktree_path`,
+      # authenticated by a credential helper so the token never appears in argv
+      # (visible via ps/proc). `args` is the subcommand and its flags; the remote
+      # URL is appended after them, before any refspec passed last.
+      #
+      # One copy, because this is where the token is handled — a change to the
+      # helper string or the `-c` pair must reach both push and fetch.
+      CRED_HELPER = '!f() { echo username=x-access-token; echo "password=$OPILOT_GH_TOKEN"; }; f'.freeze
+
+      def git_over_https(repo, worktree_path, subcommand, *args)
+        refspec = args.pop
         system(
           { "OPILOT_GH_TOKEN" => @token },
           "git", "-C", worktree_path.to_s,
           "-c", "credential.helper=",           # clear any inherited helpers
-          "-c", "credential.helper=#{cred_helper}",
-          "fetch", "--no-tags", "https://github.com/#{repo}.git", branch
-        ) or raise "git fetch failed for branch #{branch}"
+          "-c", "credential.helper=#{CRED_HELPER}",
+          subcommand, *args, "https://github.com/#{repo}.git", refspec
+        )
       end
 
       # Returns the URL of an open PR on `base_repo` whose head is `head`

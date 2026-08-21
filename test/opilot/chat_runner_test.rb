@@ -21,16 +21,11 @@ module OPilot
       attr_reader :tools
     end
 
+    include TestFixtures
+
     def setup
-      @tmpdir   = Dir.mktmpdir
-      state_dir = Pathname(@tmpdir) / ".opilot"
-      state_dir.mkpath
-      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @ctx = Struct.new(:script_dir, :state_dir, :state_container, :log_file, :repos) do
-        def op_host; "test.host"; end   # WP mirror namespace
-      end.new(
-        Pathname(@tmpdir), state_dir, "/state", Pathname(@tmpdir) / "chomp.log", registry
-      )
+      @tmpdir = Dir.mktmpdir
+      @ctx    = build_ctx(@tmpdir, host: "test.host")
     end
 
     def teardown

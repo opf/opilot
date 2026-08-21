@@ -30,6 +30,8 @@ require "opilot/pd"
 require "opilot/pd/intake"
 require "opilot/cli"
 
+require_relative "support/fixtures"
+
 WebMock.disable_net_connect!
 
 # webmock/minitest hooks its per-test reset into an ALIASED `teardown`, so any

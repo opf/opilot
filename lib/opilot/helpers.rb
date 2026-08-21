@@ -25,6 +25,16 @@ module OPilot
       items_dir(ctx) / id.to_s
     end
 
+    # The <id>/repos/<name>/ dirs under one work-package dir that hold a shipped
+    # PR. One definition, because "what counts as a shipped PR dir" is asked both
+    # of every work package (the gh-agent scan) and of one (`dev refresh`).
+    def self.pr_dirs_in(item_dir)
+      repos_dir = item_dir / "repos"
+      return [] unless repos_dir.exist?
+      repos_dir.children.select(&:directory?).sort
+               .select { |d| file_has_content?(d / "pr_url.txt") }
+    end
+
     # The same shape for the `pd` pipeline's per-change state, in its own
     # namespace (changes/ vs work_packages/) since a change id and a work-package
     # id are different things that could otherwise collide.
@@ -438,6 +448,30 @@ module OPilot
       $stdout.flush
     end
 
+    # One terminal choice prompt, shared by every [y]/[s]/[d]-style question.
+    #
+    # `choices` is { result => [accepted answers…] }, the FIRST answer of each
+    # being its letter. The re-ask hint is built from those letters, so it cannot
+    # drift from what the prompt accepts. `default:` is what an empty line means,
+    # for the prompts that have an obvious yes.
+    #
+    # Prompts that accept free text (FixRunner#prompt_option_choice) or that ask
+    # once without re-asking (UI#reset) are deliberately not routed through here.
+    def prompt_choice(label, choices, default: nil)
+      table   = {}
+      choices.each { |result, answers| Array(answers).each { |a| table[a] = result } }
+      letters = choices.values.map { |answers| Array(answers).first }
+      hint    = letters.length > 1 ? "#{letters[0..-2].join(", ")}, or #{letters.last}" : letters.first.to_s
+      loop do
+        print "  #{label}: "
+        answer = $stdin.gets&.chomp&.downcase || ""
+        return default if answer.empty? && default
+        result = table[answer]
+        return result if result
+        puts "  Please enter #{hint}."
+      end
+    end
+
     # The one push-safety rule: no push ever lands on a canonical repo (a
     # registry upstream). opilot publishes only from the contributor bot's own
     # fork, so a canonical target is always a mistake — the head of a PR a
@@ -818,18 +852,63 @@ module OPilot
       Helpers.file_has_content?(st.session_file)
     end
 
+    # Stage everything in `wt` and return the diff, or nil when there is nothing
+    # to commit. Prints the per-file stat lines, which a caller always wants
+    # immediately before committing. This is the one definition of "did the LLM
+    # change anything?", and it hands the diff back rather than making a caller
+    # that needs to describe it take a second one.
+    def stage_all(wt)
+      wt.add(all: true)
+      diff = wt.diff("HEAD")
+      return nil if diff.entries.empty?
+      diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
+      diff
+    end
+
+    # Commit the staged tree and report the commit in one format everywhere.
+    # `where` names the repo when a run spans several of them; a single-repo
+    # context leaves it off.
+    def commit_and_log(wt, message, where = nil)
+      wt.commit(message)
+      c = wt.log(1).execute.first
+      log_script "Committed#{where ? " to #{where}" : ""}: #{c.sha[0, 7]} #{c.message}"
+      c
+    end
+
+    # Check out the fix branch in every target repo, implement the plan once
+    # across all their worktrees, and commit per repo. Returns the repos that
+    # ended up with commits — [] when the plan turned out to be a no-op.
+    #
+    # One implementation pass covers every repo: the planning session is resumed,
+    # so it carries its exploration in and the write tools are simply added. The
+    # whole step is skipped when every fix branch already holds commits (an
+    # earlier `dev commit`, or a re-run), so publishing then costs no LLM call.
+    #
+    # Reporting the result is deliberately left to the caller — a work-package
+    # comment and a console line are not the same message.
+    def implement_plan(st, model: Harness::MODEL_HEAVY)
+      st.repos.each { |r| checkout_branch(st, r) }
+
+      unless st.repos.all? { |r| branch_has_commits?(st, r) }
+        log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
+        @harness.run(
+          Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
+                            resumed: session_resumable?(st)),
+          tools: Harness::TOOLS_IMPL, model: model, session_file: st.session_file
+        )
+        st.repos.each { |r| commit(st, r) }
+      end
+
+      st.repos.select { |r| branch_has_commits?(st, r) }
+    end
+
     # Commit the worktree changes for one repo. Returns true when a commit was
     # made, false when this repo had no changes (so the caller can skip its PR).
     def commit(st, repo)
       Helpers.adopt_github_author!(@publish.author_token)
       wt = worktree(repo)
-      wt.add(all: true)
-      diff = wt.diff("HEAD")
-      return false if diff.entries.empty?
-      diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      wt.commit(pr_title(st.item_id, st.subject))
-      c = wt.log(1).execute.first
-      log_script "Committed to #{repo.name}: #{c.sha[0, 7]} #{c.message}"
+      return false unless stage_all(wt)
+      commit_and_log(wt, pr_title(st.item_id, st.subject), repo.name)
       record_progress(st.item_id, st.branch, "committed:#{repo.name}")
       true
     end

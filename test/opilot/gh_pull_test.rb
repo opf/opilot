@@ -15,11 +15,7 @@ module OPilot
     WfRun         = Struct.new(:id, keyword_init: true)
     WfJob         = Struct.new(:id, :name, :status, :conclusion, keyword_init: true)
 
-    # ctx exposing the reader methods GhPull calls.
-    CtxClass = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file,
-                          :ci_max_attempts, :ci_ignored_checks) do
-      def op_host = "test.host"   # WP mirror namespace
-    end
+    include TestFixtures
 
     class FakeGitHub
       attr_reader :comment_fetches, :reacted, :ci_comments, :check_runs_calls, :pr_fetches
@@ -47,9 +43,8 @@ module OPilot
 
     def setup
       @tmpdir = Dir.mktmpdir
-      @ctx = CtxClass.new(
-        Pathname(@tmpdir) / ".opilot", ["thykel"], "ghtok", Pathname(@tmpdir) / "chomp.log", 2, []
-      )
+      @ctx = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"],
+                       contributor_token: "ghtok", ci_max_attempts: 2)
       @dir = @ctx.state_dir / "work_packages" / "test.host" / "42"
       @pr_dir = @dir / "repos" / "openproject"   # per-repo PR subdir
       @pr_dir.mkpath
@@ -366,7 +361,7 @@ module OPilot
     end
 
     def test_ignored_check_names_do_not_trigger_a_ci_fix
-      @ctx.ci_ignored_checks = ["saas tests"]
+      @ctx.ignored_checks = ["saas tests"]
       gh = pull(check_runs: [
         check_run(name: "SaaS tests", conclusion: "failure"),   # ignored → not actionable
         check_run(name: "Yamllint", conclusion: "success")
@@ -376,7 +371,7 @@ module OPilot
     end
 
     def test_a_real_failure_alongside_an_ignored_one_still_triggers
-      @ctx.ci_ignored_checks = ["saas tests"]
+      @ctx.ignored_checks = ["saas tests"]
       gh = pull(check_runs: [
         check_run(name: "SaaS tests", conclusion: "failure"),
         check_run(name: "Yamllint", conclusion: "failure")

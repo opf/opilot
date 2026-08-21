@@ -64,25 +64,11 @@ module OPilot
       def fetch_single_item(id); @fetched << id; @item; end
     end
 
-    class FakeCommit
-      attr_reader :date
-      def initialize(date: Time.utc(2026, 1, 1)); @date = date; end
-      def sha; "abcdef1234567"; end
-      def message; "[#42] Guard the nil case"; end
-    end
-
-    class FakeLog
-      def initialize(commits) @commits = commits end
-      def between(_from, _to); self; end
-      def execute; @commits; end
-    end
-
-    class FakeDiff
-      def initialize(has) @has = has end
-      def entries; @has ? [:change] : []; end
-      def stats; { files: { "app/x.rb" => { insertions: 2, deletions: 1 } } }; end
-      def patch; "diff --git a/app/x.rb b/app/x.rb\n+  return if total.nil?\n"; end
-    end
+    # Shared git doubles (test/support/fixtures.rb), aliased so the nested
+    # FakeWorktree below resolves them lexically.
+    FakeCommit = TestFixtures::FakeCommit
+    FakeLog    = TestFixtures::FakeLog
+    FakeDiff   = TestFixtures::FakeDiff
 
     class FakeWorktree
       attr_reader :commits, :merges, :fetched, :resets, :checkouts
@@ -113,22 +99,13 @@ module OPilot
 
     UPDATED_AT = Time.utc(2026, 1, 1)
 
+    include TestFixtures
+
     def setup
       @tmpdir = Dir.mktmpdir
-      state_dir = Pathname(@tmpdir) / ".opilot"
-      state_dir.mkpath
-      registry = Registry.build(script_dir: Pathname(@tmpdir), state_dir: state_dir, op_repo_path: @tmpdir)
-      @repo = registry.default
-      @ctx = Struct.new(
-        :state_dir, :state_container, :contributor_token, :op_url,
-        :log_file, :progress_file, :repos, :ignored_checks
-      ) do
-        def op_host; "test.host"; end
-        def ci_ignored_checks; ignored_checks; end
-      end.new(
-        state_dir, "/state", "gh-token", "https://test.host", Pathname(@tmpdir) / "chomp.log",
-        Pathname(@tmpdir) / "progress.txt", registry, ["saas tests"]
-      )
+      @ctx  = build_ctx(@tmpdir, host: "test.host", contributor_token: "gh-token",
+                        ignored_checks: ["saas tests"])
+      @repo = @ctx.repos.default
       # The interactive push prompt treats an empty line as "yes"; pin stdin to
       # EOF so tests that don't care about the prompt auto-confirm instead of
       # blocking on the real stdin (with_stdin overrides per test).

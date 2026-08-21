@@ -14,7 +14,8 @@ module OPilot
 
   # The whole program: poll OpenProject for @opilot comments, turn each into an
   # Intent, and dispatch it through #handle. Per-WP "state" is just the files in
-  # work_packages/<host>/<id>/ — plan.md present = has a plan, pr_url.txt present = shipped.
+  # work_packages/<host>/<id>/ — plan.md present = has a plan; shipped means
+  # every target repo has a repos/<name>/pr_url.txt (see Agent#shipped?).
   class Agent
     include Helpers
 
@@ -722,20 +723,7 @@ module OPilot
         return
       end
 
-      st.repos.each { |r| checkout_branch(st, r) }
-
-      # Implement once across every target worktree (the resumed planning session
-      # carries its exploration in; --allowedTools just adds the write tools),
-      # unless every target repo already holds commits from an earlier pass.
-      unless st.repos.all? { |r| branch_has_commits?(st, r) }
-        log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @harness.run(Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
-                                      resumed: session_resumable?(st)),
-                    tools: Harness::TOOLS_IMPL, session_file: st.session_file)
-        st.repos.each { |r| commit(st, r) }
-      end
-
-      changed = st.repos.select { |r| branch_has_commits?(st, r) }
+      changed = implement_plan(st)
       if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced, nothing to ship."
         post_note(st.item_id, addressed("I made no changes. The plan possibly changes nothing, or it is already applied."))

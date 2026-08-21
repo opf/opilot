@@ -75,11 +75,6 @@ module OPilot
         puts "  #{counter}#{wp_label(item["id"])} — #{item["subject"]}"
         puts "  #{item["url"]}"
 
-        if already_shipped?(item)
-          puts "  Already shipped: #{(Helpers.item_dir(@ctx, item["id"]) / "pr_url.txt").read.strip}"
-          next
-        end
-
         begin
           process_item(item, mode: mode)
         rescue Harness::Error => e
@@ -89,15 +84,16 @@ module OPilot
       end
     end
 
-    def already_shipped?(item_data)
-      (Helpers.item_dir(@ctx, item_data["id"]) / "pr_url.txt").exist?
-    end
-
     def process_item(item_data, mode:)
       id      = item_data["id"].to_s
       subject = item_data["subject"].to_s
       type    = item_data["type"].to_s
       st      = state_for(id, subject, type)
+      # Before any LLM call and before the approval prompt: a work package whose
+      # every target repo already has a PR has nothing left to plan or build.
+      # One guard for all three verbs — `plan` stops here too, which the old
+      # per-verb check inside #commit/#ship could not do.
+      return if report_already_shipped(st)
       # One model for every session-bound phase of this WP (plan, chat, replan,
       # implement) — switching mid-session would drop the context. The PR
       # description is a separate, stateless call and picks its own model.
@@ -264,31 +260,14 @@ module OPilot
 
     def prompt_plan_failed(id)
       ping_terminal("opilot: plan for #{wp_label(id)} failed — input needed")
-      loop do
-        print "  [r]etry / [c]hat / [s]kip / [d]rop: "
-        response = $stdin.gets&.chomp&.downcase || ""
-        case response
-        when "r", "retry" then return :retry
-        when "c", "chat"  then return :chat
-        when "s", "skip"  then return :skip
-        when "d", "drop"  then return :drop
-        else puts "  Please enter r, c, s, or d."
-        end
-      end
+      prompt_choice("[r]etry / [c]hat / [s]kip / [d]rop",
+                    { retry: %w[r retry], chat: %w[c chat], skip: %w[s skip], drop: %w[d drop] })
     end
 
     def prompt_needs_info(id)
       ping_terminal("opilot: #{wp_label(id)} needs more info before planning")
-      loop do
-        print "  [c]hat to provide context / [s]kip / [d]rop: "
-        response = $stdin.gets&.chomp&.downcase || ""
-        case response
-        when "c", "chat"  then return :chat
-        when "s", "skip"  then return :skip
-        when "d", "drop"  then return :drop
-        else puts "  Please enter c, s, or d."
-        end
-      end
+      prompt_choice("[c]hat to provide context / [s]kip / [d]rop",
+                    { chat: %w[c chat], skip: %w[s skip], drop: %w[d drop] })
     end
 
     # Offer the implementation options at the console, the same list a work
@@ -324,18 +303,10 @@ module OPilot
     def prompt_approval(id, mode: :ship)
       ping_terminal("opilot: plan for #{wp_label(id)} ready for review")
       yes = { plan: "[y]es accept plan", commit: "[y]es commit", ship: "[y]es build" }.fetch(mode)
-      loop do
-        print "  #{yes} / [s]kip / [d]rop / [c]hat / [r]e-plan: "
-        response = $stdin.gets&.chomp&.downcase || ""
-        case response
-        when "", "y", "yes"  then return :approve
-        when "s", "skip"     then return :skip
-        when "d", "drop"     then return :drop
-        when "c", "chat"     then return :chat
-        when "r", "replan"   then return :replan
-        else puts "  Please enter y, s, d, c, or r."
-        end
-      end
+      prompt_choice("#{yes} / [s]kip / [d]rop / [c]hat / [r]e-plan",
+                    { approve: %w[y yes], skip: %w[s skip], drop: %w[d drop],
+                      chat: %w[c chat], replan: %w[r replan] },
+                    default: :approve)
     end
 
     # Feedback for a re-plan. Empty input means "fold in what we discussed in
@@ -367,25 +338,10 @@ module OPilot
       end
     end
 
-    # Implement the approved plan once across every target worktree (the resumed
-    # planning session carries its exploration in; --allowedTools just adds the
-    # write tools) and commit per repo. Skipped when every fix branch already
-    # has commits — a prior `build` — so `ship` then only publishes. Returns the
-    # repos that actually changed ([] when the plan turned out to be a no-op).
+    # Helpers#implement_plan plus the console's own report of a no-op plan (the
+    # agent answers that on the work package instead).
     def implement(st, model = Harness::MODEL_HEAVY)
-      st.repos.each { |r| checkout_branch(st, r) }
-
-      unless st.repos.all? { |r| branch_has_commits?(st, r) }
-        log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @harness.run(
-          Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
-                            resumed: session_resumable?(st)),
-          tools: Harness::TOOLS_IMPL, model: model, session_file: st.session_file
-        )
-        st.repos.each { |r| commit(st, r) }
-      end
-
-      changed = st.repos.select { |r| branch_has_commits?(st, r) }
+      changed = implement_plan(st, model: model)
       if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced."
         puts "  ⚠ No changes produced — plan may be a no-op or already applied."
@@ -397,7 +353,6 @@ module OPilot
     # opened. The committed branch sits in the local clone for review; a later
     # `dev build <id>` finds it via branch_has_commits? and goes straight to publish.
     def commit(st, model = Harness::MODEL_HEAVY)
-      return if report_already_shipped(st)
       implement(st, model).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
         puts "  ✓ Committed #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./opilot dev build #{st.item_id}`"
@@ -405,7 +360,6 @@ module OPilot
     end
 
     def ship(st, model = Harness::MODEL_HEAVY)
-      return if report_already_shipped(st)
       implement(st, model).each do |repo|
         generate_pr_description(st, repo)
         url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
@@ -419,7 +373,9 @@ module OPilot
     end
 
     # True (with the URLs reported) when every target repo already has a PR —
-    # there is nothing left to build or ship for this WP.
+    # there is nothing left to plan, build or ship for this WP. `all?`, not
+    # `any?`: a fix that shipped to one of two repos must still finish the
+    # other, which is the same rule Agent#shipped? applies.
     def report_already_shipped(st)
       return false unless st.repos.all? { |r| Helpers.file_has_content?(st.pr_url_file(r)) }
       st.repos.each { |r| puts "  Already shipped (#{r.name}): #{st.pr_url_file(r).read.strip}" }

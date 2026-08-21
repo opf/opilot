@@ -207,64 +207,70 @@ module OPilot
       container_path(ci_file)
     end
 
-    def handle_own(intent)
-      repo         = @ctx.repos.by_upstream(intent.repo)
-      item_dir     = Helpers.item_dir(@ctx, intent.item_id)
-      pr_dir       = item_dir / "repos" / intent.repo_name
-      item_file    = item_dir / "item.json"
-      plan_file    = item_dir / "plan.md"
-      pr_file      = pr_dir / "pr.json"
-      session_file = pr_dir / "gh_session_id"
+    # Everything a pass over one of opilot's own PRs needs, resolved once.
+    # `item_ref`/`plan_ref` are already reduced to the placeholder the prompts
+    # take when the file is missing, so no caller repeats that test.
+    OwnPrPaths = Struct.new(:repo, :pr_file, :ci_file, :session_file, :item_ref, :plan_ref,
+                            keyword_init: true)
 
-      # Fetch the PR head over HTTPS (never the worktree's possibly-SSH origin),
-      # then sync the branch to it before the LLM touches anything. The branch
-      # lives in the PR's head repo — the user's fork — not the base repo.
-      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
-      checkout_pr_branch(repo, intent.branch)
-
-      plan_ref = Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
-      prompt = Prompts.gh_reply(
-        worktree: repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
-        title: intent.subject, item: container_path(item_file), plan: plan_ref,
-        pr_thread: container_path(pr_file), comment: intent.text.to_s,
-        author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
+    def own_pr_paths(intent)
+      item_dir  = Helpers.item_dir(@ctx, intent.item_id)
+      pr_dir    = item_dir / "repos" / intent.repo_name
+      item_file = item_dir / "item.json"
+      plan_file = item_dir / "plan.md"
+      OwnPrPaths.new(
+        repo:         @ctx.repos.by_upstream(intent.repo),
+        pr_file:      pr_dir / "pr.json",
+        ci_file:      pr_dir / "ci.json",
+        session_file: pr_dir / "gh_session_id",
+        item_ref: Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)",
+        plan_ref: Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
       )
-      reply = @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: session_file)
-
-      post_reply(intent, reply)
-      push_followup(intent, repo) if commit_followup(intent, repo)
     end
 
-    # CI failed on one of opilot's own PRs. Same shape
-    # as handle_own — sync the PR head, let the LLM read the cached failure detail
-    # (ci.json: failed checks, annotations, failed-job log tails) and fix it in
-    # the worktree, then commit + push to update the draft PR. the LLM may make no
-    # change (e.g. a flaky/infra failure it shouldn't "fix"), in which case it
-    # just replies and nothing is pushed.
-    def handle_ci(intent)
-      repo         = @ctx.repos.by_upstream(intent.repo)
-      item_dir     = Helpers.item_dir(@ctx, intent.item_id)
-      pr_dir       = item_dir / "repos" / intent.repo_name
-      item_file    = item_dir / "item.json"
-      plan_file    = item_dir / "plan.md"
-      pr_file      = pr_dir / "pr.json"
-      ci_file      = pr_dir / "ci.json"
-      session_file = pr_dir / "gh_session_id"
+    # Sync the worktree to the PR's current head, run one LLM pass over it with
+    # the write tools, reply, and push whatever it committed.
+    #
+    # #handle_own and #handle_ci differ only in the prompt — the block builds it
+    # from the resolved paths. Both fetch the head over HTTPS (never the
+    # worktree's possibly-SSH origin) and reset onto it before the LLM touches
+    # anything; the branch lives in the PR's head repo, the bot's fork, not the
+    # base repo. The LLM may make no change at all (a flaky or infra CI failure
+    # it should not "fix"), in which case it just replies and nothing is pushed.
+    def run_on_pr_head(intent)
+      paths = own_pr_paths(intent)
+      @github.fetch_branch(head_repo(intent), branch: intent.branch,
+                           worktree_path: paths.repo.worktree_host)
+      checkout_pr_branch(paths.repo, intent.branch)
 
-      @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
-      checkout_pr_branch(repo, intent.branch)
-
-      plan_ref = Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
-      item_ref = Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)"
-      prompt = Prompts.fix_ci(
-        worktree: repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
-        title: intent.subject, item: item_ref, plan: plan_ref,
-        pr_thread: container_path(pr_file), ci: container_path(ci_file)
-      )
-      reply = @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: session_file)
+      reply = @harness.run(yield(paths), tools: Harness::TOOLS_IMPL, session_file: paths.session_file)
 
       post_reply(intent, reply)
-      push_followup(intent, repo) if commit_followup(intent, repo)
+      push_followup(intent, paths.repo) if commit_followup(intent, paths.repo)
+    end
+
+    def handle_own(intent)
+      run_on_pr_head(intent) do |p|
+        Prompts.gh_reply(
+          worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
+          title: intent.subject, item: p.item_ref, plan: p.plan_ref,
+          pr_thread: container_path(p.pr_file), comment: intent.text.to_s,
+          author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
+        )
+      end
+    end
+
+    # CI failed on one of opilot's own PRs: let the LLM read the cached failure
+    # detail (ci.json — failed checks, annotations, failed-job log tails) and fix
+    # it in the worktree, then commit and push to update the draft PR.
+    def handle_ci(intent)
+      run_on_pr_head(intent) do |p|
+        Prompts.fix_ci(
+          worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
+          title: intent.subject, item: p.item_ref, plan: p.plan_ref,
+          pr_thread: container_path(p.pr_file), ci: container_path(p.ci_file)
+        )
+      end
     end
 
     # "@opilot refresh" on one of opilot's own PRs: hand it to PrRunner for
@@ -426,14 +432,10 @@ module OPilot
     # was made, false when the comment was answered without touching any file.
     def commit_followup(intent, repo)
       Helpers.adopt_github_author!(@ctx.contributor_token)
-      wt = worktree(repo)
-      wt.add(all: true)
-      diff = wt.diff("HEAD")
-      return false if diff.entries.empty?
-      diff.stats[:files].each { |f, s| puts "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
-      wt.commit(feedback_commit_message(intent, diff))
-      c = wt.log(1).execute.first
-      log_script "Committed: #{c.sha[0, 7]} #{c.message}"
+      wt   = worktree(repo)
+      diff = stage_all(wt)
+      return false unless diff
+      commit_and_log(wt, feedback_commit_message(intent, diff))
       record_progress(intent.item_id, intent.branch, "gh-commit")
       true
     end

@@ -33,19 +33,15 @@ module OPilot
       def login; "opilot-bot"; end
     end
 
+    include TestFixtures
+
     def setup
       @tmpdir = Pathname(Dir.mktmpdir)
-      state   = @tmpdir / ".opilot"
-      state.mkpath
-      @registry = Registry.build(script_dir: @tmpdir, state_dir: state, op_repo_path: @tmpdir)
-      ctx_class = Struct.new(:state_dir, :allowed_gh_users, :contributor_token, :log_file, :repos,
-                             :track_upstream) do
-        def ci_ignored_checks; []; end
-        def track_upstream_prs?; track_upstream; end
-      end
       # Opted in, since that is what these tests are about; the opt-out is its
       # own test below.
-      @ctx = ctx_class.new(state, ["thykel"], "ghtok", @tmpdir / "chomp.log", @registry, true)
+      @ctx = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"],
+                       contributor_token: "ghtok", track_upstream: true)
+      @registry = @ctx.repos
     end
 
     def teardown
