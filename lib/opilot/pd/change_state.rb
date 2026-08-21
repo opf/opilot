@@ -350,12 +350,16 @@ module OPilot
           @git = nil
         end
         return unless fresh || configured_email.empty?
-        git.config("user.name", STORE_AUTHOR_NAME)
-        git.config("user.email", STORE_AUTHOR_EMAIL)
+        git.config_set("user.name", STORE_AUTHOR_NAME)
+        git.config_set("user.email", STORE_AUTHOR_EMAIL)
       end
 
+      # `config_get` answers with a Git::ConfigEntryInfo (scope, origin, key,
+      # value), not the bare string the removed `config` reader returned — hence
+      # `.value`. It is nil when the key is unset, which `&.` turns back into the
+      # empty string #git_init! tests for.
       def configured_email
-        git.config("user.email").to_s
+        git.config_get("user.email")&.value.to_s
       rescue StandardError
         ""
       end

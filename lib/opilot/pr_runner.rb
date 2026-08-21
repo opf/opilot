@@ -417,7 +417,7 @@ module OPilot
       if conflicts.any?
         still = unresolved_conflicts(repo, conflicts)
         if still.any?
-          wt.reset_hard("HEAD")   # abort the in-progress merge, leaving the worktree clean
+          wt.reset("HEAD", hard: true)   # abort the in-progress merge, leaving the worktree clean
           raise "conflicts left unresolved in #{still.join(", ")} — this merge needs a human"
         end
         wt.add(all: true)
@@ -445,7 +445,7 @@ module OPilot
       elsif canonical_repo?(head_repo)
         # A PR whose head branch lives on the canonical repo (a maintainer's own
         # PR, or one adopted from opilot's) is not opilot's to write to.
-        wt.reset_hard(original_head)
+        wt.reset(original_head, hard: true)
         log_script "#{wp_label(wp_id)} (#{repo.name}) — the PR's head is on the canonical repo " \
                    "#{head_repo}, which opilot never pushes to; discarded."
         return
@@ -454,7 +454,7 @@ module OPilot
         log_script "Pushed to #{head_repo} — PR ##{number} updated."
         record_progress(wp_id, branch, "refreshed:#{repo.name}")
       else
-        wt.reset_hard(original_head)
+        wt.reset(original_head, hard: true)
         log_script "#{wp_label(wp_id)} (#{repo.name}) — discarded; branch reset to the PR head."
         return
       end

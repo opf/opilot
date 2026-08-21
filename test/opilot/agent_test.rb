@@ -121,7 +121,7 @@ module OPilot
       def checkout(branch, **_opts); @checkouts << branch; end
       def fetch(remote, **opts); @fetched << [remote, opts]; end
       def status; FakeStatus.new; end
-      def config(key, value); @configs << [key, value]; end
+      def config_set(key, value); @configs << [key, value]; end
       def log(*_args); FakeLog.new(@has_commits ? [FakeCommit.new] : []); end
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end

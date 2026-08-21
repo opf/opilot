@@ -75,8 +75,8 @@ module OPilot
       def revparse(_ref); "sha"; end
       def fetch(remote, **opts); @fetched << [remote, opts]; end
       def checkout(branch, **_opts); @checkouts << branch; end
-      def reset_hard(ref); @resets << ref; end
-      def config(key, value); @configs << [key, value]; end
+      def reset(ref, **_opts); @resets << ref; end
+      def config_set(key, value); @configs << [key, value]; end
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end
       def commit(msg); @commits << msg; end

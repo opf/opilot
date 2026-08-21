@@ -629,8 +629,8 @@ module OPilot
       else
         wt.checkout(st.branch, new_branch: true, start_point: "origin/#{base}")
       end
-      wt.config("branch.#{st.branch}.remote", "origin")
-      wt.config("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+      wt.config_set("branch.#{st.branch}.remote", "origin")
+      wt.config_set("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
     end
 
     # Fetch a base branch into its remote-tracking ref (origin/<base>) so the fix
@@ -698,7 +698,7 @@ module OPilot
       wt = worktree(repo)
       if local_branch_exists?(wt, branch)
         wt.checkout(branch)
-        wt.reset_hard("FETCH_HEAD")
+        wt.reset("FETCH_HEAD", hard: true)
       else
         wt.checkout(branch, new_branch: true, start_point: "FETCH_HEAD")
       end

@@ -76,8 +76,8 @@ module OPilot
         @repo.worktree_host.mkpath
         Git.init(@repo.worktree_host.to_s)
         @git = Git.open(@repo.worktree_host.to_s)
-        @git.config("user.name", "test")
-        @git.config("user.email", "test@localhost")
+        @git.config_set("user.name", "test")
+        @git.config_set("user.email", "test@localhost")
         (@repo.worktree_host / "app.rb").write("puts 1\n")
         @git.add(all: true)
         @git.commit("initial")

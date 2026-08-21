@@ -59,8 +59,8 @@ module OPilot
         clone = @repo.worktree_host
         Git.init(clone.to_s)
         git = Git.open(clone.to_s)
-        git.config("user.name", "test")
-        git.config("user.email", "test@localhost")
+        git.config_set("user.name", "test")
+        git.config_set("user.email", "test@localhost")
 
         (clone / "app.rb").write("puts 1\n")
         git.add(all: true)
@@ -84,8 +84,8 @@ module OPilot
         clone = @repo.worktree_host
         Git.init(clone.to_s)
         git = Git.open(clone.to_s)
-        git.config("user.name", "test")
-        git.config("user.email", "test@localhost")
+        git.config_set("user.name", "test")
+        git.config_set("user.email", "test@localhost")
         (clone / "app.rb").write("puts 1\n")
         git.add(all: true)
         git.commit("initial")

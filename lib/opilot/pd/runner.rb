@@ -493,7 +493,7 @@ module OPilot
       # the spec tree from the canonical store (which the run never touched).
       def reset_out_of_scope!(state)
         wt = worktree(state.repo)
-        wt.reset_hard
+        wt.reset(nil, hard: true)
         wt.clean(force: true, d: true)
         state.store.materialise!
       rescue StandardError => e

@@ -82,8 +82,8 @@ module OPilot
       def revparse(ref); ref == "HEAD" ? @head : "sha"; end
       def fetch(remote, **opts); @fetched << [remote, opts]; end
       def checkout(branch, **_opts); @checkouts << branch; end
-      def reset_hard(ref); @resets << ref; @head = ref unless ref == "FETCH_HEAD"; end
-      def config(key, value); end
+      def reset(ref, **_opts); @resets << ref; @head = ref unless ref == "FETCH_HEAD"; end
+      def config_set(key, value); end
       def add(**_opts); end
       def diff(*_args); FakeDiff.new(@has_changes); end
       # Argless log is the behind-base check (log.between…); log(1) is the

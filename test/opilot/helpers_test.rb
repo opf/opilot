@@ -281,7 +281,7 @@ module OPilot
         raise @fetch_error if @fetch_error
         @fetched << [remote, opts]
       end
-      def config(k, v); @configs << [k, v]; end
+      def config_set(k, v); @configs << [k, v]; end
       def status
         @dirty ? FakeStatus.new({ "app/x.rb" => :mod }, {}, {}) : FakeStatus.new({}, {}, {})
       end
