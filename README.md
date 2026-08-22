@@ -32,9 +32,9 @@ Use OPilot to remove that friction from your development workflow. It can automa
 
 ### General audience
 
-
-* **Free-form work package refinement**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
-* **New work packages from a thread**: Turn a suggestion made in a comment into its own work package with `@OPilot create wp <instructions>`. OPilot drafts it from the thread, creates it in the same project, and relates it back. It needs `OPILOT_ALLOWED_OP_USER_IDS`, because a work package can never be deleted.
+* **Refine work packages**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
+* **Generate new work packages**: Turn a suggestion made in a comment into its own work package with `@OPilot create wp <instructions>`. OPilot drafts it from the thread, creates it in the same project, and relates it back. It needs `OPILOT_ALLOWED_OP_USER_IDS`, because a work package can never be deleted.
+* **[Enterprise] Run project-wide discovery**: Ask `@OPilot` anything about the reachable projects' data -- it will leverage the instance's MCP server to give you a fresh answer.
 
 ### ...and others?
 
