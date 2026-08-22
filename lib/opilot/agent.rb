@@ -46,6 +46,7 @@ module OPilot
     def setup
       scan_from_at = @pull.load_or_prompt_scan_from
       @pull.ensure_bot_identity!
+      report_op_mcp_status
       if @ctx.allowed_op_user_ids.any?
         puts "  Allowlist active — only triggers from user ids: #{@ctx.allowed_op_user_ids.join(", ")}"
       else
@@ -125,8 +126,9 @@ module OPilot
       prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
                             plan: plan_ref, message: intent.text.to_s,
-                            related: related_ref(st), can_create_wp: create_wp_enabled?)
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file)
+                            related: related_ref(st), can_create_wp: create_wp_enabled?,
+                            op_mcp: @ctx.op_mcp?)
+      reply = @harness.run(prompt, tools: read_tools, session_file: st.session_file)
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
     end
 
@@ -580,8 +582,8 @@ module OPilot
         log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
         prompt = Prompts.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
-                                resumed: session_resumable?(st), related: related)
-        @harness.capture(prompt, tools: Harness::TOOLS_READ, outfile: st.plan_file,
+                                resumed: session_resumable?(st), related: related, op_mcp: @ctx.op_mcp?)
+        @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
                         session_file: st.session_file)
         record_chosen_repos(st)
         return :ok
@@ -590,8 +592,8 @@ module OPilot
       log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
       prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
-                            related: related, allow_options: allow_options)
-      @harness.capture(prompt, tools: Harness::TOOLS_READ, outfile: st.plan_file,
+                            related: related, allow_options: allow_options, op_mcp: @ctx.op_mcp?)
+      @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
                       session_file: st.session_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")

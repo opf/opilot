@@ -593,6 +593,53 @@ module OPilot
       @harness.ensure_available! if @harness.respond_to?(:ensure_available!)
     end
 
+    # The tool grant for a read-only LLM phase — includes op_query when
+    # OPILOT_OP_MCP is on (see MCP.md). Use ONLY at the specific call sites
+    # named in that plan's Step 3 table; every other TOOLS_READ call site
+    # (upstream PR review, the `create wp` draft, light one-shot passes) keeps
+    # the plain constant even when the flag is on.
+    def read_tools
+      @ctx.op_mcp? ? Harness::TOOLS_READ_OP : Harness::TOOLS_READ
+    end
+
+    # As #read_tools, for the one write-enabled call site the plan grants the
+    # tool to: gh-agent's own-PR reply and CI fix. The fix implement run keeps
+    # no MCP tool at all — see MCP.md's Step 3 table for why.
+    def impl_tools
+      @ctx.op_mcp? ? Harness::TOOLS_IMPL_OP : Harness::TOOLS_IMPL
+    end
+
+    # One-time, best-effort report of what the instance's MCP server actually
+    # offers (see MCP.md, "A startup check on what the instance really
+    # offers"). Call once per process — Agent#setup, GhAgent#setup, and once at
+    # the start of each `dev` verb that grants the tool — never inside
+    # guarded_tick/#tick.
+    #
+    # It WARNS; it never raises. That is the opposite of #ensure_harness! and
+    # Pull#ensure_bot_identity!, which raise on purpose because a run without a
+    # model or an identity cannot work — this one has a working fallback (the
+    # mirrors), so a 404, an unreachable gateway, or a malformed answer just
+    # leaves op_query unused for the run.
+    def report_op_mcp_status
+      return unless @ctx.op_mcp?
+      unless @ctx.opgw_url
+        log_script "OpenProject MCP: OPILOT_OP_MCP is set but OPILOT_OPGW_URL is not — is this running through ./opilot?"
+        return
+      end
+      summary = Clients::OpMcp.new(@ctx.opgw_url, @ctx.gw_token).summary
+      puts "  OpenProject MCP: #{summary}"
+      log_script "OpenProject MCP: #{summary}"
+    rescue Clients::OpMcp::Unavailable
+      # The common case now that OPILOT_OP_MCP defaults on: most instances have
+      # no Enterprise MCP server enabled. Quiet by design — op_query itself
+      # reports the same thing per call, so this is not new information, only
+      # confirmation the run isn't silently broken.
+      log_script "OpenProject MCP: not available on this instance — op_query will report that per call."
+    rescue StandardError => e
+      puts "  OpenProject MCP: could not read the instance's tool list (#{e.message})."
+      log_script "OpenProject MCP: startup check failed (#{e.message}) — op_query will report unavailable at call time."
+    end
+
     # `./opilot` provisions the clones, but a clone whose `git clone` failed (a
     # wrong `base` in repos.json, a network blip) only WARNS and is skipped — so
     # this state is reachable, and every later stage needs the clone: it is where

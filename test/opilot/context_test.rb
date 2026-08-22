@@ -99,6 +99,32 @@ module OPilot
       end
     end
 
+    def test_op_mcp_defaults_on_and_is_turned_off_explicitly
+      # Opposite polarity from track_upstream_prs? on purpose: an instance
+      # with no Enterprise MCP server just answers "unavailable", so this
+      # defaults ON rather than requiring every operator to opt in.
+      with_env("OPILOT_OP_MCP" => nil) { assert Context.build(@tmpdir).op_mcp? }
+      with_env("OPILOT_OP_MCP" => "") { assert Context.build(@tmpdir).op_mcp? }
+      %w[1 true yes on TRUE].each do |on|
+        with_env("OPILOT_OP_MCP" => on) do
+          assert Context.build(@tmpdir).op_mcp?, "#{on.inspect} stays on"
+        end
+      end
+      %w[0 false no off OFF].each do |off|
+        with_env("OPILOT_OP_MCP" => off) do
+          refute Context.build(@tmpdir).op_mcp?, "#{off.inspect} turns it off"
+        end
+      end
+    end
+
+    def test_opgw_url_is_nil_unless_set
+      with_env("OPILOT_OPGW_URL" => nil) { assert_nil Context.build(@tmpdir).opgw_url }
+      with_env("OPILOT_OPGW_URL" => "  ") { assert_nil Context.build(@tmpdir).opgw_url }
+      with_env("OPILOT_OPGW_URL" => "http://opgw:47293") do
+        assert_equal "http://opgw:47293", Context.build(@tmpdir).opgw_url
+      end
+    end
+
     def test_a_blank_token_is_the_same_as_no_token
       # compose.yml passes the token as `TOKEN=${TOKEN:-}`, so inside the
       # container an unset token arrives as "" — which is TRUTHY, while every

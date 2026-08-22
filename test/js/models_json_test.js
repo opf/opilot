@@ -48,12 +48,15 @@ test('the regex still refuses anything that could smuggle a CLI arg', () => {
 });
 
 test('the tool-grant allowlist still matches harness.rb', () => {
-  // ALLOWED_TOOL_GRANTS duplicates TOOLS_READ/TOOLS_IMPL in lib/opilot/harness.rb
-  // and carries a "must stay in sync" comment with nothing enforcing it. This
-  // does not close that gap, but it does pin the current values.
+  // ALLOWED_TOOL_GRANTS duplicates TOOLS_READ/TOOLS_IMPL/TOOLS_READ_OP/
+  // TOOLS_IMPL_OP in lib/opilot/harness.rb and carries a "must stay in sync"
+  // comment with nothing enforcing it. This does not close that gap, but it
+  // does pin the current values.
   assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash'));
   assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,write,edit'));
-  assert.strictEqual(ALLOWED_TOOL_GRANTS.size, 2);
+  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,op_query'));
+  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,write,edit,op_query'));
+  assert.strictEqual(ALLOWED_TOOL_GRANTS.size, 4);
 });
 
 // ── copy versus generate ──────────────────────────────────────────────────

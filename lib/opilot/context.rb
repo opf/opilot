@@ -10,7 +10,7 @@ module OPilot
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :harness_url, :contributor_token,
                 :state_container, :op_url, :token,
-                :authgw_url, :gw_token, :inference_url
+                :authgw_url, :gw_token, :inference_url, :opgw_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
 
     def self.build(script_dir = nil)
@@ -49,6 +49,11 @@ module OPilot
       # it. An empty string beats a fetch default and would print a blank
       # upstream.
       @inference_url      = presence(ENV["OPILOT_INFERENCE_URL"]) || "https://openrouter.ai/api/v1"
+      # The OpenProject MCP gateway (see MCP.md). nil (not a hardcoded default)
+      # when unset: `./opilot` exports this only when both the harness and
+      # OPILOT_OP_MCP are needed, and an absent value is what tells
+      # #report_op_mcp_status to say so rather than try to connect nowhere.
+      @opgw_url           = presence(ENV["OPILOT_OPGW_URL"])
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
       # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
@@ -126,6 +131,19 @@ module OPilot
     # which PRs to watch, the allowlist whose mentions count (UpstreamGhPull#enabled?).
     def track_upstream_prs?
       %w[1 true yes on].include?(ENV["OPILOT_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
+    end
+
+    # Whether the plan/chat/gh-reply phases get the op_query tool (see MCP.md).
+    # ON by default — opt OUT with OPILOT_OP_MCP=0 (or false/no/off). An
+    # instance without the (Enterprise-only) MCP server enabled just answers
+    # every op_query call with "unavailable", which #report_op_mcp_status and
+    # the tool itself both treat as a normal, quiet state, never an error — so
+    # defaulting this on costs an idle opgw container on such an instance, not
+    # a broken run. This flag is only the tool GRANT; the harness-side
+    # extension has its own independent gate on OPILOT_OPGW_URL (empty →
+    # registers nothing).
+    def op_mcp?
+      !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)
     end
 
     # Work-package type names the `pd` (product development) pipeline maps the

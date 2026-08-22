@@ -47,10 +47,15 @@ const PROC_KILL_GRACE_MS = 10 * 1000;
 // Server-side allowlist of tool grants. The header is client-controlled, so
 // only the exact grants the runner uses are accepted. pi's tool names are
 // lowercase and there's no glob tool — `find` covers that job.
-// Must stay in sync with TOOLS_READ / TOOLS_IMPL in lib/opilot/harness.rb.
+// Must stay in sync with TOOLS_READ / TOOLS_IMPL / TOOLS_READ_OP / TOOLS_IMPL_OP
+// in lib/opilot/harness.rb. The two `,op_query` variants are sent only when
+// OPILOT_OP_MCP is on (Context#op_mcp?); pi-op-mcp.ts registers the tool at
+// all only when OPILOT_OPGW_URL is also set — see MCP.md.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
+  'read,grep,find,ls,bash,op_query',
+  'read,grep,find,ls,bash,write,edit,op_query',
 ]);
 
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -283,7 +288,7 @@ function translate(parsed, state) {
 function runPi(body, tools, model, sessionId, res, done) {
   const args = [
     '--mode', 'json',
-    '--no-extensions', '-e', '/app/pi-guards.ts',
+    '--no-extensions', '-e', '/app/pi-guards.ts', '-e', '/app/pi-op-mcp.ts',
     '--no-skills', '--no-prompt-templates',
     // pi loads a project's CLAUDE.md/AGENTS.md at startup even when it does
     // not trust the project (untrusted, prompt-injectable work-package text

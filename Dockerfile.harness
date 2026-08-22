@@ -11,7 +11,7 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.84.2
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true
 
-COPY --chown=node:node server.js pi-guards.ts pi-settings.json pi-models.json /app/
+COPY --chown=node:node server.js pi-guards.ts pi-op-mcp.ts op-mcp-client.js pi-settings.json pi-models.json /app/
 
 USER node
 

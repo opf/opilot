@@ -27,6 +27,13 @@ module OPilot
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
+    # The op_query variants (see MCP.md), granted only at the call sites named
+    # in Context#op_mcp?'s call table via Helpers#read_tools/#impl_tools — most
+    # TOOLS_READ/TOOLS_IMPL call sites keep the plain constant even when the
+    # flag is on. Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
+    TOOLS_READ_OP = "#{TOOLS_READ},op_query"
+    TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"
+
     # Models, pinned so behaviour doesn't drift when the catalog's default
     # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>,
     # or <provider>/<model-id> for a self-hosted one ("local/qwen2.5-coder:32b").
