@@ -18,12 +18,14 @@ module OPilot
       :allowed_op_user_ids, :allowed_gh_users, :contributor_token,
       :log_file, :progress_file, :repos,
       :ignored_checks, :ci_max_attempts, :track_upstream, :host,
+      :op_mcp, :opgw_url, :gw_token,
       keyword_init: true
     ) do
       def default_repo        = repos.default
       def op_host             = host
       def ci_ignored_checks   = ignored_checks || []
       def track_upstream_prs? = track_upstream
+      def op_mcp?             = !!op_mcp
     end
 
     # A context over `tmpdir`, with its .opilot/ state dir created.
@@ -59,7 +61,10 @@ module OPilot
         ignored_checks:  [],
         ci_max_attempts: 5,
         track_upstream:  false,
-        host:            host
+        host:            host,
+        op_mcp:          false,
+        opgw_url:        nil,
+        gw_token:        nil
       ).tap { |ctx| overrides.each { |k, v| ctx[k] = v } }
     end
 

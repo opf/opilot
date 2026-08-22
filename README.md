@@ -100,39 +100,42 @@ Fallback interface: Same functionality as the agent, but runnable via the CLI.
                     │
                     │ docker compose run
                     │
-┌── Docker ─────────┼───────────────────────────────────────────────────────────────────┐
-│                   ▼                                                                   │
-│ ┌─ runner container ────────────────┐        ┌─ harness container ────────────────┐   │
-│ │                                   │        │                                    │   │
-│ │ Ruby 4.0 script                   │  json  │ Node.js server (:47291)            │   │
-│ │  * Pulls WP content from OP API   │◀──────▶│   POST / -> `pi --mode json`       │   │
-│ │  * Manages metadata in .opilot/   │        │ volumes: .opilot/                  │   │
-│ │      * WP metadata mirror         │        │                                    │   │
-│ │      * Plan files                 │        │                                    │   │
-│ │      * Draft PR data              │        └───────────────────┬────────────────┘   │
-│ │  * Pushes branches, opens PRs     │                            │                    │
-│ │  * Delegates chat to the LLM      │                            │                    │
-│ └───────┬──────────────────┬────────┘                            ▼                    │
-│         │                  │                          ┌─ authgw ──────────────┐       │
-│         │                  │                          │ * attach real API key │       │
-│         │                  │                          │ * limit access to     │       │
-│         │                  │                          │   inference API-only  │       │
-│         │                  │                          │                       │       │
-│         │                  │                          └───────────┬───────────┘       │
-│         │                  │                                      │                   │
-└─────────┼──────────────────┼──────────────────────────────────────┼───────────────────┘
-          ▼                  ▼                                      ▼
-  ┌─────────────────┐  ┌────────────┐                     ┌───────────────────────┐
-  │ OpenProject API │  │ GitHub API │                     │ Inference API:        │   
-  └─────────────────┘  └────────────┘                     │ OpenRouter, or your   │
-                                                          │ own OpenAI-compatible │
-                                                          │ endpoint              │
-                                                          └───────────────────────┘
+┌── Docker ─────────┼────────────────────────────────────────────────────────────────────────────────┐
+│                   ▼                                                                                │
+│ ┌─ runner container ────────────────┐        ┌─ harness container ───────────────┐                 │
+│ │                                   │        │                                   │                 │
+│ │ Ruby 4.0 script                   │  json  │ Node.js server (:47291)           │                 │
+│ │  * Pulls WP content from OP API   │◀──────▶│   POST / -> `pi --mode json`      │                 │
+│ │  * Manages metadata in .opilot/   │        │ volumes: .opilot/                 │                 │
+│ │      * WP metadata mirror         │        │                                   │                 │
+│ │      * Plan files                 │        │                                   │                 │
+│ │      * Draft PR data              │        └──────────────┬────────────────────┘                 │
+│ │  * Pushes branches, opens PRs     │                       │                                      │
+│ │  * Delegates chat to the LLM      │                       │                                      │
+│ └───────┬──────────────────┬────────┘                       │                                      │
+│         │                  │                         ┌──────┴───────────────────┐                  │
+│         │                  │                         │                          │                  │
+│         │                  │                         ▼                          ▼                  │
+│         │                  │                 ┌─ opgw ─────────────┐    ┌─ authgw ───────────────┐  │
+│         │                  │                 │ * attach the OP    │    │ * attach real API key  │  │
+│         │                  │                 │   API token        │    │ * limit access to      │  │
+│         │                  │                 │ * read-only ops    │    │   inference API-only   │  │
+│         │                  │                 │                    │    │                        │  │
+│         │                  │                 └───────┬────────────┘    └────────────┬───────────┘  │
+│         │                  │                         │                              │              │
+└─────────┼──────────────────┼─────────────────────────┼──────────────────────────────┼──────────────┘
+          ▼                  ▼                         │                              ▼
+  ┌──────────────┐  ┌─────────────────┐────┐           │                  ┌─────────────────────────┐
+  │ GitHub API   │  │ OpenProject API │/mcp│ ◀─────────┘                  │ Inference API:          │
+  └──────────────┘  └─────────────────┘────┘                              │ OpenRouter, or your     │
+                                                                          │ own OpenAI-compatible   │
+                                                                          │ endpoint                │
+                                                                          └─────────────────────────┘
 ```
 
 ### Security model
 
-The harness container processes untrusted text (work package descriptions and comments), so it is locked down: no host/LAN exposure, **no network egress at all except authgw**, an isolated API key, writes confined to `/repos` (and
+The harness container processes untrusted text (work package descriptions and comments), so it is locked down: no host/LAN exposure, **no network egress at all except authgw and opgw**, an isolated API key, writes confined to `/repos` (and
 never into a `.git/` directory), Bash confined to read-only git, resource caps,
 a hardened container, and everything ships only as a *draft* PR for human
 review.

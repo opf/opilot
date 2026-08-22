@@ -58,6 +58,7 @@ module OPilot
 
     def process_ids(wp_ids, mode:)
       ensure_harness!
+      report_op_mcp_status
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""
@@ -126,8 +127,8 @@ module OPilot
                              item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject, resumed: session_resumable?(st),
-                             related: related_ref(st)),
-              tools: Harness::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
+                             related: related_ref(st), op_mcp: @ctx.op_mcp?),
+              tools: read_tools, model: model, outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st)
           rescue Harness::Error
@@ -144,8 +145,8 @@ module OPilot
               Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                            item: container_path(st.item_file),
                            item_id: id, title: subject, hint: option_focus.to_s,
-                           related: related_ref(st), allow_options: option_focus.nil?),
-              tools: Harness::TOOLS_READ, model: model, outfile: st.plan_file, session_file: st.session_file
+                           related: related_ref(st), allow_options: option_focus.nil?, op_mcp: @ctx.op_mcp?),
+              tools: read_tools, model: model, outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st) if plan_present?(st)
           rescue Harness::Error
@@ -330,7 +331,7 @@ module OPilot
           item_id: st.item_id, subject: st.subject,
           item: container_path(st.item_file), plan: plan_ref, message: msg
         )
-        @harness.run(prompt, tools: Harness::TOOLS_READ, model: model, session_file: st.session_file)
+        @harness.run(prompt, tools: read_tools, model: model, session_file: st.session_file)
         # Ring after the reply, not before the first message: the user just
         # chose [c]hat and is present; it's the LLM's answers they wander off on.
         ping_terminal("opilot: chat reply for #{wp_label(st.item_id)} ready")

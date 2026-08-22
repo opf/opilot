@@ -51,6 +51,7 @@ module OPilot
     # is passed to #tick. Split out from #run so CombinedAgent can drive the loop.
     def setup
       scan_from_at = prompt_scan_from
+      report_op_mcp_status
       if @ctx.allowed_gh_users.any?
         puts "  Allowlist active — only @opilot from: #{@ctx.allowed_gh_users.map { |u| "@#{u}" }.join(", ")}"
       else
@@ -243,7 +244,7 @@ module OPilot
                            worktree_path: paths.repo.worktree_host)
       checkout_pr_branch(paths.repo, intent.branch)
 
-      reply = @harness.run(yield(paths), tools: Harness::TOOLS_IMPL, session_file: paths.session_file)
+      reply = @harness.run(yield(paths), tools: impl_tools, session_file: paths.session_file)
 
       post_reply(intent, reply)
       push_followup(intent, paths.repo) if commit_followup(intent, paths.repo)
@@ -255,7 +256,8 @@ module OPilot
           worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
           title: intent.subject, item: p.item_ref, plan: p.plan_ref,
           pr_thread: container_path(p.pr_file), comment: intent.text.to_s,
-          author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to
+          author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to,
+          op_mcp: @ctx.op_mcp?
         )
       end
     end
@@ -266,6 +268,7 @@ module OPilot
     def handle_ci(intent)
       run_on_pr_head(intent) do |p|
         Prompts.fix_ci(
+          op_mcp: @ctx.op_mcp?,
           worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
           title: intent.subject, item: p.item_ref, plan: p.plan_ref,
           pr_thread: container_path(p.pr_file), ci: container_path(p.ci_file)

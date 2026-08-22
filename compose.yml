@@ -46,6 +46,16 @@ services:
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - OPILOT_ALLOWED_OP_USER_IDS=${OPILOT_ALLOWED_OP_USER_IDS:-}
       - OPILOT_ALLOWED_GH_USERS=${OPILOT_ALLOWED_GH_USERS:-}
+      # The op_query tool grant (see MCP.md). Bare form: unset must mean
+      # "off", not "blank" — Context#op_mcp? reads it the same way
+      # OPILOT_TRACK_UPSTREAM_PRS is read.
+      - OPILOT_OP_MCP
+      # Where the runner reaches opgw for the startup tool-list check
+      # (Helpers#report_op_mcp_status). Bare form, exported by ./opilot only
+      # when the flag above and the harness are both needed — unset here means
+      # "not running through ./opilot", which the check reports rather than
+      # guessing at a URL.
+      - OPILOT_OPGW_URL
       # The optional knobs, passed WITHOUT a default (`- VAR`, not
       # `- VAR=${VAR:-}`): Compose resolves the bare form from .env too, but an
       # explicit `${VAR:-}` would hand the container an empty string, and an
@@ -79,13 +89,17 @@ services:
   # text is untrusted, so a prompt injection must have nowhere to send anything.
   #
   # authgw is its ONLY egress, reachable over the internal network, and that
-  # gateway forwards to one pinned upstream on an allowlisted set of paths.
-  # There is deliberately no general-purpose proxy beside it: a tinyproxy
-  # sidecar used to straddle internal and egress for Claude Code's WebFetch,
-  # but pi ships no fetch tool (bash is confined to read-only git), so it
+  # gateway forwards to one pinned upstream on an allowlisted set of paths —
+  # plus opgw when OPILOT_OP_MCP is set (see MCP.md), reached the same way and
+  # allowlisted on the JSON-RPC body rather than the path, since every opgw
+  # call is the same POST /mcp. There is deliberately no general-purpose proxy
+  # beside them: a tinyproxy sidecar used to straddle internal and egress for
+  # Claude Code's WebFetch, but pi ships no fetch tool (bash is confined to
+  # read-only git), so it
   # carried zero traffic and served only as a bridge out of the contained
-  # network. Removing it made egress strictly zero-except-authgw. Restoring
-  # any outbound path is a deliberate decision, not a default.
+  # network. Removing it made egress strictly zero-except-authgw (plus opgw,
+  # when opted into). Restoring any outbound path is a deliberate decision,
+  # not a default.
   harness:
     build:
       context: .
@@ -128,8 +142,14 @@ services:
       - GIT_DISCOVERY_ACROSS_FILESYSTEM=1
       # The real OpenRouter key never reaches this container: pi-models.json
       # routes the openrouter provider through authgw (which holds the real
-      # key) and authenticates with this non-secret handshake token.
+      # key) and authenticates with this non-secret handshake token. The same
+      # token authenticates pi-op-mcp.ts to opgw (see MCP.md).
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
+      # Bare form, deliberately: pi-op-mcp.ts registers the op_query tool only
+      # when this is present, so an unset value here is the second half of the
+      # feature flag alongside the runner's op_query grant (OPILOT_OP_MCP).
+      # ./opilot exports it only when both the harness and the flag are needed.
+      - OPILOT_OPGW_URL
       - PI_OFFLINE=1
       # server.js reads the model slugs to decide whether to copy the
       # openrouter provider config from git or generate one for a self-hosted
@@ -199,12 +219,40 @@ services:
       timeout: 5s
       retries: 15
 
+  # The OpenProject MCP gateway (see MCP.md) — the harness's only route to the
+  # OpenProject MCP server, on when OPILOT_OP_MCP is set. Same containment
+  # shape as authgw: a fixed upstream (OPENPROJECT_URL), a pinned address, and
+  # a swap of the handshake token for the real credential — but the allowlist
+  # here is on the JSON-RPC BODY (opgw.js parses it), not the path, because
+  # every call is the same POST /mcp. Six of the instance's MCP tools WRITE to
+  # OpenProject; this is what keeps them unreachable from the harness even
+  # though the OPENPROJECT_TOKEN handed to it can write.
+  opgw:
+    build:
+      context: .
+      dockerfile: Dockerfile.opgw
+    environment:
+      - OPENPROJECT_URL
+      - OPENPROJECT_TOKEN
+      # Fixed handshake value (not a secret), the same one authgw and pi-op-mcp.ts use.
+      - OPILOT_GW_TOKEN
+    networks:
+      - internal
+      - egress
+    <<: *hardened
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:47293/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
 networks:
   # No route to the outside world. The harness holds untrusted work-package
-  # text and sits here alone with the runner and authgw, so its only reachable
-  # outbound path is the gateway — which pins one upstream and allows only the
-  # inference paths. Verify with `docker compose exec harness cat
-  # /proc/net/route`: there must be no row with destination 00000000.
+  # text and sits here alone with the runner, authgw, and (when OPILOT_OP_MCP
+  # is set) opgw, so its only reachable outbound paths are those two gateways —
+  # each pins one upstream and allows only its own narrow allowlist. Verify
+  # with `docker compose exec harness cat /proc/net/route`: there must be no
+  # row with destination 00000000.
   internal:
     internal: true
   egress:

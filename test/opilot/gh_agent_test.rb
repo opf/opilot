@@ -169,6 +169,30 @@ module OPilot
                    "the SHA is still marked acted so it isn't re-evaluated next poll"
     end
 
+    def test_op_mcp_flag_adds_op_query_to_the_own_pr_ci_fix_grant
+      ctx = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"], op_mcp: true)
+      agent = GhAgent.new(ctx, pull: @pull, harness: @harness, github: @github)
+      inject_worktree(agent, @worktree)
+
+      capture_io { agent.handle_and_ack(ci_intent) }
+
+      run = @harness.runs.first
+      assert_equal Harness::TOOLS_IMPL_OP, run[:tools], "OPILOT_OP_MCP adds op_query to the CI-fix grant"
+    end
+
+    def test_op_mcp_flag_does_not_reach_upstream_review
+      ctx = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"], op_mcp: true)
+      agent = GhAgent.new(ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(ctx),
+                          harness: @harness, github: @github)
+      inject_worktree(agent, @worktree = FakeWorktree.new(has_changes: true))
+
+      capture_io { agent.handle(review_intent) }
+
+      review_run = @harness.runs.find { |r| r[:prompt].include?("you do NOT own") }
+      assert_equal Harness::TOOLS_READ, review_run[:tools],
+                   "upstream review must stay plain TOOLS_READ even with the flag on"
+    end
+
     def test_upstream_reply_only_reviews_without_committing_or_pushing
       agent = GhAgent.new(@ctx, pull: @pull, upstream_pull: UpstreamGhPull.new(@ctx),
                           harness: @harness, github: @github)

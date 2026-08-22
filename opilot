@@ -217,6 +217,22 @@ _needs_harness() {
 # it) — not the harness a real pi run needs.
 _needs_authgw() { _needs_harness || _is usage; }
 
+# Matches Context#op_mcp?'s accepted "turn it off" spellings, so a flag reads
+# the same whether Ruby or bash is asking.
+_falsy() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    0|false|no|off) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# The OpenProject MCP gateway (see MCP.md) — needed whenever a harness-using
+# command runs, unless the operator opted OUT with OPILOT_OP_MCP=0. On by
+# default: an instance with no (Enterprise-only) MCP server enabled just
+# answers every op_query call "unavailable", which is a normal, quiet state —
+# not a reason to withhold the tool from every instance that does have it.
+_needs_opgw() { _needs_harness && ! _falsy "$(_env_get OPILOT_OP_MCP)"; }
+
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
 # writes the clone's .git/info/exclude, and the rest read or write its openspec/.
 _needs_repos() { _needs_harness || [ "$CMD" = "pd" ]; }
@@ -269,8 +285,18 @@ if _needs_authgw; then
   export OPILOT_INFERENCE_URL OPILOT_INFERENCE_KEY OPILOT_INFERENCE_AUTH
   export OPILOT_GW_TOKEN="opilot-internal-gateway"
   if _needs_harness; then
-    dc up -d --wait --remove-orphans authgw harness
-    trap 'dc stop harness authgw 2>/dev/null || true' EXIT INT TERM
+    if _needs_opgw; then
+      # Exported only here: an absent OPILOT_OPGW_URL is what tells both the
+      # runner (which call sites grant op_query — Context#op_mcp?'s callers)
+      # and the harness extension (pi-op-mcp.ts) that opgw isn't running,
+      # without either having to re-derive this condition itself.
+      export OPILOT_OPGW_URL="http://opgw:47293"
+      dc up -d --wait --remove-orphans authgw harness opgw
+      trap 'dc stop harness authgw opgw 2>/dev/null || true' EXIT INT TERM
+    else
+      dc up -d --wait --remove-orphans authgw harness
+      trap 'dc stop harness authgw 2>/dev/null || true' EXIT INT TERM
+    fi
   else
     dc up -d --wait --remove-orphans authgw
     trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM

@@ -273,7 +273,8 @@ docker compose build runner
 
 ## Architecture
 
-Three Docker containers orchestrated by `compose.yml`:
+Four Docker containers orchestrated by `compose.yml` (three plus `opgw`, which
+starts only when `OPILOT_OP_MCP` is set):
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
   the LLM, pushes branches, opens PRs. Does all real git.
@@ -286,15 +287,17 @@ Three Docker containers orchestrated by `compose.yml`:
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
   target repo's directly instead. Its Bash grant is **read-only git** —
-  history for context, but no commit, push, or non-git command. One extension,
-  `pi-guards.ts` (loaded via `--no-extensions -e`, pi's only PreToolUse-style
-  hook), enforces that plus the write confinement: no writes outside `/repos`,
-  and **none into any `.git/` directory** — that one is not cosmetic, since
-  `.git/config`'s `diff.external` and `core.fsmonitor` run programs on
-  allowlisted read-only subcommands, and `.git/hooks/pre-commit` would execute
-  in the *runner*, which holds the GitHub token. Writes are checked on the
-  resolved path by exact segment match, so `.gitignore`/`.github/` stay
-  editable.
+  history for context, but no commit, push, or non-git command. Two
+  extensions load via `--no-extensions -e` (repeatable): `pi-guards.ts` (pi's
+  only PreToolUse-style hook) enforces that plus the write confinement: no
+  writes outside `/repos`, and **none into any `.git/` directory** — that one
+  is not cosmetic, since `.git/config`'s `diff.external` and
+  `core.fsmonitor` run programs on allowlisted read-only subcommands, and
+  `.git/hooks/pre-commit` would execute in the *runner*, which holds the
+  GitHub token. Writes are checked on the resolved path by exact segment
+  match, so `.gitignore`/`.github/` stay editable. `pi-op-mcp.ts` registers
+  the `op_query` tool (see the Opgw entry below); it is always loaded, but
+  registers nothing when `OPILOT_OPGW_URL` is unset.
 
   pi always talks to authgw at `http://authgw:47292/v1`, resolving its
   `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a secret) — the
@@ -326,6 +329,28 @@ Three Docker containers orchestrated by `compose.yml`:
   wire format is pi's `api` field (`OPILOT_MODEL_API`), not authgw's concern.
   A keyless self-hosted endpoint still goes through it; "no secret to hide" is
   not a reason to bypass containment.
+- **Opgw** (Node 20, `opgw.js`) — the harness's only route to the OpenProject
+  MCP server (see `MCP.md`), on whenever the harness is (`OPILOT_OP_MCP`
+  defaults **on**; set it to `0`/`false`/`no`/`off` to disable). Same
+  containment shape as authgw — a fixed upstream (`OPENPROJECT_URL`), an
+  address pinned at boot, and a swap of the handshake token for
+  `OPENPROJECT_TOKEN` (basic auth, `apikey:<token>`) — but the allowlist is on
+  the **JSON-RPC request body**, not the path: every call is the same `POST
+  /mcp`, so opgw parses it and allows only `initialize`/`tools/list`, and for
+  `tools/call` only eight read-only operation names. The instance's own
+  `tools/list` answer is also trimmed to those eight before it reaches pi, so
+  the model is never shown a tool it cannot call. A second route, `GET
+  /tools`, answers the runner with the **unfiltered** list — used once at
+  startup (`Helpers#report_op_mcp_status`) to log which write tools the
+  instance still has enabled; opilot cannot disable those, only an
+  administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
+  tools do — so this allowlist is the actual control, not a refinement one.
+  The pi extension side (`pi-op-mcp.ts`/`op-mcp-client.js`, loaded via a
+  second `-e`) trims a `search_work_packages` answer to a fixed subset of
+  fields (full records run ~8 KB each) and registers nothing at all when
+  `OPILOT_OPGW_URL` is empty — the harness-side half of the same feature flag.
+  A 404 ("MCP server is not available") is a normal per-instance state, not an
+  error: the MCP server is an Enterprise add-on an administrator must enable.
 **There is no egress proxy.** A tinyproxy sidecar used to sit beside authgw,
 allowlisting a couple of documentation hosts for Claude Code's WebFetch. pi
 ships no fetch tool — its built-ins are `bash, edit, find, grep, ls, read,
@@ -333,8 +358,9 @@ write`, and Bash is confined to read-only git — so nothing could use it, and
 its logs showed zero requests across every recorded run. It was also the only
 service straddling `internal` and `egress`, which made it a bridge *out* of the
 contained network rather than a restriction on one. Removing it made the
-harness's egress strictly zero-except-authgw, and means any future outbound
-path has to be added deliberately instead of already being there.
+harness's egress strictly zero-except-authgw (plus opgw, per above), and means
+any future outbound path has to be added deliberately instead of already
+being there.
 
 [pi]: https://github.com/badlogic/pi-mono
 
@@ -557,8 +583,12 @@ globally unique, so `pr_reviews/` is flat.
 Runner POSTs to `http://harness:47291` with headers:
 
 - `X-Harness-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
-  `"read,grep,find,ls,bash,write,edit"` (implementation). `server.js` rejects any
-  other grant, so its allowlist must stay in sync with `TOOLS_READ`/`TOOLS_IMPL`.
+  `"read,grep,find,ls,bash,write,edit"` (implementation), each with a `,op_query`
+  variant sent by the specific call sites `Helpers#read_tools`/`#impl_tools`
+  cover when `Context#op_mcp?` is on (see `MCP.md`) — most `TOOLS_READ`/`TOOLS_IMPL`
+  call sites keep the plain grant regardless. `server.js` rejects any other
+  grant, so its allowlist (`ALLOWED_TOOL_GRANTS`, four strings) must stay in
+  sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
   always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5`,
@@ -603,6 +633,8 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
+| `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server — see `MCP.md`) to the plan/chat/gh-reply phases and starts the `opgw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
+| `OPILOT_OPGW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://opgw:47293`) for both the runner and the harness only when `opgw` is actually running. Read by the runner for the startup tool-list check and by `pi-op-mcp.ts` as its own gate: empty means the tool registers at all |
 | `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot |
 | `OPILOT_INFERENCE_KEY` | The key authgw presents upstream, if the upstream wants one. Lives only in authgw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). authgw always deletes the inbound `Authorization` first, whatever this names |

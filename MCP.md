@@ -218,6 +218,13 @@ reason to do the harness-side work below.
 
 # Part 2 — The plan
 
+**Status: implemented.** Steps 1–5 below are all in place — `opgw.js`,
+`pi-op-mcp.ts`/`op-mcp-client.js`, the runner wiring, compose/launcher
+changes, and this file. One decision changed from what is written below
+during implementation, on explicit direction: **`OPILOT_OP_MCP` defaults ON**
+(opt out with `0`/`false`/`no`/`off`), not off-by-default as the Decisions
+table originally called for — see the note under that table.
+
 The outcome: the plan and chat phases can look up a duplicate ticket, a work
 package opilot never mirrored, or live instance metadata, while the harness
 stays contained and the write tools stay unreachable.
@@ -232,12 +239,22 @@ stays contained and the write tools stay unreachable.
 | Phases | Plan, chat, gh-agent's own-PR reply and CI fix. **Not** the fix implement run, not upstream PR review, not `create wp` |
 | Gateway code | Standalone `opgw.js`. `authgw.js` and its test stay untouched |
 | Language | JavaScript, so opgw copies authgw's proven parts. Ruby was considered and dropped: a rewrite of the pinning and header rules would have to be re-reviewed from scratch. The extension has no choice — it runs inside pi |
-| Default | Off. `OPILOT_OP_MCP=1` turns it on |
+| Default | **Changed during implementation, on explicit direction: ON.** `OPILOT_OP_MCP=0` (or `false`/`no`/`off`) turns it off |
 
-`OPILOT_OP_MCP` is off by default because the MCP server is an Enterprise
-add-on that an administrator must enable. With the flag off, no `opgw`
-container starts, the grants stay `TOOLS_READ` and `TOOLS_IMPL`, and the
-prompts say nothing about the tool.
+The reasoning that originally argued for off-by-default still holds as a
+description of the failure mode, just not as the conclusion: the MCP server
+is an Enterprise add-on an administrator must enable, so most instances have
+none. What changes the conclusion is that the whole design already treats
+"unavailable" as a normal, quiet outcome rather than an error — `op_query`
+itself returns one clear line and the run continues (Step 2), and the startup
+check (Step 3) distinguishes a 404 (`Clients::OpMcp::Unavailable`) from a real
+failure and logs it quietly rather than as a warning. Defaulting on therefore
+costs an idle `opgw` container and one log line on an instance without the
+add-on, not a broken or noisier run — while an instance that DOES have it
+enabled gets the lookup without anyone needing to discover the flag. With the
+flag off (opt-out), no `opgw` container starts, the grants stay `TOOLS_READ`
+and `TOOLS_IMPL`, and the prompts say nothing about the tool — unchanged from
+the original design.
 
 ## Data flow
 
@@ -583,17 +600,21 @@ unchanged:
 docker compose exec harness cat /proc/net/route   # no 00000000 destination row
 ```
 
-End to end, on a work package that has a known duplicate:
+End to end, on a work package that has a known duplicate, on an Enterprise
+instance with the MCP server enabled:
 
 ```bash
-OPILOT_OP_MCP=1 ./opilot dev plan <id>
+./opilot dev plan <id>   # OPILOT_OP_MCP is on by default — nothing to set
 ```
 
 Watch the startup line naming the instance's tool count and any enabled write
 tools, watch the streamed `op_query` call, and check that `plan.md` names what
 the search found. Confirm `.opilot/work_packages/<host>/<id>/` gained no new
-file. Then run the same command **without** the flag and confirm the run still
-works, with no `op_query` line and no `opgw` container.
+file. Then run the same command against an instance with **no** MCP server (or
+with `OPILOT_OP_MCP=0`) and confirm the run still works: no `op_query` line
+(or, on a real Enterprise-less instance, one quiet "not available on this
+instance" log line and nothing else), and no `opgw` container when the flag
+is off.
 
 ## Out of scope
 

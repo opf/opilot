@@ -5,8 +5,6 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 ## Productization
 * Wire the agent into our Compose stack!
   * either via an override file or a separate branch/fork
-* Make use of the MCP server
-  * Use MCP calls instead of (or additionally to) the local JSON WP mirrors
 * Make use of our own LLM
   * Custom OpenAI-compatible APIs are already supported => test this out
 * Introduce proper UI!

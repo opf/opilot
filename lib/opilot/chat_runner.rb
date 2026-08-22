@@ -19,6 +19,7 @@ module OPilot
       # One fresh session per invocation: thread context across turns within this
       # run, but never resume a stale conversation from a previous one.
       ensure_harness!
+      report_op_mcp_status
       session_file = @ctx.state_dir / "chat_session_id"
       safe_rm(session_file)
 
@@ -39,8 +40,9 @@ module OPilot
         break if pending.empty?
 
         wp_root = container_path(Helpers.items_dir(@ctx))   # /state/work_packages/<host>
-        prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending)
-        @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: session_file)
+        prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending,
+                                    op_mcp: @ctx.op_mcp?)
+        @harness.run(prompt, tools: read_tools, session_file: session_file)
         ping_terminal("opilot: chat reply ready")
         puts ""
         pending = ""
