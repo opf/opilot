@@ -33,7 +33,7 @@ Use OPilot to remove that friction from your development workflow. It can automa
 ### General audience
 
 * **Refine work packages**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
-* **Generate new work packages**: Turn a suggestion made in a comment into its own work package with `@OPilot create wp <instructions>`. OPilot drafts it from the thread, creates it in the same project, and relates it back. A request that names several separate pieces of work creates up to five at once. Each one is either a child of the source work package or a separate related one -- say which you want ("split this into subtasks", "file those separately") and OPilot follows your words.
+* **Generate new work packages**: Turn a suggestion made in a comment into its own work package(s) with `@OPilot create wp <instructions>`. OPilot builds the package content, creates them in the same project, and relates them back.
 * **[Enterprise] Run project-wide discovery**: Ask `@OPilot` anything about the reachable projects' data -- it will leverage the instance's MCP server to give you a fresh answer.
 
 ### ...and others?
@@ -58,7 +58,8 @@ Use OPilot to remove that friction from your development workflow. It can automa
 - **Docker**
 - **LLM (inference) URL & key**: OpenRouter or your own OpenAI-compatible server (see [Models](#models))
 - **GitHub auth token** for a permission-less contributor account (e.g. [opilot-agent](https://github.com/opilot-agent))
-- OpenProject API token for a sufficiently restricted bot account (e.g. [Chomper Agent](https://community.openproject.org/users/100163) on Community)
+- **OpenProject API token** for a sufficiently restricted bot account (e.g. [Chomper Agent](https://community.openproject.org/users/100163) on Community)
+  - At least "read work package" and "write comment" is required; more permissions (e.g. "create work package") may also unlock optional features (e.g. work package creator)
 
 ---
 
@@ -78,16 +79,23 @@ Scans for new activity on OpenProject WPs + its own GitHub PRs, and acts on @OPi
 ./opilot agent
 ```
 
-### Script mode
-Fallback interface: Same functionality as the agent, but runnable via the CLI.
+### CLI mode
+Fallback interface: Same functionality as the agent, but runnable via the CLI & adding some extras.
+
+Some examples:
 ```bash
-# Run one-time E2E fix of one or more specific WPs
-./opilot dev build <id>...
-# OR just draft (and approve) a plan without building
-./opilot dev plan <id>...
-# OR refresh a stale shipped PR (merge base, fix CI, address comments)
-./opilot dev refresh <id-or-pr-url>...
-# and more — ./opilot dev lists the group
+# Use the built-in OpenProject mini-SDK
+./opilot op doc list
+./opilot op wp create --project "COMMS" --subject "Hi"
+
+# Use the software development commands
+./opilot dev build COMMS-123
+
+# Invoke the opilot chatting interface locally
+./opilot chat
+
+# See configured models and their token usage stats
+./opilot usage
 ```
 
 ## Bird's-eye view
