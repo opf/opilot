@@ -54,8 +54,10 @@ module OPilot
       data = Helpers.safe_json_read(item_path) || {}
       return if data["refusal_noted_at"]
 
-      # The note names no command word, so it can never be read back as a trigger
-      # (opilot's own comments are only excluded one deep, by id).
+      # The note also names no command word. #own_comment? already keeps opilot
+      # from reading its own text as a trigger, so this is belt-and-braces —
+      # but it costs nothing, and the one comment this path may ever post is
+      # the worst place to depend on a single guard.
       who  = Helpers.mention(trigger["user"], trigger["user_href"])
       body = "#{who} I do not act on this comment. On this instance only the users in " \
              "opilot's allowlist can trigger me. Ask one of them to comment, or ask an " \
@@ -64,16 +66,6 @@ module OPilot
       return unless code == 201
 
       data["refusal_noted_at"] = Time.now.utc.iso8601
-      item_path.write(JSON.generate(data))
-    end
-
-    # Record the ID of a note posted by opilot so it is never re-detected as a
-    # trigger. Called by the agent after successfully posting a reply.
-    def record_opilot_comment(wp_id, comment_id)
-      item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
-      return unless item_path.exist?
-      data = JSON.parse(item_path.read)
-      data["last_opilot_comment_id"] = comment_id.to_s
       item_path.write(JSON.generate(data))
     end
 
@@ -87,18 +79,34 @@ module OPilot
       scan_from_at
     end
 
-    # Raise unless opilot's own OpenProject display name is known — the poll's
-    # only search term (see #mention_filter_json). There is no project-scope
-    # fallback left underneath it, so a failed /users/me lookup must stop the
-    # poll rather than send an empty/malformed filter value. Called from
+    # Raise unless BOTH halves of opilot's own OpenProject identity are known.
+    # There is no project-scope fallback left underneath the poll, so a failed
+    # /users/me lookup must stop it rather than degrade quietly. Called from
     # Agent#setup (so a broken identity fails loudly once, before the loop
     # starts, instead of being silently retried forever by guarded_tick) and
     # from #poll_intents itself (so a direct call is guarded too).
+    #
+    # Both halves are required, because each one is load-bearing on its own:
+    #
+    # - the display name is the poll's ONLY search term (#mention_filter_json),
+    #   so without it the filter value is empty or malformed;
+    # - the user id is what tells opilot's own comments apart from a trigger
+    #   (#own_comment?). Missing, that guard silently becomes a no-op and opilot
+    #   can read its own text back as an instruction — a loop nothing stops.
+    #
+    # Both come from one #own_user call, so in practice they fail together; the
+    # message names which half is missing for the case where the response is
+    # merely malformed.
     def ensure_bot_identity!
-      return unless bot_display_name.empty?
+      missing = []
+      missing << "display name" if bot_display_name.empty?
+      missing << "user id"      if own_user_id.empty?
+      return if missing.empty?
+
       raise OPilot::FatalError,
-            "could not resolve opilot's own OpenProject display name (GET /users/me) — " \
-            "op-agent can't search for its own @mentions without it"
+            "could not resolve opilot's own OpenProject identity (GET /users/me) — no " \
+            "#{missing.join(" and no ")}. op-agent needs the display name to search for its " \
+            "own @mentions, and the user id to tell its own comments from a trigger."
     end
 
     # Fetch one work package by id (ignoring filters), refresh its item.json,
@@ -356,7 +364,6 @@ module OPilot
     # package — which a commenter can cause at will.
     CARRIED_KEYS = %w[
       last_acted_comment_at
-      last_opilot_comment_id
       refusal_noted_at
       create_wp_refusal_noted_at
     ].freeze
@@ -459,12 +466,30 @@ module OPilot
       item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"
       saved = Helpers.safe_json_read(item_path) || {}
       cutoff = [saved["last_acted_comment_at"], @scan_from_at].compact.max
-      last_opilot_id = saved["last_opilot_comment_id"]
       comments
-        .reject { |c| last_opilot_id && c["id"] == last_opilot_id }
+        .reject { |c| own_comment?(c) }
         .select { |c| opilot_mentioned?(c["text"]) }
         .select { |c| cutoff.nil? || c["created_at"] > cutoff }
         .max_by { |c| c["created_at"] }
+    end
+
+    # Did opilot write this comment? Read off the AUTHOR, never off a record of
+    # what opilot posted.
+    #
+    # This guard has to be complete, because the cutoff underneath it cannot
+    # help: opilot's reply is always posted AFTER the trigger it answers, so its
+    # timestamp is always above `last_acted_comment_at`. The author is the only
+    # thing between opilot and its own text.
+    #
+    # An earlier version remembered one comment id instead. That covered the
+    # single-reply case and nothing else — a handler that posts two comments
+    # (#post_approach_note, then the pull-request links) left the first one
+    # unguarded, and every comment Pull itself posts was never recorded at all.
+    # The author is already on every cached comment (#build_comments), and
+    # #ensure_bot_identity! guarantees `own_user_id` is present, so this needs
+    # no bookkeeping and cannot fall behind.
+    def own_comment?(comment)
+      href_id(comment["user_href"]) == own_user_id
     end
 
     # A comment triggers opilot when it either contains the literal text
@@ -495,9 +520,11 @@ module OPilot
 
     # OPilot's own OpenProject identity, resolved from /users/me and memoized
     # for the lifetime of this Pull (a failed lookup is cached too, so it's not
-    # retried every comment/poll). `id` recognises an OP-native @-mention by
-    # data-id (see #opilot_mentioned?); `name` is the poll's search term (see
-    # #mention_filter_json). Both fall back to "" when the lookup fails.
+    # retried every comment/poll). `id` does two jobs — it recognises an
+    # OP-native @-mention by data-id (#opilot_mentioned?) and it recognises
+    # opilot's own comments by author (#own_comment?); `name` is the poll's
+    # search term (#mention_filter_json). Both fall back to "" when the lookup
+    # fails, which #ensure_bot_identity! turns into a hard stop.
     def own_user
       return @own_user if defined?(@own_user)
       @own_user = begin

@@ -101,7 +101,6 @@ module OPilot
       attr_accessor :related
       def initialize; @acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
-      def record_opilot_comment(*, **); end
       def related_work_packages(_id); @related; end
     end
 

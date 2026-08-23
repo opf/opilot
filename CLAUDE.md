@@ -408,7 +408,16 @@ PR needs the store's layout on every tick.
 ### Per-work-package state machine
 
 1. **Poll** — `Pull#poll_intents` fetches WPs matching the comment-search filter and
-   their comments, de-dupes by `last_acted_comment_at`.
+   their comments, de-dupes by `last_acted_comment_at`, and drops every comment
+   opilot wrote itself (`Pull#own_comment?`, on the author's user id). That guard
+   has to be complete rather than best-effort, because the cutoff cannot back it
+   up: a reply is always posted *after* the trigger it answers, so it always sits
+   above `last_acted_comment_at`, and opilot's own comments quote the command word
+   routinely (`#post_options` tells the reader to answer `@opilot build 1`). It
+   replaced a record of the last comment id, which covered one reply and no more —
+   a handler that posts two left the first one live, and the notes `Pull` itself
+   posts were never recorded at all. This is why `Pull#ensure_bot_identity!`
+   demands the bot's **user id** as well as its display name.
 2. **Plan** — the LLM (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
    one comment) until a reply names a number. Every clone is first synced to current upstream
@@ -577,8 +586,10 @@ duplicate create.
   every record written before this got.
 - **Nothing is posted on the new work package, and no reply names `@opilot`.** The poll
   filter searches comment *content*, and a new work package has no acted-state or
-  cutoff under it — a comment there naming opilot would make opilot read its own text
-  as a trigger forever. Same hazard as `Pull#note_refused_trigger`'s wording.
+  cutoff under it. `Pull#own_comment?` now rejects any comment opilot authored, so
+  this is belt-and-braces rather than the only guard — but it costs nothing, and a
+  work package that cannot be deleted is the wrong place to lean on one check.
+  Same reasoning as `Pull#note_refused_trigger`'s wording.
 - **This handler answers its own failures**, unlike every other one (`#handle_and_ack`
   stays silent by design): a reader who asked for a work package waits for a link, and
   silence reads as a broken bot. The reply is composed in Ruby (`#created_note`,

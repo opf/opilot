@@ -26,15 +26,48 @@ function test(name, fn) {
 // ── request building ─────────────────────────────────────────────────────
 
 test('only the flat fields actually set are forwarded as arguments', () => {
-  const body = buildRequestBody({ operation: 'list_work_package_comments', work_package_id: '42' });
+  const body = buildRequestBody({ operation: 'list_work_package_comments', work_package_id: 42 });
   assert.strictEqual(body.method, 'tools/call');
   assert.strictEqual(body.params.name, 'list_work_package_comments');
-  assert.deepStrictEqual(body.params.arguments, { work_package_id: '42' });
+  assert.deepStrictEqual(body.params.arguments, { work_package_id: 42 });
 });
 
 test('an unset optional field never becomes a literal null/empty', () => {
   const body = buildRequestBody({ operation: 'search_work_packages', subject: '', project_id: undefined, status_id: null });
   assert.deepStrictEqual(body.params.arguments, {});
+});
+
+// The MCP server types every id as a number and rejects a string with "value at
+// `/project_id` is not a number" — an error that names no fix, so a model just
+// retries. A stringified number must never reach it.
+test('a stringified id is coerced to the number the MCP server demands', () => {
+  const body = buildRequestBody({ operation: 'search_work_packages', project_id: '1182', page: '2' });
+  assert.deepStrictEqual(body.params.arguments, { project_id: 1182, page: 2 });
+});
+
+test('a string field is never coerced, even when it looks numeric', () => {
+  const body = buildRequestBody({ operation: 'search_work_packages', subject: '2024' });
+  assert.deepStrictEqual(body.params.arguments, { subject: '2024' });
+  assert.strictEqual(typeof body.params.arguments.subject, 'string');
+});
+
+// A project identifier is the mistake this whole fix exists to stop. Forward it
+// unchanged so the server's own error is what the model sees — never NaN.
+test('a non-numeric id is forwarded unchanged, not turned into NaN', () => {
+  const body = buildRequestBody({ operation: 'search_work_packages', project_id: 'TTP2' });
+  assert.deepStrictEqual(body.params.arguments, { project_id: 'TTP2' });
+});
+
+test('search_projects takes an identifier, the way to resolve a TTP2 prefix', () => {
+  const body = buildRequestBody({ operation: 'search_projects', identifier: 'TTP2' });
+  assert.deepStrictEqual(body.params.arguments, { identifier: 'TTP2' });
+});
+
+// search_custom_fields.id is the one upstream field declared ["number","array"],
+// so the array form has to survive the coercion rather than be narrowed away.
+test('an array of ids is coerced element-wise, not flattened or dropped', () => {
+  const body = buildRequestBody({ operation: 'search_custom_fields', id: ['12', 34] });
+  assert.deepStrictEqual(body.params.arguments, { id: [12, 34] });
 });
 
 test('every op_query operation is one of the eight read-only ops', () => {

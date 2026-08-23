@@ -23,8 +23,38 @@ const OPERATIONS = Object.freeze([
 // enforces read-only, not this list). Flat fields beat one opaque `arguments`
 // blob because the model sees the real parameter names instead of a nested object.
 const FLAT_ARG_NAMES = Object.freeze([
-  'work_package_id', 'subject', 'project_id', 'status_id', 'type_id', 'id', 'name', 'sharing', 'page',
+  'work_package_id', 'subject', 'project_id', 'status_id', 'type_id', 'id',
+  'name', 'identifier', 'sharing', 'page',
 ]);
+
+// The fields the MCP server types as `number`, not `string`. Every id upstream
+// is numeric — a probe of a live `tools/list` shows `project_id`, `status_id`,
+// `type_id`, `id` and (required) `work_package_id` all declared `number`. A
+// string reaching the server is rejected with "value at `/project_id` is not a
+// number", which names no fix, so the model retries the same call forever and
+// then falls back to scanning every project by subject.
+//
+// The tool schema declares these as numbers too (pi-op-mcp.ts), so this is the
+// second half of the belt: a model routinely stringifies a number whatever the
+// schema says, and this is the half a plain-Node test can cover.
+const NUMERIC_ARG_NAMES = Object.freeze([
+  'work_package_id', 'project_id', 'status_id', 'type_id', 'id', 'page',
+]);
+
+// Coerces a numeric string to a number for the fields above. A value that is
+// NOT a plain integer is forwarded unchanged — e.g. a `TTP2`-style project
+// identifier, which is a real mistake worth the server's own error rather than
+// a silent NaN.
+//
+// An array is mapped element-wise, because `search_custom_fields.id` is the one
+// upstream field declared `['number', 'array']` rather than plain `number`.
+function coerceArg(key, value) {
+  if (!NUMERIC_ARG_NAMES.includes(key)) return value;
+  if (Array.isArray(value)) return value.map(v => coerceArg(key, v));
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number(value.trim());
+  return value;
+}
 
 // Builds the JSON-RPC `tools/call` body opgw expects. Only the flat fields the
 // caller actually set are forwarded as `arguments` — an unset optional field
@@ -32,7 +62,9 @@ const FLAT_ARG_NAMES = Object.freeze([
 function buildRequestBody(params) {
   const args = {};
   for (const key of FLAT_ARG_NAMES) {
-    if (params[key] !== undefined && params[key] !== null && params[key] !== '') args[key] = params[key];
+    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+      args[key] = coerceArg(key, params[key]);
+    }
   }
   return {
     jsonrpc: '2.0',
@@ -138,6 +170,6 @@ function unavailableMessage() {
 }
 
 module.exports = {
-  OPERATIONS, FLAT_ARG_NAMES, MAX_ANSWER_BYTES,
+  OPERATIONS, FLAT_ARG_NAMES, NUMERIC_ARG_NAMES, MAX_ANSWER_BYTES,
   buildRequestBody, parseToolResult, summarize, unavailableMessage,
 };

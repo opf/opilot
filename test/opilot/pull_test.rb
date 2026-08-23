@@ -298,7 +298,6 @@ module OPilot
         "updated_at"                 => "2024-01-01T00:00:00Z",
         "subject"                    => "an old mirror of the subject",
         "last_acted_comment_at"      => "2024-01-01T10:00:00Z",
-        "last_opilot_comment_id"     => "77",
         "refusal_noted_at"           => "2024-01-01T11:00:00Z",
         "create_wp_refusal_noted_at" => "2024-01-01T12:00:00Z"
       ))
@@ -502,40 +501,54 @@ module OPilot
       assert_equal "1", intents[0].item_id
     end
 
-    def test_ignores_comment_recorded_as_opilot_reply
+    # opilot is user 1 on this instance (the /users/me stub in #setup), so a
+    # comment authored by user 1 is one opilot wrote. It must never be read back
+    # as a trigger, however loudly its text asks — opilot's own comments quote
+    # the command word all the time (#post_options tells the reader to reply
+    # "@opilot build 1").
+    def test_ignores_a_comment_opilot_wrote_itself
       seed_item(1, "2024-01-02T00:00:00Z", [
-        { "id" => "9", "user" => "Tom", "user_href" => "/api/v3/users/1",
-          "created_at" => "2024-02-01T00:00:00Z", "text" => "@opilot build" }
+        { "id" => "9", "user" => "OPilot", "user_href" => "/api/v3/users/1",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "Reply `@opilot build 1` to build option 1." }
       ])
-      # Mark comment 9 as a opilot-generated reply.
-      item_path = Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json"
-      data = JSON.parse(item_path.read)
-      data["last_opilot_comment_id"] = "9"
-      item_path.write(JSON.generate(data))
-
       stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
       assert_equal [], @pull.poll_intents(nil)
     end
 
-    def test_record_opilot_comment_persists_id
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.record_opilot_comment("1", "42")
-      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
-      assert_equal "42", data["last_opilot_comment_id"]
+    # The case the old one-deep id guard missed. A handler that posts TWO
+    # comments (#post_approach_note, then the pull-request links) recorded only
+    # the second id, and both sit above the cutoff, because opilot always
+    # replies after the trigger it answers. The author guard covers every one of
+    # them, no matter how many there are.
+    def test_ignores_every_opilot_comment_not_just_the_last
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "9", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:00:00Z", "text" => "#{MENTION} build" },
+        { "id" => "10", "user" => "OPilot", "user_href" => "/api/v3/users/1",
+          "created_at" => "2024-02-01T00:01:00Z", "text" => "I will implement this. Reply `@opilot build 2` to change it." },
+        { "id" => "11", "user" => "OPilot", "user_href" => "/api/v3/users/1",
+          "created_at" => "2024-02-01T00:02:00Z", "text" => "Here is your prototype: https://example.invalid/pr/1" }
+      ], extra: { "last_acted_comment_at" => "2024-02-01T00:00:00Z" })
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+      assert_equal [], @pull.poll_intents(nil)
     end
 
-    def test_record_opilot_comment_survives_item_refresh
-      seed_item(1, "2024-01-02T00:00:00Z", [])
-      @pull.record_opilot_comment("1", "42")
-      # Simulate a re-fetch that rewrites item.json (updated_at changes).
-      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/1/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stale_wp = wp(1, "2024-01-02T00:00:00Z").merge("updatedAt" => "2024-03-01T00:00:00Z")
-      @pull.send(:fetch_work_package_item, stale_wp)
-      data = JSON.parse((Pathname(@tmpdir) / "work_packages" / "example.com" / "1" / "item.json").read)
-      assert_equal "42", data["last_opilot_comment_id"]
+    # A comment from a real user is still a trigger when opilot's own replies
+    # sit around it — the guard must exclude opilot, not silence the thread.
+    def test_still_triggers_on_a_user_comment_after_an_opilot_reply
+      seed_item(1, "2024-01-02T00:00:00Z", [
+        { "id" => "10", "user" => "OPilot", "user_href" => "/api/v3/users/1",
+          "created_at" => "2024-02-01T00:01:00Z", "text" => "Reply `@opilot build 1` to build option 1." },
+        { "id" => "11", "user" => "Bob", "user_href" => "/api/v3/users/2",
+          "created_at" => "2024-02-01T00:02:00Z", "text" => "#{MENTION} build 1" }
+      ])
+      stub_request(:patch, %r{/activities/11/emoji_reactions}).to_return(status: 200, body: "{}")
+      stub_request(:get, /offset=1/).to_return(status: 200, body: page_response([wp(1, "2024-01-02T00:00:00Z")], total: 1))
+
+      intents = @pull.poll_intents(nil)
+      assert_equal 1, intents.length
+      assert_equal :ship, intents[0].command
+      assert_equal "1",   intents[0].text
     end
 
     def test_emits_intent_for_plain_text_opilot_call
@@ -605,6 +618,20 @@ module OPilot
     def test_poll_intents_raises_when_the_bot_identity_cannot_be_resolved
       stub_request(:get, "https://example.com/api/v3/users/me").to_return(status: 500, body: "{}")
       assert_raises(OPilot::FatalError) { @pull.poll_intents(nil) }
+    end
+
+    # The user id is required too, not only the display name: without it
+    # #own_comment? silently stops recognising opilot's own comments, and opilot
+    # can read its own text back as a trigger. A response carrying a name but no
+    # self link must therefore fail as loudly as no response at all.
+    def test_poll_intents_raises_when_only_the_bot_user_id_is_missing
+      stub_request(:get, "https://example.com/api/v3/users/me")
+        .to_return(status: 200, body: JSON.generate({ "name" => "OPilot" }))
+      error = assert_raises(OPilot::FatalError) { @pull.poll_intents(nil) }
+      # The "no <half>" clause names which half is missing; the sentence after it
+      # explains what both halves are for, so only the clause is asserted here.
+      assert_includes error.message, "no user id."
+      refute_includes error.message, "no display name"
     end
   end
 
