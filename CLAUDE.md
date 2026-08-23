@@ -474,10 +474,13 @@ Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
 **`:create_wp` (`@opilot create wp <what>`)** splits something out of the thread into
-its own work package — `create wp for Rosanna's suggestion`. It is op-agent's **only
-non-comment write to OpenProject**, and every guard on it stands on one fact: a work
-package can never be deleted (the HTTP client has no DELETE verb anywhere), so
-nothing downstream can undo a wrong or duplicate create.
+its own work package — `create wp for Rosanna's suggestion` — or, when the request
+names several separate pieces of work, into **up to five at once**
+(`Agent::MAX_CREATE_WP`), each declared a child of the thread or a peer beside it.
+It is op-agent's **only non-comment write to OpenProject**,
+and every guard on it stands on one fact: a work package can never be deleted (the
+HTTP client has no DELETE verb anywhere), so nothing downstream can undo a wrong or
+duplicate create.
 
 - **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`Agent#create_wp_enabled?`),
   said once per work package (`create_wp_refusal_noted_at`) and folded into the
@@ -488,14 +491,35 @@ nothing downstream can undo a wrong or duplicate create.
   The requirement also makes the allowlist gate *unconditional* for this command:
   `Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
   so every create that reaches the handler is from a listed user.
-- **The draft is one LLM call, gated by `NEEDS_INFO`** (`Prompts.create_wp`). When the
-  request points at nothing in the thread, or at more than one thing, questions are the
-  only acceptable answer. An unreadable draft buys one retry — safe, because nothing is
-  created yet — and then stops.
-- **It is idempotent on the trigger comment's timestamp** (`created_wps.json`, written
-  the instant the POST returns 201, before the relation and before the reply). `Intent`
-  carries no comment id, and `comment_at` is the key `Pull#mark_acted` already de-dupes
-  on. A re-fired trigger finds the record and re-reports the link.
+- **Every work package it will create comes out of ONE LLM call, gated by
+  `NEEDS_INFO`** (`Prompts.create_wp`, `Agent#write_work_packages`). When the request
+  points at nothing in the thread, questions are the only acceptable answer. N answers
+  cost the same one call as one, and a call per work package would not see the others —
+  two of them could write the same suggestion, and the duplicate could not be deleted.
+  An unreadable answer buys one retry — safe, because nothing is created yet — and
+  then stops.
+- **The answer is rigidly delimited: `ANSWER:`, then one `BEGIN WORK PACKAGE` …
+  `END WORK PACKAGE` block each, carrying `SUBJECT:`, an optional `TYPE:` and an
+  optional `LINK:`** (`Helpers.parse_work_packages`). The outer marker
+  keeps the writer's deliberation as scratch (a leading sentinel made a real run
+  spend its whole output limit getting ready to comply). The **end marker exists to
+  detect truncation**: every block shares one output budget, so a cut-off last block
+  is the real failure mode, and without it that half-written text would be created as
+  a work package. One unclosed block rejects the whole answer. Marker lines inside a
+  fenced code block are text — a description quotes the thread, and somebody will
+  paste opilot's own answer into a comment (`PD::TasksFile` learned this with an
+  example `##` heading).
+- **The cap is stated in the prompt and enforced in the runner.** A prompt limit
+  drifts; `MAX_CREATE_WP` does not. Over the cap nothing is created and there is no
+  retry: the blocks read fine, so the problem is scope and a retry produces the same
+  list.
+- **It is idempotent on the trigger comment's timestamp** (`created_wps.json`, each
+  record written the instant its POST returns 201, before the link and before the
+  reply). `Intent` carries no comment id, and `comment_at` is the key
+  `Pull#mark_acted` already de-dupes on; one comment now holds **several** records.
+  A re-fired trigger re-reports every record it finds and creates nothing more —
+  including after a *partial* create, where the ones that landed are the answer and
+  the reader is told to ask for the rest on their own.
 - **The project is the source work package's**, read from a *fresh* fetch: `item.json`
   caches no project, and its `"id"` may be semantic while the relations route takes
   only numeric ids. The type is one the project really offers (the draft names it, the
@@ -505,8 +529,12 @@ nothing downstream can undo a wrong or duplicate create.
   project — a work package carries only a link stub for its project, and
   `Helpers.create_wp_allowed?` reads the `createWorkPackage*` links the project
   resource renders only for a user who holds the permission.
-- **The drafted payload is preflighted through the create form**
-  (`Agent#payload_accepted?` → `POST /api/v3/work_packages/form`). A project can
+- **Every drafted payload is preflighted through the create form, before the first
+  POST** (`Agent#payloads_accepted?` → `#payload_accepted?` →
+  `POST /api/v3/work_packages/form`). The form does not save, so preflighting the
+  whole set first is the only atomic-ish gate there is, and one rejection abandons
+  **all** of them: half a tree is worse than none when the halves cannot be deleted,
+  the same rule `pd generate-wp` follows. A project can
   *require* custom fields, per project **and type**, so without this the command
   ends as a 422 in the log with the reader told nothing. The form runs the same
   `SetAttributesService` the create runs and does not save, so a payload it accepts
@@ -514,24 +542,49 @@ nothing downstream can undo a wrong or duplicate create.
   which is why `_embedded.validationErrors` decides and the status code does not.
   opilot **must not fill a required custom field itself**: the value carries
   business meaning only a person has, and the work package would be permanent. The
-  fields are named back in the instance's own wording, with the project's other
-  types listed, and nothing is created. A form that answers anything else (403, a
-  proxy's HTML) is not an answer about the payload, so the create proceeds and
-  reports its own failure.
-- **The two are linked with a `relates` relation, best-effort**
-  (`Clients::OpenProject#create_relation`, on the per-work-package route — the global
-  `/api/v3/relations` has no POST). It needs `:manage_work_package_relations`, a
-  *different* permission, so a failure is reported and recorded (`related: false`) for
-  the next ask to finish, never raised: the work package exists and cannot be deleted.
-  The new description also backlinks the source, which is what a reader sees when the
-  relation is the part that failed.
+  fields are named back in the instance's own wording (naming *which* one was
+  rejected when there are several), with the project's other types listed, and
+  nothing is created. A form that answers anything else (403, a proxy's HTML) is not
+  an answer about the payload, so the create proceeds and reports its own failure.
+- **Child or peer is DECLARED per work package, never inferred.** Each block carries
+  a `LINK:` line — `child` or `related` — and `Helpers::DEFAULT_WP_LINK` makes an
+  absent or unrecognised value `related`. The difference is not cosmetic:
+  OpenProject derives a parent's dates and progress from its children, so a `child`
+  link *mutates the source work package*. That is right for "split this into three
+  tasks" and wrong for "Rosanna's idea is separate work" — a distinction only the
+  request itself carries, which is why the count does not decide it and why the
+  default is the reversible direction (a person can re-parent a related work
+  package; a wrong parent has already changed the source by the time they see it).
+  One set may hold both shapes. `related` uses
+  `Clients::OpenProject#create_relation` (the per-work-package route — the global
+  `/api/v3/relations` has no POST); the reply states each one's shape, because the
+  reader cannot read it off the list.
+- **The parent is set after the create, never in the payload, and falls back to
+  `relates`.** Hierarchy needs `:manage_subtasks` — a **third** permission next to
+  `:add_work_packages` and `:manage_work_package_relations` — so in the create
+  payload a missing permission would kill the create itself; as a follow-up PATCH
+  (`Clients::OpenProject#update_work_package`, which handles the `lockVersion` retry)
+  it costs only the shape of the link. Every link is best-effort and never raised:
+  a failure is reported and recorded (`related: false`) for the next ask to finish,
+  because the work package exists and cannot be deleted. The new description also
+  backlinks the source, which is what a reader sees when the link is the part that
+  failed.
+- **The declared shape is stored on each record (`link_wanted`).** Records are
+  written per-201, so a batch of three where only the first lands leaves one record
+  — anything that re-derived the shape later (from the set's size, say) would read
+  that survivor as a peer and relate it permanently. `link` records what actually
+  landed. A legacy record has neither field and reads as `relates`, which is what
+  every record written before this got.
 - **Nothing is posted on the new work package, and no reply names `@opilot`.** The poll
   filter searches comment *content*, and a new work package has no acted-state or
   cutoff under it — a comment there naming opilot would make opilot read its own text
   as a trigger forever. Same hazard as `Pull#note_refused_trigger`'s wording.
 - **This handler answers its own failures**, unlike every other one (`#handle_and_ack`
   stays silent by design): a reader who asked for a work package waits for a link, and
-  silence reads as a broken bot.
+  silence reads as a broken bot. The reply is composed in Ruby (`#created_note`,
+  `#already_created_note`), for `#post_options`' reason: it states what actually
+  happened — which links exist, which are children, which POST failed, which type the
+  instance substituted — and a sentence the writer composed could drift from that.
 
 ### State on disk (`.opilot/` — gitignored)
 
@@ -556,7 +609,9 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── options.json         # offered implementation options; present = waiting for a number
 │       ├── created_wps.json     # WPs `create wp` made FROM this one, keyed by the trigger's
-│       │                        #   comment_at; `related` says whether the relation landed
+│       │                        #   comment_at (SEVERAL records per comment); `link_wanted` is
+│       │                        #   the shape asked for (parent/relates), `link` what landed,
+│       │                        #   `related` whether any link landed at all
 │       ├── target_repos.json    # repo names from the plan's REPOS line
 │       ├── target_base.json     # optional per-repo base overrides ({repo: base})
 │       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR
@@ -626,7 +681,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled and `:manage_work_package_relations` for its backlink (without the second one the work package is still created, only unlinked); `pd` needs `:add_work_packages` |
+| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages` |
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |

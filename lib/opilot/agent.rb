@@ -151,12 +151,15 @@ module OPilot
       st = state_for(intent.item_id, intent.subject, intent.type)
       return note_create_wp_disabled(st) unless create_wp_enabled?
 
-      # Created from this very comment already? Re-report it, and finish the
-      # relation if that was the part that failed. This is what stops a re-fired
+      # Created from this very comment already? Re-report them, and finish any
+      # link that was the part that failed. This is what stops a re-fired
       # trigger — a crash before the ack, the same comment posted twice — from
-      # minting a second work package for one request.
-      if (record = ensure_relation(st, intent.comment_at))
-        post_note(st.item_id, addressed("I already created #{created_wp_link(record)} for that request."))
+      # minting a second set of work packages for one request. It reports every
+      # record for the comment, including after a PARTIAL create: the ones that
+      # landed are the answer, and asking again creates nothing more.
+      records = ensure_links(st, intent.comment_at)
+      if records.any?
+        post_note(st.item_id, addressed(already_created_note(records)))
         return
       end
 
@@ -175,10 +178,10 @@ module OPilot
       return unless project
       types = project_type_names(wp["project_id"])
 
-      draft = draft_wp(st, request, project["name"], types, related_ref(st))
-      return unless draft
+      drafts = write_work_packages(st, request, project["name"], types, related_ref(st))
+      return unless drafts
 
-      create_and_report(st, intent, draft, wp, types)
+      create_and_report(st, intent, drafts, wp, types)
     rescue StandardError => e
       # Answered here, not re-raised: #handle_and_ack would only log it a second
       # time, and it acks either way.
@@ -197,6 +200,14 @@ module OPilot
     def create_wp_enabled?
       @ctx.allowed_op_user_ids.any?
     end
+
+    # How many work packages one request may create. Stated in the prompt and
+    # enforced HERE, because a prompt limit drifts and a work package can never
+    # be deleted: "create one for every suggestion in this thread" must not be
+    # able to mint twenty rows nobody can remove. Five also sits well inside one
+    # output budget — see Prompts.create_wp on why a cut-off answer is the
+    # failure mode to fear.
+    MAX_CREATE_WP = 5
 
     # Say once per work package that the command is switched off. Once, not once
     # per comment, for Pull#note_refused_trigger's reason: a reply is the one
@@ -269,24 +280,29 @@ module OPilot
       []
     end
 
-    # One LLM call for the draft, on the work package's own session (it already
-    # holds the thread). Returns the parsed draft, or nil when the answer was
-    # NEEDS_INFO or unusable — both already answered on the work package.
+    # One LLM call for every work package the request asks for, on the work
+    # package's own session (it already holds the thread). Returns the parsed
+    # blocks, or nil when the answer was NEEDS_INFO, over the cap, or unusable —
+    # each already answered on the work package.
+    #
+    # ONE call whatever the count, because N blocks cost the same as one and a
+    # call per work package would not see the others: two of them could write the
+    # same suggestion, and nothing downstream can delete the duplicate.
     #
     # One retry, bounded like #produce_plan's options retry. Retrying is safe
     # here precisely because nothing has been created yet: the failure it covers
     # is a lost request, not a duplicate work package.
-    def draft_wp(st, request, project_name, types, related, retry_bad: true)
-      log_script "Writer: drafting a work package from #{wp_label(st.item_id)} — #{request}"
+    def write_work_packages(st, request, project_name, types, related, retry_bad: true, format_note: nil)
+      log_script "Writer: drafting work packages from #{wp_label(st.item_id)} — #{request}"
       prompt = Prompts.create_wp(item_id: st.item_id, subject: st.subject,
                                  item: container_path(st.item_file), request: request,
                                  project: project_name, types: types_for_prompt(types),
-                                 related: related)
+                                 max: MAX_CREATE_WP, related: related, format_note: format_note)
       reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file).to_s
-      # Only what follows the last `DRAFT:` marker; the writer's own deliberation
+      # Only what follows the last `ANSWER:` marker; the writer's own deliberation
       # is scratch (Prompts.create_wp). Text with no marker is read whole, so an
       # answer that skips it still works.
-      answer = Helpers.after_marker(reply, "DRAFT")
+      answer = Helpers.after_marker(reply, "ANSWER")
 
       if answer.lstrip.start_with?("NEEDS_INFO")
         questions = answer.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
@@ -295,11 +311,29 @@ module OPilot
         return nil
       end
 
-      draft = Helpers.parse_wp_draft(answer)
-      return draft if draft
-      return draft_wp(st, request, project_name, types, related, retry_bad: false) if retry_bad
+      drafts = Helpers.parse_work_packages(answer)
+      # Over the cap is a SCOPE problem, not an unusable answer: the blocks read
+      # fine, so a retry would produce the same list. Say the number and stop.
+      if drafts.length > MAX_CREATE_WP
+        log_script "#{wp_label(st.item_id)} — the writer produced #{drafts.length} work packages; " \
+                   "the cap is #{MAX_CREATE_WP}, so nothing was created."
+        post_note(st.item_id, addressed(
+          "That request comes to #{drafts.length} work packages, and I create at most " \
+          "#{MAX_CREATE_WP} at a time, because a work package can never be deleted. " \
+          "I created nothing. Ask me again for a smaller set."
+        ))
+        return nil
+      end
+      return drafts if drafts.any?
+      if retry_bad
+        # The retry names what was WRONG with the answer. The block format is
+        # strict and the prompt is otherwise identical, so an unnamed miss would
+        # be repeated word for word and both attempts spent on the same slip.
+        return write_work_packages(st, request, project_name, types, related,
+                                   retry_bad: false, format_note: format_miss(answer))
+      end
 
-      log_script "#{wp_label(st.item_id)} — the writer produced no usable work-package draft twice."
+      log_script "#{wp_label(st.item_id)} — the writer produced no usable work-package block twice."
       post_note(st.item_id, addressed("I could not draft the work package. Ask me again, and say in one " \
                                       "sentence what it is about."))
       nil
@@ -317,6 +351,25 @@ module OPilot
       nil
     end
 
+    # Which part of the block format the last answer missed, said back to the
+    # writer on the one retry. Read off the answer itself rather than from the
+    # parser, because the parser's answer is only "nothing usable" — and the
+    # three misses below need three different corrections.
+    def format_miss(answer)
+      # WP_BEGIN/WP_END anchor a whole LINE, so they are matched line by line.
+      lines = answer.to_s.lines.map(&:chomp)
+      if lines.none? { |l| l.match?(Helpers::WP_BEGIN) }
+        "Your last answer had no `BEGIN WORK PACKAGE` line. Every work package needs " \
+          "one, alone on its own line, and a closing `END WORK PACKAGE` line."
+      elsif lines.none? { |l| l.match?(Helpers::WP_END) }
+        "Your last answer opened a block and never closed it. Write the closing " \
+          "`END WORK PACKAGE` line for every block, alone on its own line."
+      else
+        "Your last answer's blocks were unreadable — the first line inside each one " \
+          "must be `SUBJECT: <one line>`."
+      end
+    end
+
     # The TYPE line's menu. An empty registry is stated rather than left blank, so
     # the writer omits the line instead of inventing a type name.
     def types_for_prompt(types)
@@ -324,28 +377,52 @@ module OPilot
       names.empty? ? "(unknown — leave the TYPE line out)" : names.join(", ")
     end
 
-    # POST the work package, record it, relate it, report it — in that order,
-    # because each step must survive the next one failing.
-    def create_and_report(st, intent, draft, wp, types)
-      payload = create_wp_payload(st, draft, wp["project_id"], types)
-      return unless payload_accepted?(st, payload, types)
+    # Preflight every payload, POST each one, record it, link it, report — in
+    # that order, because each step must survive the next one failing.
+    #
+    # The whole set is preflighted BEFORE the first POST. That is the only
+    # atomic-ish gate available (the form does not save), and half a tree is
+    # worse than none when the halves cannot be deleted — the same rule `pd
+    # generate-wp` follows before it writes a FEATURE.
+    def create_and_report(st, intent, drafts, wp, types)
+      payloads = drafts.map { |draft| [draft, create_wp_payload(st, draft, wp["project_id"], types)] }
+      return unless payloads_accepted?(st, payloads, types)
 
-      code, body = @api.create_work_package(payload)
-      unless code == 201 && body
-        log_script "create wp failed for #{wp_label(st.item_id)} — HTTP #{code}"
-        post_note(st.item_id, addressed("I could not create the work package (HTTP #{code}). " \
+      created   = []
+      failed    = []
+      last_code = nil
+      payloads.each do |draft, payload|
+        code, body = @api.create_work_package(payload)
+        last_code = code
+        unless code == 201 && body
+          log_script "create wp failed for #{wp_label(st.item_id)} — HTTP #{code} on #{payload["subject"].inspect}"
+          failed << draft
+          next
+        end
+        record = record_created_wp(st, intent, wp, body, draft: draft)
+        created << record
+        log_script "Created #{wp_label(record["id"])} from #{wp_label(st.item_id)}"
+        record_progress(st.item_id, "-", "created-wp:#{record["id"]}")
+      end
+
+      if created.empty?
+        subject = failed.length == 1 ? "the work package" : "any of the #{failed.length} work packages"
+        post_note(st.item_id, addressed("I could not create #{subject} (HTTP #{last_code}). " \
                                         "The response is in my log."))
         return
       end
 
-      record = record_created_wp(st, intent, wp, body)
-      log_script "Created #{wp_label(record["id"])} from #{wp_label(st.item_id)}"
-      record_progress(st.item_id, "-", "created-wp:#{record["id"]}")
+      # Every record for this comment, not just this run's: an earlier partial
+      # create leaves records behind, and the reader is owed the whole set.
+      post_note(st.item_id, addressed(created_note(ensure_links(st, intent.comment_at), failed)))
+    end
 
-      record = ensure_relation(st, intent.comment_at) || record
-      note   = +"I created #{created_wp_link(record)} from this thread."
-      note << " I could not link the two work packages, so add the relation by hand." unless record["related"]
-      post_note(st.item_id, addressed(note))
+    # Every payload through the create form, stopping at the first one the
+    # project rejects. `all?` short-circuits on purpose: one rejection means
+    # nothing is created, so there is no reason to ask about the rest.
+    def payloads_accepted?(st, payloads, types)
+      many = payloads.length > 1
+      payloads.all? { |_draft, payload| payload_accepted?(st, payload, types, many: many) }
     end
 
     # Ask OpenProject whether this payload would be accepted, before writing it.
@@ -359,13 +436,16 @@ module OPilot
     # business meaning that only a person has ("which release train?", "which
     # customer?"), a work package can never be deleted, and a guess would be
     # permanent. So the fields are named back to the reader, who can create it in
-    # OpenProject or say which type to use.
+    # OpenProject or NAME A DIFFERENT TYPE — required-ness is per type, and their
+    # answer lands in this thread, which the next draft reads (Prompts.create_wp's
+    # TYPE line). Choosing another type here instead would be opilot re-classifying
+    # somebody's work to get past a validation, on a work package nobody can delete.
     #
     # The form runs the same SetAttributesService the create runs and simply does
     # not save, so a payload it accepts is one the create accepts, and the defaults
     # it applies are applied by the create too — which is why the payload is sent
     # on unchanged rather than replaced by the form's version.
-    def payload_accepted?(st, payload, types)
+    def payload_accepted?(st, payload, types, many: false)
       code, form = @api.create_work_package_form(payload)
       # Not an answer about the payload (403, 404, an HTML error from a proxy):
       # let the create speak for itself rather than blocking on a preflight that
@@ -378,22 +458,36 @@ module OPilot
       errors = form.dig("_embedded", "validationErrors")
       return true if !errors.is_a?(Hash) || errors.empty?
 
-      log_script "#{wp_label(st.item_id)} — the project rejects the draft: #{errors.keys.join(", ")}"
-      post_note(st.item_id, addressed(required_fields_note(errors, types)))
+      log_script "#{wp_label(st.item_id)} — the project rejects #{payload["subject"].inspect}: " \
+                 "#{errors.keys.join(", ")}"
+      post_note(st.item_id, addressed(required_fields_note(errors, types,
+                                                           subject: many ? payload["subject"] : nil)))
       false
     end
 
     # Name what the project demands, in its own words. The API's messages are the
     # field labels a person sees in OpenProject ("Cécile Hierarchy … can't be
     # blank"), so they are quoted rather than paraphrased.
-    def required_fields_note(errors, types)
+    #
+    # `subject` names WHICH work package was rejected, and is passed only when
+    # the request asked for several: the whole set is then abandoned over one
+    # rejection, so the reader needs to know which one carried it.
+    def required_fields_note(errors, types, subject: nil)
       reasons = errors.map { |field, error| "- #{error["message"]} (`#{field}`)" }.join("\n")
-      note = +"I cannot create the work package. This project needs values I must not " \
-              "invent:\n\n#{reasons}\n\nCreate the work package in OpenProject, and I can " \
-              "work on it there."
-      # Required-ness is per type, so another type may need none of this.
+      opening = if subject
+                  "I cannot create #{subject.inspect}, so I created none of them."
+                else
+                  "I cannot create the work package."
+                end
+      note = +"#{opening} This project needs values I must not invent:\n\n#{reasons}\n\n" \
+              "Create the work package in OpenProject, and I can work on it there."
+      # Required-ness is per type, so another type may need none of this — and
+      # asking again with a type named is the one-comment way out.
       names = types.map { |t| t["name"] }.reject(&:empty?)
-      note << " You can also name a different type — this project has: #{names.join(", ")}." if names.length > 1
+      if names.length > 1
+        note << " You can also ask me again and name a different type — this project has: " \
+                "#{names.join(", ")}."
+      end
       note
     end
 
@@ -440,25 +534,41 @@ module OPilot
       "#{origin}\n\n#{draft["description"]}".strip
     end
 
-    # ── the created-work-package record ───────────────────────────────────────
+    # ── the created-work-package records ──────────────────────────────────────
     #
     # created_wps.json, keyed by the TRIGGER COMMENT's timestamp: an Intent
     # carries no comment id, and comment_at is the key Pull#mark_acted already
-    # de-dupes on. Written the moment the POST returns 201 — before the relation
-    # and before the reply — so a crash after the create can never look like a
-    # create that never happened.
+    # de-dupes on. One trigger can hold SEVERAL records, and each is written the
+    # moment its POST returns 201 — before the link and before the reply — so a
+    # crash after a create can never look like a create that never happened, and
+    # a partial set can never be created twice.
 
     def created_wps(st)
       Helpers.safe_json_read(st.created_wps_file) || []
     end
 
-    def record_created_wp(st, intent, wp, body)
+    # Every work package this trigger comment created, in creation order.
+    def records_for(records, comment_at)
+      records.select { |r| r["comment_at"] == comment_at.to_s }
+    end
+
+    # `link_wanted` is the shape the block ASKED FOR (`Helpers::WP_LINKS`, mapped
+    # to the API's own words), stored on the record rather than worked out later:
+    # it is a per-work-package decision the writer states, so nothing downstream
+    # may infer it from the size of the set. `asked_type` is the type the block
+    # named, kept so the report can say when #chosen_type had to substitute
+    # another.
+    def record_created_wp(st, intent, wp, body, draft:)
       record = { "comment_at"        => intent.comment_at.to_s,
                  "id"                => Helpers.display_id(body),
                  "numeric_id"        => body["id"].to_s,
                  "source_numeric_id" => wp["numeric_id"],
                  "subject"           => body["subject"].to_s,
                  "url"               => Helpers.wp_url(@ctx, Helpers.display_id(body)),
+                 "type"              => body.dig("_links", "type", "title").to_s,
+                 "asked_type"        => draft["type"].to_s,
+                 "link_wanted"       => draft["link"] == "child" ? "parent" : "relates",
+                 "link"              => nil,
                  "related"           => false,
                  "created_at"        => Time.now.utc.iso8601 }
       records = created_wps(st) << record
@@ -466,39 +576,76 @@ module OPilot
       record
     end
 
-    # Relate the new work package to the one that asked for it, unless that is
-    # already recorded. Returns the record (nil when this comment created
-    # nothing), so the caller can both report the link and re-attempt a relation
-    # an earlier run failed to make.
+    # Link every work package this comment created back to the one that asked for
+    # it, skipping any already linked. Returns all of that comment's records —
+    # [] when it created nothing — so the caller can both report them and finish
+    # a link an earlier run failed to make.
     #
-    # Best-effort, always: the relation needs :manage_work_package_relations,
-    # which is a DIFFERENT permission from :add_work_packages, and the work
-    # package already exists and cannot be deleted. Losing the run over a missing
-    # link would be the wrong trade.
-    #
-    # The new work package is the relation's `from` (the route work package
-    # becomes `from`), so it reads "the new one relates to the source". Both ids
-    # are numeric, which is why the record keeps them.
-    def ensure_relation(st, comment_at)
+    # Best-effort, always: a link needs a permission the create does not
+    # (:manage_work_package_relations for a relation, :manage_subtasks for a
+    # parent), and the work package already exists and cannot be deleted. Losing
+    # the run over a missing link would be the wrong trade.
+    def ensure_links(st, comment_at)
       records = created_wps(st)
-      record  = records.find { |r| r["comment_at"] == comment_at.to_s }
-      return nil unless record
-      return record if record["related"]
+      mine    = records_for(records, comment_at)
+      return [] if mine.empty?
 
-      code, _body = @api.create_relation(record["numeric_id"], record["source_numeric_id"])
-      if [200, 201].include?(code)
-        record["related"] = true
-        Helpers.write_json_atomic(st.created_wps_file, records, "created_wps", pretty: true)
-      else
-        log_script "#{wp_label(st.item_id)} — could not relate #{wp_label(record["id"])} to it " \
-                   "(HTTP #{code}); the work package stands unlinked."
-      end
-      record
+      linked = mine.reject { |r| r["related"] }.count { |record| link_record(st, record) }
+      Helpers.write_json_atomic(st.created_wps_file, records, "created_wps", pretty: true) if linked.positive?
+      mine
+    end
+
+    # One link, in the shape the create asked for, falling back to a relation.
+    # Returns whether the record changed.
+    #
+    # A legacy record has no `link_wanted` and reads as "relates", which is what
+    # every record written before this existed actually got.
+    #
+    # The parent is set with its own PATCH and never in the create payload:
+    # hierarchy needs :manage_subtasks, so in the payload a missing permission
+    # would kill the create itself, while here it costs only the shape of the
+    # link. `relates` is the fallback because a work package with no link at all
+    # loses its provenance to the description alone.
+    def link_record(st, record)
+      wanted = record["link_wanted"] == "parent" ? "parent" : "relates"
+      return true if record_linked!(record, wanted, set_link(record, wanted))
+      return false unless wanted == "parent"
+
+      log_script "#{wp_label(st.item_id)} — could not make #{wp_label(record["id"])} a child of it; " \
+                 "relating it instead."
+      record_linked!(record, "relates", set_link(record, "relates"))
+    end
+
+    # Mark the record linked when the call landed. Returns whether it did.
+    def record_linked!(record, shape, code)
+      return false unless [200, 201].include?(code)
+      record["related"] = true
+      record["link"]    = shape
+      true
+    end
+
+    # Make one link and return the HTTP code, or nil when the call raised. Both
+    # ids are numeric, which is why the record keeps them.
+    #
+    # For a relation the new work package is the `from` (the route work package
+    # becomes `from`), so it reads "the new one relates to the source".
+    def set_link(record, shape)
+      source = record["source_numeric_id"]
+      code, = if shape == "parent"
+                @api.update_work_package(
+                  record["numeric_id"],
+                  { "_links" => { "parent" => { "href" => "/api/v3/work_packages/#{source}" } } }
+                )
+              else
+                @api.create_relation(record["numeric_id"], source)
+              end
+      log_script "#{wp_label(record["id"])} — #{shape} link to #{wp_label(source)} answered HTTP #{code}." \
+        unless [200, 201].include?(code)
+      code
     rescue StandardError => e
-      label = record ? wp_label(record["id"]) : "the new work package"
-      log_script "#{wp_label(st.item_id)} — could not relate #{label} to it " \
-                 "(#{e.message}); the work package stands unlinked."
-      record
+      log_script "#{wp_label(record["id"])} — could not set the #{shape} link to #{wp_label(source)} " \
+                 "(#{e.message})."
+      nil
     end
 
     # A markdown link to a created work package. Never a bare "#123": these are
@@ -507,6 +654,101 @@ module OPilot
       subject = record["subject"].to_s.strip
       label   = subject.empty? ? wp_label(record["id"]) : "#{wp_label(record["id"])} #{subject}"
       "[#{label}](#{record["url"]})"
+    end
+
+    # ── what the reader is told ───────────────────────────────────────────────
+    #
+    # Composed in Ruby, not by the writer, for #post_options' reason: the wording
+    # states what actually happened — which links exist, which are children,
+    # which failed — and a sentence the LLM writes can drift from that.
+
+    # The one comment a create is reported with. `failed` are the drafts whose
+    # POST did not land; a re-fired trigger creates nothing more, so the reader
+    # is told to ask again for those alone.
+    def created_note(records, failed = [])
+      note = +if records.length == 1
+                "I created #{created_wp_link(records.first)} from this thread.#{single_notes(records.first)}"
+              else
+                "I created #{records.length} work packages from this thread:" \
+                "\n\n#{records.map { |r| created_line(r) }.join("\n")}"
+              end
+      return note if failed.empty?
+
+      subjects = failed.map { |d| d["subject"].to_s.strip.inspect }.join(", ")
+      note << "\n\nI could not create #{subjects} — the reason is in my log. Asking me again " \
+              "here creates nothing more, so ask for #{failed.length == 1 ? "that one" : "those"} on its own."
+    end
+
+    # The re-fire answer: the same set, named again.
+    def already_created_note(records)
+      if records.length == 1
+        return "I already created #{created_wp_link(records.first)} for that request." \
+               "#{single_notes(records.first)}"
+      end
+
+      "I already created these for that request:\n\n#{records.map { |r| created_line(r) }.join("\n")}"
+    end
+
+    # One work package's shape and exceptions, as sentences — the single case is
+    # the common one and reads better as prose than as a parenthesis.
+    #
+    # The shape is always STATED, never implied: whether an offshoot is a child of
+    # this work package or a peer beside it is the writer's per-block decision
+    # (Prompts.create_wp's LINK line), so the reader cannot work it out from the
+    # count and must be told.
+    def single_notes(record)
+      notes = +""
+      if !record["related"]
+        notes << if record["link_wanted"] == "parent"
+                   " I meant it as a child of this one, but I could not set the parent — set it by hand."
+                 else
+                   " I could not link the two work packages, so add the relation by hand."
+                 end
+      elsif record["link"] == "parent"
+        notes << " It is a child of this work package."
+      elsif record["link_wanted"] == "parent"
+        notes << " I meant it as a child, but I could not set a parent here, so I related it instead."
+      end
+      asked, got = substituted_type(record)
+      notes << " This project has no #{asked} type, so I used #{got}." if asked
+      notes
+    end
+
+    def created_line(record)
+      "- #{created_wp_link(record)} — #{link_words(record)}#{type_words(record)}"
+    end
+
+    # What this line's link is, in the reader's terms. Every line carries it, so a
+    # mixed set (some children, some peers) reads correctly.
+    #
+    # `related` is read FIRST, exactly as #single_notes reads it: it is the field
+    # that says whether ANY link landed, and a record written before `link`
+    # existed has only that one. Checking `link` first would report such a record
+    # as unlinked.
+    def link_words(record)
+      unless record["related"]
+        return record["link_wanted"] == "parent" ? "not linked — set the parent by hand" : "not linked — relate it by hand"
+      end
+      return "child of this work package" if record["link"] == "parent"
+
+      record["link_wanted"] == "parent" ? "related; I could not make it a child" : "related"
+    end
+
+    # A substituted type is invisible in a list of links, so it is named there.
+    def type_words(record)
+      asked, got = substituted_type(record)
+      asked ? "; #{got}, not #{asked}" : ""
+    end
+
+    # [asked, got] when the create used a different type from the one the block
+    # named (#chosen_type substitutes the project's first), else nil. The create
+    # response titles the type it linked, so this is what the instance really
+    # stored rather than what the payload hoped for.
+    def substituted_type(record)
+      asked = record["asked_type"].to_s.strip
+      got   = record["type"].to_s.strip
+      return nil if asked.empty? || got.empty? || asked.casecmp?(got)
+      [asked, got]
     end
 
     # The fix intent: plan, implement, and open the prototype.

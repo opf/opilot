@@ -43,42 +43,111 @@ module OPilot
       assert_equal "#42",      Helpers.wp_label(42)
     end
 
-    # ── parse_wp_draft (Prompts.create_wp's answer) ─────────────────────────
+    # ── parse_work_packages (Prompts.create_wp's answer) ────────────────────
 
-    def test_parse_wp_draft_reads_the_subject_type_and_description
-      draft = Helpers.parse_wp_draft("SUBJECT: Add a toast\nTYPE: Feature\n\nRosanna asked for it.\n")
-      assert_equal "Add a toast", draft["subject"]
-      assert_equal "Feature",     draft["type"]
-      assert_equal "Rosanna asked for it.", draft["description"]
+    def block(subject, type: "Feature", body: "Rosanna asked for it.")
+      type_line = type ? "TYPE: #{type}\n" : ""
+      "BEGIN WORK PACKAGE\nSUBJECT: #{subject}\n#{type_line}\n#{body}\nEND WORK PACKAGE\n"
     end
 
-    def test_parse_wp_draft_type_is_optional
-      draft = Helpers.parse_wp_draft("SUBJECT: Add a toast\n\nBody.\n")
-      assert_equal "Add a toast", draft["subject"]
-      assert_equal "", draft["type"]
-      assert_equal "Body.", draft["description"]
+    def test_parse_work_packages_reads_the_subject_type_and_description
+      drafts = Helpers.parse_work_packages(block("Add a toast"))
+      assert_equal 1, drafts.length
+      assert_equal "Add a toast", drafts[0]["subject"]
+      assert_equal "Feature",     drafts[0]["type"]
+      assert_equal "Rosanna asked for it.", drafts[0]["description"]
     end
 
-    def test_parse_wp_draft_tolerates_leading_blank_lines_and_case
-      draft = Helpers.parse_wp_draft("\n\nsubject: Add a toast\ntype: Bug\n\nBody.")
-      assert_equal "Add a toast", draft["subject"]
-      assert_equal "Bug", draft["type"]
+    def test_parse_work_packages_type_is_optional
+      drafts = Helpers.parse_work_packages(block("Add a toast", type: nil, body: "Body."))
+      assert_equal "Add a toast", drafts[0]["subject"]
+      assert_equal "", drafts[0]["type"]
+      assert_equal "Body.", drafts[0]["description"]
     end
 
-    # No subject line means no usable draft. The caller must never POST a work
-    # package it could not read — one cannot be deleted.
-    def test_parse_wp_draft_without_a_subject_line_is_nil
-      assert_nil Helpers.parse_wp_draft("I think we should add a toast.")
-      assert_nil Helpers.parse_wp_draft("SUBJECT:\n\nBody.")
-      assert_nil Helpers.parse_wp_draft("")
+    def test_parse_work_packages_tolerates_blank_lines_and_case
+      drafts = Helpers.parse_work_packages(
+        "\n\nBEGIN WORK PACKAGE\n\nsubject: Add a toast\ntype: Bug\n\nBody.\nEND WORK PACKAGE"
+      )
+      assert_equal "Add a toast", drafts[0]["subject"]
+      assert_equal "Bug", drafts[0]["type"]
+    end
+
+    # Whether an offshoot is a child of the source or a peer beside it is stated
+    # per block, and never inferred. A child changes the source's own dates and
+    # progress, so an absent or unrecognised value is the reversible one.
+    def test_parse_work_packages_reads_the_link_line
+      drafts = Helpers.parse_work_packages(
+        "BEGIN WORK PACKAGE\nSUBJECT: A subtask\nTYPE: Task\nLINK: child\n\nBody.\nEND WORK PACKAGE"
+      )
+      assert_equal "child", drafts[0]["link"]
+    end
+
+    def test_parse_work_packages_link_defaults_to_related
+      assert_equal "related", Helpers.parse_work_packages(block("No link line"))[0]["link"]
+      odd = "BEGIN WORK PACKAGE\nSUBJECT: A\nLINK: subtask-ish\n\nBody.\nEND WORK PACKAGE"
+      assert_equal "related", Helpers.parse_work_packages(odd)[0]["link"],
+                   "an unrecognised value is not a licence to re-parent"
+    end
+
+    # TYPE and LINK are both optional, and losing one the writer did state would
+    # be worse than reading them in either order.
+    def test_parse_work_packages_reads_type_and_link_in_either_order
+      drafts = Helpers.parse_work_packages(
+        "BEGIN WORK PACKAGE\nSUBJECT: A\nlink: CHILD\ntype: Bug\n\nBody.\nEND WORK PACKAGE"
+      )
+      assert_equal "child", drafts[0]["link"]
+      assert_equal "Bug",   drafts[0]["type"]
+      assert_equal "Body.", drafts[0]["description"]
+    end
+
+    # Each block is one work package, in order.
+    def test_parse_work_packages_reads_several_blocks
+      drafts = Helpers.parse_work_packages(
+        "Here they are.\n#{block("First", type: "Feature")}\nand then\n#{block("Second", type: "Task")}"
+      )
+      assert_equal %w[First Second], drafts.map { |d| d["subject"] }
+      assert_equal %w[Feature Task], drafts.map { |d| d["type"] }
+    end
+
+    # No block, no subject, no closing marker: none is a usable answer. The
+    # caller must never POST a work package it could not read — one cannot be
+    # deleted.
+    def test_parse_work_packages_without_a_usable_block_is_empty
+      assert_empty Helpers.parse_work_packages("I think we should add a toast.")
+      assert_empty Helpers.parse_work_packages("SUBJECT: Add a toast\n\nBody.")
+      assert_empty Helpers.parse_work_packages(block("").sub("SUBJECT: \n", "SUBJECT:\n"))
+      assert_empty Helpers.parse_work_packages("")
+    end
+
+    # An unclosed block means the answer was CUT OFF — every block shares one
+    # output budget. The whole answer goes, so no half-written description is
+    # created as a work package.
+    def test_parse_work_packages_rejects_a_cut_off_answer
+      cut = "#{block("Complete one")}BEGIN WORK PACKAGE\nSUBJECT: Half of one\nTYPE: Task\n\nThe body sto"
+      assert_empty Helpers.parse_work_packages(cut)
+      assert_empty Helpers.parse_work_packages("BEGIN WORK PACKAGE\nSUBJECT: A\n\nBody.\n#{block("B")}")
+      assert_empty Helpers.parse_work_packages("SUBJECT: A\n\nBody.\nEND WORK PACKAGE\n")
     end
 
     # Only the LEADING lines are fields, so a description discussing its own
     # "SUBJECT:" line cannot move the subject.
-    def test_parse_wp_draft_ignores_field_lines_inside_the_description
-      draft = Helpers.parse_wp_draft("SUBJECT: The real one\n\nWrite SUBJECT: something else on line 1.\n")
-      assert_equal "The real one", draft["subject"]
-      assert_includes draft["description"], "SUBJECT: something else"
+    def test_parse_work_packages_ignores_field_lines_inside_the_description
+      drafts = Helpers.parse_work_packages(
+        block("The real one", body: "Write SUBJECT: something else on line 1.")
+      )
+      assert_equal "The real one", drafts[0]["subject"]
+      assert_includes drafts[0]["description"], "SUBJECT: something else"
+    end
+
+    # A description quotes the thread, and somebody will paste opilot's own
+    # answer into a comment — so a marker inside a fence is text.
+    def test_parse_work_packages_ignores_markers_inside_a_fence
+      quoted = "Christoph pasted this:\n\n```\nEND WORK PACKAGE\nBEGIN WORK PACKAGE\nSUBJECT: decoy\n```\n\nThat is the bug."
+      drafts = Helpers.parse_work_packages(block("The real one", body: quoted))
+      assert_equal 1, drafts.length
+      assert_equal "The real one", drafts[0]["subject"]
+      assert_includes drafts[0]["description"], "SUBJECT: decoy"
     end
 
     def test_after_marker_takes_the_last_marked_section

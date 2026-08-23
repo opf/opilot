@@ -129,26 +129,114 @@ module OPilot
       [options.uniq { |o| o["n"] }.sort_by { |o| o["n"] }, lines.join.lstrip]
     end
 
-    # Read a `create wp` draft: a SUBJECT: line, an optional TYPE: line, then the
-    # description (Prompts.create_wp). Returns nil when there is no SUBJECT line,
-    # which the caller treats as an unusable answer — the same shape as an
-    # unusable OPTIONS block, and for the same reason: a work package cannot be
-    # deleted, so a draft opilot cannot read must never reach the POST.
+    WP_BEGIN     = /\A[ \t]*BEGIN WORK PACKAGE[ \t]*\z/
+    WP_END       = /\A[ \t]*END WORK PACKAGE[ \t]*\z/
+    SUBJECT_LINE = /\ASUBJECT:[ \t]*(.+)\z/i
+    TYPE_LINE    = /\ATYPE:[ \t]*(.+)\z/i
+    LINK_LINE    = /\ALINK:[ \t]*(.+)\z/i
+    FENCE_LINE   = /\A[ \t]*(`{3,}|~{3,})/
+
+    # How a new work package hangs off the one that asked for it. "child" is the
+    # only value that makes it one; everything else, including a missing LINK
+    # line, is a peer. The default is deliberately the conservative direction:
+    # OpenProject derives a parent's dates and progress from its children, so a
+    # child link CHANGES the source work package, while a relation does not.
+    WP_LINKS        = %w[child related].freeze
+    DEFAULT_WP_LINK = "related".freeze
+
+    # Read the work packages a `create wp` answer asks for (Prompts.create_wp).
+    # Each one is a block — BEGIN WORK PACKAGE, a SUBJECT: line, an optional
+    # TYPE: and LINK: line, the description, END WORK PACKAGE — and a request
+    # that names several pieces of work answers with several blocks, in order.
     #
-    # Only the LEADING lines are read as fields, so a description that discusses
-    # a "SUBJECT:" line of its own cannot move the subject.
-    def self.parse_wp_draft(body)
-      lines = body.to_s.lines
-      lines.shift while lines.first && lines.first.strip.empty?
-      subject = lines.first.to_s.strip[/\ASUBJECT:\s*(.+)\z/i, 1]
-      return nil if subject.nil? || subject.strip.empty?
-      lines.shift
-      type = lines.first.to_s.strip[/\ATYPE:\s*(.+)\z/i, 1]
-      lines.shift if type
-      { "subject"     => subject.strip,
-        "type"        => type.to_s.strip,
-        "description" => lines.join.strip }
+    # Returns [] when the answer holds no usable block, which the caller treats
+    # as unusable: one bounded retry, then it gives up. That is safe precisely
+    # because nothing is created yet, and it must stay strict, because a work
+    # package cannot be deleted and so a block opilot half-understands must
+    # never reach the POST.
+    #
+    # Three rules do the work:
+    #
+    # - BOTH marker lines are required, each alone on its line. An unclosed
+    #   block means the answer was CUT OFF — all N blocks share one output
+    #   budget, so a truncated last block is the real failure mode here, and
+    #   without the end marker it would be created as a work package with half a
+    #   description. One unclosed block rejects the whole answer.
+    # - Marker lines inside a fenced code block are text. A description quotes
+    #   the thread, so it can contain anything — including a comment somebody
+    #   pasted opilot's own answer into. PD::TasksFile learned the same lesson
+    #   with an example `##` heading.
+    # - Text between blocks is ignored. Narration between blocks is harmless;
+    #   only what sits INSIDE one becomes a work package.
+    def self.parse_work_packages(body)
+      blocks = []
+      open   = nil
+      fence  = nil
+      body.to_s.lines.each do |raw|
+        line  = raw.chomp
+        fence = fence_state(fence, line)
+        # Inside a fence: description text, whatever it says.
+        next open&.<<(line) unless fence.nil?
+
+        if line.match?(WP_BEGIN)
+          # A second BEGIN with no END between: the first block is unterminated,
+          # which is the same broken answer as a truncated one.
+          return [] if open
+          open = []
+        elsif line.match?(WP_END)
+          return [] unless open
+          blocks << open
+          open = nil
+        else
+          open&.<<(line)
+        end
+      end
+      return [] if open   # cut off mid-block
+      blocks.filter_map { |block| work_package_fields(block) }
     end
+
+    # Whether this line leaves us inside a fenced code block, and in which
+    # fence. Nil means outside.
+    def self.fence_state(fence, line)
+      marker = line[FENCE_LINE, 1] or return fence
+      return marker[0] if fence.nil?
+      marker.start_with?(fence) ? nil : fence
+    end
+    private_class_method :fence_state
+
+    # One block's fields. Only the LEADING lines are read as fields, so a
+    # description that discusses a "SUBJECT:" line of its own cannot move the
+    # subject. A block with no subject is dropped rather than guessed at.
+    #
+    # TYPE and LINK are both optional and read in either order — the writer gets
+    # one shape to follow, and quietly losing a field it did state would be worse
+    # than accepting it a line early.
+    def self.work_package_fields(lines)
+      lines = lines.drop_while { |l| l.strip.empty? }
+      subject = lines.first.to_s[SUBJECT_LINE, 1]
+      return nil if subject.nil? || subject.strip.empty?
+
+      lines  = lines.drop(1)
+      fields = {}
+      loop do
+        line = lines.first.to_s
+        if (type = line[TYPE_LINE, 1])
+          fields["type"] ||= type.strip
+        elsif (link = line[LINK_LINE, 1])
+          fields["link"] ||= link.strip
+        else
+          break
+        end
+        lines = lines.drop(1)
+      end
+
+      link = fields["link"].to_s.downcase
+      { "subject"     => subject.strip,
+        "type"        => fields["type"].to_s,
+        "link"        => WP_LINKS.include?(link) ? link : DEFAULT_WP_LINK,
+        "description" => lines.join("\n").strip }
+    end
+    private_class_method :work_package_fields
 
     # A project's work-package types as [{ "id", "name" }], from a
     # Clients::OpenProject#project_types response.

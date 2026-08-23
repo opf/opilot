@@ -12,9 +12,18 @@ module OPilot
 
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
+      # One BEGIN/END WORK PACKAGE block, the shape Prompts.create_wp demands.
+      # `link` is the writer's own choice per block — "child" or "related" — and
+      # nil leaves the line out, which must read as "related".
+      def self.wp_block(subject, type: "Feature", link: nil, body: "Rosanna asks for a toast.")
+        fields = +"SUBJECT: #{subject}\nTYPE: #{type}\n"
+        fields << "LINK: #{link}\n" if link
+        "BEGIN WORK PACKAGE\n#{fields}\n#{body}\nEND WORK PACKAGE\n"
+      end
+
       def initialize(plan: "## Plan\nDo the thing.\n",
                      chat: "Here's my take.", impl: "", pr: "# PR title\nbody",
-                     draft: "SUBJECT: Split the login toast out\nTYPE: Feature\n\nRosanna asks for a toast.\n")
+                     draft: FakeHarness.wp_block("Split the login toast out"))
         @plan, @chat, @impl, @pr, @draft = plan, chat, impl, pr, draft
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
@@ -31,7 +40,7 @@ module OPilot
         @run_sessions << session_file
         # Checked before the chat prompt: the create-wp draft prompt also opens
         # with "You are opilot".
-        return draft_answer if prompt.include?("create a NEW work package")
+        return draft_answer if prompt.include?("NEW work packages out of something")
         return @chat if prompt.include?("You are opilot")
         return @pr   if prompt.include?("PR description")
         @impl
@@ -646,11 +655,15 @@ module OPilot
       created_wps_path(id).exist? ? JSON.parse(created_wps_path(id).read) : []
     end
 
-    # The four requests a create walks through. `project_links` empty models a
-    # token without :add_work_packages.
+    # Every request a create walks through. `project_links` empty models a token
+    # without :add_work_packages.
+    #
+    # `create_status` may be one status or one per work package, so a partial
+    # create is expressible: the set is created in order, and a POST that does
+    # not 201 leaves that one out.
     def stub_create_wp(project_links: { "createWorkPackage" => { "href" => "/x" } },
                        types: [{ "id" => 5, "name" => "Feature" }],
-                       create_status: 201, relation_status: 201,
+                       create_status: 201, relation_status: 201, parent_status: 200,
                        form_status: 200, validation_errors: {})
       stub_request(:get, "#{OP}/work_packages/42")
         .to_return(status: 200, body: JSON.generate(
@@ -669,17 +682,48 @@ module OPilot
           body: JSON.generate("_type" => "Form",
                               "_embedded" => { "validationErrors" => validation_errors }) }
       end
+      # One id per created work package: 99, 100, 101 …
+      statuses = Array(create_status)
       @create_requests = []
       stub_request(:post, "#{OP}/work_packages?notify=false").to_return do |req|
-        @create_requests << JSON.parse(req.body)
-        { status: create_status,
-          body: JSON.generate("id" => 99, "displayId" => "99", "subject" => "Split the login toast out") }
+        payload = JSON.parse(req.body)
+        @create_requests << payload
+        status = statuses[@create_requests.length - 1] || statuses.last
+        # The real API titles the type it stored, and the report reads it.
+        type_id = payload.dig("_links", "type", "href").to_s.split("/").last.to_i
+        title   = types.find { |t| t["id"] == type_id }&.fetch("name", nil)
+        { status: status,
+          body: JSON.generate("id" => 98 + @create_requests.length,
+                              "displayId" => (98 + @create_requests.length).to_s,
+                              "subject" => payload["subject"],
+                              "_links" => { "type" => { "title" => title } }) }
       end
+      # Both link shapes, for every id a create can hand out. The GET is what
+      # Clients::OpenProject#update_work_package reads the lockVersion from.
       @relation_requests = []
-      stub_request(:post, "#{OP}/work_packages/99/relations?notify=false").to_return do |req|
-        @relation_requests << JSON.parse(req.body)
-        { status: relation_status, body: "{}" }
+      @parent_requests   = []
+      (99..104).each do |id|
+        stub_request(:get, "#{OP}/work_packages/#{id}")
+          .to_return(status: 200, body: JSON.generate("id" => id, "lockVersion" => 1))
+        stub_request(:post, "#{OP}/work_packages/#{id}/relations?notify=false").to_return do |req|
+          @relation_requests << JSON.parse(req.body).merge("from" => id)
+          { status: relation_status, body: "{}" }
+        end
+        stub_request(:patch, "#{OP}/work_packages/#{id}?notify=false").to_return do |req|
+          @parent_requests << JSON.parse(req.body).merge("id" => id)
+          { status: parent_status, body: "{}" }
+        end
       end
+    end
+
+    # Several blocks in one answer, the multi-work-package shape.
+    def multi_draft(*subjects, link: "child")
+      subjects.map { |s| FakeHarness.wp_block(s, link: link, body: "#{s} — asked for in the thread.") }.join("\n")
+    end
+
+    def multi_agent(*subjects, link: "child")
+      harness = FakeHarness.new(draft: multi_draft(*subjects, link: link))
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
     end
 
     def test_create_wp_is_off_without_an_allowlist_and_says_so_once
@@ -709,15 +753,19 @@ module OPilot
       assert_includes payload.dig("description", "raw"), "/work_packages/42",
                       "the description backlinks the source, so the origin survives a failed relation"
 
-      # The relation runs from the NEW work package, with numeric ids on both sides.
-      assert_equal [{ "type" => "relates",
+      # The relation runs from the NEW work package, with numeric ids on both
+      # sides. One split-out is a PEER, so it is related and never re-parented:
+      # a parent link would change the source's own dates and progress.
+      assert_equal [{ "type" => "relates", "from" => 99,
                       "_links" => { "to" => { "href" => "/api/v3/work_packages/42" } } }],
                    @relation_requests
+      assert_empty @parent_requests
 
       record = created_wps.fetch(0)
       assert_equal "2024-02-01T00:00:00Z", record["comment_at"]
       assert_equal "99", record["id"]
       assert record["related"]
+      assert_equal "relates", record["link"]
 
       assert_includes @notes.last, "/work_packages/99"
       refute_includes @notes.last, "@opilot",
@@ -738,15 +786,16 @@ module OPilot
     end
 
     # The writer narrates before it answers, whatever the prompt says — so the
-    # draft is what follows the last DRAFT: marker, and the deliberation above it
-    # is scratch. The first version of this prompt demanded SUBJECT: on line 1 and
+    # answer is what follows the last ANSWER: marker, and the deliberation above
+    # it is scratch. The first version of this prompt demanded SUBJECT: on line 1 and
     # a real run burned its whole output limit getting ready to comply.
     def test_create_wp_reads_the_draft_after_the_marker_and_discards_the_narration
       allow_users(2)
       stub_create_wp
-      narrated = "Let me think. Is this really a bug? SUBJECT: a decoy in my notes\n" \
-                 "I will go with the reporter's wording.\n\nDRAFT:\n" \
-                 "SUBJECT: The real subject\nTYPE: Feature\n\nThe real body.\n"
+      narrated = "Let me think. Is this really a bug?\n" \
+                 "#{FakeHarness.wp_block("a decoy in my notes", body: "Not the answer.")}" \
+                 "I will go with the reporter's wording.\n\nANSWER:\n" \
+                 "#{FakeHarness.wp_block("The real subject", body: "The real body.")}"
       agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: FakeHarness.new(draft: narrated))
       agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
 
@@ -760,7 +809,7 @@ module OPilot
       allow_users(2)
       stub_create_wp
       agent = Agent.new(@ctx, pull: @pull, publish: @publish,
-                        harness: FakeHarness.new(draft: "Thinking about it.\n\nDRAFT:\nNEEDS_INFO\nWhich one?\n"))
+                        harness: FakeHarness.new(draft: "Thinking about it.\n\nANSWER:\nNEEDS_INFO\nWhich one?\n"))
       agent.handle(intent(:create_wp, text: "for the suggestion"))
 
       assert_includes @notes.last, "Which one?"
@@ -774,7 +823,7 @@ module OPilot
       allow_users(2)
       stub_create_wp
       boom = Class.new(FakeHarness) do
-        def run(prompt, **) = prompt.include?("create a NEW work package") ? raise(Harness::Error, "error_length") : super
+        def run(prompt, **) = prompt.include?("NEW work packages out of something") ? raise(Harness::Error, "error_length") : super
       end.new
       agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: boom)
       agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
@@ -811,11 +860,39 @@ module OPilot
     def test_create_wp_retry_that_answers_properly_creates_it
       allow_users(2)
       stub_create_wp
-      harness = SequencedDraftHarness.new(["no fields here", "SUBJECT: A real one\n\nBody.\n"])
+      harness = SequencedDraftHarness.new(["no fields here", FakeHarness.wp_block("A real one", body: "Body.")])
       agent = Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
       agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
 
       assert_equal "A real one", @create_requests.fetch(0)["subject"]
+    end
+
+    # The block format is strict and the retry prompt is otherwise identical, so
+    # the retry must say what the last answer missed — else both attempts go on
+    # the same slip.
+    def test_create_wp_retry_names_the_format_the_last_answer_missed
+      allow_users(2)
+      stub_create_wp
+      unclosed = "BEGIN WORK PACKAGE\nSUBJECT: Half of one\n\nThe body sto"
+      harness  = SequencedDraftHarness.new([unclosed, FakeHarness.wp_block("A whole one", body: "Body.")])
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      refute_includes harness.runs.fetch(0), "FIX THIS FIRST", "nothing to fix on the first attempt"
+      assert_includes harness.runs.fetch(1), "FIX THIS FIRST"
+      assert_includes harness.runs.fetch(1), "never closed it", "the miss is named, not just repeated"
+      assert_equal ["A whole one"], @create_requests.map { |p| p["subject"] }
+    end
+
+    def test_create_wp_retry_names_a_missing_begin_marker
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["SUBJECT: No markers at all\n\nBody.", "still nothing"])
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes harness.runs.fetch(1), "no `BEGIN WORK PACKAGE` line"
+      assert_empty @create_requests
     end
 
     # A drafted type name the project does not have falls back to the project's
@@ -878,6 +955,198 @@ module OPilot
       assert created_wps.fetch(0)["related"]
     end
 
+    # ── create wp: several at once ──────────────────────────────────────────
+    #
+    # One request stays one LLM call: a call per work package would not see the
+    # others, and two of them could write the same suggestion twice.
+    #
+    # Whether an offshoot is a CHILD of the thread or a PEER beside it is stated
+    # per block on the LINK line, never inferred from how many there are — a
+    # child changes the source work package's own dates and progress.
+
+    def test_create_wp_creates_several_as_children_when_the_blocks_ask_for_it
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", "Document the timeout", link: "child")
+        .handle(intent(:create_wp, text: "split this into three tasks"))
+
+      assert_equal ["Show a toast", "Log the reason", "Document the timeout"],
+                   @create_requests.map { |p| p["subject"] }
+      assert_equal 3, @form_requests.length, "each payload is preflighted"
+
+      # Each new work package is PATCHed to the source as its parent, and nothing
+      # is related: `relates` is the peer shape, and these are children.
+      assert_equal [99, 100, 101], @parent_requests.map { |p| p["id"] }
+      assert_equal ["/api/v3/work_packages/42"] * 3,
+                   @parent_requests.map { |p| p.dig("_links", "parent", "href") }
+      assert_empty @relation_requests
+
+      records = created_wps
+      assert_equal %w[99 100 101], records.map { |r| r["id"] }
+      assert_equal ["parent"] * 3, records.map { |r| r["link"] }
+      assert(records.all? { |r| r["comment_at"] == "2024-02-01T00:00:00Z" },
+             "one trigger comment holds every record it created")
+
+      note = @notes.last
+      assert_includes note, "I created 3 work packages"
+      assert_includes note, "/work_packages/101"
+      assert_equal 3, note.scan("child of this work package").length,
+                   "every line states its own shape — the count never implies it"
+    end
+
+    # The same request shape, with blocks that ask to stay peers. Nothing is
+    # re-parented, so the source work package's own dates and progress are
+    # untouched.
+    def test_create_wp_relates_several_when_the_blocks_ask_for_it
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", link: "related")
+        .handle(intent(:create_wp, text: "file both of those separately"))
+
+      assert_equal 2, @create_requests.length
+      assert_empty @parent_requests, "no block asked to be a child"
+      assert_equal [99, 100], @relation_requests.map { |r| r["from"] }
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+      refute_includes @notes.last, "child of this work package"
+    end
+
+    # A missing LINK line is `related`, whatever the count: a relation is the
+    # reversible direction, and a parent has already changed this work package by
+    # the time a person sees it.
+    def test_create_wp_defaults_to_related_when_no_block_states_a_link
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", link: nil)
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_empty @parent_requests
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+    end
+
+    # One set may hold both shapes — the decision is per work package.
+    def test_create_wp_creates_a_mixed_set
+      allow_users(2)
+      stub_create_wp
+      draft = FakeHarness.wp_block("A subtask of this", link: "child") +
+              FakeHarness.wp_block("A separate bug", link: "related")
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: FakeHarness.new(draft: draft))
+           .handle(intent(:create_wp, text: "one subtask and one separate bug"))
+
+      assert_equal [99], @parent_requests.map { |p| p["id"] }
+      assert_equal [100], @relation_requests.map { |r| r["from"] }
+      assert_equal %w[parent relates], created_wps.map { |r| r["link"] }
+
+      note = @notes.last
+      assert_includes note, "child of this work package"
+      assert_match(/A separate bug.*— related/, note)
+    end
+
+    # The parent needs :manage_subtasks, which is a THIRD permission next to
+    # :add_work_packages and :manage_work_package_relations. Without it the work
+    # packages still stand, so they are related instead and the reader is told.
+    def test_create_wp_falls_back_to_a_relation_when_it_cannot_set_a_parent
+      allow_users(2)
+      stub_create_wp(parent_status: 403)
+      multi_agent("Show a toast", "Log the reason")
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_equal 2, @create_requests.length, "the work packages are created either way"
+      assert_equal [99, 100], @parent_requests.map { |p| p["id"] }, "the parent was attempted first"
+      assert_equal [99, 100], @relation_requests.map { |r| r["from"] }
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+      assert(created_wps.all? { |r| r["related"] })
+      assert_includes @notes.last, "I could not make it a child",
+                      "the reader asked for children and did not get them — say so"
+    end
+
+    # A work package can never be deleted, so the cap is enforced here and not
+    # only asked for in the prompt. Over it, nothing is created — and there is no
+    # retry, because the blocks read fine and the problem is scope.
+    def test_create_wp_refuses_more_than_the_cap_and_creates_nothing
+      allow_users(2)
+      stub_create_wp
+      harness = FakeHarness.new(draft: multi_draft("One", "Two", "Three", "Four", "Five", "Six"))
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for every suggestion in this thread"))
+
+      assert_equal 1, harness.runs.length, "no retry — the answer was readable, the request was too big"
+      assert_empty @create_requests
+      assert_empty created_wps
+      assert_includes @notes.last, "6 work packages"
+      assert_includes @notes.last, "at most #{Agent::MAX_CREATE_WP}"
+    end
+
+    # The whole set is preflighted before the first POST. Half a tree is worse
+    # than none when the halves cannot be deleted.
+    def test_create_wp_creates_none_of_the_set_when_one_payload_is_rejected
+      allow_users(2)
+      stub_create_wp(validation_errors: {
+                       "customField205" => { "message" => "Release train can't be blank." }
+                     })
+      multi_agent("Show a toast", "Log the reason")
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_empty @create_requests, "one rejection abandons the whole set"
+      assert_empty created_wps
+      note = @notes.last
+      assert_includes note, "Release train can't be blank."
+      assert_includes note, "Show a toast", "the reader is told WHICH one carried the rejection"
+      assert_includes note, "created none of them"
+    end
+
+    # A block with no END marker means the answer was cut off mid-write. Nothing
+    # is created from it, and the one bounded retry applies — safe, because
+    # nothing has been created yet.
+    def test_create_wp_retries_a_cut_off_answer_and_creates_nothing_from_it
+      allow_users(2)
+      stub_create_wp
+      cut = "#{FakeHarness.wp_block("Complete one")}BEGIN WORK PACKAGE\nSUBJECT: Half of one\n\nThe body sto"
+      harness = SequencedDraftHarness.new([cut, FakeHarness.wp_block("A whole one", body: "Body.")])
+      Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 2, harness.runs.length
+      assert_equal ["A whole one"], @create_requests.map { |p| p["subject"] },
+                   "the complete block of a cut-off answer is not created either"
+    end
+
+    # Records are written per-201, so a partial create leaves fewer records than
+    # the request asked for. The survivor keeps the shape ITS OWN block asked
+    # for — a link worked out from the set's size would read this one as a peer
+    # and relate it for good.
+    def test_create_wp_parents_the_survivor_of_a_partial_create
+      allow_users(2)
+      stub_create_wp(create_status: [201, 422, 422])
+      multi_agent("Show a toast", "Log the reason", "Document the timeout", link: "child")
+        .handle(intent(:create_wp, text: "for each of the three suggestions"))
+
+      assert_equal 1, created_wps.length
+      assert_equal "parent", created_wps.fetch(0)["link"]
+      assert_equal [99], @parent_requests.map { |p| p["id"] }
+
+      note = @notes.last
+      assert_includes note, "/work_packages/99"
+      assert_includes note, "could not create", "the two that failed are named"
+      assert_includes note, "Log the reason"
+    end
+
+    # A re-fired trigger creates nothing more, whatever it created the first
+    # time: the records are keyed on the trigger comment, and every one of them
+    # is reported back.
+    def test_create_wp_re_fire_reports_the_whole_set_and_creates_nothing_more
+      allow_users(2)
+      stub_create_wp
+      agent   = multi_agent("Show a toast", "Log the reason")
+      trigger = intent(:create_wp, text: "for both suggestions")
+      agent.handle(trigger)
+      agent.handle(trigger)
+
+      assert_equal 2, @create_requests.length, "no second set — a work package can never be deleted"
+      assert_equal 2, created_wps.length
+      assert_includes @notes.last, "I already created these"
+      assert_includes @notes.last, "/work_packages/100"
+    end
+
     # A project can REQUIRE custom fields, and required-ness is per project and
     # type. Without the preflight this ends as a 422 in the log, after an LLM call
     # has been spent, with the reader told nothing.
@@ -901,6 +1170,8 @@ module OPilot
                       "the instance's own wording, not a paraphrase"
       assert_includes note, "customField223"
       assert_includes note, "Feature, Bug", "required-ness is per type, so name the alternatives"
+      assert_includes note, "ask me again and name a different type",
+                      "naming a type in one comment is the way out — opilot must not re-classify the work itself"
     end
 
     def test_create_wp_preflights_before_every_create
