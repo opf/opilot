@@ -24,6 +24,11 @@ module OPilot
     # push, remote, or non-git command (and no writes into any .git/, which
     # would turn those read-only subcommands into code execution). The harness
     # has no network egress but authgw, so there is nowhere to exfiltrate to.
+    #
+    # The ONE exception is `git rm` / `git clean`, which pi-guards.ts unlocks
+    # when the grant carries write/edit. pi ships no delete tool, so bash is
+    # the only place one can live; keying it to this grant rather than a flag
+    # of its own is what keeps TOOLS_READ genuinely read-only.
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 

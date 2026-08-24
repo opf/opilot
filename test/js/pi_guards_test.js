@@ -32,8 +32,11 @@ function loadGuard(mod) {
 }
 
 import('../../pi-guards.ts').then(mod => {
-  const { withinRepos, touchesGitDir, checkBash } = mod;
+  const { withinRepos, touchesGitDir, checkBash, checkClean, writesGranted } = mod;
   const call = loadGuard(mod);
+
+  const IMPL = ['pi', '--tools', 'read,grep,find,ls,bash,write,edit'];
+  const READ = ['pi', '--tools', 'read,grep,find,ls,bash'];
 
   // ── the .git denial ─────────────────────────────────────────────────────
 
@@ -99,6 +102,68 @@ import('../../pi-guards.ts').then(mod => {
     assert.ok(checkBash('rm -rf /'), 'non-git must be refused');
     assert.ok(checkBash('git log; rm -rf /'), 'chaining must be refused');
     assert.ok(checkBash('git -c core.pager=sh log'), '-c must be refused');
+  });
+
+  // ── deleting a file: the WRITE_GIT pair ─────────────────────────────────
+  //
+  // pi has no delete tool, so bash is the only place one can live. `rm` covers
+  // a stray already committed to the branch, `clean` one still untracked in
+  // the clone. Helpers#stage_all's `git add --all` records either.
+
+  test('git rm and git clean are allowed with the write grant', () => {
+    assert.strictEqual(checkBash('git rm app/models/stray.rb', true), null);
+    assert.strictEqual(checkBash('git -C /repos/openproject rm app/models/stray.rb', true), null);
+    assert.strictEqual(checkBash('git clean -fd app/models', true), null);
+    assert.strictEqual(checkBash('git clean -f -- app/models/stray.rb', true), null);
+  });
+
+  test('git rm and git clean are refused WITHOUT the write grant', () => {
+    // The plan and chat phases read untrusted work-package text and PR
+    // comments. Their read-only contract is enforced here, not by the prompt
+    // that claims it, so an injected "delete everything" must find no path.
+    for (const cmd of ['git rm app/models/user.rb', 'git clean -fd']) {
+      assert.ok(checkBash(cmd, false), `${cmd} must be refused read-only`);
+    }
+  });
+
+  test('checkBash defaults to the read-only allowlist', () => {
+    // A caller that forgets the second argument gets the narrower rule.
+    assert.ok(checkBash('git rm app/models/user.rb'), 'the default must refuse a write');
+  });
+
+  test('the grant is read off pi\'s own --tools argument', () => {
+    assert.strictEqual(writesGranted(IMPL), true);
+    assert.strictEqual(writesGranted(READ), false);
+    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,op_query']), false);
+    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,write,edit,op_query']), true);
+    // No --tools at all means pi enabled everything, write included.
+    assert.strictEqual(writesGranted(['pi', '--mode', 'json']), true);
+  });
+
+  test('git clean cannot reach IGNORED files — that is the pd spec tree', () => {
+    // PD::ChangeState keeps the spec tree in the clone git-excluded and
+    // force-added, so -x/-X would discard real state, not this run's scratch.
+    // Checked letter by letter, so a combined cluster is caught too.
+    assert.ok(checkClean(['-x']), '-x must be refused');
+    assert.ok(checkClean(['-X']), '-X must be refused');
+    assert.ok(checkClean(['-fdx']), 'a combined cluster must be refused');
+    assert.ok(checkBash('git clean -fdx', true), 'and through checkBash');
+    assert.strictEqual(checkClean(['-fd']), null, '-fd stays allowed');
+  });
+
+  test('git clean cannot descend into nested git repositories', () => {
+    assert.ok(checkClean(['-ff']), '-ff must be refused');
+    assert.ok(checkClean(['-f', '-f']), 'two separate -f must be refused');
+    assert.ok(checkClean(['--force', '--force']), 'two --force must be refused');
+    assert.strictEqual(checkClean(['--force', '-d']), null, 'one --force stays allowed');
+  });
+
+  test('the write grant does not widen anything else', () => {
+    // WRITE_GIT is two names, not a mode: everything else stays refused with
+    // the write tools in hand.
+    for (const cmd of ['git commit -m x', 'git push', 'git reset --hard', 'rm -rf /repos']) {
+      assert.ok(checkBash(cmd, true), `${cmd} must stay refused`);
+    }
   });
 
   test('an unknown tool is refused and terminates the run', () => {

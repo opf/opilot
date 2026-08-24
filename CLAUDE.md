@@ -287,7 +287,21 @@ starts only when `OPILOT_OP_MCP` is set):
   `/repos/<name>`; `--no-context-files` stops pi auto-loading a repo's
   CLAUDE.md/AGENTS.md, so the plan/implement prompts tell it to read each
   target repo's directly instead. Its Bash grant is **read-only git** —
-  history for context, but no commit, push, or non-git command. Two
+  history for context, but no commit, push, or non-git command. The one
+  exception is **`git rm` and `git clean`**, unlocked only when the grant
+  carries `write`/`edit`: pi ships no delete tool (its built-ins only create
+  and modify, and its own answer to "remove this file" is `rm` through bash),
+  so without them a reviewer asking opilot to drop a file off a PR got a
+  promise it could never keep. git rather than `rm` because git contains the
+  blast radius itself — a pathspec outside the work tree is refused, nothing
+  under `.git/` is tracked, and `rm` reaches only tracked files, which
+  `git checkout` restores. `clean` is capped at `-x`/`-X` (which would take
+  the *ignored* `pd` spec tree) and `-ff`. Keying all of it to the write grant
+  rather than a flag of its own is what keeps `TOOLS_READ` genuinely
+  read-only — plan and chat read prompt-injectable work-package text, and
+  that contract is enforced in the guard, not in the prompt that states it.
+  The runner needs no cooperation to record a removal: `Helpers#stage_all`
+  runs `git add --all`. Two
   extensions load via `--no-extensions -e` (repeatable): `pi-guards.ts` (pi's
   only PreToolUse-style hook) enforces that plus the write confinement: no
   writes outside `/repos`, and **none into any `.git/` directory** — that one
