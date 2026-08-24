@@ -21,25 +21,17 @@ module OPilot
       approves, in a separate step.
     TEXT
 
-    # How to delete a file, stated in every phase that may write one.
-    #
-    # pi ships no delete tool — its built-ins only create and modify — so git is
-    # the one way to remove a file, and pi-guards.ts unlocks exactly these two
-    # subcommands for a write grant. Saying so is not optional: a model that is
-    # never told assumes it cannot delete and answers the reviewer with a
-    # promise it can never keep, which is what opf/openproject#24916 got instead
-    # of a removed file.
-    #
-    # Both forms name a path. A bare `git clean -fd` is allowed by the guard but
-    # would discard the run's own uncommitted work, so the prompt rules it out
-    # where the guard sensibly does not.
+    # pi ships no delete tool, so git is the only way to remove a file and
+    # pi-guards.ts unlocks these two for a write grant. Saying so is not
+    # optional: untold, the model assumes it cannot delete and answers the
+    # reviewer with a promise it can never keep (opf/openproject#24916).
     DELETE_NOTE = <<~TEXT.strip
-      - To DELETE a file, run `git rm <path>` when it is tracked, or
+      - To DELETE a file, run `git rm <path>` when it is already committed, or
         `git clean -f -- <path>` when it is untracked. These two are the
         exception to the rule above; every other writing command stays denied.
-        Always name the path — a bare `git clean` would also throw away your own
-        uncommitted work. The runner stages a deletion like any other change, so
-        nothing else is needed to record it.
+        Always name the path: a bare `git clean` also throws away files YOU
+        wrote earlier in this run. The runner stages a deletion like any other
+        change, so nothing else is needed to record it.
     TEXT
 
     # Ground rules for the write-enabled PR tasks (gh_reply, fix_ci, pr_refresh).

@@ -336,15 +336,25 @@ module OPilot
     FakeStatus = Struct.new(:changed, :added, :deleted)
 
     class FakeWorktree
-      attr_reader :checkouts, :fetched, :configs
+      attr_reader :checkouts, :fetched, :configs, :cleans, :resets
       # `dirty` stands in for an implement run that died after the LLM wrote files
       # but before Helpers#commit swept them up; `fetch_error` for an unreachable
-      # origin. Both are cases sync_base! must not act on.
-      def initialize(dirty: false, fetch_error: nil)
-        @checkouts = []; @fetched = []; @configs = []
+      # origin. Both are cases sync_base! must not act on. `leftover` is what
+      # `git clean --dry-run` reports: an EARLIER work package's untracked file.
+      def initialize(dirty: false, fetch_error: nil, branch_exists: false, leftover: nil)
+        @checkouts = []; @fetched = []; @configs = []; @cleans = []; @resets = []
         @dirty = dirty; @fetch_error = fetch_error
+        @branch_exists = branch_exists; @leftover = leftover
       end
-      def revparse(_ref); raise Git::FailedError.allocate; end   # branch doesn't exist yet
+      def revparse(_ref)
+        return "abc123" if @branch_exists
+        raise Git::FailedError.allocate # branch doesn't exist yet
+      end
+      def clean(**opts)
+        @cleans << opts
+        opts[:dry_run] && @leftover ? "Would remove #{@leftover}\n" : ""
+      end
+      def reset(target, **opts); @resets << [target, opts]; end
       def checkout(branch, **opts); @checkouts << [branch, opts]; end
       def fetch(remote, **opts)
         raise @fetch_error if @fetch_error
@@ -439,7 +449,7 @@ module OPilot
       host.checkout_branch(st, op)
 
       assert_equal [["origin", { ref: "release/17.6" }]], wt.fetched, "the custom base is fetched first"
-      branch, opts = wt.checkouts.first
+      branch, opts = wt.checkouts.last
       assert_equal st.branch, branch
       assert_equal "origin/release/17.6", opts[:start_point], "the fix branch starts from the custom base"
     ensure
@@ -463,7 +473,74 @@ module OPilot
       host.checkout_branch(st, op)
 
       assert_equal [["origin", { ref: "dev" }]], wt.fetched
-      assert_equal "origin/dev", wt.checkouts.first[1][:start_point]
+      assert_equal "origin/dev", wt.checkouts.last[1][:start_point]
+    ensure
+      teardown_repo_host
+    end
+
+    # opf/openproject#24916 shipped an unrelated file: an earlier run left it
+    # untracked in the clone and #stage_all's `git add --all` swept it into the
+    # next work package's commit.
+    def test_checkout_branch_clears_leftovers_before_cutting_a_new_branch
+      host = repo_host
+      st = host.state_for("47", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      op = host.ctx.repos["openproject"]
+      wt = FakeWorktree.new(leftover: "app/models/stray.rb")
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      host.checkout_branch(st, op)
+
+      assert_equal [["HEAD", { hard: true }]], wt.resets,
+                   "resetting to origin/<base> would rewind a previous WP's branch"
+      assert_includes wt.cleans, { force: true, d: true }, "untracked leftovers are removed"
+      refute(wt.cleans.any? { |o| o[:x] || o[:X] }, "ignored files are the pd spec tree")
+      assert_equal [[st.branch, { new_branch: true, start_point: "origin/dev" }]], wt.checkouts,
+                   "nothing is checked out before the fix branch itself"
+    ensure
+      teardown_repo_host
+    end
+
+    # An existing branch may be a run resuming after it died between the LLM
+    # writing files and the commit. That work is the branch's own.
+    def test_checkout_branch_leaves_an_existing_branch_alone
+      host = repo_host
+      st = host.state_for("48", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      op = host.ctx.repos["openproject"]
+      wt = FakeWorktree.new(branch_exists: true, leftover: "app/models/wip.rb")
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      host.checkout_branch(st, op)
+
+      assert_empty wt.cleans, "a resumed branch keeps its uncommitted work"
+      assert_empty wt.resets
+      assert_equal [[st.branch, {}]], wt.checkouts
+    ensure
+      teardown_repo_host
+    end
+
+    # A clone that will not clean is worth a warning and a run, not a dead poll.
+    def test_checkout_branch_survives_a_clone_it_cannot_clear
+      host = repo_host
+      st = host.state_for("49", "Fix", "Bug")
+      st.plan_file.write("REPOS: openproject\n## Plan\n")
+      host.record_chosen_repos(st)
+
+      op = host.ctx.repos["openproject"]
+      wt = FakeWorktree.new
+      def wt.clean(**_opts) = raise(Git::FailedError.allocate)
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      host.checkout_branch(st, op)
+
+      assert_equal st.branch, wt.checkouts.last[0], "the run continues"
+      assert_equal [["branch.#{st.branch}.remote", "origin"],
+                    ["branch.#{st.branch}.merge", "refs/heads/#{st.branch}"]], wt.configs
     ensure
       teardown_repo_host
     end

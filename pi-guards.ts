@@ -17,36 +17,19 @@ const READONLY_GIT = new Set([
 ]);
 
 // The two git subcommands that WRITE, allowed only when the run also holds the
-// write tools (see writesGranted). They exist because pi ships no delete tool:
-// its seven built-ins are bash, edit, find, grep, ls, read and write, and its
-// own answer to "remove this file" is `rm` through bash. Confining bash to
-// read-only git took that answer away and left nothing in its place, so the
-// model could create and modify files but never remove one. A reviewer asking
-// opilot to drop a stray file off a PR got a promise it could not keep
-// (opf/openproject#24916).
+// write tools (see writesGranted). pi ships no delete tool — its built-ins only
+// create and modify, and its own answer to "remove this file" is `rm` through
+// bash — so confining bash to read-only git left the model unable to delete
+// anything at all (opf/openproject#24916). `rm` covers a stray already
+// committed, `clean` one still untracked; Helpers#stage_all's `git add --all`
+// records either.
 //
-// Together they cover both states a stray file can be in: `rm` for one already
-// committed to the branch, `clean` for one still sitting untracked in the
-// clone — which is how a stray reaches a commit at all, since Helpers#stage_all
-// runs `git add --all`. That same `add --all` is why neither call needs the
-// runner's cooperation to be recorded: it stages deletions with everything else.
-//
-// git rather than a plain `rm` because git contains the blast radius itself,
-// with no path validation for this file to get wrong:
-//
-//   - a pathspec outside the work tree is refused, so /repos confinement is
-//     free (and --work-tree/--git-dir are DANGEROUS_OPTIONs already);
-//   - nothing under .git/ is tracked and `clean` never descends into it, so
-//     the .git/config and .git/hooks exec vectors documented below stay out
-//     of reach;
-//   - `rm` removes only TRACKED files — by definition restorable with
-//     `git checkout`, i.e. replaceable data in a disposable clone.
-//
-// `clean` is the looser of the two: an untracked file is in no object database,
-// so a blanket `git clean -fd` discards the run's own uncommitted output. That
-// costs a re-run and shows up as a fix that produced nothing — bounded, and
-// visible when it happens. CLEAN_REFUSED below keeps it from reaching anything
-// that is NOT the run's own scratch.
+// git rather than plain `rm` because git contains the blast radius itself, with
+// no path validation to get wrong: a pathspec outside the work tree is refused,
+// nothing under .git/ is tracked, and `rm` reaches only tracked files, which
+// `git checkout` restores. `clean` is the looser of the two — a blanket
+// `git clean -fd` discards the run's own uncommitted output, which costs a
+// re-run and shows as a fix that produced nothing.
 const WRITE_GIT = new Set(["rm", "clean"]);
 
 // Tokens that can turn a read into a write or a code-exec, regardless of
@@ -107,18 +90,14 @@ export function touchesGitDir(p) {
 }
 
 // Does this run hold the WRITE tools? Deletion rides on that grant rather than
-// on a flag of its own: TOOLS_IMPL carries write/edit, TOOLS_READ does not, so
-// the plan and chat phases stay read-only with nothing extra to keep in sync.
+// a flag of its own: TOOLS_IMPL carries write/edit, TOOLS_READ does not.
 //
-// This is the load-bearing half of allowing a write through bash at all. Those
-// read-only phases read work-package text and PR comments — untrusted,
-// prompt-injectable input — and their read-only contract is enforced HERE, not
-// by the prompt that claims it. A bash that could delete in every grant would
-// hand an injected instruction a way to empty a clone from a phase whose whole
-// promise is that it changes nothing.
+// This is the load-bearing half of allowing any write through bash. Plan and
+// chat read work-package text and PR comments — untrusted, prompt-injectable —
+// and their read-only contract is enforced HERE, not by the prompt claiming it.
 //
-// server.js starts pi with `--tools <grant>`. No --tools at all means pi
-// enabled every tool, write included, so an absent flag reads as granted.
+// server.js starts pi with `--tools <grant>`. No --tools means pi enabled every
+// tool, write included, so an absent flag reads as granted.
 export function writesGranted(argv) {
   const args = argv || [];
   const i = args.indexOf("--tools");
@@ -127,16 +106,10 @@ export function writesGranted(argv) {
   return granted.includes("write") || granted.includes("edit");
 }
 
-// Flags refused on `git clean`, checked letter by letter so a combined cluster
-// like -fdx is caught as surely as a lone -x:
-//
-//   x / X      also remove IGNORED files. Those are not the run's scratch:
-//              they are the pd spec tree (PD::ChangeState keeps it in the
-//              clone git-excluded and force-added) and every build artifact.
-//   -ff        recurses into nested git repositories.
-//
-// Everything else about clean is deliberately left alone — -f, -d and a
-// pathspec are the useful, bounded form.
+// Flags refused on `git clean`, checked letter by letter so a cluster like -fdx
+// is caught as surely as a lone -x. x/X also remove IGNORED files — the pd spec
+// tree and every build artifact, not this run's scratch. -ff recurses into
+// nested git repositories. -f, -d and a pathspec stay allowed.
 export function checkClean(tokens) {
   let force = 0;
   for (const t of tokens) {
@@ -183,9 +156,7 @@ export function checkBash(command, canWrite = false) {
     return `only read-only git is allowed (subcommand: ${sub})`;
   }
   if (WRITE_GIT.has(sub)) {
-    // Named separately from the line above so the model is told which of the
-    // two it hit: "rm is not allowed here" and "no git subcommand like this is
-    // allowed" call for different next moves.
+    // Its own message, so the model is told which of the two it hit.
     if (!canWrite) return `git ${sub} needs the write tools, which this phase does not have`;
     if (sub === "clean") {
       const reason = checkClean(tokens);

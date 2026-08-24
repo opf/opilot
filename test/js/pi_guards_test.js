@@ -105,10 +105,6 @@ import('../../pi-guards.ts').then(mod => {
   });
 
   // ── deleting a file: the WRITE_GIT pair ─────────────────────────────────
-  //
-  // pi has no delete tool, so bash is the only place one can live. `rm` covers
-  // a stray already committed to the branch, `clean` one still untracked in
-  // the clone. Helpers#stage_all's `git add --all` records either.
 
   test('git rm and git clean are allowed with the write grant', () => {
     assert.strictEqual(checkBash('git rm app/models/stray.rb', true), null);
@@ -117,18 +113,16 @@ import('../../pi-guards.ts').then(mod => {
     assert.strictEqual(checkBash('git clean -f -- app/models/stray.rb', true), null);
   });
 
+  // Plan and chat read untrusted work-package text. Their read-only contract is
+  // enforced here, not by the prompt claiming it.
   test('git rm and git clean are refused WITHOUT the write grant', () => {
-    // The plan and chat phases read untrusted work-package text and PR
-    // comments. Their read-only contract is enforced here, not by the prompt
-    // that claims it, so an injected "delete everything" must find no path.
     for (const cmd of ['git rm app/models/user.rb', 'git clean -fd']) {
       assert.ok(checkBash(cmd, false), `${cmd} must be refused read-only`);
     }
   });
 
   test('checkBash defaults to the read-only allowlist', () => {
-    // A caller that forgets the second argument gets the narrower rule.
-    assert.ok(checkBash('git rm app/models/user.rb'), 'the default must refuse a write');
+    assert.ok(checkBash('git rm app/models/user.rb'), 'a caller that forgets canWrite gets the narrower rule');
   });
 
   test('the grant is read off pi\'s own --tools argument', () => {
@@ -140,10 +134,9 @@ import('../../pi-guards.ts').then(mod => {
     assert.strictEqual(writesGranted(['pi', '--mode', 'json']), true);
   });
 
+  // PD::ChangeState keeps the spec tree in the clone git-excluded, so -x/-X
+  // would discard real state, not this run's scratch.
   test('git clean cannot reach IGNORED files — that is the pd spec tree', () => {
-    // PD::ChangeState keeps the spec tree in the clone git-excluded and
-    // force-added, so -x/-X would discard real state, not this run's scratch.
-    // Checked letter by letter, so a combined cluster is caught too.
     assert.ok(checkClean(['-x']), '-x must be refused');
     assert.ok(checkClean(['-X']), '-X must be refused');
     assert.ok(checkClean(['-fdx']), 'a combined cluster must be refused');
@@ -158,9 +151,8 @@ import('../../pi-guards.ts').then(mod => {
     assert.strictEqual(checkClean(['--force', '-d']), null, 'one --force stays allowed');
   });
 
+  // WRITE_GIT is two names, not a mode.
   test('the write grant does not widen anything else', () => {
-    // WRITE_GIT is two names, not a mode: everything else stays refused with
-    // the write tools in hand.
     for (const cmd of ['git commit -m x', 'git push', 'git reset --hard', 'rm -rf /repos']) {
       assert.ok(checkBash(cmd, true), `${cmd} must stay refused`);
     }

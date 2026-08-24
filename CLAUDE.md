@@ -289,19 +289,15 @@ starts only when `OPILOT_OP_MCP` is set):
   target repo's directly instead. Its Bash grant is **read-only git** —
   history for context, but no commit, push, or non-git command. The one
   exception is **`git rm` and `git clean`**, unlocked only when the grant
-  carries `write`/`edit`: pi ships no delete tool (its built-ins only create
-  and modify, and its own answer to "remove this file" is `rm` through bash),
-  so without them a reviewer asking opilot to drop a file off a PR got a
-  promise it could never keep. git rather than `rm` because git contains the
-  blast radius itself — a pathspec outside the work tree is refused, nothing
-  under `.git/` is tracked, and `rm` reaches only tracked files, which
-  `git checkout` restores. `clean` is capped at `-x`/`-X` (which would take
-  the *ignored* `pd` spec tree) and `-ff`. Keying all of it to the write grant
-  rather than a flag of its own is what keeps `TOOLS_READ` genuinely
-  read-only — plan and chat read prompt-injectable work-package text, and
-  that contract is enforced in the guard, not in the prompt that states it.
-  The runner needs no cooperation to record a removal: `Helpers#stage_all`
-  runs `git add --all`. Two
+  carries `write`/`edit`. pi ships no delete tool, so without them the model
+  could not remove a file at all (opf/openproject#24916). git rather than `rm`
+  because git contains the blast radius itself: a pathspec outside the work
+  tree is refused, nothing under `.git/` is tracked, and `rm` reaches only
+  tracked files, which `git checkout` restores; `clean` is capped at `-x`/`-X`
+  (the *ignored* `pd` spec tree) and `-ff`. Keying it to the write grant is
+  what keeps `TOOLS_READ` genuinely read-only — plan and chat read
+  prompt-injectable work-package text, and that contract is enforced in the
+  guard, not in the prompt stating it. Two
   extensions load via `--no-extensions -e` (repeatable): `pi-guards.ts` (pi's
   only PreToolUse-style hook) enforces that plus the write confinement: no
   writes outside `/repos`, and **none into any `.git/` directory** — that one
@@ -446,6 +442,16 @@ PR needs the store's layout on every tick.
    clone on `bug/<id>-<slug>` in one resumed session; the runner commits
    `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
    ids, bare `STC-162` for semantic ones).
+
+   **Cutting a NEW branch clears the clone first** (`Helpers#clear_leftovers!`,
+   from `#checkout_branch`, so `pd` gets it too): `reset --hard HEAD` then
+   `git clean -fd`. Nothing else removes an untracked file — not a checkout, not
+   `#sync_base!` — so one an earlier run left behind rides into the next WP's
+   `git add --all` (opf/openproject#24916). **Only** the new-branch path: an
+   existing branch may be a run resuming after it died between the LLM writing
+   files and the commit. Reset to `HEAD`, never to `origin/<base>`, which would
+   rewind a previous WP's branch if it is still checked out. No `-x` — the `pd`
+   spec tree is git-excluded by design. Every discarded path is logged.
 4. **Publish** — opilot has **one GitHub identity**, the contributor
    (`GITHUB_CONTRIBUTOR_TOKEN`, a bot with no access to the canonical repos); every
    mode publishes as it and commits are authored by it. The branch goes to the bot's

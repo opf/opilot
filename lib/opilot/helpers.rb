@@ -762,10 +762,34 @@ module OPilot
       if local_branch_exists?(wt, st.branch)
         wt.checkout(st.branch)
       else
+        clear_leftovers!(wt, repo)
         wt.checkout(st.branch, new_branch: true, start_point: "origin/#{base}")
       end
       wt.config_set("branch.#{st.branch}.remote", "origin")
       wt.config_set("branch.#{st.branch}.merge", "refs/heads/#{st.branch}")
+    end
+
+    # Clear the clone before a NEW work branch is cut from it. Nothing else
+    # removes an untracked file — not a checkout, not #sync_base! — so one an
+    # earlier run left behind sits there until the next WP's `git add --all`
+    # sweeps it into ITS commit (opf/openproject#24916).
+    #
+    # New-branch path only: an existing branch may be a run resuming after it
+    # died between the LLM writing files and the commit, and that work is its own.
+    #
+    # Reset to HEAD, not origin/<base>: HEAD may still be a previous WP's branch,
+    # and resetting to the base would rewind it. HEAD moves no ref, only the tree.
+    # No `x:` — the pd spec tree is git-excluded by design, and pd cuts branches
+    # through here too. Never fatal, and every discarded path is logged: a file
+    # appearing from nowhere is the bug, so removing one silently repeats it.
+    def clear_leftovers!(wt, repo)
+      leftovers = wt.clean(force: true, d: true, dry_run: true).to_s.lines.map(&:strip).reject(&:empty?)
+      leftovers.each { |line| log_script "#{repo.name}: discarding leftover — #{line}" }
+      wt.reset("HEAD", hard: true)
+      wt.clean(force: true, d: true)
+    rescue StandardError => e
+      log_script "#{repo.name}: could not clear the clone before branching (#{e.message}) — " \
+                 "anything left in it may end up in this commit."
     end
 
     # Fetch a base branch into its remote-tracking ref (origin/<base>) so the fix
