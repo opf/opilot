@@ -44,6 +44,33 @@ module OPilot
       missing details — ask the reporter for the specific information you need.
     TEXT
 
+    # A ticket often states a fact about how the product works today — a field is
+    # configurable per type, a setting gates a feature, an option defaults on.
+    # When the tree does not have that fact, no amount of searching can close the
+    # question, and a real run spent its entire budget re-searching the same four
+    # places for one: the same conclusion re-derived nine times, zero writes, and
+    # a plan call that only the absolute OPILOT_PI_MAX_RUN_MIN ceiling stopped
+    # (the idle timeout rearms on every byte, so a run that loops *loudly* is
+    # invisible to it). This says the empty result is the answer.
+    #
+    # Deliberately NOT folded into THIN_REPORT_GATE: that gate forbids assuming
+    # past ABSENT information, this rule requires it past CONTRADICTED
+    # information. One constant holding both would say "never guess" and "guess
+    # here" in the same breath, and `chat` would inherit the contradiction with no
+    # "Risks / assumptions" section to land the guess in.
+    #
+    # Interpolated by plan, replan and chat — every prompt that reads the tree to
+    # answer. replan gets this one and not the bug-report gate, which is the other
+    # reason the two are separate.
+    SEARCH_STOP_RULE = <<~TEXT.strip
+      One search settles one question. When you look for something in the tree and
+      do not find it, that empty result IS your answer — do not search again with
+      different words to confirm it, and do not re-open a question you already
+      answered earlier in this same response. A ticket may state a fact about
+      today's behaviour that the tree does not have; the tree is what you build
+      against.
+    TEXT
+
     # The language every piece of prose opilot publishes is written in — work
     # package comments, PR replies and descriptions, plans, spec proposals. A
     # work package thread is read by people who are reporters, testers and
@@ -279,6 +306,15 @@ module OPilot
     # emits it instead of a plan, and Agent#produce_plan posts the questions back
     # to the WP. `allow_options:` adds OPTIONS_CONTRACT whenever no human has
     # chosen an approach yet; it stays off once an option or a direction is given.
+    #
+    # The clause under NEEDS_INFO keeps that gate narrow, and the tilt is
+    # deliberate rather than balanced: every feature ticket describes something
+    # absent from the tree — that is what a feature ticket is — so a premise the
+    # writer cannot verify must default to an assumption written into
+    # "Risks / assumptions", not to a question. A false NEEDS_INFO costs more than
+    # the loop SEARCH_STOP_RULE exists to stop: the loop wastes one harness slot
+    # for one run, while Agent#produce_plan posts the questions into the activity
+    # tab and stalls the ticket until somebody answers them.
     def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
                   allow_options: false, op_mcp: false)
       focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
@@ -290,6 +326,8 @@ module OPilot
         You are the WRITER. Produce a plan only.
         #{READ_ONLY}
 
+        #{SEARCH_STOP_RULE}
+
         FIRST, judge whether this issue gives you enough to plan a concrete fix.
         #{THIN_REPORT_GATE}
         When the issue is too thin to confidently locate AND reproduce the problem,
@@ -299,6 +337,11 @@ module OPilot
           NEEDS_INFO
           ### Questions for the reporter
           - <each specific thing you need before you can proceed>
+
+        A stated fact you cannot find is not a reason to stop. Write what you
+        found under "Risks / assumptions", build the simpler shape, and continue.
+        Use NEEDS_INFO for it ONLY when the missing fact changes the whole shape of
+        the fix — never when it changes a detail you can state and move past.
         #{options_gate}
         Otherwise, produce the plan:
 
@@ -344,6 +387,8 @@ module OPilot
         Preserve structure and content that is still valid; only change what the feedback requires.
         Produce a plan only.
         #{READ_ONLY}
+
+        #{SEARCH_STOP_RULE}
 
         #{plan_skeleton(item_id, title)}
       PROMPT
@@ -426,6 +471,8 @@ module OPilot
         isn't; on a fresh session read the issue, including its comments, first)
 
         #{THIN_REPORT_GATE}
+
+        #{SEARCH_STOP_RULE}
 
         AVAILABLE COMMANDS (mention these when relevant) — `build` is the only
         working command; there is no separate plan, approve, or ship step. A comment
