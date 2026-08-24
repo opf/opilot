@@ -19,24 +19,29 @@ module OPilot
         assert_equal %w[search_work_packages create_work_package], @client.tool_names
       end
 
-      def test_summary_counts_allowed_and_names_other_tools
+      def test_summary_counts_allowed_and_flags_write_tools
         stub_request(:get, "#{URL}/tools")
           .to_return(status: 200, body: JSON.generate(
             result: { tools: [{ name: "search_work_packages" }, { name: "list_types" },
-                               { name: "create_work_package" }] }
+                               { name: "create_work_package" }, { name: "update_work_package" }] }
           ))
 
         summary = @client.summary
-        assert_includes summary, "3 tool(s) on the instance"
-        assert_includes summary, "2 allowed by opgw"
-        assert_includes summary, "also enabled: create_work_package"
+        assert_includes summary, "2/4 tools allowed by opgw"
+        assert_includes summary, "2 write tool(s) enabled"
+        refute_includes summary, "create_work_package", "names would put ~150 chars on every startup"
       end
 
-      def test_summary_says_so_when_nothing_else_is_enabled
+      # search_users is not allowlisted but cannot write, so it is not news.
+      def test_summary_stays_quiet_about_reads_it_merely_does_not_allow
         stub_request(:get, "#{URL}/tools")
-          .to_return(status: 200, body: JSON.generate(result: { tools: [{ name: "search_work_packages" }] }))
+          .to_return(status: 200, body: JSON.generate(
+            result: { tools: [{ name: "search_work_packages" }, { name: "search_users" }] }
+          ))
 
-        assert_includes @client.summary, "no other tools enabled"
+        summary = @client.summary
+        assert_includes summary, "1/2 tools allowed by opgw"
+        refute_includes summary, "write tool"
       end
 
       def test_a_404_is_unavailable_not_a_generic_error

@@ -710,13 +710,12 @@ module OPilot
     # leaves op_query unused for the run.
     def report_op_mcp_status
       return unless @ctx.op_mcp?
+      return unless Helpers.first_op_mcp_report?
       unless @ctx.opgw_url
         log_script "OpenProject MCP: OPILOT_OP_MCP is set but OPILOT_OPGW_URL is not — is this running through ./opilot?"
         return
       end
-      summary = Clients::OpMcp.new(@ctx.opgw_url, @ctx.gw_token).summary
-      puts "  OpenProject MCP: #{summary}"
-      log_script "OpenProject MCP: #{summary}"
+      log_script "OpenProject MCP: #{Clients::OpMcp.new(@ctx.opgw_url, @ctx.gw_token).summary}"
     rescue Clients::OpMcp::Unavailable
       # The common case now that OPILOT_OP_MCP defaults on: most instances have
       # no Enterprise MCP server enabled. Quiet by design — op_query itself
@@ -724,8 +723,13 @@ module OPilot
       # confirmation the run isn't silently broken.
       log_script "OpenProject MCP: not available on this instance — op_query will report that per call."
     rescue StandardError => e
-      puts "  OpenProject MCP: could not read the instance's tool list (#{e.message})."
       log_script "OpenProject MCP: startup check failed (#{e.message}) — op_query will report unavailable at call time."
+    end
+
+    # True once per process — `./opilot agent` sets up both loops.
+    def self.first_op_mcp_report?
+      return false if @op_mcp_reported
+      @op_mcp_reported = true
     end
 
     # `./opilot` provisions the clones, but a clone whose `git clone` failed (a

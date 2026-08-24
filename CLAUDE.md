@@ -350,10 +350,12 @@ starts only when `OPILOT_OP_MCP` is set):
   `tools/call` only eight read-only operation names. The instance's own
   `tools/list` answer is also trimmed to those eight before it reaches pi, so
   the model is never shown a tool it cannot call. A second route, `GET
-  /tools`, answers the runner with the **unfiltered** list — used once at
-  startup (`Helpers#report_op_mcp_status`) to log which write tools the
-  instance still has enabled; opilot cannot disable those, only an
-  administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
+  /tools`, answers the runner with the **unfiltered** list — logged once per
+  **process** (`Helpers#report_op_mcp_status`, guarded by
+  `Helpers.first_op_mcp_report?` since `./opilot agent` sets up two loops) as
+  one short line: how many tools the allowlist passes, and how many write tools
+  the instance has enabled. Counts, not names — opilot cannot disable those
+  anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
   tools do — so this allowlist is the actual control, not a refinement one.
   The pi extension side (`pi-op-mcp.ts`/`op-mcp-client.js`, loaded via a
   second `-e`) trims a `search_work_packages` answer to a fixed subset of

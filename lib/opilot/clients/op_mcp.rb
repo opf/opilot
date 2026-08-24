@@ -57,17 +57,15 @@ module OPilot
         raise Error, "could not reach opgw at #{target}: #{e.message}"
       end
 
-      # One line for the startup log: how many tools the instance exposes, how
-      # many opgw allows, and which OTHER tools are still enabled — most
-      # notably any of the six write tools, which opilot cannot disable but an
-      # administrator can (McpConfiguration, Administration → Artificial
-      # Intelligence → MCP).
+      # One short line for the startup log. Counts rather than names, since it
+      # prints every run; the signal is that write tools are enabled, which only
+      # an administrator can change.
       def summary
         names   = tool_names
         allowed = names & READ_ONLY_OPS
-        extra   = names - READ_ONLY_OPS
-        line = "#{names.length} tool(s) on the instance, #{allowed.length} allowed by opgw"
-        line + (extra.empty? ? ", no other tools enabled" : ", also enabled: #{extra.join(", ")}")
+        writes  = (names - READ_ONLY_OPS).grep(/\A(create|update|delete)_/)
+        line = "#{allowed.length}/#{names.length} tools allowed by opgw"
+        writes.empty? ? line : "#{line}, #{writes.length} write tool(s) enabled on the instance"
       end
     end
   end
