@@ -12,7 +12,7 @@
 
 ## What is this?
 
-A standalone & secure "OpenProject copilot" that uses the [`pi` agent harness](https://pi.dev/) + LLM of your choice to automate various tasks. 
+A standalone "OpenProject copilot" that uses the [`pi` agent harness](https://pi.dev/) + LLM of your choice to automate various tasks. 
 
 Chat with it throughout the OpenProject interface and let it work in the background!
 
@@ -25,15 +25,17 @@ AI tools help us design and implement faster. Nevertheless, outside that creativ
 
 Use OPilot to remove that friction from your development workflow. It can automate anything from simple bug-fixing to entire E2E product delivery. Just chat with `@OPilot` in OpenProject and GitHub PRs!
 
-* **Prototyping**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
-  * **Human take-over**: Run `gh adopt <pr-id>` to make the prototype your own, thus cleanly transferring ownership
-* **General PR assistance**: Tag `@OPilot` in any upstream PR with questions.
-* **Product development**: Use the experimental `pd` product development pipeline to automatically deliver entire features end-to-end, using OpenProject as the work tracking backend.
+* **Prototype solutions**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
+* **Take ownership**: Run `gh adopt <pr-id>` to make the prototypes your own, thus cleanly transferring ownership.
+* **General PR assistance**: Tag `@OPilot` in any upstream PR with questions. These can relate to code as well as the product context.
+
+### Product builders
+* **Automate product development**: Use the experimental `pd` product development pipeline to deliver entire features end-to-end, using OpenProject as the work tracking backend.
 
 ### General audience
 
 * **Refine work packages**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
-* **Generate new work packages**: Turn a suggestion made in a comment into its own work package(s) with `@OPilot create wp <instructions>`. OPilot builds the package content, creates them in the same project, and relates them back.
+* **Create work packages**: Turn a suggestion made in a comment into its own work package(s) with `@OPilot create wp <instructions>`. OPilot builds the package content, creates them in the same project, and relates them back.
 * **[Enterprise] Run project-wide discovery**: Ask `@OPilot` anything about the reachable projects' data -- it will leverage the instance's MCP server to give you a fresh answer.
 
 ### ...and others?
