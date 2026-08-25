@@ -28,9 +28,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
-* Adoption workflow:
-  * More universal `adopt` alias that does not require `gh`?
-  * Port the `adopt` alias to a script in a trusted repo inside the `opf` org (e.g. a `gh` extension), so maintainers install it from a first-party source rather than pasting an inline alias
+* Move the adopt command into its own repo? 
 * AppSignal integration — ingesting the errors is the open half; ticket creation itself now exists (`pd generate-wp`)
   * Currently tricky, as we don't want to share user data with a 3rd party LLM
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system

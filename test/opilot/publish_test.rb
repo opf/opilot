@@ -81,39 +81,39 @@ module OPilot
     def test_fork_pr_gets_the_adopt_note_with_its_real_number
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
-      refute_includes @github.pr_calls.first[:body], "gh adopt",
+      refute_includes @github.pr_calls.first[:body], "opilot-adopt",
                       "the note needs the PR number, which doesn't exist at create time"
       update = @github.body_updates.first
       refute_nil update, "the body is patched right after creation"
       assert_equal "opf/openproject", update[:repo]
       assert_equal 7, update[:number]
       assert_includes update[:body],
-                      "`gh adopt 7` ([setup guide](https://github.com/opf/openproject-opilot#adopting-a-opilot-pr))",
+                      "`opilot-adopt 7` ([setup guide](https://github.com/opf/opilot#adopting-an-opilot-pr))",
                       "the note links the setup doc and names this PR's concrete number"
       # It reads as the banner's second bullet, directly under the first — not
       # buried after the description.
-      assert_match(/^\* To ask for a change, write a comment to @\S+ .*\n\* To ship the PR, first make it yours: run `gh adopt 7`/,
+      assert_match(/^\* To ask for a change, write a comment to @\S+ .*\n\* To ship the PR, first make it yours: run `opilot-adopt 7`/,
                    update[:body], "the note is the banner's second bullet")
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
     end
 
-    # The fence is what `gh adopt` deletes, so both the disclaimer and the adopt
+    # The fence is what `opilot-adopt` deletes, so both the disclaimer and the adopt
     # note must fall inside it — a note left outside would survive adoption and
     # tell a maintainer to adopt their own PR.
-    def test_bot_preamble_is_fenced_for_gh_adopt
+    def test_bot_preamble_is_fenced_for_opilot_adopt
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       body = @github.body_updates.first[:body]
       fenced = body[/#{Regexp.escape(Publish::BANNER_OPEN)}\n(.*?)\n#{Regexp.escape(Publish::BANNER_CLOSE)}/m, 1]
-      refute_nil fenced, "the preamble is wrapped in the fence the adopt alias deletes"
+      refute_nil fenced, "the preamble is wrapped in the fence the adopt script deletes"
       assert_includes fenced, "AI-generated prototype"
-      assert_includes fenced, "gh adopt 7"
+      assert_includes fenced, "opilot-adopt 7"
       assert body.start_with?(Publish::BANNER_OPEN), "the fence opens the body"
 
-      # What `gh adopt` is left with once it deletes the range.
+      # What `opilot-adopt` is left with once it deletes the range.
       rest = body.sub(/#{Regexp.escape(Publish::BANNER_OPEN)}.*?#{Regexp.escape(Publish::BANNER_CLOSE)}\n/m, "")
       refute_includes rest, "AI-generated prototype", "the disclaimer does not survive adoption"
-      refute_includes rest, "gh adopt", "the adopt note does not survive adoption"
+      refute_includes rest, "opilot-adopt", "the adopt note does not survive adoption"
       assert_includes rest, "PR body here", "the description does"
     end
 

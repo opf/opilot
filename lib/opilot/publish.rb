@@ -66,7 +66,7 @@ module OPilot
 
       # Keep the PR body compact; the full plan is attached as a secret gist and
       # linked below the banner. The bot-specific preamble (disclaimer + adopt
-      # note) is fenced in HTML comments so `gh adopt` can lift exactly that block
+      # note) is fenced in HTML comments so `opilot-adopt` can lift exactly that block
       # out — a maintainer's own PR is not AI-generated and cannot be adopted
       # twice. The markers are a contract; matching on the prose would break the
       # moment its wording changed. The plan link sits OUTSIDE the fence, so it
@@ -80,7 +80,7 @@ module OPilot
 
       # The PR lives on upstream but isn't a maintainer's PR yet — defang its WP
       # link (http→hxxp) so the OpenProject GitHub integration doesn't
-      # auto-reference the WP and clutter its activity tab (`gh adopt` re-fangs
+      # auto-reference the WP and clutter its activity tab (`opilot-adopt` re-fangs
       # it when a maintainer promotes it).
       pr_body = neutralize_wp_links(pr_body)
 
@@ -165,14 +165,16 @@ module OPilot
 
     private
 
-    # Where the `gh adopt` alias (one-time setup) is documented.
-    ADOPT_DOC_URL = "https://github.com/opf/openproject-opilot#adopting-a-opilot-pr"
+    # Where `opilot-adopt` (how to get it, how to run it) is documented. The
+    # anchor must match the README heading's slug, or the link lands at the top
+    # of the page.
+    ADOPT_DOC_URL = "https://github.com/opf/opilot#adopting-an-opilot-pr"
 
-    # Fence around the bot-only preamble of a PR body. The `gh adopt` alias in
-    # the README deletes this range verbatim, so these two lines are a published
-    # interface: changing either string orphans every PR opened before the change
-    # (an old PR's fence no longer matches the new alias, and vice versa), and
-    # adoption then silently keeps the AI disclaimer on a maintainer's PR.
+    # Fence around the bot-only preamble of a PR body. `opilot-adopt` deletes
+    # this range verbatim, so these two lines are a published interface: changing
+    # either string orphans every PR opened before the change (an old PR's fence
+    # no longer matches the new script, and vice versa), and adoption then
+    # silently keeps the AI disclaimer on a maintainer's PR.
     BANNER_OPEN  = "<!-- opilot:banner -->"
     BANNER_CLOSE = "<!-- /opilot:banner -->"
 
@@ -182,12 +184,12 @@ module OPilot
     # a bare number resolves against the maintainer's canonical checkout. The
     # number only exists after creation — hence the follow-up body edit.
     # Appended as the banner's second bullet, so it stays inside the fence
-    # `gh adopt` deletes (an adopted PR must not tell its owner to adopt it).
+    # `opilot-adopt` deletes (an adopted PR must not tell its owner to adopt it).
     # Best-effort: a failed update just leaves the note off.
     def add_adopt_note(upstream, url, pr_body, banner)
       number = Clients::GitHub.pr_number_from_url(url)
       return unless number
-      note = "* To ship the PR, first make it yours: run `gh adopt #{number}` " \
+      note = "* To ship the PR, first make it yours: run `opilot-adopt #{number}` " \
              "([setup guide](#{ADOPT_DOC_URL}))."
       @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
     rescue => e

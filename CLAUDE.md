@@ -463,18 +463,47 @@ PR needs the store's layout on every tick.
 
    The body's WP link is **defanged** (`http`→`hxxp`) so OpenProject's GitHub
    integration doesn't clutter the activity tab with a fork PR nobody has adopted;
-   `PrRunner#op_ticket_id` accepts `hxxp` so opilot reads it back, and `gh adopt`
-   re-fangs it. The body opens with a bot-only preamble — the AI-prototype disclaimer
-   plus an **adopt note** (`gh adopt <number>`) telling maintainers how to re-publish
-   under their own account, since fork PRs can't run secret-gated CI
-   (`#add_adopt_note`; the number only exists post-create, hence the follow-up body
-   edit). Both are fenced between `Publish::BANNER_OPEN`/`BANNER_CLOSE`
-   (`<!-- opilot:banner -->` … `<!-- /opilot:banner -->`), because neither is true
-   of an adopted PR: `gh adopt` deletes exactly that range and prepends
-   `Adapted from #<bot-pr>`. **The fence is a published interface** — the alias lives
-   in the README and in maintainers' shells, so changing a marker orphans every PR
-   opened before the change. The plan gist link sits *outside* the fence and survives
-   adoption.
+   `PrRunner#op_ticket_id` accepts `hxxp` so opilot reads it back, and
+   `opilot-adopt` re-fangs it. The body opens with a bot-only preamble — the
+   AI-prototype disclaimer plus an **adopt note** (`opilot-adopt <number>`) telling
+   maintainers how to re-publish under their own account, since fork PRs can't run
+   secret-gated CI (`#add_adopt_note`; the number only exists post-create, hence
+   the follow-up body edit). Both are fenced between
+   `Publish::BANNER_OPEN`/`BANNER_CLOSE` (`<!-- opilot:banner -->` …
+   `<!-- /opilot:banner -->`), because neither is true of an adopted PR:
+   `opilot-adopt` deletes exactly that range and prepends `Adapted from #<bot-pr>`.
+   **The fence is a published interface** — changing a marker orphans every PR
+   opened before the change. The plan gist link sits *outside* the fence and
+   survives adoption.
+
+   Adoption itself is **`tools/opilot-adopt`, one standalone script**. It is the
+   only file here aimed at someone who does not run opilot — a maintainer needs
+   the script, `git` and an authenticated `gh`, and no checkout — which is why it
+   sits in `tools/` rather than `bin/` (what the runner container executes) or
+   beside `./opilot` (the operator's launcher). **Its path and name are
+   published**: the README's install line and every PR banner's adopt note point
+   at them, so moving the file breaks both. It used to be a `gh` alias whose body
+   was copy-pasted out of the README, and that body drifted in maintainers' shells
+   until an adopted PR kept the whole banner (opf/openproject#24940). A script
+   cannot fix drift by itself — a downloaded copy still goes stale — but the
+   README's no-install `curl … | bash -s <n>` form always runs the current one.
+
+   It **narrates each step and stops for approval before the first irreversible
+   one**. Everything up to the push is local and recoverable (fetch, `checkout -B`,
+   the re-authoring rebase), so the prompt sits directly before the push and covers
+   the whole publish in one answer. What it shows there is the **three concrete
+   commands**, not a prose summary — and each is held in an array that `show`
+   prints and the script then executes, so the approved text cannot drift from the
+   action. That is also why the description goes to a temp file and the command
+   reads `--body-file`: an inline `--body` is 25 unreadable lines, so the body is
+   printed as its own block instead. Before the prompt it also lists the commits to
+   push, refuses a tree with uncommitted **tracked** changes (untracked files
+   survive a checkout, so they are no reason to stop), and names the old SHA of a
+   local branch it is about to reset. Declining prints the way back to the branch
+   you started on, since the checkout has already moved you. The prompt reads
+   `/dev/tty`, not stdin — the no-install form has the script itself on stdin — and
+   with no terminal it refuses rather than pushing; `--yes` is the way through
+   unattended.
 
    The one push-safety rule is **target-based**: any push targeting a registry
    upstream (`#canonical_repo?`) is **refused outright** (`#refuse_canonical_push?`,

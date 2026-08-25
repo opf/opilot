@@ -617,7 +617,7 @@ module OPilot
     # integration also scans PR bodies for it and would auto-reference the WP,
     # cluttering its activity tab with a fork PR nobody has taken over. `hxxp://`
     # fails the integration's `https?://…/(?:work_packages|wp)/<id>` matcher while
-    # leaving the id readable; `op_ticket_id` reads it back and `gh adopt` re-fangs
+    # leaving the id readable; `op_ticket_id` reads it back and `opilot-adopt` re-fangs
     # it. Host-scoped, idempotent, and a no-op when the host is unknown.
     def neutralize_wp_links(text)
       host = op_link_host

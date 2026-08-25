@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Re-publish an opilot prototype PR as your own: rebase it onto the current
+# base, push to origin, open a fresh draft PR, close the bot's.
+#
+# Standalone: you need this one file, `git` and an authenticated `gh` — not a
+# checkout of opilot. Run it from inside the product repo, whose `origin` must be
+# the canonical repo the PR targets.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+usage: opilot-adopt [-y] <pr-number|pr-url>
+
+Re-publish an opilot prototype PR under your own account. Run from inside the
+product repo, whose `origin` is the canonical repo the PR targets.
+
+  -y, --yes   do not ask before pushing
+  -h, --help  show this
+EOF
+}
+
+assume_yes=0
+pr=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -y|--yes)  assume_yes=1 ;;
+    -h|--help) usage; exit 0 ;;
+    -*)        echo "opilot-adopt: unknown option $1" >&2; usage >&2; exit 1 ;;
+    *)
+      [ -z "$pr" ] || { echo "opilot-adopt: one PR at a time" >&2; exit 1; }
+      pr="$1" ;;
+  esac
+  shift
+done
+[ -n "$pr" ] || { usage >&2; exit 1; }
+
+say()  { printf '\n==> %s\n' "$*"; }
+die()  { printf 'opilot-adopt: %s\n' "$*" >&2; exit 1; }
+
+# Print a command the way you would type it. Only for display — every command is
+# run from its array, so a quoting edge case here cannot change what executes.
+show() {
+  local out="" arg
+  for arg in "$@"; do
+    case "$arg" in
+      ""|*[!A-Za-z0-9_.,/:@=+-]*) arg="\"$arg\"" ;;
+    esac
+    out="${out:+$out }$arg"
+  done
+  printf '    %s\n' "$out"
+}
+
+# Ask on the terminal, not on stdin: the documented no-install form pipes this
+# script into bash, so stdin is the script itself.
+confirm() {
+  [ "$assume_yes" -eq 0 ] || return 0
+  [ -r /dev/tty ] || die "nothing to prompt on — re-run with --yes to accept these steps"
+  local answer
+  printf '\n%s [y/N] ' "$1"
+  read -r answer < /dev/tty || answer=""
+  case "$answer" in
+    [yY]|[yY][eE][sS]) ;;
+    *) printf 'Aborted — nothing left this machine. Back to where you were:\n    git checkout %s\n' \
+              "$started_on"
+       exit 1 ;;
+  esac
+}
+
+v() { gh pr view "$pr" --json "$1" -q ".$1"; }
+
+say "Reading PR $pr"
+num="$(v number)"
+title="$(v title)"
+branch="$(v headRefName)"
+base="$(v baseRefName)"
+fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository \
+  --template '{{.headRepositoryOwner.login}}/{{.headRepository.name}}')"
+origin="$(git remote get-url origin)"
+
+printf '    PR      #%s — %s\n'  "$num" "$title"
+printf '    from    %s (%s)\n'   "$fork" "$branch"
+printf '    onto    %s (%s)\n'   "$origin" "$base"
+
+# Tracked changes only: the checkout and rebase below leave untracked files
+# alone, so stray ones are no reason to refuse.
+[ -z "$(git status --porcelain --untracked-files=no)" ] ||
+  die "you have uncommitted changes to tracked files — commit or stash them first"
+
+if previous="$(git rev-parse --verify --quiet "refs/heads/$branch")"; then
+  say "Local branch $branch already exists at ${previous:0:12}"
+  echo "    it is about to be reset; recover it with: git branch -f $branch $previous"
+fi
+
+say "Fetching $base from origin and $branch from the fork"
+git fetch origin "$base"
+git fetch "https://github.com/$fork.git" "$branch"
+
+say "Rebasing onto origin/$base, re-authoring every commit as you"
+# Remember where the maintainer was: the checkout below moves them onto $branch,
+# and an abort at the prompt has to be able to say how to get back.
+started_on="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
+git checkout -B "$branch" FETCH_HEAD
+git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
+
+say "Commits to publish"
+git --no-pager log --oneline --no-decorate "origin/$base..HEAD" | sed 's/^/    /'
+
+# Build the description before the prompt, so it is on screen while you decide.
+# Lift out the bot-only banner — neither the AI disclaimer nor the adopt note is
+# true of an adopted PR — and re-fang the defanged work-package link.
+body_file="$(mktemp "${TMPDIR:-/tmp}/opilot-adopt.XXXXXX")"
+trap 'rm -f "$body_file"' EXIT
+{
+  printf 'Adapted from #%s.\n' "$num"
+  v body | sed -e '/<!-- opilot:banner -->/,/<!-- \/opilot:banner -->/d' \
+               -e 's#hxxp://#http://#g' -e 's#hxxps://#https://#g'
+} > "$body_file"
+
+say "Description of your new PR"
+sed 's/^/    /' "$body_file"
+
+# Every command below runs from its array, and `show` prints that same array, so
+# what you approve is what runs. --body-file rather than --body keeps the printed
+# command short enough to read.
+push_cmd=(git push origin "$branch")
+create_cmd=(gh pr create --draft --head "$branch" --base "$base"
+            --title "$title" --body-file "$body_file")
+
+say "Nothing has left this machine yet. These commands run next, in order"
+show "${push_cmd[@]}"
+show "${create_cmd[@]}"
+show gh pr close "$pr" --comment "Adopted in <url of the new PR>."
+printf '\n    origin is %s\n' "$origin"
+confirm "Run them?"
+
+say "Pushing $branch to origin"
+"${push_cmd[@]}"
+
+say "Opening your draft PR"
+url="$("${create_cmd[@]}")"
+
+say "Closing #$num"
+gh pr close "$pr" --comment "Adopted in $url."
+
+say "Done — new PR (yours): $url"
