@@ -224,19 +224,18 @@ module OPilot
     # description that discusses a "SUBJECT:" line of its own cannot move the
     # subject. A block with no subject is dropped rather than guessed at.
     #
-    # TYPE and LINK are both optional and read in either order — the writer gets
-    # one shape to follow, and quietly losing a field it did state would be worse
-    # than accepting it a line early.
+    # SUBJECT, TYPE and LINK are one header and are read in ANY order: a writer
+    # that swaps two of them has still said everything, and rejecting it costs a
+    # whole retry call (a local model swapped SUBJECT and TYPE on a real
+    # `appsignal fix` run). TYPE and LINK stay optional.
     def self.work_package_fields(lines)
-      lines = lines.drop_while { |l| l.strip.empty? }
-      subject = lines.first.to_s[SUBJECT_LINE, 1]
-      return nil if subject.nil? || subject.strip.empty?
-
-      lines  = lines.drop(1)
+      lines  = lines.drop_while { |l| l.strip.empty? }
       fields = {}
       loop do
         line = lines.first.to_s
-        if (type = line[TYPE_LINE, 1])
+        if (subject = line[SUBJECT_LINE, 1])
+          fields["subject"] ||= subject.strip
+        elsif (type = line[TYPE_LINE, 1])
           fields["type"] ||= type.strip
         elsif (link = line[LINK_LINE, 1])
           fields["link"] ||= link.strip
@@ -245,9 +244,10 @@ module OPilot
         end
         lines = lines.drop(1)
       end
+      return nil if fields["subject"].to_s.empty?
 
       link = fields["link"].to_s.downcase
-      { "subject"     => subject.strip,
+      { "subject"     => fields["subject"],
         "type"        => fields["type"].to_s,
         "link"        => WP_LINKS.include?(link) ? link : DEFAULT_WP_LINK,
         "description" => lines.join("\n").strip }
@@ -340,8 +340,8 @@ module OPilot
         "Your last answer opened a block and never closed it. Write the closing " \
           "`END WORK PACKAGE` line#{many ? " for every block" : ""}, alone on its own line."
       else
-        "Your last answer's #{many ? "blocks were" : "block was"} unreadable — the first line inside " \
-          "#{many ? "each one" : "it"} must be `SUBJECT: <one line>`."
+        "Your last answer's #{many ? "blocks were" : "block was"} unreadable — #{many ? "each one" : "it"} " \
+          "needs a `SUBJECT: <one line>` line in the header, above the description."
       end
     end
 

@@ -101,6 +101,25 @@ module OPilot
       assert_equal "Body.", drafts[0]["description"]
     end
 
+    # SUBJECT is a header line like the other two, not a position. A writer that
+    # puts TYPE first has still said everything, and a retry call is the cost.
+    def test_parse_work_packages_reads_the_subject_below_the_other_header_lines
+      drafts = Helpers.parse_work_packages(
+        "BEGIN WORK PACKAGE\nTYPE: Main Bug\nLINK: child\nSUBJECT: A\n\nBody.\nEND WORK PACKAGE"
+      )
+      assert_equal "A",        drafts[0]["subject"]
+      assert_equal "Main Bug", drafts[0]["type"]
+      assert_equal "child",    drafts[0]["link"]
+      assert_equal "Body.",    drafts[0]["description"]
+    end
+
+    # A SUBJECT below the header is description text, not the subject.
+    def test_parse_work_packages_does_not_reach_past_the_header_for_a_subject
+      assert_empty Helpers.parse_work_packages(
+        "BEGIN WORK PACKAGE\nTYPE: Task\n\nSUBJECT: A\nEND WORK PACKAGE"
+      )
+    end
+
     # Each block is one work package, in order.
     def test_parse_work_packages_reads_several_blocks
       drafts = Helpers.parse_work_packages(
