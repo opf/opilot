@@ -3,7 +3,7 @@
 // `node test/js/pi_guards_test.js`.
 //
 // pi-guards.ts carries no type annotations on purpose, so Node imports the .ts
-// file directly (verified on node 22 in the harness image and on the host).
+// file directly (verified on node 24 in the harness image and on the host).
 //
 // The guard fails OPEN if it ever stops loading — an unguarded write or bash,
 // not a blocked one — so "the extension still registers a hook" is itself

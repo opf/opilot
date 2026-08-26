@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:24-slim
 
 COPY --chown=node:node authgw.js /app/
 

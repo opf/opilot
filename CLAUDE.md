@@ -278,7 +278,7 @@ starts only when `OPILOT_OP_MCP` is set):
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
   the LLM, pushes branches, opens PRs. Does all real git.
-- **Harness** (Node 22 + [pi], compose service `harness`, `Dockerfile.harness`) —
+- **Harness** (Node 24 + [pi], compose service `harness`, `Dockerfile.harness`) —
   wraps `pi --mode json` via `server.js` on port 47291 (internal network only,
   never published), which translates pi's JSON event stream into the frame
   shapes `lib/opilot/harness.rb` (`OPilot::Harness`) parses. Any model is one
@@ -316,7 +316,7 @@ starts only when `OPILOT_OP_MCP` is set):
   `openrouter/…` copies `pi-models.json` from git, anything else generates one
   (`buildModelsJson`). That prefix is the only signal, deliberately — a second
   "mode" variable could disagree with the slug.
-- **Authgw** (Node 20, `authgw.js`) — the harness's **only** route to a model,
+- **Authgw** (Node 24, `authgw.js`) — the harness's **only** route to a model,
   and **containment is its load-bearing job, not authentication**. The name
   predates that. It does four things, and holding the key is the only optional
   one: a **fixed upstream** (`OPILOT_INFERENCE_URL`, default
@@ -339,7 +339,7 @@ starts only when `OPILOT_OP_MCP` is set):
   wire format is pi's `api` field (`OPILOT_MODEL_API`), not authgw's concern.
   A keyless self-hosted endpoint still goes through it; "no secret to hide" is
   not a reason to bypass containment.
-- **Opgw** (Node 20, `opgw.js`) — the harness's only route to the OpenProject
+- **Opgw** (Node 24, `opgw.js`) — the harness's only route to the OpenProject
   MCP server (see `MCP.md`), on whenever the harness is (`OPILOT_OP_MCP`
   defaults **on**; set it to `0`/`false`/`no`/`off` to disable). Same
   containment shape as authgw — a fixed upstream (`OPENPROJECT_URL`), an

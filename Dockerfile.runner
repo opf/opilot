@@ -11,7 +11,8 @@ RUN apt-get update && apt-get install -y \
 # undo the container's whole posture. The runner is the trusted orchestrator, so
 # this is the right home — but it does hold both API tokens, hence the pin and
 # the build-time-only install (no runtime package fetches).
-# Node >= 20.19 is required by openspec's engines field; setup_20.x satisfies it.
+# openspec's engines field wants Node >= 20.19; setup_24.x satisfies it. 24
+# because the Node 20 line died 2026-04-30 and the JS images are all on 24.
 #
 # curl is installed and purged inside this one layer: nothing at runtime shells
 # out to it, and the runner holds both API tokens, so it does not need a general
@@ -21,7 +22,7 @@ ENV OPENSPEC_VERSION=1.7.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && apt-mark manual ca-certificates \
- && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y nodejs \
  && npm install -g "@fission-ai/openspec@${OPENSPEC_VERSION}" \
  && npm cache clean --force \

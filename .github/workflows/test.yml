@@ -18,7 +18,7 @@ jobs:
       image: ruby:4.0-slim
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # git matches Dockerfile.runner: the ChangeStore tests drive a real
       # repository (init, commit, .git/info/exclude) rather than a stub, because
@@ -36,15 +36,16 @@ jobs:
 
   test-harness-js:
     # The container-side JS has no Ruby coverage; these are its only tests.
-    # Node version matches Dockerfile.harness — pi-guards.ts is imported
-    # directly (it carries no type annotations), so that has to keep working on
-    # the same runtime the harness image ships.
+    # Node version matches the three JS images (harness, authgw, opgw), so this
+    # job tests the runtime they ship; Dockerfile.runner is on the same line for
+    # openspec. pi-guards.ts is imported directly (it carries no type
+    # annotations), so that has to keep working on it too.
     runs-on: ubuntu-latest
     container:
-      image: node:22-slim
+      image: node:24-slim
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Globbed rather than one step per file: a new test/js/*_test.js is picked
       # up on its own, instead of running only if someone remembers to add a step
