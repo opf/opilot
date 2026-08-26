@@ -11,6 +11,55 @@ module OPilot
       FileUtils.rm_rf(@tmpdir)
     end
 
+    # ── the local-model guard ───────────────────────────────────────────────
+    #
+    # `./opilot appsignal` sends production error data to the model, so this
+    # decides whether that is allowed. authgw answers with the address it pinned
+    # at boot; the runner never resolves the URL itself.
+
+    AUTHGW = "http://authgw.test:47292".freeze
+
+    def with_authgw_address(address)
+      body = address.nil? ? "{}" : JSON.generate("host" => "h", "address" => address)
+      stub_request(:get, "#{AUTHGW}/upstream").to_return(status: 200, body: body)
+      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => "gw") { yield Context.build(@tmpdir) }
+    end
+
+    # Docker Desktop's host gateway is in 0.0.0.0/8 — reserved, but NOT matched
+    # by IPAddr#private?. Refusing it would refuse Ollama on the developer's own
+    # Mac, which is the setup the command exists for. Tailscale's 100.64/10 is
+    # here for the same reason.
+    def test_reserved_and_private_addresses_are_accepted
+      %w[0.250.250.254 192.168.65.254 127.0.0.1 10.0.0.5 100.101.1.5 ::1].each do |address|
+        with_authgw_address(address) { |ctx| assert ctx.inference_privacy.first, "#{address} is not a third party" }
+      end
+    end
+
+    def test_public_addresses_are_refused
+      # 104.18/172.67 are Cloudflare, which is what openrouter.ai resolves to.
+      %w[104.18.2.1 172.67.1.1 8.8.8.8].each do |address|
+        with_authgw_address(address) { |ctx| refute ctx.inference_privacy.first, "#{address} is a third party" }
+      end
+    end
+
+    # It fails CLOSED: the caller is about to send user data somewhere.
+    def test_it_fails_closed_when_authgw_cannot_answer
+      with_authgw_address(nil) { |ctx| refute ctx.inference_privacy.first, "no address means no" }
+
+      stub_request(:get, "#{AUTHGW}/upstream").to_raise(SocketError.new("down"))
+      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => "gw") do
+        refute Context.build(@tmpdir).inference_privacy.first, "an unreachable authgw means no"
+      end
+    end
+
+    # No gateway token means opilot is not running through ./opilot, so there is
+    # nothing to ask — and nothing to assume.
+    def test_it_fails_closed_without_a_gateway_token
+      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => nil) do
+        refute Context.build(@tmpdir).inference_privacy.first
+      end
+    end
+
     def test_op_url_drops_a_trailing_slash
       # Every consumer appends its own path, so a trailing slash in .env would
       # produce "https://host//api/v3/…" and "https://host//documents/118".

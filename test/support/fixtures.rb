@@ -19,6 +19,8 @@ module OPilot
       :log_file, :progress_file, :repos,
       :ignored_checks, :ci_max_attempts, :track_upstream, :host,
       :op_mcp, :opgw_url, :gw_token,
+      :inference_url, :inference_private, :appsignal_token, :appsignal_app_id,
+      :appsignal_project,
       keyword_init: true
     ) do
       def default_repo        = repos.default
@@ -26,6 +28,9 @@ module OPilot
       def ci_ignored_checks   = ignored_checks || []
       def track_upstream_prs? = track_upstream
       def op_mcp?             = !!op_mcp
+      # The real one asks authgw; a test says yes or no directly. Context's own
+      # test covers the address judgment and the reason string.
+      def inference_privacy   = [!!inference_private, inference_private ? "10.0.0.5" : "a test said no"]
     end
 
     # A context over `tmpdir`, with its .opilot/ state dir created.
@@ -64,7 +69,12 @@ module OPilot
         host:            host,
         op_mcp:          false,
         opgw_url:        nil,
-        gw_token:        nil
+        gw_token:        nil,
+        inference_url:      "http://ollama.test:11434/v1",
+        inference_private:  true,
+        appsignal_token:    "api-token",
+        appsignal_app_id:   "0123456789abcdef01234567",
+        appsignal_project:  "COMMS"
       ).tap { |ctx| overrides.each { |k, v| ctx[k] = v } }
     end
 

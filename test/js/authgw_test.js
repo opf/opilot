@@ -246,6 +246,39 @@ test('/health needs no token', () => {
   assert.strictEqual(res.statusCode, 200);
 });
 
+// ── /upstream, the runner's view of what will be connected to ─────────────
+//
+// `./opilot appsignal` refuses to send production error data to a model that is
+// not on a private network, and this route is where it learns the address. The
+// runner cannot resolve OPILOT_INFERENCE_URL for itself: only this process
+// connects to that host, and only this process knows the address it pinned.
+
+test('/upstream reports the pinned address, not just the configured name', () => {
+  const cfg = parseConfig(env({ OPILOT_INFERENCE_URL: 'http://ollama.internal:11434/v1' }));
+  const { res, sent } = run(cfg, fakeReq({ method: 'GET', url: '/upstream' }), { address: '192.168.65.254' });
+  assert.strictEqual(res.statusCode, 200);
+  const body = JSON.parse(res.body);
+  assert.strictEqual(body.address, '192.168.65.254');
+  assert.strictEqual(body.host, 'ollama.internal');
+  assert.strictEqual(body.port, 11434);
+  assert.strictEqual(body.https, false);
+  assert.strictEqual(sent, null, 'it answers locally and reaches no upstream');
+});
+
+test('/upstream needs the gateway token, unlike /health', () => {
+  const cfg = parseConfig(env());
+  const { res } = run(cfg, fakeReq({ method: 'GET', url: '/upstream', headers: {} }));
+  assert.strictEqual(res.statusCode, 401);
+});
+
+// It is handled before mapPath on purpose: the allowlist is about the
+// UPSTREAM's paths and would refuse this one outright.
+test('/upstream is not refused by the path allowlist', () => {
+  const cfg = parseConfig(env());
+  const { res } = run(cfg, fakeReq({ method: 'GET', url: '/upstream' }));
+  assert.strictEqual(res.statusCode, 200);
+});
+
 // ── the resolver ──────────────────────────────────────────────────────────
 
 // Awaited before the summary below — an async test left floating would report

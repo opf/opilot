@@ -46,6 +46,22 @@ module OPilot
       changes_dir(ctx) / change_id.to_s
     end
 
+    # One "Usage:" shape for every command, so a bad invocation reads the same
+    # whichever one it was. A module function because CLI does not include
+    # Helpers, and it was the second verbatim copy that proved the point.
+    def self.usage!(name, arg_spec, example = nil)
+      $stderr.puts "Usage: ./opilot #{name} #{arg_spec}#{example ? "   (#{example})" : ""}"
+      raise OPilot::FatalError
+    end
+
+    # `./opilot appsignal`'s per-incident state. Namespaced by OpenProject host
+    # for the reason items_dir is: wp_id.txt records a work package on ONE
+    # instance, and incident #4711 means nothing on another. The app segment is
+    # there because an incident number is only unique within one app.
+    def self.incident_dir(ctx, app, number)
+      ctx.state_dir / "appsignal" / ctx.op_host / slugify(app, fallback: "app") / number.to_s
+    end
+
     # Filesystem-safe slug of a title. One implementation, because the rule (what
     # "&" becomes, what counts as a separator, hyphen trimming) has to be identical
     # everywhere: an attachment's directory name and the markdown link pointing at
@@ -267,6 +283,66 @@ module OPilot
     def self.create_wp_allowed?(project_json)
       links = (project_json || {})["_links"] || {}
       CREATE_WP_LINKS.any? { |name| links.key?(name) }
+    end
+
+    # The TYPE line's menu. An empty registry is stated rather than left blank, so
+    # the writer omits the line instead of inventing a type name. One definition,
+    # because every prompt carrying a `TYPE:` line reads the same list.
+    def self.types_for_prompt(types)
+      names = types.to_a.map { |t| t["name"].to_s }.reject(&:empty?)
+      names.empty? ? "(unknown — leave the TYPE line out)" : names.join(", ")
+    end
+
+    # The v3 create body. `_links.type` is present only when a type was resolved:
+    # with no type at all OpenProject assigns the project's first enabled type.
+    #
+    # One definition, because the subject truncation and the markdown description
+    # shape have to hold at every site that creates a work package.
+    def self.wp_payload(project:, type:, subject:, description:)
+      links = { "project" => { "href" => "/api/v3/projects/#{project}" } }
+      links["type"] = { "href" => "/api/v3/types/#{type["id"]}" } if type
+
+      { "subject"     => subject.to_s[0, 200],
+        "description" => { "format" => "markdown", "raw" => description.to_s },
+        "_links"      => links }
+    end
+
+    # The create form's three-way answer, in one place: nil when the form did not
+    # answer about the payload at all (403, an HTML error from a proxy) or found
+    # nothing wrong, else the validation errors.
+    #
+    # The form answers **200 even for a payload it rejects**, which is why
+    # `_embedded.validationErrors` decides and the status code does not — a quirk
+    # subtle enough that Clients::OpenProject#create_work_package_form documents
+    # it, and one that must not be encoded twice.
+    def self.form_validation_errors(code, form)
+      return nil unless code == 200 && form.is_a?(Hash)
+      errors = form.dig("_embedded", "validationErrors")
+      errors.is_a?(Hash) && !errors.empty? ? errors : nil
+    end
+
+    # Which part of the BEGIN/END WORK PACKAGE contract the last answer missed,
+    # said back to the writer on the one retry. Read off the answer itself rather
+    # than from the parser, whose answer is only "nothing usable" — the three
+    # misses below need three different corrections.
+    #
+    # It lives beside WP_BEGIN/WP_END and .parse_work_packages on purpose: the
+    # markers, the parser and this correction text are ONE contract, and a copy
+    # per caller is how one of them starts teaching the old format. `many` is the
+    # only thing that varies between callers.
+    def self.wp_format_miss(answer, many: false)
+      # WP_BEGIN/WP_END anchor a whole LINE, so they are matched line by line.
+      lines = answer.to_s.lines.map(&:chomp)
+      if lines.none? { |l| l.match?(WP_BEGIN) }
+        "Your last answer had no `BEGIN WORK PACKAGE` line. #{many ? "Every work package needs" : "It needs"} " \
+          "one, alone on its own line, and a closing `END WORK PACKAGE` line."
+      elsif lines.none? { |l| l.match?(WP_END) }
+        "Your last answer opened a block and never closed it. Write the closing " \
+          "`END WORK PACKAGE` line#{many ? " for every block" : ""}, alone on its own line."
+      else
+        "Your last answer's #{many ? "blocks were" : "block was"} unreadable — the first line inside " \
+          "#{many ? "each one" : "it"} must be `SUBJECT: <one line>`."
+      end
     end
 
     # Resolve a reader's answer to the plan-call focus for the option they chose,

@@ -74,6 +74,13 @@ services:
       - OPILOT_PD_CHILD_TYPE
       - OPILOT_PD_IMPLEMENTING_STATUS
       - OPILOT_PD_IMPLEMENTED_STATUS
+      # `./opilot appsignal`. The RUNNER reads AppSignal, not the harness — the
+      # model only ever sees the cached incident file. A personal API token,
+      # because the request payload is reachable no other way (see
+      # Clients::AppSignal).
+      - APPSIGNAL_API_TOKEN
+      - APPSIGNAL_APP_ID
+      - OPILOT_APPSIGNAL_PROJECT
       # Optional: seeds the openproject clone from a local checkout (bin/repos).
       - OP_REPO_PATH
     working_dir: ${SCRIPT_DIR:-/opilot}

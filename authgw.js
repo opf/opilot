@@ -173,6 +173,25 @@ function createHandler(cfg, deps) {
       return;
     }
 
+    // The runner-only view of what this gateway will actually connect to.
+    // Handled before mapPath, whose allowlist is about the UPSTREAM's paths and
+    // would refuse this one; behind the token, unlike /health, because it
+    // describes the configured upstream.
+    //
+    // It exists because the runner must not resolve OPILOT_INFERENCE_URL for
+    // itself: only this process connects to that host, and only this process
+    // knows the address it pinned at boot. `./opilot appsignal` gates on that
+    // address being private, and a second lookup elsewhere could answer
+    // differently.
+    if (req.method === 'GET' && req.url === '/upstream') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        host: cfg.host, address: deps.address(), port: cfg.port, https: cfg.https,
+      }));
+      req.resume();
+      return;
+    }
+
     const mapped = mapPath(cfg, req.url || '');
     if (mapped.refuse) {
       process.stderr.write(`authgw: refused ${req.method} ${req.url} — ${mapped.refuse}\n`);

@@ -5,8 +5,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 ## Productization
 * Wire the agent into our Compose stack!
   * either via an override file or a separate branch/fork
-* Make use of our own LLM
-  * Custom OpenAI-compatible APIs are already supported => test this out
+* Point OPilot to our custom LLM
 * Introduce proper UI!
   * AI chat noise deflected from the main activity comments
   * LLM working/typing indicator using HocusPocus
@@ -29,8 +28,6 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
 * Move the adopt command into its own repo? 
-* AppSignal integration — ingesting the errors is the open half; ticket creation itself now exists (`pd generate-wp`)
-  * Currently tricky, as we don't want to share user data with a 3rd party LLM
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
   * Or just run OPilot in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container

@@ -27,7 +27,8 @@ Use OPilot to remove that friction from your development workflow. It can automa
 
 * **Prototype solutions**: Generate auto-correcting code prototypes via `@OPilot build`. Refine the code by chatting with [OPilot Bot](https://github.com/op-opilot) within the PR.
 * **Take ownership**: Run `opilot-adopt <pr-id>` to make the prototypes your own, thus cleanly transferring ownership.
-* **General PR assistance**: Tag `@OPilot` in any upstream PR with questions. These can relate to code as well as the product context.
+* **Help with upstream PRs**: Tag `@OPilot` in any upstream PR with questions. These can relate to code as well as the product context.
+* **Fix production errors**: Run `./opilot appsignal fix <incident>` to turn an AppSignal exception into a work package and a draft PR. It **refuses to run unless your model is local** — production error data never reaches a third party.
 
 ### Product builders
 * **Automate product development**: Use the experimental `pd` product development pipeline to deliver entire features end-to-end, using OpenProject as the work tracking backend.
@@ -92,6 +93,9 @@ Some examples:
 
 # Use the software development commands
 ./opilot dev build COMMS-123
+
+# Turn a production error into a work package and a draft PR (needs a LOCAL model)
+./opilot appsignal fix 4711 --project COMMS
 
 # Invoke the opilot chatting interface locally
 ./opilot chat
@@ -201,6 +205,13 @@ OPILOT_INFERENCE_URL=http://10.0.0.5:8000/v1
 OPILOT_INFERENCE_KEY=                       # empty if the server needs none
 OPILOT_MODEL_HEAVY=local/qwen2.5-coder:32b
 OPILOT_MODEL_LIGHT=local/qwen2.5-coder:7b
+```
+
+#### Example local model usage
+(Roughly 20 GB of RAM needed)
+```
+ollama pull qwen3.8:27b-mlx
+OLLAMA_HOST=0.0.0.0 OLLAMA_CONTEXT_LENGTH=65536 ollama serve
 ```
 
 ---

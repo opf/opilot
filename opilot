@@ -209,6 +209,14 @@ _needs_harness() {
   case "$CMD" in
     dev) case "$SUB" in build|fix|commit|plan|refresh) return 0 ;; esac ;;
     pd)  case "$SUB" in propose|implement) return 0 ;; esac ;;
+    # `fix` is appsignal's only verb, so a bare incident number reads as one
+    # (`./opilot appsignal 2025`). Matched by EXCLUSION for that reason: a list
+    # of verbs would have to repeat the shorthand rule Ruby already owns, and
+    # the copy that did dropped it. Only the two spellings that print help and
+    # exit are left out. It also needs authgw for a second reason the others do
+    # not: Context#inference_privacy asks it which address it pinned, and a
+    # not-running authgw is (correctly) a refusal.
+    appsignal) case "$SUB" in ""|--help|-h) ;; *) return 0 ;; esac ;;
   esac
   return 1
 }

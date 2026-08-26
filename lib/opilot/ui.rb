@@ -283,6 +283,39 @@ module OPilot
       puts ""
     end
 
+    # `./opilot appsignal` with no (or a bad) subcommand, and `appsignal --help`.
+    def appsignal_usage_text
+      <<~USAGE.strip
+        Usage: ./opilot appsignal fix <incident-number> [flags]
+
+        Turn a production error into a work package and a draft PR.
+
+          ./opilot appsignal fix <incident-number> [--project <id>] [--type <name>] [--app <id-or-name>]
+              Read the incident — message, backtrace, and the request payload
+              that triggered it — write one work package, create it, then plan
+              and build the fix, with the same prompts as `./opilot dev build`.
+              --type names the work-package type and overrides the one opilot
+              picks from the incident.
+
+        `fix` is the only command, so the number alone works too:
+        `./opilot appsignal 2025`.
+
+        It sends production error data to the model, so it RUNS ONLY against a
+        private inference endpoint and refuses otherwise. See OPILOT_INFERENCE_URL
+        in .env.example.
+
+        Set APPSIGNAL_API_TOKEN (a personal API token, from your AppSignal
+        personal settings) and APPSIGNAL_APP_ID — an app id or its name. With no
+        app set, opilot lists the apps your token can see.
+      USAGE
+    end
+
+    def appsignal_usage
+      puts ""
+      puts appsignal_usage_text
+      puts ""
+    end
+
     def usage
       puts <<~USAGE
 
@@ -297,13 +330,13 @@ module OPilot
           ./opilot dev <command>    software development: plan, commit, build, refresh, status
           ./opilot pd <command>     product development: the spec-driven pipeline
           ./opilot op <command>     read the OpenProject API directly (JSON out)
+          ./opilot appsignal <cmd>  turn a production error into a work package and a PR
           ./opilot chat [message]   read-only chat about your local mirrors
           ./opilot usage            Inference spend (OpenRouter), else the configured upstream
           ./opilot reset            delete .opilot/, clones included
 
-        `./opilot dev`, `./opilot pd` and `./opilot op` list their own commands, and
-        --help works after any of them. Configuration lives in .env (the first run sets it up)
-        and state in .opilot/ — both are documented in README.md.
+        Every group lists its own commands, and --help works after any of them.
+        Config lives in .env (the first run sets it up), state in .opilot/ — see README.md.
 
       USAGE
     end

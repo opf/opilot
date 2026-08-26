@@ -34,6 +34,7 @@ module OPilot
       when "dev"      then dev(rest)
       when "pd"       then pd(rest)
       when "op"       then op(rest)
+      when "appsignal" then appsignal(rest)
       else
         $stderr.puts "Unknown argument: #{cmd}"
         @ui.usage
@@ -55,6 +56,7 @@ module OPilot
       when "dev" then @ui.dev_usage
       when "pd" then @ui.pd_usage
       when "op" then @ui.op_usage
+      when "appsignal" then @ui.appsignal_usage
       else @ui.usage
       end
     end
@@ -114,7 +116,7 @@ module OPilot
     def with_ids(name, args)
       ids = args.map { |a| wp_id_arg(a) }
       if ids.empty? || ids.any? { |id| !id.match?(Helpers::WP_ID_PATTERN) }
-        usage!(name, "<work-package-id>...", "e.g. 59942 or PROJ-123 STC-7")
+        Helpers.usage!(name, "<work-package-id>...", "e.g. 59942 or PROJ-123 STC-7")
       end
       session(name, ids.map { |id| Helpers.wp_label(id) }) { yield ids }
     end
@@ -124,8 +126,8 @@ module OPilot
     def refresh(args)
       targets = args.map(&:strip).map { |a| a.match?(%r{\Ahttps?://}) ? a : wp_id_arg(a) }
       unless targets.any? && targets.all? { |t| t.match?(Helpers::WP_ID_PATTERN) || pr_url?(t) }
-        usage!("dev refresh", "<work-package-id | pr-url>...",
-               "e.g. 59942, PROJ-123, or https://github.com/opf/openproject/pull/123")
+        Helpers.usage!("dev refresh", "<work-package-id | pr-url>...",
+                       "e.g. 59942, PROJ-123, or https://github.com/opf/openproject/pull/123")
       end
       session("dev refresh", targets.map { |t| t.match?(Helpers::WP_ID_PATTERN) ? Helpers.wp_label(t) : t }) do
         PrRunner.new(@ctx).run(*targets)
@@ -144,6 +146,14 @@ module OPilot
       OpRunner.new(@ctx).run(args)
     end
 
+    # `appsignal` is an integration — the system it reads — so it sits beside
+    # `op` rather than under `dev`. Unlike `op` it goes through #session: `fix`
+    # calls the LLM and opens a PR, so it wants the full config and a log header.
+    def appsignal(args)
+      return @ui.appsignal_usage if args.empty?
+      session("appsignal", args.first(2)) { AppSignalRunner.new(@ctx).run(args) }
+    end
+
     # `pd` is the product-development (spec-driven) pipeline; PD::Runner owns its
     # subcommand dispatch and its own flags (--repo, --doc-id).
     def pd(args)
@@ -156,13 +166,6 @@ module OPilot
       # that never read a document don't pay for it.
       require "opilot/pd"
       session("pd", args.first(1)) { PD::Runner.new(@ctx).run(args) }
-    end
-
-    # One "Usage:" shape for every command, so a bad invocation reads the same
-    # whichever one it was.
-    def usage!(name, arg_spec, example = nil)
-      $stderr.puts "Usage: ./opilot #{name} #{arg_spec}#{example ? "   (#{example})" : ""}"
-      raise OPilot::FatalError
     end
 
     # Ids pasted from OpenProject often carry the "#" prefix ("#59942",

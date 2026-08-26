@@ -296,7 +296,7 @@ module OPilot
       log_script "Writer: drafting work packages from #{wp_label(st.item_id)} — #{request}"
       prompt = Prompts.create_wp(item_id: st.item_id, subject: st.subject,
                                  item: container_path(st.item_file), request: request,
-                                 project: project_name, types: types_for_prompt(types),
+                                 project: project_name, types: Helpers.types_for_prompt(types),
                                  max: MAX_CREATE_WP, related: related, format_note: format_note)
       reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file).to_s
       # Only what follows the last `ANSWER:` marker; the writer's own deliberation
@@ -330,7 +330,7 @@ module OPilot
         # strict and the prompt is otherwise identical, so an unnamed miss would
         # be repeated word for word and both attempts spent on the same slip.
         return write_work_packages(st, request, project_name, types, related,
-                                   retry_bad: false, format_note: format_miss(answer))
+                                   retry_bad: false, format_note: Helpers.wp_format_miss(answer, many: true))
       end
 
       log_script "#{wp_label(st.item_id)} — the writer produced no usable work-package block twice."
@@ -349,32 +349,6 @@ module OPilot
         "Ask me again with a shorter, more specific request."
       ))
       nil
-    end
-
-    # Which part of the block format the last answer missed, said back to the
-    # writer on the one retry. Read off the answer itself rather than from the
-    # parser, because the parser's answer is only "nothing usable" — and the
-    # three misses below need three different corrections.
-    def format_miss(answer)
-      # WP_BEGIN/WP_END anchor a whole LINE, so they are matched line by line.
-      lines = answer.to_s.lines.map(&:chomp)
-      if lines.none? { |l| l.match?(Helpers::WP_BEGIN) }
-        "Your last answer had no `BEGIN WORK PACKAGE` line. Every work package needs " \
-          "one, alone on its own line, and a closing `END WORK PACKAGE` line."
-      elsif lines.none? { |l| l.match?(Helpers::WP_END) }
-        "Your last answer opened a block and never closed it. Write the closing " \
-          "`END WORK PACKAGE` line for every block, alone on its own line."
-      else
-        "Your last answer's blocks were unreadable — the first line inside each one " \
-          "must be `SUBJECT: <one line>`."
-      end
-    end
-
-    # The TYPE line's menu. An empty registry is stated rather than left blank, so
-    # the writer omits the line instead of inventing a type name.
-    def types_for_prompt(types)
-      names = types.map { |t| t["name"] }.reject(&:empty?)
-      names.empty? ? "(unknown — leave the TYPE line out)" : names.join(", ")
     end
 
     # Preflight every payload, POST each one, record it, link it, report — in
@@ -447,16 +421,14 @@ module OPilot
     # on unchanged rather than replaced by the form's version.
     def payload_accepted?(st, payload, types, many: false)
       code, form = @api.create_work_package_form(payload)
-      # Not an answer about the payload (403, 404, an HTML error from a proxy):
-      # let the create speak for itself rather than blocking on a preflight that
-      # did not run.
-      unless code == 200 && form.is_a?(Hash)
-        log_script "#{wp_label(st.item_id)} — the create form answered HTTP #{code}; creating without it."
-        return true
-      end
-
-      errors = form.dig("_embedded", "validationErrors")
-      return true if !errors.is_a?(Hash) || errors.empty?
+      # nil covers both "the form gave no verdict on the payload" and "nothing
+      # wrong". Only the first is worth a log line: a form that answered 403, 404
+      # or a proxy's HTML did not run, so let the create speak for itself rather
+      # than blocking on a preflight that never happened.
+      errors = Helpers.form_validation_errors(code, form)
+      log_script "#{wp_label(st.item_id)} — the create form answered HTTP #{code}; creating without it." \
+        unless code == 200 && form.is_a?(Hash)
+      return true unless errors
 
       log_script "#{wp_label(st.item_id)} — the project rejects #{payload["subject"].inspect}: " \
                  "#{errors.keys.join(", ")}"
@@ -496,13 +468,8 @@ module OPilot
     # first enabled type, which is a fallback worth logging but not worth failing
     # over.
     def create_wp_payload(st, draft, project_id, types)
-      links = { "project" => { "href" => "/api/v3/projects/#{project_id}" } }
-      type  = chosen_type(st, draft, types)
-      links["type"] = { "href" => "/api/v3/types/#{type["id"]}" } if type
-
-      { "subject"     => draft["subject"][0, 200],
-        "description" => { "format" => "markdown", "raw" => create_wp_description(st, draft) },
-        "_links"      => links }
+      Helpers.wp_payload(project: project_id, type: chosen_type(st, draft, types),
+                         subject: draft["subject"], description: create_wp_description(st, draft))
     end
 
     # The type to create under: the one the draft named, else the project's first.

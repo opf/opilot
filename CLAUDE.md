@@ -211,6 +211,77 @@ nothing" and "not scanning" look identical in the log.
   its own: `op wp get` prints a work package but caches nothing, so a WP opilot has
   never worked on is not visible to `chat`.
 
+### appsignal (production errors)
+
+`./opilot appsignal` turns an AppSignal exception incident into a work package and
+a draft PR (`AppSignalRunner`). It is an **integration** — the system it reads —
+so it sits beside `op` rather than under `dev`, per `cli.rb`'s own rule; unlike
+`op` it goes through `CLI#session`, because `fix` calls the LLM and publishes.
+
+**The command exists because of its guard, not in spite of it.** `TODO.md` carried
+an AppSignal integration for a long time and blocked it on one thing: opilot must
+not hand user data to a third-party model. `fix` therefore **refuses to run unless
+the model is local** (`#require_local_inference!` → `Context#inference_privacy`),
+and it **fails closed**. The refusal names WHY (`Context#inference_privacy`), because
+"authgw could not be asked" and "it resolves to a public address" look identical
+from the outside and send the reader to different files.
+
+**authgw answers "is the model local?", not the runner.** The new `GET /upstream`
+route reports the address authgw **pinned at boot** — the address every inference
+request will actually reach. The runner must not resolve `OPILOT_INFERENCE_URL`
+itself (`context.rb`: *"The runner never calls it directly"*); a second lookup
+could answer differently, and "usually agrees" is not a standard for a
+data-privacy gate. The route sits after the gateway-token check and **before**
+`mapPath`, whose allowlist is about the *upstream's* paths and would refuse it.
+The address is judged against an explicit list of non-public ranges
+(`Context::NON_PUBLIC_RANGES`) rather than `IPAddr#private?`, which misses the two
+that matter here: **`0.0.0.0/8`**, where Docker Desktop's `host.docker.internal`
+resolves (`0.250.250.254`) — refusing it would refuse Ollama on the developer's
+own Mac — and `100.64.0.0/10`, which is what Tailscale hands out.
+
+**Reading one incident takes FOUR calls across two of AppSignal's APIs**
+(`Clients::AppSignal`), and that shape was established by probing a live account,
+not from the documentation, which is wrong or silent on most of it:
+
+1. GraphQL `incident(incidentNumber:)` → the **digest**, and the metadata
+2. V2 `POST /api/v2/tracing/traces/errors` → a `trace_id` for that digest
+3. V2 `POST /api/v2/tracing/trace/error` → the **request payload**, plus headers,
+   tags and a `stacktrace_id`
+4. GraphQL `backtrace(id:, revision:)` → the full frame list
+
+Two of those are load-bearing and non-obvious. **The payload is only in V2
+tracing**: GraphQL's documented `sample { params }` returns null for every
+incident tried, even with `hasSamplesInRetention: true` and every documented
+argument, and AppSignal's MCP server does not expose params at all. The payload is
+what turns "Invalid params" into a diagnosis — for the incident this was built
+against it was `{"id":1,"jsonrpc":"2.0","method":"initialize"}`, an initialize
+call with no `params` key, which *is* the bug. **The backtrace is behind a
+separate query**: `ExceptionIncident` carries only `firstBacktraceLine`, and the
+frames hang off a `stacktrace_id` that only the V2 span reports — so step 4
+depends on step 3, and the order is not incidental.
+
+**One credential does all of it** (a personal API token). An earlier version used
+a scoped MCP token, which is a strictly better credential — until the payload is
+needed, at which point a personal token is required anyway and holding a narrow
+one beside it buys nothing. GraphQL takes its token only as a URL query
+parameter, so `#scrub` removes it from every raised message; V2 takes a Bearer
+header and never puts it in a URL.
+
+This is the **runner's** client, and there is deliberately no gateway sidecar:
+opgw and authgw contain the *harness*, which reads untrusted text. The runner
+already holds the GitHub and OpenProject tokens. The model never reaches
+AppSignal — it reads the cached `incident.json`.
+
+**`fix` mostly delegates.** Once the work package exists, `FixRunner#ship_ids` is
+already the whole plan → approve → implement → publish pipeline with its own
+prompts; nothing about a fix that started at an incident makes it different. What
+is new is only: read the incident, draft one work package, create it. Every
+irreversible step is preflighted **before** the LLM call — the guard, the harness,
+the publishing token, and `:add_work_packages` — because a work package can never
+be deleted. For the same reason the draft is shown for a `[y]es/[a]bort` answer,
+the payload goes through the create form first, and `wp_id.txt` makes a re-run
+report the existing work package rather than mint a second one for one error.
+
 ### pd (product development)
 
 `./opilot pd <subcommand>` is a spec-driven pipeline, separate from the bug-fix
@@ -250,6 +321,10 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot op wp create --project <id> --type <name> --subject <text> [--dry-run]   # the one write
 ./opilot op wp form --project <id> --type <name> --required   # what it demands; creates nothing
 ./opilot op cf items <id>            # a hierarchy custom field's allowed values
+
+# Production errors → a work package and a draft PR. REFUSES a public inference
+# endpoint. `fix` is the only verb, so a bare number works too.
+./opilot appsignal fix <incident-number> [--project <id>] [--type <name>] [--app <id-or-name>]
 
 # Product development (spec-driven)
 ./opilot pd init <project-id> [--repo <name>]
@@ -400,6 +475,9 @@ bare `docker compose run …` works from the repo root.
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
+| `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
+| `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
+| `clients/authgw.rb` | authgw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
@@ -688,6 +766,11 @@ globally unique, so `pr_reviews/` is flat.
 │           └── gh_session_id    # gh-agent's LLM session
 ├── pr_reviews/<owner>-<repo>/<number>/   # tracked upstream PR (opilot didn't open it)
 │   └── pr.json / ci.json / gh_pr.json / gh_session_id
+├── appsignal/<op_host>/<app_id>/<number>/   # `appsignal fix`
+│   ├── incident.json        # metadata + request payload + backtrace, assembled
+│   └── wp_id.txt            # the WP created from it; present = create nothing more
+│                            #   (namespaced by op_host because THIS is the record
+│                            #    that names a work package on one instance)
 ├── changes/ , openspec/     # `pd` state — see lib/opilot/pd/CLAUDE.md
 ├── repos/<repo_name>/       # this repo's standalone clone (mounted at /repos/<name>)
 ├── pi-agent/                # pi's config dir (settings.json/models.json seeded by
@@ -752,7 +835,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
 | `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server — see `MCP.md`) to the plan/chat/gh-reply phases and starts the `opgw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
 | `OPILOT_OPGW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://opgw:47293`) for both the runner and the harness only when `opgw` is actually running. Read by the runner for the startup tool-list check and by `pi-op-mcp.ts` as its own gate: empty means the tool registers at all |
-| `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot |
+| `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via authgw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
 | `OPILOT_INFERENCE_KEY` | The key authgw presents upstream, if the upstream wants one. Lives only in authgw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). authgw always deletes the inbound `Authorization` first, whatever this names |
 | `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
@@ -764,6 +847,9 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |
 | `OPILOT_PD_IMPLEMENTING_STATUS` | Optional; status set when `pd implement` starts (default `In progress`). Empty skips the transition; a missing name is reported, never fatal |
 | `OPILOT_PD_IMPLEMENTED_STATUS` | Optional; status set once the draft PR is open (default `Developed`) |
+| `APPSIGNAL_API_TOKEN` | Required by `./opilot appsignal`. A **personal** API token, and it has to be: the request payload is reachable only through the V2 tracing API, which a scoped MCP token cannot read — so a narrow token beside a broad one would buy nothing. It can read every app in the owner's organisations |
+| `APPSIGNAL_APP_ID` | Required by `./opilot appsignal`. The 24-character app id, or its **name** — opilot resolves a name to its id, and refuses a name used in two environments rather than guess. Unset lists what the token can see. `--app` overrides it per run |
+| `OPILOT_APPSIGNAL_PROJECT` | Optional; where `appsignal fix` creates the work package (identifier or numeric id). `--project` overrides it per run |
 | `OPILOT_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
 | `OPILOT_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
 | `OPILOT_PI_IDLE_TIMEOUT_MIN` | Optional; minutes one LLM run may produce **no output** before `server.js` kills it (default `5`) |

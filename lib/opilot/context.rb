@@ -1,6 +1,7 @@
 require "pathname"
 require "rainbow"
 require "uri"
+require "ipaddr"
 require_relative "repo"
 
 module OPilot
@@ -12,6 +13,7 @@ module OPilot
                 :state_container, :op_url, :token,
                 :authgw_url, :gw_token, :inference_url, :opgw_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
+    attr_reader   :appsignal_token, :appsignal_app_id, :appsignal_project
 
     def self.build(script_dir = nil)
       script_dir = Pathname(script_dir || File.expand_path("../../..", __FILE__))
@@ -74,6 +76,16 @@ module OPilot
       # let anyone push code to the bot's branch.
       @allowed_gh_users      = ENV.fetch("OPILOT_ALLOWED_GH_USERS", "")
                                   .split(",").map { |u| u.strip.downcase.delete_prefix("@") }.reject(&:empty?)
+      # AppSignal (Clients::AppSignal). A PERSONAL api token, and deliberately
+      # so: the request payload that makes an incident diagnosable is reachable
+      # only through the V2 tracing API, which a scoped MCP token cannot read.
+      # A narrow token beside a broad one buys nothing, so there is one.
+      @appsignal_token    = presence(ENV["APPSIGNAL_API_TOKEN"])
+      @appsignal_app_id   = presence(ENV["APPSIGNAL_APP_ID"])
+      # Where `appsignal fix` creates its work package, unless --project says
+      # otherwise. An identifier ("COMMS") or a numeric id; both are valid in
+      # /api/v3/projects/<id>.
+      @appsignal_project  = presence(ENV["OPILOT_APPSIGNAL_PROJECT"])
 
       @state_dir.mkpath
       @progress_file.open("a") {} # touch
@@ -144,6 +156,61 @@ module OPilot
     # registers nothing).
     def op_mcp?
       !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)
+    end
+
+    # Whether the model opilot will call runs on a private network.
+    #
+    # `appsignal` sends production incident data to the model, which is the one
+    # thing TODO.md refused to do with a third-party model. This is the check
+    # that makes the refusal unnecessary rather than a promise in a README.
+    #
+    # AUTHGW ANSWERS IT, not a lookup here. authgw resolves
+    # OPILOT_INFERENCE_URL once at boot and re-uses that address for every
+    # request, so it is the only process that knows what will actually be
+    # connected to; a second resolution here could differ, and "usually agrees"
+    # is not a standard for a data-privacy gate.
+    #
+    # FAILS CLOSED. Not running through ./opilot (no gateway token), an
+    # unreachable authgw, or an address that is not an address, are all
+    # refusals — the caller is about to send user data somewhere.
+    # Every range that cannot be a third party on the public internet. Listed
+    # explicitly rather than composed from IPAddr#private?/#loopback?/
+    # #link_local?, because those three miss ranges that are the NORMAL answer
+    # here:
+    #
+    #   0.0.0.0/8      Docker Desktop's host gateway — `host.docker.internal`
+    #                  resolves to 0.250.250.254 inside a container, which is
+    #                  reserved ("this network", RFC 1122) but not `private?`.
+    #                  Refusing it would refuse Ollama on the developer's own Mac,
+    #                  which is the setup this whole command is built for.
+    #   100.64.0.0/10  CGNAT, and what Tailscale hands out — a model reached over
+    #                  a private mesh is on your own network by any reading.
+    #   198.18.0.0/15  benchmarking; some VPNs allocate from it.
+    #
+    # A list is also easier to audit than three predicates and two exceptions:
+    # the question "which addresses does opilot consider safe to send production
+    # error data to?" is answered by reading it.
+    NON_PUBLIC_RANGES = %w[
+      0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16
+      172.16.0.0/12 192.168.0.0/16 198.18.0.0/15
+      ::1/128 fc00::/7 fe80::/10
+    ].map { |range| IPAddr.new(range) }.freeze
+
+    # [allowed?, why] — the reason is for the refusal message. "Refused" without
+    # it sends the reader to .env when the real cause is a gateway that is not
+    # running, which looks identical from the outside.
+    def inference_privacy
+      return [false, "opilot is not running through ./opilot, so there is no authgw to ask"] unless @gw_token
+
+      address = Clients::Authgw.new(@authgw_url, @gw_token).upstream["address"]
+      ip      = IPAddr.new(address.to_s)
+      return [true, address] if NON_PUBLIC_RANGES.any? { |range| range.include?(ip) }
+
+      [false, "authgw resolves it to #{address}, which is a public address"]
+    rescue Clients::Authgw::Error => e
+      [false, "authgw could not be asked (#{e.message})"]
+    rescue IPAddr::Error => e
+      [false, "authgw gave an address opilot cannot read (#{e.message})"]
     end
 
     # Work-package type names the `pd` (product development) pipeline maps the
