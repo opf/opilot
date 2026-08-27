@@ -24,6 +24,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ## Feature ideas
+* Transition the WP status & other fields when taking over implementation
 * Generate arbitrary non-code artifacts like SVGs or stylesheets
   * For now, at least gists could be good enough for basic text reports
 * Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
