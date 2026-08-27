@@ -369,6 +369,32 @@ module OPilot
       assert_includes out, "skipped"
     end
 
+    # A local model in particular often reasons in prose before it reaches the
+    # sentinel — the same accommodation NEEDS_INFO already gets below, now
+    # extended to OPTIONS (opf/opilot: a real `qwen3.8:27b-mlx` run opened with
+    # a full paragraph of reasoning before the OPTIONS line and was read as a
+    # failed plan instead of an options answer).
+    PREAMBLED_OPTIONS_ANSWER = <<~TEXT
+      I have enough from the issue to name the approaches. Both are legitimate,
+      so I'm offering them.
+
+      OPTIONS
+      1 | Guard the paste | I insert plain text and show a message. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor. | openproject | large
+    TEXT
+
+    def test_a_reasoning_preamble_before_options_is_still_read_as_options
+      harness = ScriptedPlanHarness.new(PREAMBLED_OPTIONS_ANSWER, "## Plan: #36 — chosen")
+      r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "36" => item(36, "Two ways") }),
+                        harness: harness, publish: nil)
+
+      out, = with_stdin("2\ns\n") { capture_io { r.plan_ids("36") } }
+
+      refute_includes out, "Plan generation failed"
+      assert_includes out, "This fix has more than one shape"
+      assert_includes out, "Rebuild the editor"
+    end
+
     def test_option_prompt_can_drop_the_work_package
       harness = ScriptedPlanHarness.new(OPTIONS_ANSWER)
       r = FixRunner.new(@ctx, pull: FakePull.new(singles: { "34" => item(34, "Two ways") }),

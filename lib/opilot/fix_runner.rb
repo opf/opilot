@@ -159,8 +159,7 @@ module OPilot
         # judgment the agent's `ship` gets. When it named more than one, ask
         # here rather than plan blind — the operator is at the console, so the
         # answer costs one keystroke.
-        if Helpers.file_has_content?(st.plan_file) &&
-           st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
+        if Helpers.file_has_content?(st.plan_file) && Helpers.options_sentinel?(st.plan_file.read)
           options, remainder = Helpers.parse_leading_options(st.plan_file.read)
 
           if options.length == 1 && !remainder.strip.empty?

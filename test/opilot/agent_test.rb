@@ -262,6 +262,25 @@ module OPilot
       assert_includes @notes.last, "@opilot build 1"
     end
 
+    # A local model in particular often reasons in prose before it reaches the
+    # sentinel. Without Helpers.options_sentinel? tolerating that, this read as
+    # a failed plan rather than an options answer.
+    PREAMBLED_OPTIONS_ANSWER = <<~TEXT
+      I have enough from the issue to name the approaches. Both are legitimate,
+      so I'm offering them.
+
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor and show one message. | openproject | large
+    TEXT
+
+    def test_a_reasoning_preamble_before_options_is_still_offered
+      agent_answering(PREAMBLED_OPTIONS_ANSWER).handle(intent(:ship))
+
+      assert options_path.exist?
+      assert_includes @notes.last, "**1 — Guard the paste**"
+    end
+
     # No real choice to offer: the writer names the one approach and keeps
     # going into its plan in the same response, so opilot announces it and
     # ships immediately — no options.json, no waiting on a reply.

@@ -96,11 +96,7 @@ module OPilot
       # The permission the create needs, checked before the draft is written.
       @project_json = require_create_permission!(@project)
 
-      incident_file = dir / "incident.json"
-      log_script "Fetching AppSignal incident ##{number}…"
-      incident_file.write(JSON.pretty_generate(appsignal.incident(@app, number)))
-
-      draft = write_work_package(number, incident_file)
+      draft = drafted_work_package(dir, number)
       return unless draft
       return unless confirm_create(draft)
 
@@ -167,6 +163,31 @@ module OPilot
               "`add_work_packages` permission there. Ask an administrator for it."
       end
       json
+    end
+
+    # The draft to show at #confirm_create — cached on disk so a re-run (the
+    # form rejected it, the operator aborted, the process died) never re-spends
+    # the LLM call that wrote it. Written the instant a usable draft exists,
+    # BEFORE the confirm prompt: an abort must not lose it, or the next run pays
+    # for the same draft twice.
+    def drafted_work_package(dir, number)
+      draft_file = dir / "draft.json"
+      if Helpers.file_has_content?(draft_file)
+        draft = Helpers.safe_json_read(draft_file)
+        if draft
+          puts "  Reusing the work package already drafted from incident ##{number}."
+          return draft
+        end
+      end
+
+      incident_file = dir / "incident.json"
+      log_script "Fetching AppSignal incident ##{number}…"
+      incident_file.write(JSON.pretty_generate(appsignal.incident(@app, number)))
+
+      draft = write_work_package(number, incident_file)
+      return nil unless draft
+      draft_file.write(JSON.pretty_generate(draft))
+      draft
     end
 
     # One LLM call. Returns the parsed block, or nil having said why.
@@ -254,6 +275,9 @@ module OPilot
         unless code == 200 && form.is_a?(Hash)
       return true unless errors
 
+      errors = hack_required_custom_fields!(payload, form, errors)
+      return true unless errors
+
       # Named in the instance's own wording. opilot must not fill a required
       # custom field itself: the value carries business meaning only a person
       # has, and the work package would be permanent.
@@ -263,6 +287,86 @@ module OPilot
       puts ""
       puts "  Create the work package in OpenProject, then run `./opilot dev build <id>`."
       false
+    end
+
+    # ── an explicit, narrow exception to "opilot must not invent a required
+    # custom field's value" ────────────────────────────────────────────────
+    #
+    # These are opilot's OWN manufactured test fields — no ticket has ever
+    # depended on one meaning something — kept around to exercise the
+    # create-form path end to end. Matched by name, not by project or field id,
+    # so the allowlist means what it says: everything else still refuses,
+    # unchanged, however #fix is invoked. Keyed lower-case/stripped because the
+    # instance's own field names carry stray casing and a trailing space
+    # ("...Required CF ").
+    CF_VALUE_HACKS = {
+      "bug found in version"                                  => :highest,
+      "cécile list type multi select custom field"            => :random,
+      "cécile hierarchy notafilter singleselect required cf"  => :random,
+      "cécile's 1st scored list"                               => :random
+    }.freeze
+
+    # Fill every errored field this run recognizes, then re-check the form —
+    # a wrong link shape here would otherwise become a work package that can
+    # never be deleted, so the one extra round trip is worth it. Returns the
+    # remaining errors (nil if none are left), the same shape
+    # Helpers.form_validation_errors already returns.
+    def hack_required_custom_fields!(payload, form, errors)
+      schema = form.dig("_embedded", "schema") || {}
+      filled = []
+
+      errors.each_key do |field|
+        node     = schema[field]
+        strategy = node && CF_VALUE_HACKS[node["name"].to_s.strip.downcase]
+        next unless strategy
+
+        href = hacked_custom_field_href(node, strategy)
+        next unless href
+
+        payload["_links"][field] = node["type"].to_s.start_with?("[]") ? [{ "href" => href }] : { "href" => href }
+        filled << node["name"]
+      end
+      return errors if filled.empty?
+
+      log_script "appsignal: invented a value for #{filled.join(", ")} (allowlisted test field#{"s" if filled.length > 1})."
+      code, form = @api.create_work_package_form(payload)
+      Helpers.form_validation_errors(code, form)
+    end
+
+    # One candidate href for a hacked field. A schema field's `allowedValues`
+    # is either the values themselves (list/version fields render them inline)
+    # or a link to fetch them (hierarchy/user fields render only a link) — see
+    # API::V3::Utilities::CustomFieldInjector in the openproject source for
+    # which shape goes with which field format.
+    def hacked_custom_field_href(node, strategy)
+      allowed = node.dig("_links", "allowedValues")
+      candidates =
+        case allowed
+        when Array then allowed
+        when Hash  then hierarchy_item_candidates(allowed["href"])
+        end
+      return nil if candidates.to_a.empty?
+
+      case strategy
+      # The titles on this test project are noise ("adsf", "backlog", …), not
+      # version numbers, so "highest" is the highest id among the candidates —
+      # the one thing that IS a number here.
+      when :highest then candidates.max_by { |c| c["href"].to_s[/\d+\z/].to_i }["href"]
+      when :random  then candidates.sample["href"]
+      end
+    end
+
+    # A hierarchy custom field's selectable items, as candidate hrefs. The tree
+    # has one synthetic root with no label of its own (custom_field_items
+    # returns it as element zero); every other node is a real, selectable item.
+    def hierarchy_item_candidates(items_href)
+      id = items_href.to_s[%r{/custom_fields/(\d+)/items\z}, 1]
+      return [] unless id
+      code, body = @api.custom_field_items(id)
+      return [] unless code == 200 && body
+      ((body["_embedded"] || {})["elements"] || [])
+        .select { |item| item["label"] }
+        .map { |item| { "href" => item.dig("_links", "self", "href") } }
     end
 
     def project_types

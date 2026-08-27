@@ -815,7 +815,7 @@ module OPilot
 
       # The sentinel is read whether or not options were invited, so an
       # uninvited OPTIONS block can never be committed and shipped as a plan.
-      if st.plan_file.read.lstrip.start_with?(Prompts::OPTIONS_SENTINEL)
+      if Helpers.options_sentinel?(st.plan_file.read)
         options, remainder = Helpers.parse_leading_options(st.plan_file.read)
 
         # The common case: one named approach, straight into its plan in the

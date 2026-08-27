@@ -203,6 +203,37 @@ module OPilot
       assert_equal ["991"], fix_runner.shipped, "it still builds the one that exists"
     end
 
+    # ── draft persistence ───────────────────────────────────────────────────
+    #
+    # The LLM call that writes the draft is the expensive part of `fix`, so
+    # nothing should ever pay for it twice for the same incident.
+
+    def test_a_usable_draft_is_persisted_before_the_confirm_prompt
+      stub_form
+      with_answer("a") { runner.run(%w[fix 4711]) } # abort — nothing gets created
+
+      cached = JSON.parse((Helpers.incident_dir(@ctx, APP, "4711") / "draft.json").read)
+      assert_equal "Guard against a nil author when rendering an activity", cached["subject"]
+    end
+
+    def test_a_cached_draft_is_reused_without_a_new_llm_call
+      dir = Helpers.incident_dir(@ctx, APP, "4711")
+      dir.mkpath
+      (dir / "draft.json").write(JSON.generate(
+        "subject" => "Cached subject", "type" => "BUG", "description" => "Cached body."
+      ))
+      stub_form
+      stub_create
+      harness   = FakeHarness.new # no replies queued — a draft call would blow up
+      appsignal = FakeAppSignal.new
+
+      with_answer("y") { runner(harness: harness, appsignal: appsignal).run(%w[fix 4711]) }
+
+      assert_empty harness.prompts, "no LLM call for a draft already on disk"
+      assert_empty appsignal.fetched, "no incident re-fetch either"
+      assert_requested(:post, CREATE) { |req| JSON.parse(req.body)["subject"] == "Cached subject" }
+    end
+
     def test_declining_the_prompt_creates_nothing
       stub_form
       fix_runner = FakeFixRunner.new
@@ -227,6 +258,94 @@ module OPilot
       stub_form("customField12" => { "message" => "Release train can't be blank" })
       out, = with_answer("y") { runner.run(%w[fix 4711]) }
       assert_includes out, "Release train can't be blank"
+    end
+
+    # ── the allowlisted custom-field hack ───────────────────────────────────
+    #
+    # A narrow, explicit exception: these four are opilot's own manufactured
+    # test fields on the "Chomper testing area" project, matched by name so
+    # nothing with real business meaning is ever touched.
+
+    CF_SCHEMA = {
+      "customField158" => {
+        "name" => "Bug found in version", "type" => "[]Version",
+        "_links" => { "allowedValues" => [
+          { "href" => "/api/v3/versions/10", "title" => "adsf" },
+          { "href" => "/api/v3/versions/633", "title" => "adsf" }
+        ] }
+      },
+      "customField205" => {
+        "name" => "Cécile List Type Multi Select Custom Field", "type" => "[]CustomOption",
+        "_links" => { "allowedValues" => [
+          { "href" => "/api/v3/custom_options/684", "title" => "1 - wahad" }
+        ] }
+      },
+      # The real field name carries a trailing space — the match must survive it.
+      "customField223" => {
+        "name" => "Cécile Hierarchy NotAfilter SingleSelect Required CF ",
+        "type" => "CustomField::Hierarchy::Item",
+        "_links" => { "allowedValues" => { "href" => "/api/v3/custom_fields/223/items" } }
+      },
+      "customField286" => {
+        "name" => "Cécile's 1st Scored List", "type" => "CustomField::Hierarchy::Item",
+        "_links" => { "allowedValues" => { "href" => "/api/v3/custom_fields/286/items" } }
+      }
+    }.freeze
+
+    CF_ERRORS = CF_SCHEMA.to_h { |field, node| [field, { "message" => "#{node["name"]} can't be blank." }] }.freeze
+
+    def stub_schema_form(schema, errors, retry_errors: {})
+      stub_request(:post, "#{API}/work_packages/form")
+        .to_return(status: 200, body: JSON.generate(
+          "_embedded" => { "validationErrors" => errors, "schema" => schema }
+        )).then.to_return(status: 200, body: JSON.generate(
+          "_embedded" => { "validationErrors" => retry_errors, "schema" => schema }
+        ))
+    end
+
+    def stub_hierarchy_items(id, leaf_id)
+      stub_request(:get, "#{API}/custom_fields/#{id}/items").to_return(status: 200, body: JSON.generate(
+        "_embedded" => { "elements" => [
+          { "id" => 0, "label" => nil, "_links" => { "self" => { "href" => "/api/v3/custom_field_items/root" } } },
+          { "id" => leaf_id, "label" => "a leaf",
+            "_links" => { "self" => { "href" => "/api/v3/custom_field_items/#{leaf_id}" } } }
+        ] }
+      ))
+    end
+
+    def test_allowlisted_fields_are_filled_and_the_work_package_is_created
+      stub_schema_form(CF_SCHEMA, CF_ERRORS)
+      stub_hierarchy_items(223, 61)
+      stub_hierarchy_items(286, 1801)
+      stub_create(id: 991)
+
+      out, = with_answer("y") { runner.run(%w[fix 4711]) }
+
+      refute_includes out, "needs values I must not invent"
+      assert_requested(:post, CREATE) do |req|
+        links = JSON.parse(req.body)["_links"]
+        links["customField158"] == [{ "href" => "/api/v3/versions/633" }] && # highest id
+          links["customField205"] == [{ "href" => "/api/v3/custom_options/684" }] &&
+          links["customField223"] == { "href" => "/api/v3/custom_field_items/61" } &&
+          links["customField286"] == { "href" => "/api/v3/custom_field_items/1801" }
+      end
+    end
+
+    # A required field the allowlist does not recognize must still refuse, even
+    # alongside three the hack can fill.
+    def test_an_unrecognized_field_among_allowlisted_ones_still_refuses
+      schema = CF_SCHEMA.merge(
+        "customField12" => { "name" => "Release train", "type" => "String", "_links" => {} }
+      )
+      errors = CF_ERRORS.merge("customField12" => { "message" => "Release train can't be blank" })
+      stub_schema_form(schema, errors, retry_errors: { "customField12" => errors["customField12"] })
+      stub_hierarchy_items(223, 61)
+      stub_hierarchy_items(286, 1801)
+
+      out, = with_answer("y") { runner.run(%w[fix 4711]) }
+
+      assert_includes out, "Release train can't be blank"
+      assert_not_requested :post, CREATE
     end
 
     # ── the writer's answer ─────────────────────────────────────────────────

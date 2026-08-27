@@ -127,16 +127,31 @@ module OPilot
         .uniq { |o| o["n"] }.sort_by { |o| o["n"] }
     end
 
-    # Split a writer's answer into its leading OPTIONS line(s) and whatever
-    # follows (Prompts::OPTIONS_CONTRACT: name the approach, then — when
-    # there's only one — continue straight into the plan in the same
-    # response). Unlike parse_options, this only consumes CONTIGUOUS option
-    # lines right after the sentinel: a plan can itself contain pipe-delimited
-    # markdown table rows, which the tolerant scan above would misread as more
-    # options.
+    # Whether `text` answers with OPTIONS (Prompts::OPTIONS_CONTRACT) — tolerant
+    # of a preamble sentence before the sentinel line, the same accommodation
+    # #record_chosen_repos' REPOS: match already makes and the NEEDS_INFO check
+    # below makes too: a local model in particular often reasons in prose before
+    # it reaches the actual marker ("I have enough from the issue... OPTIONS").
+    # Requires the sentinel ALONE on its own line, so an ordinary sentence that
+    # happens to use the word "options" is never mistaken for the block.
+    def self.options_sentinel?(text)
+      text.to_s.lines.any? { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+    end
+
+    # Split a writer's answer into its OPTIONS line(s) and whatever follows
+    # (Prompts::OPTIONS_CONTRACT: name the approach, then — when there's only
+    # one — continue straight into the plan in the same response). The
+    # sentinel is found anywhere, per #options_sentinel? above, and everything
+    # before and including it is dropped along with it — a preamble sentence
+    # is not part of the contract's answer, the same as a NEEDS_INFO preamble
+    # is dropped where it is read. From there, only CONTIGUOUS option lines are
+    # consumed: a plan can itself contain pipe-delimited markdown table rows,
+    # which a tolerant scan like parse_options' would misread as more options.
     def self.parse_leading_options(body)
       lines = body.to_s.lines
-      lines.shift if lines.first&.strip == Prompts::OPTIONS_SENTINEL
+      start = lines.index { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+      return [[], body.to_s.lstrip] unless start
+      lines = lines[(start + 1)..] || []
       options = []
       while (parsed = parse_option_line(lines.first))
         options << parsed
