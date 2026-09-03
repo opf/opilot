@@ -48,15 +48,22 @@ test('the regex still refuses anything that could smuggle a CLI arg', () => {
 });
 
 test('the tool-grant allowlist still matches harness.rb', () => {
-  // ALLOWED_TOOL_GRANTS duplicates TOOLS_READ/TOOLS_IMPL/TOOLS_READ_OP/
-  // TOOLS_IMPL_OP in lib/opilot/harness.rb and carries a "must stay in sync"
-  // comment with nothing enforcing it. This does not close that gap, but it
-  // does pin the current values.
-  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash'));
-  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,write,edit'));
-  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,op_query'));
-  assert.ok(ALLOWED_TOOL_GRANTS.has('read,grep,find,ls,bash,write,edit,op_query'));
-  assert.strictEqual(ALLOWED_TOOL_GRANTS.size, 4);
+  // ALLOWED_TOOL_GRANTS duplicates what Harness.tools_for builds in
+  // lib/opilot/harness.rb and carries a "must stay in sync" comment with
+  // nothing enforcing it. This does not close that gap, but it does pin the
+  // current values — and the size assertion is the tripwire: a new grant fails
+  // here until someone updates it deliberately, which is what you want on a
+  // security allowlist.
+  const base = 'read,grep,find,ls,bash';
+  const impl = `${base},write,edit`;
+  for (const prefix of [base, impl]) {
+    assert.ok(ALLOWED_TOOL_GRANTS.has(prefix), prefix);
+    assert.ok(ALLOWED_TOOL_GRANTS.has(`${prefix},op_query`));
+    assert.ok(ALLOWED_TOOL_GRANTS.has(`${prefix},gh_query`));
+    // op_query before gh_query — the order Harness.tools_for emits.
+    assert.ok(ALLOWED_TOOL_GRANTS.has(`${prefix},op_query,gh_query`));
+  }
+  assert.strictEqual(ALLOWED_TOOL_GRANTS.size, 8);
 });
 
 // ── copy versus generate ──────────────────────────────────────────────────

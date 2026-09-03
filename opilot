@@ -239,7 +239,13 @@ _falsy() {
 # default: an instance with no (Enterprise-only) MCP server enabled just
 # answers every op_query call "unavailable", which is a normal, quiet state —
 # not a reason to withhold the tool from every instance that does have it.
-_needs_mcp_gw() { _needs_harness && ! _falsy "$(_env_get OPILOT_OP_MCP)"; }
+# The GitHub route's read token IS its configuration, on both sides: mcp-gw
+# builds the route only when it is set, and this is what tells the runner and
+# the harness extension to offer gh_query at all.
+_gh_mcp_on() { [ -n "$(_env_get OPILOT_GITHUB_READ_TOKEN)" ]; }
+
+# One gateway, two upstreams — so it is needed when EITHER is wanted.
+_needs_mcp_gw() { _needs_harness && { ! _falsy "$(_env_get OPILOT_OP_MCP)" || _gh_mcp_on; }; }
 
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
 # writes the clone's .git/info/exclude, and the rest read or write its openspec/.
@@ -299,6 +305,10 @@ if _needs_inference_gw; then
       # and the harness extension (pi-op-mcp.ts) that mcp-gw isn't running,
       # without either having to re-derive this condition itself.
       export OPILOT_MCP_GW_URL="http://mcp-gw:47293"
+      # Same two-half shape as the URL above: the runner uses it to decide the
+      # tool grant (Context#gh_mcp?) and pi-mcp.ts to decide whether to
+      # register gh_query at all.
+      if _gh_mcp_on; then export OPILOT_GH_MCP=1; fi
       dc up -d --wait --remove-orphans inference-gw harness mcp-gw
       trap 'dc stop harness inference-gw mcp-gw 2>/dev/null || true' EXIT INT TERM
     else

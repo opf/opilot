@@ -38,6 +38,15 @@ module OPilot
     TOOLS_READ_OP = "#{TOOLS_READ},op_query"
     TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"
 
+    # Builds one grant from the base plus whichever MCP tools are switched on.
+    # The array literal IS the canonical order — server.js's ALLOWED_TOOL_GRANTS
+    # holds the same eight strings as exact literals, and an order that differed
+    # between the two would be a 403 the model cannot explain. One place to look,
+    # rather than eight named constants here and eight there.
+    def self.tools_for(base, op_mcp:, gh_mcp:)
+      [base, ("op_query" if op_mcp), ("gh_query" if gh_mcp)].compact.join(",")
+    end
+
     # Models, pinned so behaviour doesn't drift when the catalog's default
     # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>,
     # or <provider>/<model-id> for a self-hosted one ("local/qwen2.5-coder:32b").

@@ -7,8 +7,15 @@
 // `tools/list` answer is trimmed to the read-only set before it reaches pi.
 const assert = require('assert');
 const {
-  parseConfig, mapPath, checkMcpCall, filterToolsList, READ_ONLY_OPS, createHandler,
+  parseConfig, parseGhConfig, parseRoutes, loadRepos, mapPath, checkMcpCall, checkRepoPin,
+  filterToolsList, unwrapSse, READ_ONLY_OPS, GH_READ_ONLY_OPS, createHandler,
 } = require('../../mcp-gw.js');
+
+// The registry the GitHub route pins against, injected instead of read from a
+// mounted repos.json.
+const REPOS = () => new Set(['opf/openproject', 'opf/openproject-octicons']);
+const ghEnv = (extra = {}) => env({ OPILOT_GITHUB_READ_TOKEN: 'ghp_readonly', ...extra });
+const ghRoute = (extra = {}) => parseGhConfig(ghEnv(extra), REPOS);
 
 const GW = 'opilot-internal-gateway';
 
@@ -43,8 +50,9 @@ function fakeRes() {
 // `upstreamBody` fake the upstream's answer for response-filtering tests.
 function run(cfg, req, body, { address = '10.0.0.9', upstreamStatus = 200, upstreamBody = '{}' } = {}) {
   let sent = null;
-  const handler = createHandler(cfg, {
-    request(options, cb) {
+  const table = cfg.routes ? cfg : { gwToken: GW, routes: { '/mcp': cfg } };
+  const handler = createHandler(table, {
+    request(_route, options, cb) {
       sent = options;
       const chunks = [];
       const up = {
@@ -253,6 +261,146 @@ test('a 404 (no MCP server on this instance) passes through untouched, not JSON-
   const { res } = run(cfg, fakeReq(), body, { upstreamStatus: 404, upstreamBody: 'MCP server is not available.' });
   assert.strictEqual(res.statusCode, 404);
   assert.strictEqual(res.body, 'MCP server is not available.');
+});
+
+// ── the GitHub route ────────────────────────────────────────────────────
+
+test('with no read token there is no GitHub route at all', () => {
+  assert.strictEqual(parseGhConfig(env(), REPOS), null);
+  assert.deepStrictEqual(Object.keys(parseRoutes(env(), REPOS).routes), ['/mcp']);
+});
+
+test('the GitHub route pins readonly IN THE PATH, not in a header', () => {
+  const gh = ghRoute();
+  assert.strictEqual(gh.host, 'api.githubcopilot.com');
+  assert.strictEqual(gh.upstreamPath, '/mcp/readonly');
+  assert.strictEqual(gh.authValue, 'Bearer ghp_readonly');
+  assert.strictEqual(gh.sse, true, 'GitHub always answers text/event-stream');
+  assert.strictEqual(gh.extraHeaders['x-mcp-toolsets'], 'repos,pull_requests,issues');
+});
+
+test('a local github-mcp-server is a config choice, not a redesign', () => {
+  const gh = ghRoute({ OPILOT_GH_MCP_URL: 'http://ghmcp:8082/' });
+  assert.strictEqual(gh.https, false);
+  assert.strictEqual(gh.port, 8082);
+  assert.strictEqual(gh.upstreamPath, '/');
+});
+
+test('a broken GitHub config refuses that route, and never OpenProject', () => {
+  assert.throws(() => parseGhConfig(ghEnv({ OPILOT_GH_MCP_URL: 'not a url' }), REPOS), /not a URL/);
+  assert.throws(() => parseGhConfig(ghEnv(), () => new Set()), /no upstreams/);
+  // OpenProject still parses on its own, whatever GitHub does.
+  assert.strictEqual(parseConfig(ghEnv()).name, 'openproject');
+});
+
+test('loadRepos lowercases, because GitHub owner/repo are case-insensitive', () => {
+  const repos = loadRepos('x', () => JSON.stringify({ repos: [{ upstream: 'OPF/OpenProject' }] }));
+  assert.ok(repos.has('opf/openproject'));
+});
+
+test('an unreadable registry refuses the route rather than pinning nothing', () => {
+  assert.throws(() => loadRepos('/nope', () => { throw new Error('ENOENT'); }), /repository pin/);
+});
+
+// ── the repository pin ──────────────────────────────────────────────────
+
+const ghCall = (name, args) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+
+test('the pin allows a registry repo and refuses everything else', () => {
+  const gh = ghRoute();
+  assert.deepStrictEqual(checkRepoPin(gh, ghCall('list_commits', { owner: 'opf', repo: 'openproject' })), {});
+  assert.ok(checkRepoPin(gh, ghCall('list_commits', { owner: 'evil', repo: 'exfil' })).refuse);
+});
+
+test('the pin cannot be walked past with capitalisation', () => {
+  // GitHub resolves OPF/OpenProject to the same repository, so a
+  // case-sensitive comparison would be a bypass, not a nicety.
+  assert.deepStrictEqual(checkRepoPin(ghRoute(), ghCall('list_commits', { owner: 'OPF', repo: 'OpenProject' })), {});
+});
+
+test('the pin refuses a call that names no repository', () => {
+  assert.ok(checkRepoPin(ghRoute(), ghCall('list_commits', {})).refuse);
+  assert.ok(checkRepoPin(ghRoute(), ghCall('list_commits', { owner: 'opf' })).refuse);
+});
+
+test('the OpenProject route is not pinned — its token scope is the boundary', () => {
+  assert.deepStrictEqual(checkRepoPin(parseConfig(env()), ghCall('search_work_packages', {})), {});
+});
+
+// ── per-route allowlists ────────────────────────────────────────────────
+
+test('each route allows only its own operations', () => {
+  for (const name of GH_READ_ONLY_OPS) {
+    assert.deepStrictEqual(checkMcpCall(ghCall(name, {}), GH_READ_ONLY_OPS), {});
+    assert.ok(checkMcpCall(ghCall(name, {})).refuse, `${name} is not an OpenProject tool`);
+  }
+  assert.ok(checkMcpCall(ghCall('search_work_packages', {}), GH_READ_ONLY_OPS).refuse);
+});
+
+test('a GitHub write tool is refused even though the path already says readonly', () => {
+  for (const name of ['create_pull_request', 'create_or_update_file', 'delete_file', 'add_issue_comment']) {
+    assert.ok(checkMcpCall(ghCall(name, {}), GH_READ_ONLY_OPS).refuse, `${name} should be refused`);
+  }
+});
+
+test('the free-text search operations are deliberately not allowed yet', () => {
+  // They cannot be repo-pinned by an exact check: a substring test for
+  // `repo:opf/openproject` passes on `NOT repo:opf/openproject`.
+  for (const name of ['search_commits', 'search_pull_requests', 'search_issues', 'search_code']) {
+    assert.ok(checkMcpCall(ghCall(name, {}), GH_READ_ONLY_OPS).refuse, `${name} should be refused`);
+  }
+});
+
+// ── SSE unwrapping ──────────────────────────────────────────────────────
+
+test('a single SSE frame is unwrapped to its JSON-RPC object', () => {
+  const raw = Buffer.from('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{}}\n\n');
+  assert.deepStrictEqual(JSON.parse(unwrapSse(raw).toString()).id, 1);
+});
+
+test('anything else passes through untouched rather than being guessed at', () => {
+  assert.strictEqual(unwrapSse(Buffer.from('{"jsonrpc":"2.0"}')), null, 'no data: line');
+  assert.strictEqual(unwrapSse(Buffer.from('data: {"a":1}\n\ndata: {"b":2}\n')), null, 'several frames');
+  assert.strictEqual(unwrapSse(Buffer.from('data: not json\n')), null);
+});
+
+// ── the GitHub route end to end ─────────────────────────────────────────
+
+test('a GitHub call is forwarded with its own credential, headers and path', () => {
+  const cfg = parseRoutes(ghEnv(), REPOS);
+  const body = JSON.stringify(ghCall('list_commits', { owner: 'opf', repo: 'openproject' }));
+  const upstreamBody = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n';
+  const { sent, res } = run(cfg, fakeReq({ url: '/gh/mcp' }), body, { upstreamBody });
+
+  assert.strictEqual(sent.path, '/mcp/readonly');
+  assert.strictEqual(sent.headers.authorization, 'Bearer ghp_readonly');
+  assert.strictEqual(sent.headers['x-mcp-toolsets'], 'repos,pull_requests,issues');
+  assert.strictEqual(sent.headers.accept, 'application/json, text/event-stream');
+  // Unwrapped, and told the truth about what it now is.
+  assert.deepStrictEqual(JSON.parse(res.body).result, { ok: true });
+  assert.strictEqual(res.headers['content-type'], 'application/json');
+});
+
+test('a repo outside the registry never reaches GitHub', () => {
+  const cfg = parseRoutes(ghEnv(), REPOS);
+  const body = JSON.stringify(ghCall('list_commits', { owner: 'evil', repo: 'exfil' }));
+  const { sent, res } = run(cfg, fakeReq({ url: '/gh/mcp' }), body);
+  assert.strictEqual(res.statusCode, 403);
+  assert.strictEqual(sent, null);
+});
+
+test('the GitHub path 403s when the route is not configured', () => {
+  const { sent, res } = run(parseRoutes(env(), REPOS), fakeReq({ url: '/gh/mcp' }), '{}');
+  assert.strictEqual(res.statusCode, 403);
+  assert.strictEqual(sent, null);
+});
+
+test('an OpenProject call still goes to OpenProject with both routes live', () => {
+  const cfg = parseRoutes(ghEnv(), REPOS);
+  const body = JSON.stringify(ghCall('search_work_packages', {}));
+  const { sent } = run(cfg, fakeReq(), body);
+  assert.strictEqual(sent.path, '/mcp');
+  assert.strictEqual(sent.headers.authorization, parseConfig(env()).authValue);
 });
 
 console.log(failures === 0 ? '\nall passed' : `\n${failures} failed`);

@@ -380,7 +380,7 @@ starts only when `OPILOT_OP_MCP` is set):
   `core.fsmonitor` run programs on allowlisted read-only subcommands, and
   `.git/hooks/pre-commit` would execute in the *runner*, which holds the
   GitHub token. Writes are checked on the resolved path by exact segment
-  match, so `.gitignore`/`.github/` stay editable. `pi-op-mcp.ts` registers
+  match, so `.gitignore`/`.github/` stay editable. `pi-mcp.ts` registers
   the `op_query` tool (see the MCP gateway entry below); it is always loaded, but
   registers nothing when `OPILOT_MCP_GW_URL` is unset.
 
@@ -433,7 +433,7 @@ starts only when `OPILOT_OP_MCP` is set):
   the instance has enabled. Counts, not names — opilot cannot disable those
   anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
   tools do — so this allowlist is the actual control, not a refinement one.
-  The pi extension side (`pi-op-mcp.ts`/`op-mcp-client.js`, loaded via a
+  The pi extension side (`pi-mcp.ts`/`op-mcp-client.js`, loaded via a
   second `-e`) trims a `search_work_packages` answer to a fixed subset of
   fields (full records run ~8 KB each) and registers nothing at all when
   `OPILOT_MCP_GW_URL` is empty — the harness-side half of the same feature flag.
@@ -788,7 +788,13 @@ globally unique, so `pr_reviews/` is flat.
 
 Runner POSTs to `http://harness:47291` with headers:
 
-- `X-Harness-Tools` — `"read,grep,find,ls,bash"` (planning/chat) or
+- `X-Harness-Tools` — built by `Harness.tools_for`, which appends `op_query`
+  then `gh_query` in that fixed order when each flag is on. `server.js`
+  allowlists the resulting **eight exact strings** (`ALLOWED_TOOL_GRANTS`);
+  exact-string matching on purpose, since per-tool membership would accept
+  combinations nobody designed, and the `size` assertion in
+  `test/js/models_json_test.js` makes adding one deliberate. The base is
+  `"read,grep,find,ls,bash"` (planning/chat) or
   `"read,grep,find,ls,bash,write,edit"` (implementation), each with a `,op_query`
   variant sent by the specific call sites `Helpers#read_tools`/`#impl_tools`
   cover when `Context#op_mcp?` is on (see `MCP.md`) — most `TOOLS_READ`/`TOOLS_IMPL`
@@ -840,7 +846,10 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
 | `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server — see `MCP.md`) to the plan/chat/gh-reply phases and starts the `mcp-gw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
-| `OPILOT_MCP_GW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://mcp-gw:47293`) for both the runner and the harness only when `mcp-gw` is actually running. Read by the runner for the startup tool-list check and by `pi-op-mcp.ts` as its own gate: empty means the tool registers at all |
+| `OPILOT_GITHUB_READ_TOKEN` | Optional; enables the **GitHub route** on `mcp-gw` and the `gh_query` tool. A **dedicated read-only** PAT with public read access — deliberately not `GITHUB_CONTRIBUTOR_TOKEN`, which can write. Held only by `mcp-gw`: it never reaches the harness or the runner. Its presence is the whole switch, on both sides — with no token there is no `/gh/mcp` route and no tool |
+| `OPILOT_GH_MCP` | Not meant to be hand-set — `./opilot` exports it when the token above is present. The runner reads it for the tool grant (`Context#gh_mcp?`) and `pi-mcp.ts` to decide whether to register `gh_query`. **Off by default**, the opposite of `OPILOT_OP_MCP`, because this one needs a token an operator has to create |
+| `OPILOT_GH_MCP_URL` | Optional; the GitHub MCP upstream (default `https://api.githubcopilot.com/mcp/readonly`). **`readonly` is in the PATH, not a header** — a live probe showed the path beats a hostile `X-MCP-Readonly: false`, while the same call without it exposes 38 tools of which 16 write. Point it at a locally run `github-mcp-server http` to pin the version |
+| `OPILOT_MCP_GW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://mcp-gw:47293`) for both the runner and the harness only when `mcp-gw` is actually running. Read by the runner for the startup tool-list check and by `pi-mcp.ts` as its own gate: empty means the tool registers at all |
 | `OPILOT_INFERENCE_URL` | Optional; the upstream inference-gw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via inference-gw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
 | `OPILOT_INFERENCE_KEY` | The key inference-gw presents upstream, if the upstream wants one. Lives only in inference-gw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). inference-gw always deletes the inbound `Authorization` first, whatever this names |
