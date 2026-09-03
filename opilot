@@ -82,7 +82,7 @@ fi
 # upstream needs.
 if _need OPILOT_INFERENCE_URL; then
   echo "  Inference endpoint — an OpenRouter URL, or your own OpenAI-compatible server."
-  echo "  Whatever you pick, the key is held only by the authgw gateway and never"
+  echo "  Whatever you pick, the key is held only by the inference-gw gateway and never"
   echo "  reaches the harness container that reads untrusted work-package text."
   printf "  Inference URL [https://openrouter.ai/api/v1]: "
   read -r OPILOT_INFERENCE_URL_ENTRY
@@ -213,17 +213,17 @@ _needs_harness() {
     # (`./opilot appsignal 2025`). Matched by EXCLUSION for that reason: a list
     # of verbs would have to repeat the shorthand rule Ruby already owns, and
     # the copy that did dropped it. Only the two spellings that print help and
-    # exit are left out. It also needs authgw for a second reason the others do
+    # exit are left out. It also needs inference-gw for a second reason the others do
     # not: Context#inference_privacy asks it which address it pinned, and a
-    # not-running authgw is (correctly) a refusal.
+    # not-running inference-gw is (correctly) a refusal.
     appsignal) case "$SUB" in ""|--help|-h) ;; *) return 0 ;; esac ;;
   esac
   return 1
 }
 
-# `usage` needs only authgw (it reads OpenRouter's account/key balance through
+# `usage` needs only inference-gw (it reads OpenRouter's account/key balance through
 # it) — not the harness a real pi run needs.
-_needs_authgw() { _needs_harness || _is usage; }
+_needs_inference_gw() { _needs_harness || _is usage; }
 
 # Matches Context#op_mcp?'s accepted "turn it off" spellings, so a flag reads
 # the same whether Ruby or bash is asking.
@@ -239,7 +239,7 @@ _falsy() {
 # default: an instance with no (Enterprise-only) MCP server enabled just
 # answers every op_query call "unavailable", which is a normal, quiet state —
 # not a reason to withhold the tool from every instance that does have it.
-_needs_opgw() { _needs_harness && ! _falsy "$(_env_get OPILOT_OP_MCP)"; }
+_needs_mcp_gw() { _needs_harness && ! _falsy "$(_env_get OPILOT_OP_MCP)"; }
 
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
 # writes the clone's .git/info/exclude, and the rest read or write its openspec/.
@@ -277,13 +277,13 @@ if _needs_repos; then
   done < <(dc --progress quiet run --no-deps --rm runner ruby bin/repos list)
 fi
 
-if _needs_authgw; then
-  # The inference key is held only by the authgw gateway and never reaches the
+if _needs_inference_gw; then
+  # The inference key is held only by the inference-gw gateway and never reaches the
   # harness container; pi (and `usage`) authenticate to it with this fixed,
   # non-secret handshake token instead (pi-models.json resolves it via
   # $OPILOT_GW_TOKEN; the runner gets it via compose.yml).
   #
-  # authgw is needed whatever the upstream is: holding the key is only one of
+  # inference-gw is needed whatever the upstream is: holding the key is only one of
   # its four jobs, and the other three — fixed upstream, pinned address, path
   # allowlist — are what keep the harness contained. A keyless self-hosted
   # endpoint still goes through it.
@@ -293,21 +293,21 @@ if _needs_authgw; then
   export OPILOT_INFERENCE_URL OPILOT_INFERENCE_KEY OPILOT_INFERENCE_AUTH
   export OPILOT_GW_TOKEN="opilot-internal-gateway"
   if _needs_harness; then
-    if _needs_opgw; then
-      # Exported only here: an absent OPILOT_OPGW_URL is what tells both the
+    if _needs_mcp_gw; then
+      # Exported only here: an absent OPILOT_MCP_GW_URL is what tells both the
       # runner (which call sites grant op_query — Context#op_mcp?'s callers)
-      # and the harness extension (pi-op-mcp.ts) that opgw isn't running,
+      # and the harness extension (pi-op-mcp.ts) that mcp-gw isn't running,
       # without either having to re-derive this condition itself.
-      export OPILOT_OPGW_URL="http://opgw:47293"
-      dc up -d --wait --remove-orphans authgw harness opgw
-      trap 'dc stop harness authgw opgw 2>/dev/null || true' EXIT INT TERM
+      export OPILOT_MCP_GW_URL="http://mcp-gw:47293"
+      dc up -d --wait --remove-orphans inference-gw harness mcp-gw
+      trap 'dc stop harness inference-gw mcp-gw 2>/dev/null || true' EXIT INT TERM
     else
-      dc up -d --wait --remove-orphans authgw harness
-      trap 'dc stop harness authgw 2>/dev/null || true' EXIT INT TERM
+      dc up -d --wait --remove-orphans inference-gw harness
+      trap 'dc stop harness inference-gw 2>/dev/null || true' EXIT INT TERM
     fi
   else
-    dc up -d --wait --remove-orphans authgw
-    trap 'dc stop authgw 2>/dev/null || true' EXIT INT TERM
+    dc up -d --wait --remove-orphans inference-gw
+    trap 'dc stop inference-gw 2>/dev/null || true' EXIT INT TERM
   fi
 fi
 # `op` prints JSON for a pipe, so it must never run under a pty: compose.yml

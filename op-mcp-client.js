@@ -8,8 +8,8 @@
 // image (it imports typebox and @earendil-works/pi-ai, which only jiti's
 // module resolution can find), so keep new logic here, not there.
 //
-// The op names below MUST match opgw.js's READ_ONLY_OPS. The two run in
-// different containers so the duplication is unavoidable; opgw.js is the
+// The op names below MUST match mcp-gw.js's READ_ONLY_OPS. The two run in
+// different containers so the duplication is unavoidable; mcp-gw.js is the
 // authority (it decides what actually executes) — this copy only shapes the
 // schema the model sees.
 const OPERATIONS = Object.freeze([
@@ -56,7 +56,7 @@ function coerceArg(key, value) {
   return value;
 }
 
-// Builds the JSON-RPC `tools/call` body opgw expects. Only the flat fields the
+// Builds the JSON-RPC `tools/call` body mcp-gw expects. Only the flat fields the
 // caller actually set are forwarded as `arguments` — an unset optional field
 // must not become a literal `null`/`undefined` the MCP server has to parse.
 function buildRequestBody(params) {

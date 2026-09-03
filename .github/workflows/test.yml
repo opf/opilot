@@ -36,7 +36,7 @@ jobs:
 
   test-harness-js:
     # The container-side JS has no Ruby coverage; these are its only tests.
-    # Node version matches the three JS images (harness, authgw, opgw), so this
+    # Node version matches the three JS images (harness, inference-gw, mcp-gw), so this
     # job tests the runtime they ship; Dockerfile.runner is on the same line for
     # openspec. pi-guards.ts is imported directly (it carries no type
     # annotations), so that has to keep working on it too.

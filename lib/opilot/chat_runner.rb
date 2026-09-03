@@ -19,7 +19,7 @@ module OPilot
       # One fresh session per invocation: thread context across turns within this
       # run, but never resume a stale conversation from a previous one.
       ensure_harness!
-      report_op_mcp_status
+      report_mcp_status
       session_file = @ctx.state_dir / "chat_session_id"
       safe_rm(session_file)
 

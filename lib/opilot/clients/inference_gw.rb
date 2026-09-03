@@ -4,7 +4,7 @@ require "json"
 
 module OPilot
   module Clients
-    # Asks authgw what it will actually connect to. authgw resolves
+    # Asks inference-gw what it will actually connect to. inference-gw resolves
     # OPILOT_INFERENCE_URL once at boot and re-uses that address for every
     # request, so it is the only process that can answer this — a lookup made
     # here could resolve differently, and `appsignal` gates on the answer.
@@ -13,11 +13,11 @@ module OPilot
     # Clients::OpenRouter is. Kept separate from that class, which documents
     # itself as reachable only when the upstream IS OpenRouter; this route
     # answers whatever the upstream is.
-    class Authgw
+    class InferenceGw
       Error = Class.new(StandardError)
 
-      def initialize(authgw_url, gw_token)
-        @uri      = URI(authgw_url)
+      def initialize(inference_gw_url, gw_token)
+        @uri      = URI(inference_gw_url)
         @gw_token = gw_token
       end
 
@@ -31,15 +31,15 @@ module OPilot
           req["Authorization"] = "Bearer #{@gw_token}"
           http.request(req)
         end
-        raise Error, "authgw returned HTTP #{res.code} for /upstream" unless res.is_a?(Net::HTTPSuccess)
+        raise Error, "inference-gw returned HTTP #{res.code} for /upstream" unless res.is_a?(Net::HTTPSuccess)
 
         parsed = JSON.parse(res.body) rescue nil
-        raise Error, "authgw returned a non-JSON answer for /upstream" unless parsed.is_a?(Hash)
+        raise Error, "inference-gw returned a non-JSON answer for /upstream" unless parsed.is_a?(Hash)
         parsed
       rescue Error
         raise
       rescue StandardError => e
-        raise Error, "could not reach authgw at #{target}: #{e.message}"
+        raise Error, "could not reach inference-gw at #{target}: #{e.message}"
       end
     end
   end

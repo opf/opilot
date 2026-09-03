@@ -11,7 +11,7 @@ module OPilot
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :harness_url, :contributor_token,
                 :state_container, :op_url, :token,
-                :authgw_url, :gw_token, :inference_url, :opgw_url
+                :inference_gw_url, :gw_token, :inference_url, :mcp_gw_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
     attr_reader   :appsignal_token, :appsignal_app_id, :appsignal_project
 
@@ -36,13 +36,13 @@ module OPilot
       # container an unset token arrives as "", which is TRUTHY.
       @contributor_token  = presence(ENV["GITHUB_CONTRIBUTOR_TOKEN"])
       @harness_url        = ENV.fetch("HARNESS_URL", "http://harness:47291")
-      # authgw is the only sidecar holding the real inference key; `usage`
+      # inference-gw is the only sidecar holding the real inference key; `usage`
       # queries it for account/key balance the same non-secret way pi does —
       # a Bearer OPILOT_GW_TOKEN, never the real key. nil (not "") when unset,
       # so `usage` can tell "not running via ./opilot" from "token is blank".
-      @authgw_url         = ENV.fetch("AUTHGW_URL", "http://authgw:47292")
+      @inference_gw_url         = ENV.fetch("OPILOT_INFERENCE_GW_URL", "http://inference-gw:47292")
       @gw_token           = presence(ENV["OPILOT_GW_TOKEN"])
-      # Which upstream authgw forwards to. The runner never calls it directly —
+      # Which upstream inference-gw forwards to. The runner never calls it directly —
       # this is for reporting, so `usage` can name the endpoint it is (or is
       # not) reading spend from. The default keeps an untouched .env on
       # OpenRouter.
@@ -54,8 +54,8 @@ module OPilot
       # The OpenProject MCP gateway (see MCP.md). nil (not a hardcoded default)
       # when unset: `./opilot` exports this only when both the harness and
       # OPILOT_OP_MCP are needed, and an absent value is what tells
-      # #report_op_mcp_status to say so rather than try to connect nowhere.
-      @opgw_url           = presence(ENV["OPILOT_OPGW_URL"])
+      # #report_mcp_status to say so rather than try to connect nowhere.
+      @mcp_gw_url           = presence(ENV["OPILOT_MCP_GW_URL"])
       @state_container    = "/state"
       # Normalised once here rather than at each call site: every consumer
       # appends its own path ("#{op_url}/api/v3/…", "#{op_url}/documents/…"),
@@ -148,11 +148,11 @@ module OPilot
     # Whether the plan/chat/gh-reply phases get the op_query tool (see MCP.md).
     # ON by default — opt OUT with OPILOT_OP_MCP=0 (or false/no/off). An
     # instance without the (Enterprise-only) MCP server enabled just answers
-    # every op_query call with "unavailable", which #report_op_mcp_status and
+    # every op_query call with "unavailable", which #report_mcp_status and
     # the tool itself both treat as a normal, quiet state, never an error — so
-    # defaulting this on costs an idle opgw container on such an instance, not
+    # defaulting this on costs an idle mcp-gw container on such an instance, not
     # a broken run. This flag is only the tool GRANT; the harness-side
-    # extension has its own independent gate on OPILOT_OPGW_URL (empty →
+    # extension has its own independent gate on OPILOT_MCP_GW_URL (empty →
     # registers nothing).
     def op_mcp?
       !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)
@@ -164,14 +164,14 @@ module OPilot
     # thing TODO.md refused to do with a third-party model. This is the check
     # that makes the refusal unnecessary rather than a promise in a README.
     #
-    # AUTHGW ANSWERS IT, not a lookup here. authgw resolves
+    # THE INFERENCE GATEWAY ANSWERS IT, not a lookup here. inference-gw resolves
     # OPILOT_INFERENCE_URL once at boot and re-uses that address for every
     # request, so it is the only process that knows what will actually be
     # connected to; a second resolution here could differ, and "usually agrees"
     # is not a standard for a data-privacy gate.
     #
     # FAILS CLOSED. Not running through ./opilot (no gateway token), an
-    # unreachable authgw, or an address that is not an address, are all
+    # unreachable inference-gw, or an address that is not an address, are all
     # refusals — the caller is about to send user data somewhere.
     # Every range that cannot be a third party on the public internet. Listed
     # explicitly rather than composed from IPAddr#private?/#loopback?/
@@ -200,17 +200,17 @@ module OPilot
     # it sends the reader to .env when the real cause is a gateway that is not
     # running, which looks identical from the outside.
     def inference_privacy
-      return [false, "opilot is not running through ./opilot, so there is no authgw to ask"] unless @gw_token
+      return [false, "opilot is not running through ./opilot, so there is no inference-gw to ask"] unless @gw_token
 
-      address = Clients::Authgw.new(@authgw_url, @gw_token).upstream["address"]
+      address = Clients::InferenceGw.new(@inference_gw_url, @gw_token).upstream["address"]
       ip      = IPAddr.new(address.to_s)
       return [true, address] if NON_PUBLIC_RANGES.any? { |range| range.include?(ip) }
 
-      [false, "authgw resolves it to #{address}, which is a public address"]
-    rescue Clients::Authgw::Error => e
-      [false, "authgw could not be asked (#{e.message})"]
+      [false, "inference-gw resolves it to #{address}, which is a public address"]
+    rescue Clients::InferenceGw::Error => e
+      [false, "inference-gw could not be asked (#{e.message})"]
     rescue IPAddr::Error => e
-      [false, "authgw gave an address opilot cannot read (#{e.message})"]
+      [false, "inference-gw gave an address opilot cannot read (#{e.message})"]
     end
 
     # Work-package type names the `pd` (product development) pipeline maps the

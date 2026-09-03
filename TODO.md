@@ -13,7 +13,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 
 ## Security & Hosting
 * Switch from Docker to Podman for root-less process model
-* Replace authgw with a configurable tiny proxy
+* Replace inference-gw with a configurable tiny proxy
 
 ## AI Architecture
 * Set up token limits & cleanly handle threshold breaches

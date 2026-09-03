@@ -58,7 +58,7 @@ module OPilot
 
     def process_ids(wp_ids, mode:)
       ensure_harness!
-      report_op_mcp_status
+      report_mcp_status
       total = wp_ids.length
       wp_ids.each_with_index do |wp_id, idx|
         counter = total > 1 ? "#{Rainbow("[#{idx + 1}/#{total}]").dimgray} " : ""

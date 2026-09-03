@@ -2,7 +2,7 @@ require "rainbow"
 
 module OPilot
   # `./opilot usage` — reports inference spend without ever handling the real
-  # API key: it asks authgw, the sidecar that holds it, the same way pi asks
+  # API key: it asks inference-gw, the sidecar that holds it, the same way pi asks
   # for inference. No OpenProject/GitHub config needed, so unlike the other
   # terminal modes this never calls Context#load_config!.
   #
@@ -17,13 +17,13 @@ module OPilot
 
     def run
       raise OPilot::FatalError, <<~MSG.strip unless @ctx.gw_token
-        authgw isn't reachable — this must run through `./opilot usage`
+        inference-gw isn't reachable — this must run through `./opilot usage`
         (`bin/opilot usage` alone has no OPILOT_GW_TOKEN to authenticate with).
       MSG
 
       return print_self_hosted_report unless openrouter?
 
-      client  = Clients::OpenRouter.new(@ctx.authgw_url, @ctx.gw_token)
+      client  = Clients::OpenRouter.new(@ctx.inference_gw_url, @ctx.gw_token)
       credits = client.credits
       key     = client.key
       catalog = client.models

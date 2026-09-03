@@ -1,10 +1,10 @@
 // OpenProject MCP gateway — the harness's only route to the OpenProject MCP
-// server (`POST <OPENPROJECT_URL>/mcp`). Same containment shape as authgw.js
+// server (`POST <OPENPROJECT_URL>/mcp`). Same containment shape as inference-gw.js
 // (fixed upstream, pinned address, allowlisted reach, key swap), but the
 // allowlist here is on the REQUEST BODY, not the path: every call is the same
 // `POST /mcp`, so the gateway must parse the JSON-RPC envelope to decide.
 //
-// See MCP.md for the full design. Two things this file does that authgw.js
+// See MCP.md for the full design. Two things this file does that inference-gw.js
 // does not, both because a JSON-RPC body — not a URL — is what decides:
 //
 //   1. The request is buffered and parsed before it is forwarded, never
@@ -30,7 +30,7 @@ const PORT = 47293;
 
 // The only path the model may reach. The upstream path is the instance's own
 // prefix (from OPENPROJECT_URL) plus this — so an instance served under a
-// sub-path still works, the same reasoning as authgw's CLIENT_PREFIX.
+// sub-path still works, the same reasoning as inference-gw's CLIENT_PREFIX.
 const MCP_PATH = '/mcp';
 
 // The eight read-only MCP tools this gateway will place a call to. Six other
@@ -56,7 +56,7 @@ const ALLOWED_METHODS = new Set(['initialize', 'tools/list', 'tools/call']);
 const MAX_BODY_BYTES = 64 * 1024;
 
 // Parses the environment into the frozen upstream description every request
-// is served from. Mirrors authgw's parseConfig: throws on anything
+// is served from. Mirrors inference-gw's parseConfig: throws on anything
 // malformed, because a gateway that starts half-understood is worse than one
 // that refuses to start.
 function parseConfig(env = process.env) {
@@ -73,7 +73,7 @@ function parseConfig(env = process.env) {
     throw new Error(`OPENPROJECT_URL must be http or https (got ${url.protocol})`);
   }
 
-  // Trailing slash normalised away for the same reason as authgw: the
+  // Trailing slash normalised away for the same reason as inference-gw: the
   // re-applied prefix must never double a separator.
   const pathPrefix = url.pathname.replace(/\/+$/, '');
 
@@ -96,7 +96,7 @@ function parseConfig(env = process.env) {
 }
 
 // Maps an inbound client path onto the upstream, or reports why not. Only one
-// client path exists (MCP_PATH), so this is simpler than authgw's mapPath,
+// client path exists (MCP_PATH), so this is simpler than inference-gw's mapPath,
 // but it keeps the same traversal check on the string actually used to build
 // the upstream path — belt-and-braces even though an exact-match comparison
 // already rules traversal out.
@@ -144,7 +144,7 @@ function filterToolsList(raw) {
 
 // The request handler, separated from createServer so tests can drive it
 // directly. `deps.request` is the outbound call and `deps.address` yields the
-// pinned address — same shape as authgw's createHandler.
+// pinned address — same shape as inference-gw's createHandler.
 function createHandler(cfg, deps) {
   const agent = new (cfg.https ? https : http).Agent({ keepAlive: true });
 
@@ -189,10 +189,10 @@ function createHandler(cfg, deps) {
     });
 
     upstream.on('error', err => {
-      // Same reasoning as authgw: a stale pinned address surfaces as a
+      // Same reasoning as inference-gw: a stale pinned address surfaces as a
       // connection error, so re-resolve for the NEXT request.
       deps.invalidate();
-      process.stderr.write(`opgw: upstream error: ${err.message}\n`);
+      process.stderr.write(`mcp-gw: upstream error: ${err.message}\n`);
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
       res.end('upstream error\n');
     });
@@ -227,7 +227,7 @@ function createHandler(cfg, deps) {
     }
 
     if (req.method !== 'POST' || req.url !== MCP_PATH) {
-      process.stderr.write(`opgw: refused ${req.method} ${req.url} — path not allowed\n`);
+      process.stderr.write(`mcp-gw: refused ${req.method} ${req.url} — path not allowed\n`);
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('path not allowed\n');
       req.resume();
@@ -236,7 +236,7 @@ function createHandler(cfg, deps) {
 
     const mapped = mapPath(cfg, req.url, MCP_PATH);
     if (mapped.refuse) {
-      process.stderr.write(`opgw: refused ${req.method} ${req.url} — ${mapped.refuse}\n`);
+      process.stderr.write(`mcp-gw: refused ${req.method} ${req.url} — ${mapped.refuse}\n`);
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('path not allowed\n');
       req.resume();
@@ -267,7 +267,7 @@ function createHandler(cfg, deps) {
       try {
         parsed = JSON.parse(raw.toString());
       } catch {
-        process.stderr.write('opgw: refused — malformed JSON-RPC body\n');
+        process.stderr.write('mcp-gw: refused — malformed JSON-RPC body\n');
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('malformed JSON-RPC body\n');
         return;
@@ -275,7 +275,7 @@ function createHandler(cfg, deps) {
 
       const check = checkMcpCall(parsed);
       if (check.refuse) {
-        process.stderr.write(`opgw: refused — ${check.refuse}\n`);
+        process.stderr.write(`mcp-gw: refused — ${check.refuse}\n`);
         res.writeHead(403, { 'Content-Type': 'text/plain' });
         res.end('call not allowed\n');
         return;
@@ -284,7 +284,7 @@ function createHandler(cfg, deps) {
       // The only record an MCP call leaves anywhere (see MCP.md, "The mirrors
       // stay independent") — log every allowed call.
       const label = parsed.params && parsed.params.name ? `${parsed.method} ${parsed.params.name}` : parsed.method;
-      process.stderr.write(`opgw: allowed ${label}\n`);
+      process.stderr.write(`mcp-gw: allowed ${label}\n`);
 
       const filter = parsed.method === 'tools/list' ? filterToolsList : identity;
       forwardUpstream(mapped.path, raw, res, filter);
@@ -293,7 +293,7 @@ function createHandler(cfg, deps) {
 }
 
 // Resolves the upstream host to an address once, re-resolving only when a
-// connection actually fails. Identical shape to authgw's createResolver.
+// connection actually fails. Identical shape to inference-gw's createResolver.
 function createResolver(cfg, lookup = dns.promises.lookup) {
   let current = null;
   const refresh = async () => {
@@ -322,7 +322,7 @@ async function startServer() {
 
   const server = http.createServer((req, res) => {
     resolver.ensure().then(() => handler(req, res)).catch(err => {
-      process.stderr.write(`opgw: could not resolve ${cfg.host}: ${err.message}\n`);
+      process.stderr.write(`mcp-gw: could not resolve ${cfg.host}: ${err.message}\n`);
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
       res.end('upstream unresolvable\n');
     });
@@ -331,7 +331,7 @@ async function startServer() {
   server.listen(PORT, '0.0.0.0', () => {
     const scheme = cfg.https ? 'https' : 'http';
     process.stderr.write(
-      `opgw listening on ${PORT} → ${scheme}://${cfg.host}:${cfg.port}${cfg.pathPrefix}/mcp ` +
+      `mcp-gw listening on ${PORT} → ${scheme}://${cfg.host}:${cfg.port}${cfg.pathPrefix}/mcp ` +
       `(pinned ${resolver.address()}, ${READ_ONLY_OPS.size} read-only ops allowed)\n`
     );
   });
@@ -340,7 +340,7 @@ async function startServer() {
 
 if (require.main === module) {
   startServer().catch(err => {
-    process.stderr.write(`opgw: ${err.message}\n`);
+    process.stderr.write(`mcp-gw: ${err.message}\n`);
     process.exit(1);
   });
 }

@@ -1,5 +1,5 @@
 // pi extension — registers `op_query`, a tool that lets the plan/chat phases
-// look up live OpenProject data through opgw (the OpenProject MCP gateway;
+// look up live OpenProject data through mcp-gw (the OpenProject MCP gateway;
 // see MCP.md). Loaded via `--no-extensions -e /app/pi-op-mcp.ts` beside
 // pi-guards.ts.
 //
@@ -22,8 +22,8 @@ export default function (pi: ExtensionAPI) {
   // (Harness::TOOLS_READ_OP / TOOLS_IMPL_OP in lib/opilot/harness.rb). With
   // no gateway URL, register nothing: a registered tool that always fails to
   // connect would still cost the model a wasted turn.
-  const opgwUrl = process.env.OPILOT_OPGW_URL;
-  if (!opgwUrl) return;
+  const mcpGwUrl = process.env.OPILOT_MCP_GW_URL;
+  if (!mcpGwUrl) return;
 
   const gwToken = process.env.OPILOT_GW_TOKEN;
 
@@ -74,7 +74,7 @@ export default function (pi: ExtensionAPI) {
       const body = client.buildRequestBody(params);
       let res: Response;
       try {
-        res = await fetch(`${opgwUrl}/mcp`, {
+        res = await fetch(`${mcpGwUrl}/mcp`, {
           method: "POST",
           headers: { authorization: `Bearer ${gwToken}`, "content-type": "application/json" },
           body: JSON.stringify(body),

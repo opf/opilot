@@ -6,7 +6,7 @@
 // imports typebox and @earendil-works/pi-ai, which only jiti's module
 // resolution inside pi can find — see its own header comment. Everything
 // that logic delegates to lives in op-mcp-client.js, which is plain
-// CommonJS and loads fine under plain Node, same reasoning as authgw_test.js.
+// CommonJS and loads fine under plain Node, same reasoning as inference_gw_test.js.
 const assert = require('assert');
 const {
   OPERATIONS, buildRequestBody, parseToolResult, summarize, unavailableMessage, MAX_ANSWER_BYTES,

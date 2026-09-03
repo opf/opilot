@@ -129,7 +129,7 @@ module OPilot
 
       assert_includes err.message, "cannot confirm the model is local"
       assert_includes err.message, "https://openrouter.ai/api/v1", "the reader needs to know which endpoint"
-      assert_includes err.message, "a test said no", "and WHY — a not-running authgw looks the same otherwise"
+      assert_includes err.message, "a test said no", "and WHY — a not-running inference-gw looks the same otherwise"
       assert_empty appsignal.fetched, "nothing may be fetched once the guard has refused"
       assert_not_requested :post, CREATE
     end

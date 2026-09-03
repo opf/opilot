@@ -130,7 +130,7 @@ Some examples:
 │         │                  │                         ┌──────┴───────────────────┐                  │
 │         │                  │                         │                          │                  │
 │         │                  │                         ▼                          ▼                  │
-│         │                  │                 ┌─ opgw ─────────────┐    ┌─ authgw ───────────────┐  │
+│         │                  │                 ┌─ mcp-gw ───────────┐    ┌─ inference-gw ─────────┐  │
 │         │                  │                 │ * attach the OP    │    │ * attach real API key  │  │
 │         │                  │                 │   API token        │    │ * limit access to      │  │
 │         │                  │                 │ * read-only ops    │    │   inference API-only   │  │
@@ -149,7 +149,7 @@ Some examples:
 
 ### Security model
 
-The harness container processes untrusted text (work package descriptions and comments), so it is locked down: no host/LAN exposure, **no network egress at all except authgw and opgw**, an isolated API key, writes confined to `/repos` (and
+The harness container processes untrusted text (work package descriptions and comments), so it is locked down: no host/LAN exposure, **no network egress at all except inference-gw and mcp-gw**, an isolated API key, writes confined to `/repos` (and
 never into a `.git/` directory), Bash confined to read-only git, resource caps,
 a hardened container, and everything ships only as a *draft* PR for human
 review.
@@ -192,7 +192,7 @@ Everything lives in `.env`, which the first run writes interactively. See `.env.
 
 ### Models
 
-OPilot harness reaches the inference API through **authgw**, a small gateway container that is the harness's only route out. Configure the taget API & auth via environment variables.
+OPilot harness reaches the inference API through **inference-gw**, a small gateway container that is the harness's only route out. Configure the taget API & auth via environment variables.
 
 #### Your own endpoint
 

@@ -799,14 +799,14 @@ module OPilot
     # model or an identity cannot work — this one has a working fallback (the
     # mirrors), so a 404, an unreachable gateway, or a malformed answer just
     # leaves op_query unused for the run.
-    def report_op_mcp_status
+    def report_mcp_status
       return unless @ctx.op_mcp?
-      return unless Helpers.first_op_mcp_report?
-      unless @ctx.opgw_url
-        log_script "OpenProject MCP: OPILOT_OP_MCP is set but OPILOT_OPGW_URL is not — is this running through ./opilot?"
+      return unless Helpers.first_mcp_report?
+      unless @ctx.mcp_gw_url
+        log_script "OpenProject MCP: OPILOT_OP_MCP is set but OPILOT_MCP_GW_URL is not — is this running through ./opilot?"
         return
       end
-      log_script "OpenProject MCP: #{Clients::OpMcp.new(@ctx.opgw_url, @ctx.gw_token).summary}"
+      log_script "OpenProject MCP: #{Clients::OpMcp.new(@ctx.mcp_gw_url, @ctx.gw_token).summary}"
     rescue Clients::OpMcp::Unavailable
       # The common case now that OPILOT_OP_MCP defaults on: most instances have
       # no Enterprise MCP server enabled. Quiet by design — op_query itself
@@ -818,7 +818,7 @@ module OPilot
     end
 
     # True once per process — `./opilot agent` sets up both loops.
-    def self.first_op_mcp_report?
+    def self.first_mcp_report?
       return false if @op_mcp_reported
       @op_mcp_reported = true
     end

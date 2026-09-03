@@ -2,10 +2,10 @@ require_relative "../test_helper"
 
 module OPilot
   class UsageRunnerTest < Minitest::Test
-    CtxDouble = Struct.new(:authgw_url, :gw_token, :inference_url, keyword_init: true)
+    CtxDouble = Struct.new(:inference_gw_url, :gw_token, :inference_url, keyword_init: true)
 
     def ctx(**over)
-      CtxDouble.new(authgw_url: "http://authgw.test:47292", gw_token: "gw-token",
+      CtxDouble.new(inference_gw_url: "http://inference-gw.test:47292", gw_token: "gw-token",
                     inference_url: "https://openrouter.ai/api/v1", **over)
     end
 
@@ -44,11 +44,11 @@ module OPilot
     end
 
     def test_prints_account_and_key_balance
-      stub_request(:get, "http://authgw.test:47292/v1/credits")
+      stub_request(:get, "http://inference-gw.test:47292/v1/credits")
         .to_return(status: 200, body: '{"data":{"total_credits":100,"total_usage":1.875817337}}')
-      stub_request(:get, "http://authgw.test:47292/v1/key")
+      stub_request(:get, "http://inference-gw.test:47292/v1/key")
         .to_return(status: 200, body: '{"data":{"usage":0.278890834,"limit":100,"limit_remaining":99.721109166,"is_free_tier":false}}')
-      stub_request(:get, "http://authgw.test:47292/v1/models")
+      stub_request(:get, "http://inference-gw.test:47292/v1/models")
         .to_return(status: 200, body: catalog_body)
 
       out, = capture_io { UsageRunner.new(ctx).run }
@@ -65,11 +65,11 @@ module OPilot
     end
 
     def test_reports_no_per_key_limit_when_the_key_has_none
-      stub_request(:get, "http://authgw.test:47292/v1/credits")
+      stub_request(:get, "http://inference-gw.test:47292/v1/credits")
         .to_return(status: 200, body: '{"data":{"total_credits":50,"total_usage":0}}')
-      stub_request(:get, "http://authgw.test:47292/v1/key")
+      stub_request(:get, "http://inference-gw.test:47292/v1/key")
         .to_return(status: 200, body: '{"data":{"usage":0,"limit":null,"is_free_tier":true}}')
-      stub_request(:get, "http://authgw.test:47292/v1/models")
+      stub_request(:get, "http://inference-gw.test:47292/v1/models")
         .to_return(status: 200, body: '{"data":[]}')
 
       out, = capture_io { UsageRunner.new(ctx).run }
@@ -80,7 +80,7 @@ module OPilot
     end
 
     def test_wraps_client_errors_as_fatal
-      stub_request(:get, "http://authgw.test:47292/v1/credits")
+      stub_request(:get, "http://inference-gw.test:47292/v1/credits")
         .to_return(status: 401, body: "unauthorized")
 
       assert_raises(OPilot::FatalError) { capture_io { UsageRunner.new(ctx).run } }

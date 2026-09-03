@@ -1,10 +1,10 @@
 // Inference gateway — runs in its own container, and is the harness's ONLY
 // route to a model.
 //
-// CONTAINMENT, not authentication, is the load-bearing job here. The name
-// "authgw" predates that and now undersells the component: holding the API key
-// is one of four things it does, and the only optional one. The other three
-// hold whether or not a key exists:
+// CONTAINMENT, not authentication, is the load-bearing job here. This was
+// once called "authgw", a name that advertised the only OPTIONAL thing it
+// does: holding the API key. That is one of four jobs; the other three hold
+// whether or not a key exists:
 //
 //   1. a FIXED upstream, resolved once at boot and never read from the request
 //   2. a PINNED address, so the resolved host cannot be swapped under us (DNS
@@ -194,7 +194,7 @@ function createHandler(cfg, deps) {
 
     const mapped = mapPath(cfg, req.url || '');
     if (mapped.refuse) {
-      process.stderr.write(`authgw: refused ${req.method} ${req.url} — ${mapped.refuse}\n`);
+      process.stderr.write(`inference-gw: refused ${req.method} ${req.url} — ${mapped.refuse}\n`);
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('path not allowed\n');
       req.resume();
@@ -219,7 +219,7 @@ function createHandler(cfg, deps) {
       // a CDN rotating out the record it handed us at boot. Re-resolve for the
       // NEXT request rather than per request, which would give up the pinning.
       deps.invalidate();
-      process.stderr.write(`authgw: upstream error: ${err.message}\n`);
+      process.stderr.write(`inference-gw: upstream error: ${err.message}\n`);
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
       res.end('upstream error\n');
     });
@@ -262,7 +262,7 @@ async function startServer() {
   const server = http.createServer((req, res) => {
     // Restore a pinned address dropped by an earlier failure before serving.
     resolver.ensure().then(() => handler(req, res)).catch(err => {
-      process.stderr.write(`authgw: could not resolve ${cfg.host}: ${err.message}\n`);
+      process.stderr.write(`inference-gw: could not resolve ${cfg.host}: ${err.message}\n`);
       if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain' });
       res.end('upstream unresolvable\n');
     });
@@ -273,7 +273,7 @@ async function startServer() {
     // "Which upstream is this run using" has to be answerable from the log
     // alone — it is now configurable, so it can no longer be assumed.
     process.stderr.write(
-      `authgw listening on ${PORT} → ${scheme}://${cfg.host}:${cfg.port}${cfg.pathPrefix} ` +
+      `inference-gw listening on ${PORT} → ${scheme}://${cfg.host}:${cfg.port}${cfg.pathPrefix} ` +
       `(pinned ${resolver.address()}, auth ${cfg.apiKey ? `${cfg.authHeader} header` : 'none'})\n`
     );
   });
@@ -282,7 +282,7 @@ async function startServer() {
 
 if (require.main === module) {
   startServer().catch(err => {
-    process.stderr.write(`authgw: ${err.message}\n`);
+    process.stderr.write(`inference-gw: ${err.message}\n`);
     process.exit(1);
   });
 }

@@ -81,9 +81,9 @@ module OPilot
     end
 
     def test_op_mcp_flag_adds_op_query_to_the_grant
-      stub_request(:get, "http://opgw:47293/tools")
+      stub_request(:get, "http://mcp-gw:47293/tools")
         .to_return(status: 200, body: JSON.generate({ result: { tools: [] } }))
-      ctx = build_ctx(@tmpdir, host: "test.host", op_mcp: true, opgw_url: "http://opgw:47293", gw_token: "gw")
+      ctx = build_ctx(@tmpdir, host: "test.host", op_mcp: true, mcp_gw_url: "http://mcp-gw:47293", gw_token: "gw")
       harness = RecordingHarness.new
       with_stdin("hi\n\n") { silently { ChatRunner.new(ctx, harness: harness).run } }
       assert_equal Harness::TOOLS_READ_OP, harness.tools
@@ -93,8 +93,8 @@ module OPilot
       # The normal case now that Context#op_mcp? defaults on: most instances
       # have no Enterprise MCP add-on. The run must still complete — this is
       # never a reason to fail.
-      stub_request(:get, "http://opgw:47293/tools").to_return(status: 404, body: "MCP server is not available.")
-      ctx = build_ctx(@tmpdir, host: "test.host", op_mcp: true, opgw_url: "http://opgw:47293", gw_token: "gw")
+      stub_request(:get, "http://mcp-gw:47293/tools").to_return(status: 404, body: "MCP server is not available.")
+      ctx = build_ctx(@tmpdir, host: "test.host", op_mcp: true, mcp_gw_url: "http://mcp-gw:47293", gw_token: "gw")
       harness = RecordingHarness.new
       with_stdin("hi\n\n") { silently { ChatRunner.new(ctx, harness: harness).run } }
       assert_equal 1, harness.prompts.length, "the chat still runs"

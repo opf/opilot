@@ -37,7 +37,7 @@ const WRITE_GIT = new Set(["rm", "clean"]);
 const DANGEROUS_OPTION = /^(--output|-o$|--exec-path|--git-dir|--work-tree|-c$|--upload-pack|--receive-pack)/;
 
 // op_query (pi-op-mcp.ts) is listed here too, but this file does nothing
-// further to guard it — opgw.js's request-body allowlist is the real control
+// further to guard it — mcp-gw.js's request-body allowlist is the real control
 // on what it can reach. An unknown tool name still terminates the run.
 const KNOWN_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "write", "edit", "op_query"]);
 

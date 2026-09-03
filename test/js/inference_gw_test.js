@@ -1,7 +1,7 @@
-// Plain-Node test for authgw.js — the harness's only route to a model. No test
-// framework (the repo has none for JS): run with `node test/js/authgw_test.js`.
+// Plain-Node test for inference-gw.js — the harness's only route to a model. No test
+// framework (the repo has none for JS): run with `node test/js/inference_gw_test.js`.
 //
-// authgw had no tests at all before the upstream became configurable. What is
+// inference-gw had no tests at all before the upstream became configurable. What is
 // covered here is the part that is silent when it breaks: the path allowlist,
 // the /v1 prefix rewrite, the auth-header template, and address pinning. A
 // wrong header still returns 200 from the upstream, so only an assertion
@@ -9,7 +9,7 @@
 const assert = require('assert');
 const {
   parseConfig, mapPath, buildHeaders, createHandler, createResolver,
-} = require('../../authgw.js');
+} = require('../../inference-gw.js');
 
 const GW = 'opilot-internal-gateway';
 
@@ -18,7 +18,7 @@ function env(extra = {}) {
 }
 
 // Minimal req/res doubles. `req.pipe` is a no-op: nothing here asserts on the
-// body, and authgw never reads it.
+// body, and inference-gw never reads it.
 function fakeReq(overrides = {}) {
   return {
     method: 'POST',

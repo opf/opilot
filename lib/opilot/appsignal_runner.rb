@@ -120,7 +120,7 @@ module OPilot
 
     # The gate this command exists behind.
     #
-    # authgw answers it, not a lookup here — see Context#inference_privacy. The
+    # inference-gw answers it, not a lookup here — see Context#inference_privacy. The
     # message names the endpoint, because "refused" without it sends the reader
     # to the wrong file.
     def require_local_inference!

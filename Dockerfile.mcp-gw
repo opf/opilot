@@ -1,0 +1,7 @@
+FROM node:24-slim
+
+COPY --chown=node:node mcp-gw.js /app/
+
+USER node
+
+CMD ["node", "/app/mcp-gw.js"]

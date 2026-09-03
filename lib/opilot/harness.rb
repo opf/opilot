@@ -23,7 +23,7 @@ module OPilot
     # the pi-guards.ts tool_call hook confines it to read-only git — no commit,
     # push, remote, or non-git command (and no writes into any .git/, which
     # would turn those read-only subcommands into code execution). The harness
-    # has no network egress but authgw, so there is nowhere to exfiltrate to.
+    # has no network egress but inference-gw, so there is nowhere to exfiltrate to.
     # The ONE exception is `git rm` / `git clean`, which pi-guards.ts unlocks
     # when the grant carries write/edit — pi ships no delete tool, so bash is
     # the only place one can live, and keying it to this grant is what keeps

@@ -3,7 +3,7 @@ require_relative "../../test_helper"
 module OPilot
   module Clients
     class OpMcpTest < Minitest::Test
-      URL = "http://opgw.test:47293".freeze
+      URL = "http://mcp-gw.test:47293".freeze
 
       def setup
         @client = OpMcp.new(URL, "gw-token")
@@ -27,7 +27,7 @@ module OPilot
           ))
 
         summary = @client.summary
-        assert_includes summary, "2/4 tools allowed by opgw"
+        assert_includes summary, "2/4 tools allowed by mcp-gw"
         assert_includes summary, "2 write tool(s) enabled"
         refute_includes summary, "create_work_package", "names would put ~150 chars on every startup"
       end
@@ -40,7 +40,7 @@ module OPilot
           ))
 
         summary = @client.summary
-        assert_includes summary, "1/2 tools allowed by opgw"
+        assert_includes summary, "1/2 tools allowed by mcp-gw"
         refute_includes summary, "write tool"
       end
 
@@ -65,7 +65,7 @@ module OPilot
       def test_network_failure_raises_wrapped_error
         stub_request(:get, "#{URL}/tools").to_raise(SocketError.new("no route"))
         err = assert_raises(OpMcp::Error) { @client.tool_names }
-        assert_includes err.message, "opgw"
+        assert_includes err.message, "mcp-gw"
       end
     end
   end

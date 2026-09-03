@@ -93,11 +93,11 @@ test('two different models produce two entries, heavy first', () => {
   assert.deepStrictEqual(config.models, [{ id: 'qwen2.5-coder:32b' }, { id: 'qwen2.5-coder:7b' }]);
 });
 
-test('baseUrl is authgw, never the model server directly', () => {
-  // The harness has no other route out, and authgw re-applies the upstream's
+test('baseUrl is inference-gw, never the model server directly', () => {
+  // The harness has no other route out, and inference-gw re-applies the upstream's
   // own path prefix — hence /v1 here whatever the upstream serves.
   const { config } = only(buildModelsJson({ OPILOT_MODEL_HEAVY: 'local/m' }));
-  assert.strictEqual(config.baseUrl, 'http://authgw:47292/v1');
+  assert.strictEqual(config.baseUrl, 'http://inference-gw:47292/v1');
   assert.strictEqual(config.apiKey, '$OPILOT_GW_TOKEN');
 });
 

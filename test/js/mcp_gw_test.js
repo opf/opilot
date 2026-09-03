@@ -1,14 +1,14 @@
-// Plain-Node test for opgw.js — the harness's only route to the OpenProject
-// MCP server. Run with `node test/js/opgw_test.js`.
+// Plain-Node test for mcp-gw.js — the harness's only route to the OpenProject
+// MCP server. Run with `node test/js/mcp_gw_test.js`.
 //
-// Unlike authgw, the allowlist here is on the JSON-RPC BODY, not the path —
+// Unlike inference-gw, the allowlist here is on the JSON-RPC BODY, not the path —
 // every call is the same POST /mcp — so what matters most is: a write tool
 // (create_work_package) is refused, a batch/array body is refused, and a
 // `tools/list` answer is trimmed to the read-only set before it reaches pi.
 const assert = require('assert');
 const {
   parseConfig, mapPath, checkMcpCall, filterToolsList, READ_ONLY_OPS, createHandler,
-} = require('../../opgw.js');
+} = require('../../mcp-gw.js');
 
 const GW = 'opilot-internal-gateway';
 

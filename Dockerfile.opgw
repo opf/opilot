@@ -1,7 +1,0 @@
-FROM node:24-slim
-
-COPY --chown=node:node opgw.js /app/
-
-USER node
-
-CMD ["node", "/app/opgw.js"]

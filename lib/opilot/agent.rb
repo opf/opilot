@@ -46,7 +46,7 @@ module OPilot
     def setup
       scan_from_at = @pull.load_or_prompt_scan_from
       @pull.ensure_bot_identity!
-      report_op_mcp_status
+      report_mcp_status
       if @ctx.allowed_op_user_ids.any?
         puts "  Allowlist active — only triggers from user ids: #{@ctx.allowed_op_user_ids.join(", ")}"
       else

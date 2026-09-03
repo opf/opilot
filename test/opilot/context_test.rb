@@ -14,15 +14,15 @@ module OPilot
     # ── the local-model guard ───────────────────────────────────────────────
     #
     # `./opilot appsignal` sends production error data to the model, so this
-    # decides whether that is allowed. authgw answers with the address it pinned
+    # decides whether that is allowed. inference-gw answers with the address it pinned
     # at boot; the runner never resolves the URL itself.
 
-    AUTHGW = "http://authgw.test:47292".freeze
+    INFERENCE_GW = "http://inference-gw.test:47292".freeze
 
-    def with_authgw_address(address)
+    def with_inference_gw_address(address)
       body = address.nil? ? "{}" : JSON.generate("host" => "h", "address" => address)
-      stub_request(:get, "#{AUTHGW}/upstream").to_return(status: 200, body: body)
-      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => "gw") { yield Context.build(@tmpdir) }
+      stub_request(:get, "#{INFERENCE_GW}/upstream").to_return(status: 200, body: body)
+      with_env("OPILOT_INFERENCE_GW_URL" => INFERENCE_GW, "OPILOT_GW_TOKEN" => "gw") { yield Context.build(@tmpdir) }
     end
 
     # Docker Desktop's host gateway is in 0.0.0.0/8 — reserved, but NOT matched
@@ -31,31 +31,31 @@ module OPilot
     # here for the same reason.
     def test_reserved_and_private_addresses_are_accepted
       %w[0.250.250.254 192.168.65.254 127.0.0.1 10.0.0.5 100.101.1.5 ::1].each do |address|
-        with_authgw_address(address) { |ctx| assert ctx.inference_privacy.first, "#{address} is not a third party" }
+        with_inference_gw_address(address) { |ctx| assert ctx.inference_privacy.first, "#{address} is not a third party" }
       end
     end
 
     def test_public_addresses_are_refused
       # 104.18/172.67 are Cloudflare, which is what openrouter.ai resolves to.
       %w[104.18.2.1 172.67.1.1 8.8.8.8].each do |address|
-        with_authgw_address(address) { |ctx| refute ctx.inference_privacy.first, "#{address} is a third party" }
+        with_inference_gw_address(address) { |ctx| refute ctx.inference_privacy.first, "#{address} is a third party" }
       end
     end
 
     # It fails CLOSED: the caller is about to send user data somewhere.
-    def test_it_fails_closed_when_authgw_cannot_answer
-      with_authgw_address(nil) { |ctx| refute ctx.inference_privacy.first, "no address means no" }
+    def test_it_fails_closed_when_inference_gw_cannot_answer
+      with_inference_gw_address(nil) { |ctx| refute ctx.inference_privacy.first, "no address means no" }
 
-      stub_request(:get, "#{AUTHGW}/upstream").to_raise(SocketError.new("down"))
-      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => "gw") do
-        refute Context.build(@tmpdir).inference_privacy.first, "an unreachable authgw means no"
+      stub_request(:get, "#{INFERENCE_GW}/upstream").to_raise(SocketError.new("down"))
+      with_env("OPILOT_INFERENCE_GW_URL" => INFERENCE_GW, "OPILOT_GW_TOKEN" => "gw") do
+        refute Context.build(@tmpdir).inference_privacy.first, "an unreachable inference-gw means no"
       end
     end
 
     # No gateway token means opilot is not running through ./opilot, so there is
     # nothing to ask — and nothing to assume.
     def test_it_fails_closed_without_a_gateway_token
-      with_env("AUTHGW_URL" => AUTHGW, "OPILOT_GW_TOKEN" => nil) do
+      with_env("OPILOT_INFERENCE_GW_URL" => INFERENCE_GW, "OPILOT_GW_TOKEN" => nil) do
         refute Context.build(@tmpdir).inference_privacy.first
       end
     end
@@ -166,11 +166,11 @@ module OPilot
       end
     end
 
-    def test_opgw_url_is_nil_unless_set
-      with_env("OPILOT_OPGW_URL" => nil) { assert_nil Context.build(@tmpdir).opgw_url }
-      with_env("OPILOT_OPGW_URL" => "  ") { assert_nil Context.build(@tmpdir).opgw_url }
-      with_env("OPILOT_OPGW_URL" => "http://opgw:47293") do
-        assert_equal "http://opgw:47293", Context.build(@tmpdir).opgw_url
+    def test_mcp_gw_url_is_nil_unless_set
+      with_env("OPILOT_MCP_GW_URL" => nil) { assert_nil Context.build(@tmpdir).mcp_gw_url }
+      with_env("OPILOT_MCP_GW_URL" => "  ") { assert_nil Context.build(@tmpdir).mcp_gw_url }
+      with_env("OPILOT_MCP_GW_URL" => "http://mcp-gw:47293") do
+        assert_equal "http://mcp-gw:47293", Context.build(@tmpdir).mcp_gw_url
       end
     end
 

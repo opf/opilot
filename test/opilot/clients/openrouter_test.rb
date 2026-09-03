@@ -3,7 +3,7 @@ require_relative "../../test_helper"
 module OPilot
   module Clients
     class OpenRouterTest < Minitest::Test
-      URL = "http://authgw.test:47292".freeze
+      URL = "http://inference-gw.test:47292".freeze
 
       def setup
         @client = OpenRouter.new(URL, "gw-token")
@@ -50,7 +50,7 @@ module OPilot
       def test_network_failure_raises_wrapped_error
         stub_request(:get, "#{URL}/v1/key").to_raise(SocketError.new("no route"))
         err = assert_raises(OpenRouter::Error) { @client.key }
-        assert_includes err.message, "authgw"
+        assert_includes err.message, "inference-gw"
       end
     end
   end

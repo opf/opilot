@@ -1,7 +1,7 @@
 {
   "providers": {
     "openrouter": {
-      "baseUrl": "http://authgw:47292/v1",
+      "baseUrl": "http://inference-gw:47292/v1",
       "apiKey": "$OPILOT_GW_TOKEN"
     }
   }

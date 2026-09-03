@@ -223,11 +223,11 @@ an AppSignal integration for a long time and blocked it on one thing: opilot mus
 not hand user data to a third-party model. `fix` therefore **refuses to run unless
 the model is local** (`#require_local_inference!` → `Context#inference_privacy`),
 and it **fails closed**. The refusal names WHY (`Context#inference_privacy`), because
-"authgw could not be asked" and "it resolves to a public address" look identical
+"inference-gw could not be asked" and "it resolves to a public address" look identical
 from the outside and send the reader to different files.
 
-**authgw answers "is the model local?", not the runner.** The new `GET /upstream`
-route reports the address authgw **pinned at boot** — the address every inference
+**inference-gw answers "is the model local?", not the runner.** The new `GET /upstream`
+route reports the address inference-gw **pinned at boot** — the address every inference
 request will actually reach. The runner must not resolve `OPILOT_INFERENCE_URL`
 itself (`context.rb`: *"The runner never calls it directly"*); a second lookup
 could answer differently, and "usually agrees" is not a standard for a
@@ -268,7 +268,7 @@ parameter, so `#scrub` removes it from every raised message; V2 takes a Bearer
 header and never puts it in a URL.
 
 This is the **runner's** client, and there is deliberately no gateway sidecar:
-opgw and authgw contain the *harness*, which reads untrusted text. The runner
+mcp-gw and inference-gw contain the *harness*, which reads untrusted text. The runner
 already holds the GitHub and OpenProject tokens. The model never reaches
 AppSignal — it reads the cached `incident.json`.
 
@@ -348,7 +348,7 @@ docker compose build runner
 
 ## Architecture
 
-Four Docker containers orchestrated by `compose.yml` (three plus `opgw`, which
+Four Docker containers orchestrated by `compose.yml` (three plus `mcp-gw`, which
 starts only when `OPILOT_OP_MCP` is set):
 
 - **Runner** (Ruby 4.0) — the agent. Polls OpenProject, dispatches intents, calls
@@ -381,25 +381,26 @@ starts only when `OPILOT_OP_MCP` is set):
   `.git/hooks/pre-commit` would execute in the *runner*, which holds the
   GitHub token. Writes are checked on the resolved path by exact segment
   match, so `.gitignore`/`.github/` stay editable. `pi-op-mcp.ts` registers
-  the `op_query` tool (see the Opgw entry below); it is always loaded, but
-  registers nothing when `OPILOT_OPGW_URL` is unset.
+  the `op_query` tool (see the MCP gateway entry below); it is always loaded, but
+  registers nothing when `OPILOT_MCP_GW_URL` is unset.
 
-  pi always talks to authgw at `http://authgw:47292/v1`, resolving its
+  pi always talks to inference-gw at `http://inference-gw:47292/v1`, resolving its
   `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a secret) — the
   real key never reaches this container. `server.js` decides which provider
   config pi gets from **the provider prefix on `OPILOT_MODEL_HEAVY`**:
   `openrouter/…` copies `pi-models.json` from git, anything else generates one
   (`buildModelsJson`). That prefix is the only signal, deliberately — a second
   "mode" variable could disagree with the slug.
-- **Authgw** (Node 24, `authgw.js`) — the harness's **only** route to a model,
-  and **containment is its load-bearing job, not authentication**. The name
-  predates that. It does four things, and holding the key is the only optional
-  one: a **fixed upstream** (`OPILOT_INFERENCE_URL`, default
-  `https://openrouter.ai/api/v1`), an **address pinned at boot** and re-used
-  per request (closing DNS rebinding; re-resolved only after a connection
-  fails), a **path allowlist** (`chat/completions`, `messages`, `responses`,
-  `models…`, `credits`, `key` — everything else 403s, notably Ollama's
-  `/api/pull`, which takes an arbitrary registry host), and the key swap.
+- **Inference gateway** (Node 24, `inference-gw.js`) — the harness's **only** route to a model,
+  and **containment is its load-bearing job, not authentication**. It was once
+  called `authgw`, after the only optional thing it does. It does four things,
+  and holding the key is that optional one: a **fixed upstream**
+  (`OPILOT_INFERENCE_URL`, default `https://openrouter.ai/api/v1`), an
+  **address pinned at boot** and re-used per request (closing DNS rebinding;
+  re-resolved only after a connection fails), a **path allowlist**
+  (`chat/completions`, `messages`, `responses`, `models…`, `credits`, `key` —
+  everything else 403s, notably Ollama's `/api/pull`, which takes an arbitrary
+  registry host), and the key swap.
 
   It validates the fixed gateway token, then **deletes** the incoming
   `Authorization` before setting whatever `OPILOT_INFERENCE_AUTH` names
@@ -407,27 +408,27 @@ starts only when `OPILOT_OP_MCP` is set):
   The delete is unconditional and load-bearing: a set-without-delete on a
   differently-named header would ship the gateway token to a third party.
 
-  Every client speaks a uniform `/v1`; authgw re-applies the upstream's own
+  Every client speaks a uniform `/v1`; inference-gw re-applies the upstream's own
   path prefix, so `/v1/chat/completions` reaches `/api/v1/chat/completions` on
   OpenRouter. That is why `./opilot usage` (`Clients::OpenRouter`) asks for
   `/v1/credits` and `/v1/key`. It converts **headers, never protocols** — the
-  wire format is pi's `api` field (`OPILOT_MODEL_API`), not authgw's concern.
+  wire format is pi's `api` field (`OPILOT_MODEL_API`), not inference-gw's concern.
   A keyless self-hosted endpoint still goes through it; "no secret to hide" is
   not a reason to bypass containment.
-- **Opgw** (Node 24, `opgw.js`) — the harness's only route to the OpenProject
+- **MCP gateway** (Node 24, `mcp-gw.js`) — the harness's only route to the OpenProject
   MCP server (see `MCP.md`), on whenever the harness is (`OPILOT_OP_MCP`
   defaults **on**; set it to `0`/`false`/`no`/`off` to disable). Same
-  containment shape as authgw — a fixed upstream (`OPENPROJECT_URL`), an
+  containment shape as inference-gw — a fixed upstream (`OPENPROJECT_URL`), an
   address pinned at boot, and a swap of the handshake token for
   `OPENPROJECT_TOKEN` (basic auth, `apikey:<token>`) — but the allowlist is on
   the **JSON-RPC request body**, not the path: every call is the same `POST
-  /mcp`, so opgw parses it and allows only `initialize`/`tools/list`, and for
+  /mcp`, so mcp-gw parses it and allows only `initialize`/`tools/list`, and for
   `tools/call` only eight read-only operation names. The instance's own
   `tools/list` answer is also trimmed to those eight before it reaches pi, so
   the model is never shown a tool it cannot call. A second route, `GET
   /tools`, answers the runner with the **unfiltered** list — logged once per
-  **process** (`Helpers#report_op_mcp_status`, guarded by
-  `Helpers.first_op_mcp_report?` since `./opilot agent` sets up two loops) as
+  **process** (`Helpers#report_mcp_status`, guarded by
+  `Helpers.first_mcp_report?` since `./opilot agent` sets up two loops) as
   one short line: how many tools the allowlist passes, and how many write tools
   the instance has enabled. Counts, not names — opilot cannot disable those
   anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
@@ -435,17 +436,17 @@ starts only when `OPILOT_OP_MCP` is set):
   The pi extension side (`pi-op-mcp.ts`/`op-mcp-client.js`, loaded via a
   second `-e`) trims a `search_work_packages` answer to a fixed subset of
   fields (full records run ~8 KB each) and registers nothing at all when
-  `OPILOT_OPGW_URL` is empty — the harness-side half of the same feature flag.
+  `OPILOT_MCP_GW_URL` is empty — the harness-side half of the same feature flag.
   A 404 ("MCP server is not available") is a normal per-instance state, not an
   error: the MCP server is an Enterprise add-on an administrator must enable.
-**There is no egress proxy.** A tinyproxy sidecar used to sit beside authgw,
+**There is no egress proxy.** A tinyproxy sidecar used to sit beside inference-gw,
 allowlisting a couple of documentation hosts for Claude Code's WebFetch. pi
 ships no fetch tool — its built-ins are `bash, edit, find, grep, ls, read,
 write`, and Bash is confined to read-only git — so nothing could use it, and
 its logs showed zero requests across every recorded run. It was also the only
 service straddling `internal` and `egress`, which made it a bridge *out* of the
 contained network rather than a restriction on one. Removing it made the
-harness's egress strictly zero-except-authgw (plus opgw, per above), and means
+harness's egress strictly zero-except-inference-gw (plus mcp-gw, per above), and means
 any future outbound path has to be added deliberately instead of already
 being there.
 
@@ -477,7 +478,7 @@ bare `docker compose run …` works from the repo root.
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
-| `clients/authgw.rb` | authgw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
+| `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
@@ -833,11 +834,11 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
-| `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server — see `MCP.md`) to the plan/chat/gh-reply phases and starts the `opgw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
-| `OPILOT_OPGW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://opgw:47293`) for both the runner and the harness only when `opgw` is actually running. Read by the runner for the startup tool-list check and by `pi-op-mcp.ts` as its own gate: empty means the tool registers at all |
-| `OPILOT_INFERENCE_URL` | Optional; the upstream authgw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via authgw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
-| `OPILOT_INFERENCE_KEY` | The key authgw presents upstream, if the upstream wants one. Lives only in authgw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
-| `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). authgw always deletes the inbound `Authorization` first, whatever this names |
+| `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server — see `MCP.md`) to the plan/chat/gh-reply phases and starts the `mcp-gw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
+| `OPILOT_MCP_GW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://mcp-gw:47293`) for both the runner and the harness only when `mcp-gw` is actually running. Read by the runner for the startup tool-list check and by `pi-op-mcp.ts` as its own gate: empty means the tool registers at all |
+| `OPILOT_INFERENCE_URL` | Optional; the upstream inference-gw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via inference-gw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
+| `OPILOT_INFERENCE_KEY` | The key inference-gw presents upstream, if the upstream wants one. Lives only in inference-gw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
+| `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). inference-gw always deletes the inbound `Authorization` first, whatever this names |
 | `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |

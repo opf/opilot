@@ -51,7 +51,7 @@ module OPilot
     # is passed to #tick. Split out from #run so CombinedAgent can drive the loop.
     def setup
       scan_from_at = prompt_scan_from
-      report_op_mcp_status
+      report_mcp_status
       if @ctx.allowed_gh_users.any?
         puts "  Allowlist active — only @opilot from: #{@ctx.allowed_gh_users.map { |u| "@#{u}" }.join(", ")}"
       else

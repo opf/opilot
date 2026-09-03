@@ -50,7 +50,7 @@ const PROC_KILL_GRACE_MS = 10 * 1000;
 // Must stay in sync with TOOLS_READ / TOOLS_IMPL / TOOLS_READ_OP / TOOLS_IMPL_OP
 // in lib/opilot/harness.rb. The two `,op_query` variants are sent only when
 // OPILOT_OP_MCP is on (Context#op_mcp?); pi-op-mcp.ts registers the tool at
-// all only when OPILOT_OPGW_URL is also set — see MCP.md.
+// all only when OPILOT_MCP_GW_URL is also set — see MCP.md.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
@@ -93,8 +93,8 @@ function providerPrefix(slug) {
 // deduped — a self-hosted server usually serves one model, so heavy and light
 // normally collapse to a single entry.
 //
-// baseUrl is authgw, not the model server: the harness has no other route out,
-// and authgw re-applies the upstream's own path prefix. That is why this is
+// baseUrl is inference-gw, not the model server: the harness has no other route out,
+// and inference-gw re-applies the upstream's own path prefix. That is why this is
 // always /v1 regardless of what the upstream serves.
 function buildModelsJson(env = process.env) {
   const heavy = env.OPILOT_MODEL_HEAVY || '';
@@ -119,11 +119,11 @@ function buildModelsJson(env = process.env) {
     : { id });
 
   const config = {
-    baseUrl: 'http://authgw:47292/v1',
+    baseUrl: 'http://inference-gw:47292/v1',
     api,
     // A dummy value, and the convention rather than a workaround: pi hides
     // models that have no auth configured, and keyless servers ignore it.
-    // This is the same non-secret handshake authgw already expects.
+    // This is the same non-secret handshake inference-gw already expects.
     apiKey: '$OPILOT_GW_TOKEN',
     models: ids.map(model),
   };
