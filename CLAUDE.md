@@ -518,7 +518,12 @@ PR needs the store's layout on every tick.
    branch, with nothing in the tree saying so. The whole registry is synced at plan
    time (which repos the fix lands in is the plan's own output); `:chat` syncs just
    the target repos. A **dirty** tree is left strictly alone, and a fetch failure
-   warns rather than fails.
+   warns rather than fails. **Tags and `release/*` are fetched here too**
+   (`#fetch_read_refs`, `RELEASE_REFSPEC`) and nowhere else: `#fetch_base` pulls the
+   base alone, so without this every tag and release branch sits at clone time while
+   the clone still HAS a `release/17.6` to compare against — "is this commit in 17.6?"
+   then gets a confident answer off a months-old snapshot. Best-effort, unlike the
+   base: a repo with no `release/*` namespace is normal.
 3. **Implement** — the LLM (Read/Write/Edit + read-only Bash) works across each chosen
    clone on `bug/<id>-<slug>` in one resumed session; the runner commits
    `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric

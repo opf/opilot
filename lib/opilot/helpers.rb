@@ -897,11 +897,37 @@ module OPilot
       raise "base branch #{base.inspect} not found on #{repo.upstream} (#{e.message})"
     end
 
+    # Refspecs the READ phases answer questions from. #fetch_base pulls exactly
+    # ONE ref — the base — so every tag and every release/* branch in a clone
+    # stays as-of-clone-time, and nothing else ever updates them. That is worse
+    # than it sounds: the clone still HAS a release/17.6 and a tag list to
+    # compare against, so "is this commit in 17.6?" gets a confident answer off
+    # a months-old snapshot, with nothing in the tree saying so.
+    #
+    # Narrow on purpose. Fetching every head would put the openproject
+    # monorepo's full branch list on every plan and chat; release/* plus tags is
+    # what a "has this shipped yet?" question actually reads.
+    RELEASE_REFSPEC = "+refs/heads/release/*:refs/remotes/origin/release/*".freeze
+
+    # Best-effort, unlike #fetch_base: a repo with no release/* namespace is
+    # normal (a glob refspec matching nothing is not an error to git), and a
+    # stale tag beats a failed chat. Only the READ path calls this —
+    # #checkout_branch needs the base and nothing else, and would pay the cost
+    # on every implement run for nothing.
+    def fetch_read_refs(wt, repo)
+      wt.fetch("origin", ref: RELEASE_REFSPEC, tags: true)
+    rescue StandardError => e
+      log_script "#{repo.name}: could not refresh tags and release branches (#{e.message}) — " \
+                 "answers about tags and releases may be stale."
+    end
+
     # Point `repo`'s clone at current upstream before a READ-ONLY phase (plan,
     # chat). Nothing else does: `./opilot` fetches each base once at launch
     # without moving the tree, and no run checks the tree back off its fix branch
     # — so a plan would otherwise be written against the original clone commit,
     # or against another WP's leftover branch, with nothing in the tree saying so.
+    # Tags and release/* come along too (#fetch_read_refs) — the read phases are
+    # asked about them, and no other code path fetches them at all.
     #
     # Detached at origin/<base>, since a local base branch would be a second thing
     # to keep in sync; #checkout_branch cuts fix branches from origin/<base>
@@ -915,6 +941,7 @@ module OPilot
         return false
       end
       fetch_base(wt, repo, repo.base)
+      fetch_read_refs(wt, repo)
       wt.checkout("origin/#{repo.base}")
       true
     rescue StandardError => e

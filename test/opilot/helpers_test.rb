@@ -360,9 +360,9 @@ module OPilot
       # but before Helpers#commit swept them up; `fetch_error` for an unreachable
       # origin. Both are cases sync_base! must not act on. `leftover` is what
       # `git clean --dry-run` reports: an EARLIER work package's untracked file.
-      def initialize(dirty: false, fetch_error: nil, branch_exists: false, leftover: nil)
+      def initialize(dirty: false, fetch_error: nil, read_refs_error: nil, branch_exists: false, leftover: nil)
         @checkouts = []; @fetched = []; @configs = []; @cleans = []; @resets = []
-        @dirty = dirty; @fetch_error = fetch_error
+        @dirty = dirty; @fetch_error = fetch_error; @read_refs_error = read_refs_error
         @branch_exists = branch_exists; @leftover = leftover
       end
       def revparse(_ref)
@@ -377,6 +377,8 @@ module OPilot
       def checkout(branch, **opts); @checkouts << [branch, opts]; end
       def fetch(remote, **opts)
         raise @fetch_error if @fetch_error
+        # Fails only the tags/release fetch, which #fetch_read_refs must swallow.
+        raise @read_refs_error if @read_refs_error && opts[:tags]
         @fetched << [remote, opts]
       end
       def config_set(k, v); @configs << [k, v]; end
@@ -576,7 +578,10 @@ module OPilot
 
       assert host.sync_base!(host.ctx.repos["openproject"])
 
-      assert_equal [["origin", { ref: "dev" }]], wt.fetched
+      assert_equal [
+        ["origin", { ref: "dev" }],
+        ["origin", { ref: "+refs/heads/release/*:refs/remotes/origin/release/*", tags: true }]
+      ], wt.fetched, "the base, then the refs a release question reads"
       assert_equal [["origin/dev", {}]], wt.checkouts,
                    "detached at the fetched ref, not a local base branch"
     ensure
@@ -611,6 +616,22 @@ module OPilot
       teardown_repo_host
     end
 
+    def test_sync_base_survives_a_failed_tag_fetch
+      # Best-effort, unlike the base fetch: a repo with no release/* namespace is
+      # normal, and the tree still has to move onto current upstream. Only the
+      # release and tag answers go stale.
+      host = repo_host
+      wt = FakeWorktree.new(read_refs_error: StandardError.new("couldn't find remote ref"))
+      host.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+
+      assert host.sync_base!(host.ctx.repos["openproject"])
+
+      assert_equal [["origin", { ref: "dev" }]], wt.fetched, "the base fetch still landed"
+      assert_equal [["origin/dev", {}]], wt.checkouts, "and the tree still moved"
+    ensure
+      teardown_repo_host
+    end
+
     def test_sync_bases_for_reading_covers_every_repo_it_is_given
       host = repo_host
       seen = {}
@@ -619,7 +640,7 @@ module OPilot
       host.sync_bases_for_reading(host.ctx.repos.all)
 
       assert_equal %w[foo openproject], seen.keys.sort
-      assert_equal [["origin", { ref: "main" }]], seen["foo"].fetched,
+      assert_equal ["origin", { ref: "main" }], seen["foo"].fetched.first,
                    "each repo is synced to its own base, not the default one"
     ensure
       teardown_repo_host
