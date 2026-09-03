@@ -71,6 +71,22 @@ module OPilot
       assert_includes harness.prompts.last,  "summarise it"
     end
 
+    def test_the_orientation_is_sent_once_and_follow_ups_are_the_bare_message
+      # It runs to about 1000 tokens — where the mirrors live, which repos
+      # exist, how to reply. Every turn after the first resumes the same pi
+      # session, which still holds all of it, so re-sending it per turn only
+      # grew the context by that much per question.
+      harness = RecordingHarness.new
+      with_stdin("what's planned?\nsummarise it\nand again\n\n") do
+        silently { ChatRunner.new(@ctx, harness: harness).run }
+      end
+
+      assert_equal 3, harness.prompts.length
+      assert_includes harness.prompts.first, "/state"
+      assert_equal "summarise it", harness.prompts[1]
+      assert_equal "and again",    harness.prompts[2]
+    end
+
     def test_inline_initial_message_is_the_first_turn
       harness = RecordingHarness.new
       with_stdin("\n") do  # nothing typed after the seeded message → exit

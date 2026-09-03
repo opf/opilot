@@ -32,6 +32,18 @@ module OPilot
       puts "  Empty line to exit."
 
       pending = initial_message.to_s.strip
+      # The orientation — where the mirrors are, which repos exist, how to
+      # reply — is worth ~1000 tokens and is sent ONCE. Every later turn resumes
+      # the same pi session, which still holds it, so a follow-up is just the
+      # user's message. Re-sending it per turn was pure duplication, growing the
+      # context by that much on every question.
+      #
+      # A local flag rather than `session_file.exist?`, because the two are not
+      # the same test everywhere: FixRunner#run_chat enters its loop with a
+      # session that already exists (the planning run made it) but has never
+      # seen the chat orientation. "Have I sent it in this loop" is the actual
+      # question, and it is the same question in both.
+      oriented = false
       loop do
         if pending.empty?
           print "\n  You (empty line to exit): "
@@ -40,9 +52,16 @@ module OPilot
         break if pending.empty?
 
         wp_root = container_path(Helpers.items_dir(@ctx))   # /state/work_packages/<host>
-        prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending,
-                                    op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+        prompt  = if oriented
+                    pending
+                  else
+                    Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos,
+                                      message: pending, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+                  end
         @harness.run(prompt, tools: read_tools, session_file: session_file)
+        # Set only after the run returns: a failed turn never reached the model,
+        # so the next one still has to orient it.
+        oriented = true
         ping_terminal("opilot: chat reply ready")
         puts ""
         pending = ""

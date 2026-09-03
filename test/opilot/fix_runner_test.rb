@@ -30,6 +30,16 @@ module OPilot
       end
     end
 
+    # Records the prompts of the [c]hat loop, which calls #run (not #capture).
+    class RecordingChatHarness
+      attr_reader :prompts
+      def initialize; @prompts = []; end
+      def run(prompt, tools: nil, model: nil, session_file: nil)
+        @prompts << prompt
+        "ok"
+      end
+    end
+
     # Plays back one scripted outcome per capture call: a string is written to
     # the outfile, :error raises like a run that died mid-way (no outfile write).
     class ScriptedPlanHarness
@@ -446,6 +456,34 @@ module OPilot
       refute_includes out, "Plan generation failed"
       assert_equal "## Plan: original", (@ctx.state_dir / "work_packages" / "op.example.com" / "17" / "plan.md").read
       assert_includes out, "skipped"
+    end
+
+    def test_plan_chat_orients_once_even_though_the_session_already_exists
+      # The trap this guards: the session file EXISTS on entry — the planning
+      # run made it — so `session_file.exist?` would read as "already oriented"
+      # and skip the one turn that has to carry the chat framing. The flag is
+      # scoped to the loop for exactly that reason.
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / "17"
+      dir.mkpath
+      (dir / "session_id").write("session-from-planning")
+      st = Helpers::ItemState.new(
+        item_id: "17", subject: "A bug", branch: "bug/17-a-bug", repos: [], bases: {},
+        item_dir: dir, plan_file: dir / "plan.md", item_file: dir / "item.json",
+        related_file: dir / "related.json", target_repos_file: dir / "target_repos.json",
+        target_base_file: dir / "target_base.json", options_file: dir / "options.json",
+        created_wps_file: dir / "created_wps.json", session_file: dir / "session_id"
+      )
+      harness = RecordingChatHarness.new
+      runner  = FixRunner.new(@ctx, pull: FakePull.new, harness: harness, publish: nil)
+
+      with_stdin("why this approach?\nand the tests?\n\n") do
+        capture_io { runner.send(:run_chat, st) }
+      end
+
+      assert_equal 2, harness.prompts.length
+      assert_includes harness.prompts.first, "why this approach?"
+      assert_includes harness.prompts.first, "17", "the first turn still carries the framing"
+      assert_equal "and the tests?", harness.prompts.last, "the second is the bare message"
     end
   end
 end

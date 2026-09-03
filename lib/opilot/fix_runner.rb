@@ -322,15 +322,26 @@ module OPilot
       # path as a fallback rather than re-embedding the full text on every turn.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
       puts ""
+      # Same reasoning as the plan reference above, one level up: the orientation
+      # goes once and every later turn is just the message, because the session
+      # still holds it. The session already EXISTS here (planning made it), so
+      # `st.session_file.exist?` would wrongly skip the first chat turn's
+      # orientation — hence a flag scoped to this loop.
+      oriented = false
       loop do
         print "\n  You (empty line to exit): "
         msg = $stdin.gets&.chomp
         break if msg.nil? || msg.empty?
-        prompt = Prompts.plan_chat(
-          item_id: st.item_id, subject: st.subject,
-          item: container_path(st.item_file), plan: plan_ref, message: msg
-        )
+        prompt = if oriented
+                   msg
+                 else
+                   Prompts.plan_chat(
+                     item_id: st.item_id, subject: st.subject,
+                     item: container_path(st.item_file), plan: plan_ref, message: msg
+                   )
+                 end
         @harness.run(prompt, tools: read_tools, model: model, session_file: st.session_file)
+        oriented = true
         # Ring after the reply, not before the first message: the user just
         # chose [c]hat and is present; it's the LLM's answers they wander off on.
         ping_terminal("opilot: chat reply for #{wp_label(st.item_id)} ready")
