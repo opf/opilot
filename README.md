@@ -114,37 +114,37 @@ Some examples:
                     │
                     │ docker compose run
                     │
-┌── Docker ─────────┼──────────────────────────────────────────────────────────────────────────┐
-│                   ▼                                                                          │
-│ ┌─ runner container ────────────────┐        ┌─ harness container ───────────────┐           │
-│ │                                   │        │                                   │           │
-│ │ Ruby 4.0 script                   │  json  │ Node.js server (:47291)           │           │
-│ │  * Pulls WP content from OP API   │◀──────▶│   POST / -> `pi --mode json`      │           │
-│ │  * Manages metadata in .opilot/   │        │ volumes: .opilot/                 │           │
-│ │      * WP metadata mirror         │        │                                   │           │
-│ │      * Plan files                 │        │                                   │           │
-│ │      * Draft PR data              │        └──────────────┬────────────────────┘           │
-│ │  * Pushes branches, opens PRs     │                       │                                │
-│ │  * Delegates chat to the LLM      │                       │                                │
-│ └───────┬───────────────────────────┘                       │                                │
-│         │                                            ┌──────┴───────────────┐                │
-│         │                                            │                      │                │
-│         │                                            ▼                      ▼                │
-│         │                              ┌─ mcp-gw ───────────┐    ┌─ inference-gw ─────────┐  │
-│         │                              │ * attach the OP    │    │ * attach real API key  │  │
-│         │                              │   API token        │    │ * limit access to      │  │
-│         │                              │ * read-only ops    │    │   inference API-only   │  │
-│         │                              │                    │    │                        │  │
-│         │                              └───────┬────────────┘    └────────────┬───────────┘  │
-│         │                                      │                              │              │
-└─────────┼──────────────────────────────────────┼──────────────────────────────┼──────────────┘
-          │                                      │                              ▼
-          │         ┌─────────────────┐────┐     │                  ┌─────────────────────────┐
-          ├────────▶│ OpenProject API │/mcp│◀────┤                  │ Inference API:          │
-          │         ├ ────────────────┼────┤     │                  │ OpenRouter, or your     │
-          ├────────▶│ GitHub API      │/mcp│◀────┘                  │ own OpenAI-compatible   │
-          │         ├ ────────────────┼────┘                        │ endpoint                │
-          └────────▶│ AppSignal API   │                             └─────────────────────────┘
+┌── Docker ─────────┼─────────────────────────────────────────────────────────────────────────┐
+│                   ▼                                                                         │
+│ ┌─ runner container ────────────────┐        ┌─ harness container ───────────────┐          │
+│ │                                   │        │                                   │          │
+│ │ Ruby 4.0 script                   │  json  │ Node.js server (:47291)           │          │
+│ │  * Pulls WP content from OP API   │◀──────▶│   POST / -> `pi --mode json`      │          │
+│ │  * Manages metadata in .opilot/   │        │ volumes: .opilot/                 │          │
+│ │      * WP metadata mirror         │        │                                   │          │
+│ │      * Plan files                 │        │                                   │          │
+│ │      * Draft PR data              │        └──────────────┬────────────────────┘          │
+│ │  * Pushes branches, opens PRs     │                       │                               │
+│ │  * Delegates chat to the LLM      │                       │                               │
+│ └───────┬───────────────────────────┘                       │                               │
+│         │                                            ┌──────┴───────────────┐               │
+│         │                                            │                      │               │
+│         │                                            ▼                      ▼               │
+│         │                             ┌─ mcp-gw ───────────┐    ┌─ inference-gw ─────────┐  │
+│         │                             │ Read-only ops      │    │ LLM inference access   │  │
+│         │                             │ on various MCPs    │    │ injects the real token │  │
+│         │                             │                    │    │                        │  │
+│         │                             │                    │    │                        │  │
+│         │                             └───────┬────────────┘    └────────────┬───────────┘  │
+│         │                                     │                              │              │
+└─────────┼─────────────────────────────────────┼──────────────────────────────┼──────────────┘
+          │                                     │                              ▼
+          │         ┌─────────────────┐────┐    │                  ┌─────────────────────────┐
+          ├────────▶│ OpenProject API │/mcp│◀───┤                  │ Inference API:          │
+          │         ├ ────────────────┼────┤    │                  │ OpenRouter, or your     │
+          ├────────▶│ GitHub API      │/mcp│◀───┘                  │ own OpenAI-compatible   │
+          │         ├ ────────────────┼────┘                       │ endpoint                │
+          └────────▶│ AppSignal API   │                            └─────────────────────────┘
                     └─────────────────┘
 ```
 
