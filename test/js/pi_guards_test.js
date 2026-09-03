@@ -94,6 +94,17 @@ import('../../pi-guards.ts').then(mod => {
     assert.strictEqual(withinRepos('/etc/passwd'), false);
   });
 
+  test('ref inspection is allowed, but not the subcommands that delete refs', () => {
+    // "which tags contain this commit" is what the read phases get asked, and
+    // `describe` answers only the nearest tag. for-each-ref and show-ref have
+    // no write mode; branch and tag do (-D / -d), so they stay refused even
+    // though their --contains form is read-only.
+    assert.strictEqual(checkBash('git for-each-ref --contains abc123 refs/tags'), null);
+    assert.strictEqual(checkBash('git -C /repos/openproject show-ref'), null);
+    assert.ok(checkBash('git branch --contains abc123'), 'branch -D deletes refs');
+    assert.ok(checkBash('git tag --contains abc123'), 'tag -d deletes refs');
+  });
+
   test('bash is still confined to read-only git', () => {
     assert.strictEqual(checkBash('git log --oneline'), null);
     assert.strictEqual(checkBash('git -C /repos/openproject status'), null);

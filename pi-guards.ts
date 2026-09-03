@@ -14,6 +14,14 @@ const READONLY_GIT = new Set([
   "log", "show", "diff", "blame", "status", "rev-parse", "rev-list", "describe",
   "shortlog", "ls-files", "ls-tree", "cat-file", "grep", "whatchanged", "reflog",
   "annotate", "merge-base", "name-rev", "show-branch", "count-objects",
+  // Ref inspection. "Which tags or release branches contain this commit" is a
+  // question the read phases are actually asked, and nothing above answers it:
+  // `describe` names only the NEAREST tag. `branch` and `tag` are deliberately
+  // NOT here — both are dual-mode (`branch -D`, `tag -d` delete refs), so
+  // allowing either would put a ref-deleting subcommand behind the READ-ONLY
+  // grant. These two have no write mode at all, and `for-each-ref --contains`
+  // answers exactly what `branch --contains` / `tag --contains` would.
+  "for-each-ref", "show-ref",
 ]);
 
 // The two git subcommands that WRITE, allowed only when the run also holds the
