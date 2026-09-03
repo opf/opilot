@@ -169,6 +169,15 @@ import('../../pi-guards.ts').then(mod => {
     }
   });
 
+  test('both MCP tools are known to the guard by name', () => {
+    // The guard is a name allowlist, so a tool pi-mcp.ts registers but the
+    // guard does not know is blocked AND terminates the run — which is how
+    // gh_query failed the first time it was called.
+    for (const tool of ['op_query', 'gh_query']) {
+      assert.strictEqual(call(tool, {}).block, false, `${tool} must be allowed`);
+    }
+  });
+
   test('an unknown tool is refused and terminates the run', () => {
     const r = call('webfetch', { url: 'http://evil' });
     assert.strictEqual(r.block, true);

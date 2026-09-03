@@ -28,6 +28,27 @@ module OPilot
       stub_request(:post, "http://harness.test:47291").to_return(status: 200, body: body)
     end
 
+    # --- the tool grant ------------------------------------------------------
+
+    def test_tools_for_appends_only_the_tools_that_are_switched_on
+      base = Harness::TOOLS_READ
+      assert_equal base, Harness.tools_for(base, op_mcp: false, gh_mcp: false)
+      assert_equal "#{base},op_query", Harness.tools_for(base, op_mcp: true, gh_mcp: false)
+      assert_equal "#{base},gh_query", Harness.tools_for(base, op_mcp: false, gh_mcp: true)
+    end
+
+    def test_tools_for_emits_one_canonical_order
+      # server.js allowlists these as EXACT strings, so an order that differed
+      # between the two files would be a 403 the model cannot explain.
+      assert_equal "#{Harness::TOOLS_IMPL},op_query,gh_query",
+                   Harness.tools_for(Harness::TOOLS_IMPL, op_mcp: true, gh_mcp: true)
+    end
+
+    def test_tools_for_still_produces_the_named_op_only_constants
+      assert_equal Harness::TOOLS_READ_OP, Harness.tools_for(Harness::TOOLS_READ, op_mcp: true, gh_mcp: false)
+      assert_equal Harness::TOOLS_IMPL_OP, Harness.tools_for(Harness::TOOLS_IMPL, op_mcp: true, gh_mcp: false)
+    end
+
     def test_run_returns_streamed_text_on_success
       stub_harness(ndjson(
         assistant_text("the plan"),

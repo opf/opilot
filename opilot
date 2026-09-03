@@ -239,7 +239,14 @@ _falsy() {
 # default: an instance with no (Enterprise-only) MCP server enabled just
 # answers every op_query call "unavailable", which is a normal, quiet state —
 # not a reason to withhold the tool from every instance that does have it.
-_needs_mcp_gw() { _needs_harness && ! _falsy "$(_env_get OPILOT_OP_MCP)"; }
+# The GitHub route. OPILOT_GH_MCP is the switch on all three sides — mcp-gw
+# builds the route, the runner grants gh_query, pi-mcp.ts registers it — and it
+# is OFF unless set, because GitHub is a third party. The credential falls back
+# to GITHUB_CONTRIBUTOR_TOKEN, so no second token is needed.
+_gh_mcp_on() { [ -n "$(_env_get OPILOT_GH_MCP)" ] && ! _falsy "$(_env_get OPILOT_GH_MCP)"; }
+
+# One gateway, two upstreams — so it is needed when EITHER is wanted.
+_needs_mcp_gw() { _needs_harness && { ! _falsy "$(_env_get OPILOT_OP_MCP)" || _gh_mcp_on; }; }
 
 # The clones: needed by everything above, and by every pd subcommand — `pd init`
 # writes the clone's .git/info/exclude, and the rest read or write its openspec/.
@@ -299,14 +306,26 @@ if _needs_inference_gw; then
       # and the harness extension (pi-op-mcp.ts) that mcp-gw isn't running,
       # without either having to re-derive this condition itself.
       export OPILOT_MCP_GW_URL="http://mcp-gw:47293"
-      dc up -d --wait --remove-orphans inference-gw harness mcp-gw
+      # Same two-half shape as the URL above: the runner uses it to decide the
+      # tool grant (Context#gh_mcp?) and pi-mcp.ts to decide whether to
+      # register gh_query at all.
+      if _gh_mcp_on; then export OPILOT_GH_MCP=1; fi
+      # --build on every start. server.js, pi-guards.ts, pi-mcp.ts and the two
+      # MCP clients are BAKED INTO the harness image, and the gateways' .js the
+      # same way, so an edit without a rebuild silently runs the old code — the
+      # symptom is a stale behaviour that names nothing (a removed hostname, a
+      # tool the guard has not heard of, an extension that failed to load and
+      # left the model with no tool). With a warm cache and nothing changed
+      # this costs about a second; when something did change it rebuilds
+      # instead of lying.
+      dc up -d --build --wait --remove-orphans inference-gw harness mcp-gw
       trap 'dc stop harness inference-gw mcp-gw 2>/dev/null || true' EXIT INT TERM
     else
-      dc up -d --wait --remove-orphans inference-gw harness
+      dc up -d --build --wait --remove-orphans inference-gw harness
       trap 'dc stop harness inference-gw 2>/dev/null || true' EXIT INT TERM
     fi
   else
-    dc up -d --wait --remove-orphans inference-gw
+    dc up -d --build --wait --remove-orphans inference-gw
     trap 'dc stop inference-gw 2>/dev/null || true' EXIT INT TERM
   fi
 fi

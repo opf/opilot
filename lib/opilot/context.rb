@@ -158,6 +158,15 @@ module OPilot
       !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)
     end
 
+    # Whether the plan/chat phases get the gh_query tool. OFF by default, which
+    # is the opposite of op_mcp? and deliberate: that one degrades to a quiet
+    # "unavailable" on an instance without the add-on, while this one needs a
+    # GitHub read token an operator has to create. `./opilot` exports it only
+    # when that token is present, so unset means off rather than blank.
+    def gh_mcp?
+      %w[1 true yes on].include?(ENV["OPILOT_GH_MCP"].to_s.strip.downcase)
+    end
+
     # Whether the model opilot will call runs on a private network.
     #
     # `appsignal` sends production incident data to the model, which is the one

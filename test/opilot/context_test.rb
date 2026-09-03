@@ -166,6 +166,16 @@ module OPilot
       end
     end
 
+    def test_gh_mcp_is_off_unless_explicitly_switched_on
+      # The opposite default to op_mcp?, and deliberate: this one needs a GitHub
+      # read token an operator has to create, so unset must mean off.
+      with_env("OPILOT_GH_MCP" => nil)  { refute Context.build(@tmpdir).gh_mcp? }
+      with_env("OPILOT_GH_MCP" => "")   { refute Context.build(@tmpdir).gh_mcp? }
+      with_env("OPILOT_GH_MCP" => "0")  { refute Context.build(@tmpdir).gh_mcp? }
+      with_env("OPILOT_GH_MCP" => "1")  { assert Context.build(@tmpdir).gh_mcp? }
+      with_env("OPILOT_GH_MCP" => "true") { assert Context.build(@tmpdir).gh_mcp? }
+    end
+
     def test_mcp_gw_url_is_nil_unless_set
       with_env("OPILOT_MCP_GW_URL" => nil) { assert_nil Context.build(@tmpdir).mcp_gw_url }
       with_env("OPILOT_MCP_GW_URL" => "  ") { assert_nil Context.build(@tmpdir).mcp_gw_url }

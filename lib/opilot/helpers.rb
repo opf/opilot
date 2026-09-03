@@ -778,14 +778,14 @@ module OPilot
     # (upstream PR review, the `create wp` draft, light one-shot passes) keeps
     # the plain constant even when the flag is on.
     def read_tools
-      @ctx.op_mcp? ? Harness::TOOLS_READ_OP : Harness::TOOLS_READ
+      Harness.tools_for(Harness::TOOLS_READ, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
     end
 
     # As #read_tools, for the one write-enabled call site the plan grants the
     # tool to: gh-agent's own-PR reply and CI fix. The fix implement run keeps
     # no MCP tool at all — see MCP.md's Step 3 table for why.
     def impl_tools
-      @ctx.op_mcp? ? Harness::TOOLS_IMPL_OP : Harness::TOOLS_IMPL
+      Harness.tools_for(Harness::TOOLS_IMPL, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
     end
 
     # One-time, best-effort report of what the instance's MCP server actually

@@ -41,7 +41,7 @@ module OPilot
 
         wp_root = container_path(Helpers.items_dir(@ctx))   # /state/work_packages/<host>
         prompt  = Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos, message: pending,
-                                    op_mcp: @ctx.op_mcp?)
+                                    op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
         @harness.run(prompt, tools: read_tools, session_file: session_file)
         ping_terminal("opilot: chat reply ready")
         puts ""

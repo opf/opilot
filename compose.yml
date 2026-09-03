@@ -50,6 +50,10 @@ services:
       # "off", not "blank" — Context#op_mcp? reads it the same way
       # OPILOT_TRACK_UPSTREAM_PRS is read.
       - OPILOT_OP_MCP
+      # The gh_query tool grant. Bare form and OFF unless set, unlike
+      # OPILOT_OP_MCP: it needs a GitHub read token, so ./opilot exports it
+      # only when one is configured.
+      - OPILOT_GH_MCP
       # Where the runner reaches mcp-gw for the startup tool-list check
       # (Helpers#report_mcp_status). Bare form, exported by ./opilot only
       # when the flag above and the harness are both needed — unset here means
@@ -157,6 +161,9 @@ services:
       # feature flag alongside the runner's op_query grant (OPILOT_OP_MCP).
       # ./opilot exports it only when both the harness and the flag are needed.
       - OPILOT_MCP_GW_URL
+      # The harness half of the gh_query flag: pi-mcp.ts registers that tool
+      # only when this is truthy AND the gateway URL above is set.
+      - OPILOT_GH_MCP
       - PI_OFFLINE=1
       # server.js reads the model slugs to decide whether to copy the
       # openrouter provider config from git or generate one for a self-hosted
@@ -241,6 +248,17 @@ services:
     environment:
       - OPENPROJECT_URL
       - OPENPROJECT_TOKEN
+      # The GitHub route. OPILOT_GH_MCP is the switch (off by default — GitHub
+      # is a third party, so reaching it is an explicit opt-in). The credential
+      # is opilot's one GitHub identity: it can write, but no write is reachable
+      # through the pinned /readonly path and the six-operation allowlist, and
+      # this container already holds a write-capable OPENPROJECT_TOKEN on the
+      # same footing.
+      - OPILOT_GH_MCP
+      - GITHUB_CONTRIBUTOR_TOKEN
+      # Optional; defaults to GitHub's own hosted MCP server on its readonly
+      # path. Points at a locally run `github-mcp-server http` instead.
+      - OPILOT_GH_MCP_URL
       # Fixed handshake value (not a secret), the same one inference-gw and pi-op-mcp.ts use.
       - OPILOT_GW_TOKEN
     networks:

@@ -47,7 +47,13 @@ const DANGEROUS_OPTION = /^(--output|-o$|--exec-path|--git-dir|--work-tree|-c$|-
 // op_query (pi-op-mcp.ts) is listed here too, but this file does nothing
 // further to guard it — mcp-gw.js's request-body allowlist is the real control
 // on what it can reach. An unknown tool name still terminates the run.
-const KNOWN_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "write", "edit", "op_query"]);
+const KNOWN_TOOLS = new Set([
+  "read", "grep", "find", "ls", "bash", "write", "edit",
+  // The MCP tools pi-mcp.ts registers. Both must be named here or the guard
+  // refuses them and TERMINATES the run, which is the allowlist working as
+  // designed — a new tool is a deliberate addition in two files, not one.
+  "op_query", "gh_query",
+]);
 
 function resolvePath(p) {
   // Node's path.resolve, inlined: extensions run in whatever module system pi
