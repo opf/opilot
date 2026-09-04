@@ -144,6 +144,30 @@ test('contextWindow appears only when configured', () => {
   assert.deepStrictEqual(junk.config.models, [{ id: 'm' }]);
 });
 
+test('a self-hosted model only gets image input when the operator says so', () => {
+  // pi treats a model with no `input` as text-only and then drops every picture
+  // its read tool opens — silently, mid-run. Claiming vision for a text-only
+  // server is the opposite failure (the upstream 400s), so this is a flag.
+  const off = only(buildModelsJson({ OPILOT_MODEL_HEAVY: 'local/m' }));
+  assert.deepStrictEqual(off.config.models, [{ id: 'm' }]);
+
+  for (const on of ['1', 'true', 'yes', 'on', 'TRUE']) {
+    const { config } = only(buildModelsJson({ OPILOT_MODEL_HEAVY: 'local/m', OPILOT_MODEL_VISION: on }));
+    assert.deepStrictEqual(config.models, [{ id: 'm', input: ['text', 'image'] }], on);
+  }
+
+  for (const off_ of ['0', 'false', 'no', 'off', '']) {
+    const { config } = only(buildModelsJson({ OPILOT_MODEL_HEAVY: 'local/m', OPILOT_MODEL_VISION: off_ }));
+    assert.deepStrictEqual(config.models, [{ id: 'm' }], JSON.stringify(off_));
+  }
+
+  // Both knobs at once, in the order pi's schema declares them.
+  const both = only(buildModelsJson({
+    OPILOT_MODEL_HEAVY: 'local/m', OPILOT_MODEL_CONTEXT_WINDOW: '8192', OPILOT_MODEL_VISION: '1',
+  }));
+  assert.deepStrictEqual(both.config.models, [{ id: 'm', contextWindow: 8192, input: ['text', 'image'] }]);
+});
+
 test('a light model on another provider is ignored rather than mixed in', () => {
   // One generated provider, so a slug from a different one cannot belong to it.
   const { config } = only(buildModelsJson({

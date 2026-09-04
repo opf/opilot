@@ -25,6 +25,14 @@ module OPilot
       items_dir(ctx) / id.to_s
     end
 
+    # Rewrite a host path under .opilot/ to its path inside the harness
+    # container, where .opilot is mounted read-only at /state. A module function
+    # as well as an instance method (#container_path) because Pull writes
+    # container paths into item.json and does not include Helpers.
+    def self.state_container_path(ctx, host_path)
+      host_path.to_s.sub(ctx.state_dir.to_s, ctx.state_container)
+    end
+
     # The <id>/repos/<name>/ dirs under one work-package dir that hold a shipped
     # PR. One definition, because "what counts as a shipped PR dir" is asked both
     # of every work package (the gh-agent scan) and of one (`dev refresh`).
@@ -1068,7 +1076,7 @@ module OPilot
 
     # Rewrite a host path under .opilot/ to its path inside the harness container.
     def container_path(host_path)
-      host_path.to_s.sub(@ctx.state_dir.to_s, @ctx.state_container)
+      Helpers.state_container_path(@ctx, host_path)
     end
 
     # Rewrite a host path inside a repo's worktree to its /repos/<name> path

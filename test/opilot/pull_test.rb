@@ -240,9 +240,13 @@ module OPilot
 
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:op_url, :state_dir, :token) { def op_host; "example.com"; end }
-                  .new("https://example.com", Pathname(@tmpdir), "tok")
+      ctx = Struct.new(:op_url, :state_dir, :state_container, :token) { def op_host; "example.com"; end }
+                  .new("https://example.com", Pathname(@tmpdir), "/state", "tok")
       @pull = Pull.new(ctx)
+      # Every refreshed item.json mirrors the WP's pictures (ItemPictures), so
+      # the fresh path always asks for the attachment collection.
+      stub_request(:get, %r{/work_packages/[\w-]+/attachments\z})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
     end
 
     def teardown
@@ -252,7 +256,8 @@ module OPilot
     def test_skips_api_calls_when_item_json_is_current
       item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
       item_dir.mkpath
-      (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
+      (item_dir / "item.json").write(JSON.generate(
+        { "updated_at" => "2024-01-02T00:00:00Z", "item_version" => Pull::ITEM_VERSION }))
 
       # WebMock raises if any HTTP call is made — no stubs registered
       cached, comments = @pull.send(:fetch_work_package_item, WP)
@@ -264,7 +269,9 @@ module OPilot
       stored_comments = [{ "user" => "Alice", "text" => "Reproduced on 14.3", "reactions" => { "thumbsup" => 2 } }]
       item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
       item_dir.mkpath
-      (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z", "comments" => stored_comments }))
+      (item_dir / "item.json").write(JSON.generate(
+        { "updated_at" => "2024-01-02T00:00:00Z", "item_version" => Pull::ITEM_VERSION,
+          "comments" => stored_comments }))
 
       _, comments = @pull.send(:fetch_work_package_item, WP)
       assert_equal stored_comments, comments
@@ -315,6 +322,98 @@ module OPilot
       assert_equal "Fix login bug", on_disk["subject"], "while the API mirror itself is rebuilt"
     end
 
+    # The mirror's shape changes over time (pictures[] was the first addition).
+    # Without a version beside updated_at, a work package opilot has already seen
+    # keeps the old shape until somebody edits it — which for a quiet work
+    # package is never.
+    def test_re_fetches_an_item_written_on_an_older_shape
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
+
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      cached, = @pull.send(:fetch_work_package_item, WP)
+
+      refute cached, "the same updated_at, but not the same shape"
+      on_disk = JSON.parse((item_dir / "item.json").read)
+      assert_equal Pull::ITEM_VERSION, on_disk["item_version"]
+      assert_equal [], on_disk["pictures"]
+    end
+
+    # An attachment read that failed leaves the mirror incomplete, and
+    # updated_at cannot notice: the work package itself did not change.
+    def test_re_fetches_while_the_picture_mirror_is_incomplete
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
+      item_dir.mkpath
+      (item_dir / "item.json").write(JSON.generate(
+        { "updated_at" => "2024-01-02T00:00:00Z", "item_version" => Pull::ITEM_VERSION,
+          "pictures" => [], "pictures_pending" => true }))
+
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      cached, = @pull.send(:fetch_work_package_item, WP)
+
+      refute cached
+      on_disk = JSON.parse((item_dir / "item.json").read)
+      refute on_disk["pictures_pending"], "the retry finished it"
+    end
+
+    # A refresh during an outage must not lose the pictures the last complete
+    # run mirrored — the files are still on disk, and only this index names them.
+    def test_a_failed_attachment_read_keeps_the_previous_picture_index
+      item_dir = Pathname(@tmpdir) / "work_packages" / "example.com" / "42"
+      item_dir.mkpath
+      known = [{ "id" => "7", "file" => "/state/work_packages/example.com/42/pictures/7-shot.png" }]
+      (item_dir / "item.json").write(JSON.generate(
+        { "updated_at" => "2024-01-01T00:00:00Z", "item_version" => Pull::ITEM_VERSION,
+          "pictures" => known }))
+
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/attachments")
+        .to_return(status: 503, body: "{}")
+
+      @pull.send(:fetch_work_package_item, WP)
+
+      on_disk = JSON.parse((item_dir / "item.json").read)
+      assert_equal known, on_disk["pictures"]
+      assert on_disk["pictures_pending"]
+    end
+
+    # The mirror rewrites a picture's URL in the comments it returns, so the two
+    # branches have to hand back the same text.
+    def test_returns_the_mirrored_comments
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [
+          { "id" => 9, "createdAt" => "2024-01-02T00:00:00Z",
+            "comment" => { "raw" => "look: ![](/api/v3/attachments/7/content)" },
+            "_links" => { "user" => { "href" => "/api/v3/users/2", "title" => "Bob" } } }
+        ] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/attachments")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [
+          { "id" => 7, "fileName" => "shot.png", "contentType" => "image/png", "fileSize" => 3,
+            "_links" => { "downloadLocation" => { "href" => "/api/v3/attachments/7/content" } } }
+        ] } }))
+      stub_request(:get, "https://example.com/api/v3/attachments/7/content")
+        .to_return(status: 200, body: "png")
+
+      _, comments = @pull.send(:fetch_work_package_item, WP)
+
+      assert_equal "look: ![](/state/work_packages/example.com/42/pictures/7-shot.png)",
+                   comments.first["text"]
+    end
+
     def test_fetches_and_writes_when_no_item_json_exists
       stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
@@ -343,7 +442,8 @@ module OPilot
       dir = Pathname(@tmpdir) / "work_packages" / "example.com" / id.to_s
       dir.mkpath
       (dir / "item.json").write(JSON.generate(
-        { "updated_at" => updated_at, "comments" => comments }.merge(extra)
+        { "updated_at" => updated_at, "item_version" => Pull::ITEM_VERSION,
+          "comments" => comments }.merge(extra)
       ))
     end
 
@@ -359,9 +459,9 @@ module OPilot
     end
 
     def build_pull(allowed_op_user_ids = [])
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) do
+      ctx = Struct.new(:op_url, :state_dir, :state_container, :token, :allowed_op_user_ids) do
         def op_host; "example.com"; end
-      end.new("https://example.com", Pathname(@tmpdir), "tok", allowed_op_user_ids)
+      end.new("https://example.com", Pathname(@tmpdir), "/state", "tok", allowed_op_user_ids)
       Pull.new(ctx)
     end
 
@@ -374,6 +474,10 @@ module OPilot
       # /users/me identifies opilot as user 1 with display name "OPilot" — the
       # id lets an OP-native @-mention be recognised by data-id, the name is
       # the poll's own search term (see #mention_filter_json).
+      # Every refreshed item.json mirrors the WP's pictures (ItemPictures), so
+      # the fresh path always asks for the attachment collection.
+      stub_request(:get, %r{/work_packages/[\w-]+/attachments\z})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
       stub_request(:get, "https://example.com/api/v3/users/me")
         .to_return(status: 200, body: JSON.generate(
           { "_links" => { "self" => { "href" => "/api/v3/users/1" } }, "name" => "OPilot" }))
@@ -638,9 +742,13 @@ module OPilot
   class PullRelatedTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:op_url, :state_dir, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
-                  .new("https://example.com", Pathname(@tmpdir), "tok", [])
+      ctx = Struct.new(:op_url, :state_dir, :state_container, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
+                  .new("https://example.com", Pathname(@tmpdir), "/state", "tok", [])
       @pull = Pull.new(ctx)
+      # Every refreshed item.json mirrors the WP's pictures (ItemPictures), so
+      # the fresh path always asks for the attachment collection.
+      stub_request(:get, %r{/work_packages/[\w-]+/attachments\z})
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
     end
 
     def teardown

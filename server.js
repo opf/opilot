@@ -126,9 +126,18 @@ function buildModelsJson(env = process.env) {
   if (ids.length === 0) throw new Error(`no model id in OPILOT_MODEL_HEAVY (got: ${heavy})`);
 
   const contextWindow = Number(env.OPILOT_MODEL_CONTEXT_WINDOW);
-  const model = id => (Number.isFinite(contextWindow) && contextWindow > 0
-    ? { id, contextWindow }
-    : { id });
+  // pi defaults a model with no `input` to text-only, and then its `read` tool
+  // drops every picture it opens ("Current model does not support images") —
+  // silently, mid-run. A self-hosted vision model has to say so here, and only
+  // the operator knows: pi's own catalog answers this for openrouter, and
+  // claiming it for a text-only server would make the upstream 400 instead.
+  const vision = /^(1|true|yes|on)$/i.test(String(env.OPILOT_MODEL_VISION || ''));
+  const model = (id) => {
+    const entry = { id };
+    if (Number.isFinite(contextWindow) && contextWindow > 0) entry.contextWindow = contextWindow;
+    if (vision) entry.input = ['text', 'image'];
+    return entry;
+  };
 
   const config = {
     baseUrl: 'http://inference-gw:47292/v1',

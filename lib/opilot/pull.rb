@@ -1,6 +1,7 @@
 require "json"
 require "time"
 require_relative "clients"
+require_relative "item_pictures"
 
 module OPilot
   class Pull
@@ -368,6 +369,28 @@ module OPilot
       create_wp_refusal_noted_at
     ].freeze
 
+    # Carried the same way, under a weaker rule — which is why they are not in
+    # CARRIED_KEYS, whose promise is "never dropped". These are derived, and
+    # ItemPictures REPLACES both whenever it finishes; they survive only so that
+    # a refresh whose attachment read failed does not lose the index (and, with
+    # it, the files) the last complete run produced.
+    PICTURE_KEYS = %w[pictures pictures_skipped].freeze
+
+    # item.json's shape. The updated_at cache below would otherwise keep a work
+    # package opilot has already seen on the old shape forever — which is how a
+    # mirror gains a field (this is 2 because "pictures" was added).
+    ITEM_VERSION = 2
+
+    # A work package is served from cache only when the mirror is COMPLETE.
+    # `pictures_pending` says an attachment read failed, and updated_at cannot
+    # notice that: the work package did not change, so an incomplete index would
+    # read as current until somebody edited it.
+    def item_current?(cached, wp)
+      cached["updated_at"] == wp["updatedAt"] &&
+        cached["item_version"] == ITEM_VERSION &&
+        !cached["pictures_pending"]
+    end
+
     def fetch_work_package_item(wp)
       wp_id = wp_display_id(wp)
       item_dir  = Helpers.item_dir(@ctx, wp_id)
@@ -375,9 +398,7 @@ module OPilot
 
       if item_path.exist?
         cached = JSON.parse(item_path.read)
-        if cached["updated_at"] == wp["updatedAt"]
-          return [true, cached["comments"] || []]
-        end
+        return [true, cached["comments"] || []] if item_current?(cached, wp)
       end
 
       acts_code, acts = @api.work_package_activities(wp_id)
@@ -394,12 +415,17 @@ module OPilot
       full = build_full_item(wp, comments)
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
-        CARRIED_KEYS.each { |key| full[key] = prev[key] if prev.key?(key) }
+        (CARRIED_KEYS + PICTURE_KEYS).each { |key| full[key] = prev[key] if prev.key?(key) }
       end
       item_dir.mkpath
+      full["item_version"] = ITEM_VERSION
+      full = ItemPictures.mirror(full, dir: item_dir, api: @api, ctx: @ctx)
       item_path.write(JSON.generate(full))
 
-      [false, comments]
+      # The mirrored comments, not the ones just built: the mirror rewrites the
+      # picture URLs in them, and the cached branch above returns the rewritten
+      # text — one shape whichever way this returns.
+      [false, full["comments"] || []]
     end
 
     def build_comments(activities, reactions)

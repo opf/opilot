@@ -467,6 +467,7 @@ bare `docker compose run …` works from the repo root.
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
 | `pull.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
+| `item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
 | `agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
 | `gh_pull.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
 | `upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
@@ -509,6 +510,44 @@ PR needs the store's layout on every tick.
    a handler that posts two left the first one live, and the notes `Pull` itself
    posts were never recorded at all. This is why `Pull#ensure_bot_identity!`
    demands the bot's **user id** as well as its display name.
+
+   A refreshed `item.json` also **mirrors the pictures the work package shows**
+   (`OPilot::ItemPictures`), because a screenshot is often the whole report. pi's
+   `read` tool inlines png/jpeg/gif/webp/bmp as images, but it has no fetch tool
+   and the harness has no egress, so `/api/v3/attachments/<id>/content` in the
+   mirrored text is dead until the bytes are on disk **and** the reference points
+   at them — which is why the download and `#rewrite_refs` are one operation.
+   Nothing here parses an image: the bytes pass through untouched and the decode
+   happens in the contained harness, not in the runner that holds both tokens.
+
+   Two reads, not one: the work package's own collection
+   (`#work_package_attachments`), plus a per-id read (`#attachment`) for anything
+   only a reference names — a picture pasted into a **comment** is claimed by that
+   comment (`CommentAttachmentsClaims`), so the work package's collection never
+   carries it. Only the by-id route answers for both containers, and it is skipped
+   for an id the collection already resolved. Capped at 10MB a picture, 40MB and
+   20 attachments a work package; anything else (an SVG is markup to pi, a PDF is
+   bytes it will not send) is recorded in `pictures_skipped` with the reason rather
+   than downloaded — a reader who attached a screenshot has to learn it was not
+   read. Bytes already on disk at the size the API reports are not fetched again,
+   so a new comment does not re-download every screenshot.
+
+   **`item.json` carries an `item_version`, and the `updated_at` cache checks it.**
+   Without it a work package opilot has already seen keeps the old mirror shape
+   until somebody edits it, which for a quiet work package is never — so a new
+   field would reach exactly the work packages that did not need it.
+
+   **An attachment read that failed is not the answer "no pictures", and the
+   cache gate (`Pull#item_current?`) knows the difference.** A failure sets
+   `pictures_pending`, which suppresses the cache for that work package until a
+   run finishes, prunes nothing (a bad minute at the API must not delete a
+   picture), and carries the last complete index forward (`Pull::PICTURE_KEYS`,
+   deliberately *not* in `CARRIED_KEYS`, whose promise is "never dropped").
+   Retrying is keyed on the **status code**, not on "it failed": a 429 or 5xx has
+   already exhausted the transport's own retries, so it means a bad minute, while
+   a 404 means the attachment is gone — a stale reference in a description is
+   real, and asking again every 20 seconds forever would only cost requests. A
+   403 on the collection is likewise an answer, so the by-id reads still run.
 2. **Plan** — the LLM (read-only tools) produces `plan.md`; `NEEDS_INFO` aborts with a
    comment, and on a `ship` trigger `OPTIONS` stops here instead (`options.json` plus
    one comment) until a reply names a number. Every clone is first synced to current upstream
@@ -748,9 +787,14 @@ globally unique, so `pr_reviews/` is flat.
 │   ├── op_agent_scan.json      # op-agent's saved scan-window watermark
 │   ├── resolved-ids.json       # `pd init` cache: project, type ids, statuses + isClosed
 │   └── <wp_id>/
-│       ├── item.json            # WP metadata + poll cache + acted_at
+│       ├── item.json            # WP metadata + poll cache + acted_at + item_version
 │       │                        #   + refusal_noted_at (the one allowlist note per WP)
 │       │                        #   + create_wp_refusal_noted_at (the one `create wp` off note)
+│       │                        #   + pictures[] / pictures_skipped[] (see pictures/ below)
+│       │                        #   + pictures_pending (an attachment read failed —
+│       │                        #     suppresses the cache until a run finishes)
+│       ├── pictures/            # every picture the WP shows, mirrored so the LLM can `read`
+│       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── options.json         # offered implementation options; present = waiting for a number
@@ -856,6 +900,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |
 | `OPILOT_MODEL_CONTEXT_WINDOW` | Optional; context window for a self-hosted model. Omitted leaves pi's default |
+| `OPILOT_MODEL_VISION` | Optional (`1`/`true`); says a **self-hosted** model can see pictures, so the generated provider config declares `input: ["text","image"]`. Only read for a generated config — pi's own catalog answers this for `openrouter/…` models. Off by default, and the failure it prevents is silent in both directions: unset, pi treats the model as text-only and drops every picture its `read` tool opens ("Current model does not support images"); set for a text-only server, the upstream rejects the request instead |
 | `OPILOT_HARNESS_MEM` / `OPILOT_HARNESS_CPUS` | Optional; caps on the harness container (defaults `4g` / `2`, generous and unmeasured). Too low reads as an idle timeout, not an OOM — measure a real `dev commit` before tightening |
 | `OPILOT_PD_PARENT_TYPE` | Optional; the WP type a `pd` change becomes (default `FEATURE`), resolved by name at `pd init` |
 | `OPILOT_PD_CHILD_TYPE` | Optional; the type each `tasks.md` section becomes (default `IMPLEMENTATION`) |

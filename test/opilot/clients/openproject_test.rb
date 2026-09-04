@@ -142,6 +142,45 @@ module OPilot
 
       # --- attachment downloads and the API token -----------------------------
 
+      def test_work_package_attachments_reads_the_nested_collection
+        listing = stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-42/attachments")
+                  .to_return(status: 200, body: '{"_embedded":{"elements":[]}}')
+
+        code, = @op.work_package_attachments("PROJ-42")
+
+        assert_equal 200, code
+        assert_requested listing
+      end
+
+      def test_an_attachment_is_read_by_id
+        # The route a comment's picture needs: it is claimed by the comment, so
+        # the work package's own collection never carries it.
+        one = stub_request(:get, "#{BASE}/api/v3/attachments/30381")
+              .to_return(status: 200, body: '{"id":30381,"fileName":"shot.png"}')
+
+        code, body = @op.attachment(30381)
+
+        assert_equal 200, code
+        assert_equal "shot.png", body["fileName"]
+        assert_requested one
+      end
+
+      def test_a_relative_download_location_is_resolved_against_this_instance
+        # `downloadLocation` is absolute only on external storage. With the files
+        # on the instance itself it is the bare API path, which has no host to
+        # connect to — and would read as "not this instance", withholding the
+        # token from our own API.
+        content = stub_request(:get, "#{BASE}/api/v3/attachments/5/content")
+                  .with(basic_auth: ["apikey", "tok"])
+                  .to_return(status: 200, body: "bytes")
+
+        code, body = @op.download_attachment("/api/v3/attachments/5/content")
+
+        assert_equal 200, code
+        assert_equal "bytes", body
+        assert_requested content
+      end
+
       def test_download_attachment_authenticates_against_this_instance
         content = stub_request(:get, "#{BASE}/api/v3/attachments/5/content")
                   .with(basic_auth: ["apikey", "tok"])
@@ -188,6 +227,8 @@ module OPilot
         refute @op.on_this_instance?("https://op.test:8443/x"), "port differs"
         refute @op.on_this_instance?("https://op.test.evil/x"), "host differs"
         refute @op.on_this_instance?("not a url"),              "unparseable is not this instance"
+        assert @op.on_this_instance?("/api/v3/attachments/5/content"),
+               "a relative path in this API's own response IS this instance"
       end
 
       def test_lock_version_is_private_so_the_locking_dance_stays_in_one_place
