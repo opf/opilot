@@ -24,7 +24,8 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
 ## Feature ideas
-* Matrix/Element integration, to track activity via a standalone channel
+* Replace OpenSpec with a simple list of acceptance criteria
+* Matrix/Element integration for a better interface & activity tracking
 * Nextcloud integration, so that we can load relevant data during designs
 * Figma integration, to interpret designs
 * Explore ingestion of pictures & videos in WP description (and linked by Nextcloud)
