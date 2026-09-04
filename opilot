@@ -27,6 +27,56 @@ dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 # pipe, and a prompt behind one hangs with no visible question.
 _need() { ! _is reset op && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 
+# ── Cleanup ───────────────────────────────────────────────────────────────
+# One trap for the whole run. Each step that acquires something records it
+# here, because a second `trap` REPLACES the first — the three per-service
+# traps this replaced could not have coexisted with the lock below.
+STOP_SERVICES=""
+LOCK_HELD=""
+LOCK_DIR="$SCRIPT_DIR/.opilot/agent.lock"
+_cleanup() {
+  if [ -n "$STOP_SERVICES" ]; then dc stop $STOP_SERVICES 2>/dev/null || true; fi
+  if [ -n "$LOCK_HELD" ]; then rm -rf "$LOCK_DIR"; fi
+}
+trap _cleanup EXIT INT TERM
+
+# ── One agent at a time ───────────────────────────────────────────────────
+# Two agent processes on one .opilot answer every trigger twice. The de-dup
+# watermark (last_acted_comment_at) is written only AFTER a handler finishes,
+# so a second poller inside that window — up to a minute for a chat answer —
+# reads the same comment as unacted and runs it again. Both then post.
+#
+# The lock is here, in the launcher, rather than in the runner: this process
+# holds the HOST pid, which is the one an operator kills, and a container
+# cannot test whether another container's process is alive. A run started as
+# `docker compose run … bin/opilot agent` bypasses it, which is the accepted
+# gap — every documented path goes through this script.
+#
+# `mkdir` is the atomic test-and-set. A lock whose owner is gone is taken over
+# rather than reported, so a killed agent needs no manual cleanup.
+_locks_agent() {
+  _is agent op-agent gh-agent || return 1
+  for _a in "$@"; do
+    case "$_a" in --help | -h) return 1 ;; esac
+  done
+}
+if _locks_agent "$@"; then
+  mkdir -p "$SCRIPT_DIR/.opilot"
+  until mkdir "$LOCK_DIR" 2>/dev/null; do
+    # An empty lock is a sibling between its mkdir and its pid write, not a
+    # stale one — read twice before deciding.
+    OWNER="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    [ -z "$OWNER" ] && { sleep 1; OWNER="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"; }
+    if [ -n "$OWNER" ] && kill -0 "$OWNER" 2>/dev/null; then
+      echo "opilot: an agent is already running (pid $OWNER)." >&2
+      exit 1
+    fi
+    rm -rf "$LOCK_DIR"
+  done
+  echo $$ > "$LOCK_DIR/pid"
+  LOCK_HELD=1
+fi
+
 # ── First-run setup ───────────────────────────────────────────────────────
 if _need OPENPROJECT_URL; then
   echo ""; echo "=== First run — quick setup ==="; echo ""
@@ -319,14 +369,14 @@ if _needs_inference_gw; then
       # this costs about a second; when something did change it rebuilds
       # instead of lying.
       dc up -d --build --wait --remove-orphans inference-gw harness mcp-gw
-      trap 'dc stop harness inference-gw mcp-gw 2>/dev/null || true' EXIT INT TERM
+      STOP_SERVICES="harness inference-gw mcp-gw"
     else
       dc up -d --build --wait --remove-orphans inference-gw harness
-      trap 'dc stop harness inference-gw 2>/dev/null || true' EXIT INT TERM
+      STOP_SERVICES="harness inference-gw"
     fi
   else
     dc up -d --build --wait --remove-orphans inference-gw
-    trap 'dc stop inference-gw 2>/dev/null || true' EXIT INT TERM
+    STOP_SERVICES="inference-gw"
   fi
 fi
 # `op` prints JSON for a pipe, so it must never run under a pty: compose.yml

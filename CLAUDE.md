@@ -26,6 +26,22 @@ a fresh clone).
 Agent loops: `./opilot agent` (both), `agent op`, `agent gh` — the older
 `op-agent`/`gh-agent` names still work and are used below.
 
+**Only one agent runs at a time**, whichever loops it starts. A second one is
+refused by name and pid (`.opilot/agent.lock/pid`). Two agents on one `.opilot`
+answer every trigger twice: `last_acted_comment_at` is written only *after* a
+handler finishes, so a second poller inside that window — up to a minute for a
+chat answer — reads the same comment as unacted and runs it again. `agent op`
+and `agent gh` exclude each other for the same reason `CombinedAgent` is
+single-threaded: both drive the same clones.
+
+The lock lives in **`./opilot`, the launcher**, not in the runner. It holds the
+host pid, which is the one an operator kills, and a container cannot test
+whether another container's process is alive. `mkdir` is the atomic
+test-and-set; a lock whose owner is gone is taken over rather than reported, so
+a killed agent needs no cleanup. Starting the runner directly
+(`docker compose run … bin/opilot agent`) bypasses it — the accepted gap, since
+every documented path goes through the script.
+
 ### op-agent
 
 Polls work packages, driven by `@opilot` comments. There are two command words —
@@ -820,6 +836,7 @@ globally unique, so `pr_reviews/` is flat.
 
 ```
 .opilot/
+├── agent.lock/pid           # the running agent's HOST pid; present = an agent holds it
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
 ├── chat_session_id          # LLM session for the current `chat` REPL (reset each run)
