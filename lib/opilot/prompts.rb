@@ -549,9 +549,12 @@ module OPilot
     # artifacts are available, for create_wp_line's reason — and so the off path
     # pays none of these tokens.
     #
-    # Two sentences carry the weight. Without the "use one only when" rule every
+    # Three sentences carry the weight. Without the "use one only when" rule every
     # answer becomes a gist. Without "the reader does not see it here" the writer
     # says "as the diagram below shows", which is false in the activity tab.
+    # Without "put the FULL answer in it" the writer answers in the comment AND
+    # attaches a diagram of the same thing, so the reader reads it twice — which
+    # is what the first version did on a real run.
     #
     # The block sits at the END of the answer: the whole answer shares one output
     # budget, so a cut-off response then loses the artifact and keeps the comment.
@@ -570,7 +573,12 @@ module OPilot
         END ARTIFACT
 
         An artifact is markdown only. I remove each block from the comment, put it in
-        a gist, and add the link. The reader does not see the artifact in the comment,
+        a gist, and add the link.
+
+        When you write an artifact, put the FULL answer in it — the explanation and
+        the diagram in one document. The comment then holds two or three sentences:
+        what the artifact contains, and the one thing the reader must know. Do not
+        write the answer twice. The reader does not see the artifact in the comment,
         so do not write "see the diagram below".
       TEXT
     end

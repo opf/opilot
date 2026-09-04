@@ -1350,6 +1350,8 @@ module OPilot
       with_artifacts("ok")
       @agent.handle(intent(:chat, text: "what can you do?"))
       assert_includes @harness.runs.last, "BEGIN ARTIFACT"
+      assert_includes @harness.runs.last, "put the FULL answer in it",
+                      "an artifact holds the whole answer; the comment is a lead plus the link"
     end
 
     # With the feature off the instructions were never given, so a BEGIN ARTIFACT

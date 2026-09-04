@@ -686,6 +686,11 @@ is why there is no sanitizer here. **OpenProject does not render mermaid** (chec
 in its CKEditor bundle), so the activity-tab comment carries the link and never the
 picture — hence the prompt telling the writer not to say "see the diagram below".
 
+**An artifact holds the WHOLE answer**, explanation and diagram in one document;
+the comment is then two or three sentences plus the link. The first version said
+only where the diagram goes, so a real run answered in full in the comment *and*
+attached a flowchart of the same thing, and the reader read it twice.
+
 **The artifact travels in the response text, and the runner writes it.** Chat holds
 `Harness::TOOLS_READ` and `pi-guards.ts` confines writes to `/repos`, so the model
 cannot write a file — and that read-only contract for prompt-injectable phases is
