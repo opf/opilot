@@ -30,9 +30,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Nextcloud integration, so that we can load relevant data during designs
 * Figma integration, to interpret designs
 * Transition the WP status & other fields when taking over implementation
-* Generate arbitrary non-code artifacts like SVGs or stylesheets
-  * For now, at least gists could be good enough for basic text reports
-* Add a diagram that maps OPilot commands to complete product development flow (waterfall-ish)
+* Generate more kinds of arbitrary non-code artifacts
 * Move the adopt command into its own repo? 
 * Consider running actual tests -- tricky, as they'd need to be run via the `docker compose` stack on the host system
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.

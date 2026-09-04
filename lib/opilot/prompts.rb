@@ -402,6 +402,8 @@ module OPilot
         ## Plan: #{Helpers.wp_label(item_id)} — #{title}
         ### Files to change
         ### Approach
+        (when a flow or a structure is hard to say in words, add one ```mermaid
+        fence here — the plan is published as a gist, which shows it as a picture)
         ### Tests to run
         ### Risks / assumptions
       TEXT
@@ -501,7 +503,8 @@ module OPilot
     # needs a non-empty allowlist — see Agent#create_wp_enabled?). It defaults to
     # false so a caller nobody updated advertises nothing, rather than offering a
     # command opilot would refuse.
-    def self.chat(item_id:, subject:, item:, plan:, message:, related: nil, can_create_wp: false, op_mcp: false)
+    def self.chat(item_id:, subject:, item:, plan:, message:, related: nil, can_create_wp: false,
+                  can_make_artifact: false, max_artifacts: 3, op_mcp: false)
       <<~PROMPT
         You are opilot, an AI code assistant working on OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
         #{READ_ONLY}
@@ -538,7 +541,38 @@ module OPilot
         question's audience.
 
         #{OP_COMMENT_FORMAT}
+        #{artifact_block(can_make_artifact, max_artifacts)}
       PROMPT
+    end
+
+    # How a chat answer hands over a diagram or a long report. Present only when
+    # artifacts are available, for create_wp_line's reason — and so the off path
+    # pays none of these tokens.
+    #
+    # Two sentences carry the weight. Without the "use one only when" rule every
+    # answer becomes a gist. Without "the reader does not see it here" the writer
+    # says "as the diagram below shows", which is false in the activity tab.
+    #
+    # The block sits at the END of the answer: the whole answer shares one output
+    # budget, so a cut-off response then loses the artifact and keeps the comment.
+    def self.artifact_block(enabled, max)
+      return "" unless enabled
+      <<~TEXT
+        \nARTIFACTS — a diagram or a long structured report goes in an artifact, not
+        in the comment. Most answers need none. Use one only when the answer needs a
+        diagram, or a report of more than 20 lines. Write #{max} at most. Put each one
+        at the END of your answer, after the comment text:
+
+        BEGIN ARTIFACT
+        FILENAME: short-name.md
+        TITLE: <short title>
+        <the markdown; write a diagram as a ```mermaid fence>
+        END ARTIFACT
+
+        An artifact is markdown only. I remove each block from the comment, put it in
+        a gist, and add the link. The reader does not see the artifact in the comment,
+        so do not write "see the diagram below".
+      TEXT
     end
 
     # The `create wp` line of chat's command list, present only when the command
@@ -798,6 +832,17 @@ module OPilot
       #{PLAIN_ENGLISH}
     TEXT
 
+    # A diagram in a PR comment. GitHub renders a ```mermaid fence as a picture,
+    # so this surface needs no gist and no machinery — only permission.
+    #
+    # Deliberately NOT part of REPLY_CONTRACT: fix_ci and pr_refresh share that
+    # constant, and a diagram there is noise on a run that just pushed a fix.
+    MERMAID_NOTE = <<~TEXT.strip
+      When a flow or a structure is hard to say in words, add one ```mermaid fence
+      to the reply. GitHub shows it as a picture. Use it for a flow or a structure
+      only, and never for a list.
+    TEXT
+
     # How a read-only review proposes an *applicable* code change on a PR opilot
     # can't push to: a GitHub suggestion the author commits with one click. The
     # block is machine-parsed (GhAgent#parse_suggestions) into inline review
@@ -847,6 +892,8 @@ module OPilot
         When you do change code:
         #{WRITE_RULES}
 
+        #{MERMAID_NOTE}
+
         #{REPLY_CONTRACT}
       PROMPT
     end
@@ -877,6 +924,8 @@ module OPilot
         and specific.
 
         #{SUGGESTION_CONTRACT}
+
+        #{MERMAID_NOTE}
 
         #{REPLY_CONTRACT}
       PROMPT

@@ -668,6 +668,105 @@ module OPilot
     ].each { |text| assert_equal text, Helpers.demote_headings(text) }
   end
 
+  # --- chat artifacts ---------------------------------------------------
+
+  def artifact_block(name, body, title: "A title")
+    "BEGIN ARTIFACT\nFILENAME: #{name}\nTITLE: #{title}\n#{body}\nEND ARTIFACT\n"
+  end
+
+  def test_no_artifact_block_leaves_the_body_untouched
+    body = "Here is the answer.\n\nIt has two paragraphs.\n"
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_empty artifacts
+    assert_equal body, remainder, "an answer with no block is passed through byte for byte"
+  end
+
+  def test_one_artifact_is_lifted_out_of_the_reply
+    body = "Here is the diagram.\n\n" + artifact_block("flow.md", "```mermaid\ngraph TD;\n```")
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_equal 1, artifacts.size
+    assert_equal "flow.md", artifacts.first["filename"]
+    assert_equal "A title", artifacts.first["title"]
+    assert_includes artifacts.first["content"], "graph TD;"
+    assert_equal "Here is the diagram.", remainder.strip
+    refute_includes remainder, "graph TD;", "the artifact never stays in the comment"
+  end
+
+  def test_a_mermaid_fence_inside_a_block_does_not_end_it
+    body = artifact_block("flow.md", "```mermaid\ngraph TD;\nEND ARTIFACT\n```\ntail")
+    artifacts, = Helpers.parse_artifacts(body)
+
+    assert_equal 1, artifacts.size
+    assert_includes artifacts.first["content"], "tail",
+                    "a marker inside the fence is content, so the block runs past it"
+  end
+
+  def test_markers_inside_a_fence_are_text
+    body = "Answer this way:\n\n```\nBEGIN ARTIFACT\nFILENAME: x.md\nEND ARTIFACT\n```\n"
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_empty artifacts, "a quoted example is not an artifact"
+    assert_equal body, remainder
+  end
+
+  def test_two_artifacts_keep_their_order
+    body = "Answer.\n" + artifact_block("a.md", "first", title: "A") + artifact_block("b.md", "second", title: "B")
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_equal %w[a.md b.md], artifacts.map { |a| a["filename"] }
+    assert_equal "Answer.", remainder.strip
+  end
+
+  # The opposite rule to parse_work_packages: a bad block drops itself, and the
+  # answer that came with it is still posted.
+  def test_a_truncated_block_is_dropped_but_the_reply_survives
+    body = "Here is the answer.\n\nBEGIN ARTIFACT\nFILENAME: flow.md\nhalf a dia"
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_empty artifacts, "an unclosed block was cut off mid-write"
+    assert_equal "Here is the answer.", remainder.strip
+    refute_includes remainder, "half a dia", "the half-written artifact is not posted either"
+  end
+
+  def test_a_second_begin_abandons_the_unterminated_block
+    body = "BEGIN ARTIFACT\nFILENAME: a.md\nlost\n" + artifact_block("b.md", "kept")
+    artifacts, = Helpers.parse_artifacts(body)
+
+    assert_equal ["b.md"], artifacts.map { |a| a["filename"] }
+  end
+
+  def test_a_block_without_a_filename_is_dropped
+    body = "Answer.\nBEGIN ARTIFACT\nTITLE: no name\nsome content\nEND ARTIFACT\n"
+    artifacts, remainder = Helpers.parse_artifacts(body)
+
+    assert_empty artifacts, "a filename is never guessed at"
+    assert_equal "Answer.", remainder.strip
+  end
+
+  def test_an_empty_block_is_dropped
+    body = "BEGIN ARTIFACT\nFILENAME: a.md\nEND ARTIFACT\n"
+    artifacts, = Helpers.parse_artifacts(body)
+
+    assert_empty artifacts, "there is nothing to publish"
+  end
+
+  def test_artifact_filename_is_slugged_and_always_markdown
+    assert_equal "passwd.md", Helpers.artifact_filename("../../etc/passwd")
+    assert_equal "notes.md", Helpers.artifact_filename("Notes.txt")
+    assert_equal "call-flow.md", Helpers.artifact_filename("Call Flow")
+    assert_equal "artifact.md", Helpers.artifact_filename("  ")
+  end
+
+  def test_artifact_filenames_are_deduplicated
+    taken = []
+    3.times { taken << Helpers.artifact_filename("flow.md", taken: taken) }
+
+    assert_equal %w[flow.md flow-2.md flow-3.md], taken,
+                 "a gist keys files by name, so a collision would lose an artifact"
+  end
+
   def test_demote_headings_skips_fenced_code_blocks
     # A leading # in a fence is a comment or a shell prompt, not a heading.
     text = "Steps:\n\n```bash\n# install\nbundle install\n```\n\n## After\n"

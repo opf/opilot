@@ -101,6 +101,24 @@ module OPilot
       url
     end
 
+    # Publish one chat answer's artifacts as a single secret gist, returning its
+    # URL (or nil when there is no token, or the call failed).
+    #
+    # Unlike the plan gist there is no cache file: every answer produces its own
+    # artifacts, so there is nothing to reuse. `files` is {name => content}.
+    def artifact_gist(item_id, subject, files)
+      return nil if files.empty?
+      unless author_token
+        puts "  Error: #{token_env_var} is not set — cannot publish artifacts."
+        return nil
+      end
+
+      @github.create_gist(
+        description: "opilot artifact: #{wp_label(item_id)} — #{subject}",
+        files:       files
+      )
+    end
+
     # The login of the identity publishing, for PR bodies that invite a reply.
     def login
       @github.login
@@ -206,8 +224,7 @@ module OPilot
 
       url = @github.create_gist(
         description: "opilot plan: #{wp_label(st.item_id)} — #{st.subject}",
-        filename:    "wp-#{st.item_id}-plan.md",
-        content:     st.plan_file.read
+        files:       { "wp-#{st.item_id}-plan.md" => st.plan_file.read }
       )
       cache.write(url) if url
       url

@@ -86,8 +86,19 @@ module OPilot
     # Mirrors the real Publish: open_pr writes the repo's pr_url.txt and returns
     # the URL.
     class FakePublish
-      def initialize(state_dir, pr:); @state_dir = state_dir; @pr = pr; end
-      def author_token; nil; end   # nil keeps adopt_github_author! a no-op
+      attr_reader :gists
+      attr_accessor :gist_url
+      # token: nil keeps adopt_github_author! a no-op AND artifacts switched off,
+      # which is what every test that does not care about them wants.
+      def initialize(state_dir, pr:, token: nil)
+        @state_dir = state_dir; @pr = pr; @token = token
+        @gists = []; @gist_url = "https://gist.github.com/me/abc"
+      end
+      def author_token; @token; end
+      def artifact_gist(id, subject, files)
+        @gists << { id: id, subject: subject, files: files }
+        @gist_url
+      end
       def open_pr(id, _subject, _branch, repo)
         dir = @state_dir / "work_packages" / "op.example.com" / id.to_s / "repos" / repo.name
         dir.mkpath
@@ -1229,6 +1240,130 @@ module OPilot
       allow_users(2)
       @agent.handle(intent(:chat, text: "what can you do?"))
       assert_includes @harness.runs.last, "@opilot create wp"
+    end
+
+    # ── chat artifacts ──────────────────────────────────────────────────────
+
+    ARTIFACT_ANSWER = <<~TEXT
+      Here is how the two services talk.
+
+      BEGIN ARTIFACT
+      FILENAME: call-flow.md
+      TITLE: Call flow
+      ```mermaid
+      sequenceDiagram
+        A->>B: hello
+      ```
+      END ARTIFACT
+    TEXT
+
+    # Artifacts on: a publishing identity plus an allowlist.
+    def with_artifacts(chat)
+      allow_users(7)
+      @harness = FakeHarness.new(chat: chat)
+      @publish = FakePublish.new(@ctx.state_dir, pr: "https://github.com/o/r/pull/7", token: "bot-tok")
+      @agent   = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, @worktree)
+    end
+
+    def artifact_dir(slug = "2024-02-01t00-00-00z")
+      @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "artifacts" / slug
+    end
+
+    # The guard on the surface that already worked: an ordinary answer must be
+    # posted exactly as it is, artifacts on or off.
+    def test_chat_without_an_artifact_posts_the_answer_unchanged
+      with_artifacts("Here's my take.")
+      @agent.handle(intent(:chat, text: "why?"))
+
+      assert_equal 1, @notes.size
+      assert_includes @notes.last, "Here's my take."
+      refute_includes @notes.last, "gist.github.com"
+      assert_empty @publish.gists, "no artifact means no gist"
+    end
+
+    def test_chat_artifact_is_published_as_a_gist_and_linked
+      with_artifacts(ARTIFACT_ANSWER)
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      gist = @publish.gists.first
+      refute_nil gist, "the artifact is published"
+      assert_equal ["call-flow.md"], gist[:files].keys
+      assert_includes gist[:files]["call-flow.md"], "sequenceDiagram"
+
+      note = @notes.last
+      assert_includes note, "Here is how the two services talk."
+      assert_includes note, "📎 [Call flow](https://gist.github.com/me/abc)"
+      refute_includes note, "sequenceDiagram", "the diagram is linked, never pasted into the comment"
+      refute_includes note, "BEGIN ARTIFACT"
+    end
+
+    def test_chat_artifact_is_mirrored_on_disk
+      with_artifacts(ARTIFACT_ANSWER)
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      file = artifact_dir / "call-flow.md"
+      assert file.exist?, "the artifact is mirrored so a later chat can read it from /state"
+      assert_includes file.read, "sequenceDiagram"
+    end
+
+    def test_a_failed_gist_still_posts_the_reply
+      with_artifacts(ARTIFACT_ANSWER)
+      @publish.gist_url = nil
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      note = @notes.last
+      assert_includes note, "Here is how the two services talk.", "the answer is not lost"
+      assert_includes note, "could not publish the artifact"
+      refute_includes note, "sequenceDiagram"
+    end
+
+    def test_artifacts_over_the_count_cap_are_dropped_and_named
+      blocks = (1..4).map { |n| "BEGIN ARTIFACT\nFILENAME: a#{n}.md\nTITLE: A#{n}\nbody #{n}\nEND ARTIFACT\n" }
+      with_artifacts("Answer.\n\n#{blocks.join}")
+      @agent.handle(intent(:chat, text: "draw four things"))
+
+      assert_equal %w[a1.md a2.md a3.md], @publish.gists.first[:files].keys,
+                   "the cap is enforced in the runner, because a prompt limit drifts"
+      assert_includes @notes.last, "I did not publish 1 more artifact(s). One answer may hold 3 at most",
+                     "the note states the rule — naming one cap would be false when the other bound"
+    end
+
+    def test_an_oversized_artifact_is_dropped
+      big = "x" * (Agent::MAX_ARTIFACT_BYTES + 1)
+      answer = "Answer.\n" \
+               "BEGIN ARTIFACT\nFILENAME: small.md\nTITLE: Small\nfits\nEND ARTIFACT\n" \
+               "BEGIN ARTIFACT\nFILENAME: big.md\nTITLE: Big\n#{big}\nEND ARTIFACT\n"
+      with_artifacts(answer)
+      @agent.handle(intent(:chat, text: "draw two things"))
+
+      assert_equal ["small.md"], @publish.gists.first[:files].keys
+      assert_includes @notes.last, "I did not publish 1 more artifact(s). One answer may hold 3 at most",
+                     "the same true sentence covers the byte cap"
+    end
+
+    def test_chat_offers_artifacts_only_when_they_are_available
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      refute_includes @harness.runs.last, "BEGIN ARTIFACT",
+                      "never offer what has no publishing identity behind it"
+
+      with_artifacts("ok")
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      assert_includes @harness.runs.last, "BEGIN ARTIFACT"
+    end
+
+    # With the feature off the instructions were never given, so a BEGIN ARTIFACT
+    # line is text the writer invented or quoted — stripping it would delete
+    # content from someone's reply.
+    def test_an_artifact_block_is_left_alone_when_artifacts_are_off
+      @harness = FakeHarness.new(chat: ARTIFACT_ANSWER)
+      @agent   = Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, @worktree)
+
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      assert_includes @notes.last, "BEGIN ARTIFACT", "the answer is posted as it stands"
+      assert_includes @notes.last, "sequenceDiagram"
     end
 
     def test_replies_mention_the_requesting_user

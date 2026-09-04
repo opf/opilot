@@ -127,9 +127,72 @@ module OPilot
                             item: container_path(st.item_file),
                             plan: plan_ref, message: intent.text.to_s,
                             related: related_ref(st), can_create_wp: create_wp_enabled?,
+                            can_make_artifact: artifacts_enabled?, max_artifacts: MAX_ARTIFACTS,
                             op_mcp: @ctx.op_mcp?)
       reply = @harness.run(prompt, tools: read_tools, session_file: st.session_file)
+      # Only when artifacts are on: with the instructions never given, a BEGIN
+      # ARTIFACT line is text the writer invented or quoted, and stripping it
+      # would delete content from someone's reply.
+      reply = publish_artifacts(st, intent, reply) if artifacts_enabled?
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
+    end
+
+    # Take the artifacts out of a chat answer, mirror them, publish them as one
+    # gist, and return the comment to post — the answer without the blocks, plus a
+    # line naming what was published.
+    def publish_artifacts(st, intent, reply)
+      artifacts, text = Helpers.parse_artifacts(reply)
+      return reply if artifacts.empty?
+
+      kept, dropped = within_caps(artifacts)
+      dir   = st.artifact_dir(intent.comment_at)
+      files = {}
+      kept.each do |artifact|
+        name = Helpers.artifact_filename(artifact["filename"], taken: files.keys)
+        (dir / name).write(artifact["content"])
+        files[name] = artifact["content"]
+      end
+      log_script "#{Helpers.wp_label(st.item_id)}: #{files.size} artifact(s) → #{dir}"
+
+      url = @publish.artifact_gist(st.item_id, st.subject, files)
+      "#{text.strip}\n\n#{artifact_note(url, kept, dropped)}".strip
+    end
+
+    # Keep artifacts in order while both caps still hold; the rest are dropped.
+    def within_caps(artifacts)
+      total = 0
+      kept  = artifacts.take_while do |artifact|
+        total += artifact["content"].bytesize
+        total <= MAX_ARTIFACT_BYTES
+      end.first(MAX_ARTIFACTS)
+      [kept, artifacts.size - kept.size]
+    end
+
+    # The line the comment ends with. Composed in Ruby, for #post_options' reason:
+    # it states what actually happened, and a sentence the writer composed could
+    # drift from it.
+    def artifact_note(url, kept, dropped)
+      lines = []
+      if url.nil?
+        lines << "I could not publish the artifact. Its content is not in this comment."
+      elsif kept.size == 1
+        lines << "📎 [#{artifact_title(kept.first)}](#{url})"
+      else
+        lines << "📎 I published #{kept.size} artifacts here: #{url}"
+        lines.concat(kept.map { |a| "- #{artifact_title(a)}" })
+      end
+      # State the rule, not the cap that happened to bind: two caps drop
+      # artifacts, and a sentence naming one of them would be false half the time.
+      if dropped.positive?
+        lines << "I did not publish #{dropped} more artifact(s). One answer may hold " \
+                 "#{MAX_ARTIFACTS} at most, and #{MAX_ARTIFACT_BYTES / 1000} KB in total."
+      end
+      lines.join("\n")
+    end
+
+    def artifact_title(artifact)
+      title = artifact["title"].to_s.strip
+      title.empty? ? artifact["filename"].to_s : title
     end
 
     # ── create wp ─────────────────────────────────────────────────────────────
@@ -200,6 +263,22 @@ module OPilot
     def create_wp_enabled?
       @ctx.allowed_op_user_ids.any?
     end
+
+    # Whether a chat answer may publish artifacts: a publishing identity has to
+    # exist, and the allowlist has to be set.
+    #
+    # The allowlist requirement is about EXFILTRATION, not permanence (a gist can
+    # be deleted, unlike a work package). A gist is readable by anyone holding the
+    # link, so without an allowlist any user who can comment could make opilot
+    # lift an internal work package's text onto gist.github.com.
+    def artifacts_enabled?
+      !@publish.author_token.nil? && @ctx.allowed_op_user_ids.any?
+    end
+
+    # How many artifacts one answer may publish, and how many bytes they may total.
+    # Stated in the prompt and enforced HERE, because a prompt limit drifts.
+    MAX_ARTIFACTS      = 3
+    MAX_ARTIFACT_BYTES = 60_000
 
     # How many work packages one request may create. Stated in the prompt and
     # enforced HERE, because a prompt limit drifts and a work package can never

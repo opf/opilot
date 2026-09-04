@@ -187,15 +187,16 @@ module OPilot
 
       # Create a gist and return its html_url, or nil on failure (e.g. the token
       # lacks the `gist` scope). Secret by default: unlisted and unindexed, but
-      # readable by anyone with the link — used to attach a WP's full plan to its
-      # PR while keeping the PR body itself compact.
-      def create_gist(description:, filename:, content:, public: false)
-        @octokit.create_gist(
-          description: description, public: public,
-          files: { filename => { content: content } }
-        ).html_url
+      # readable by anyone with the link.
+      #
+      # `files` is {name => content}; the Octokit wrapper shape is applied here so
+      # no caller repeats it. Several files make one gist — a chat answer's
+      # artifacts belong together.
+      def create_gist(description:, files:, public: false)
+        payload = files.to_h { |name, content| [name, { content: content }] }
+        @octokit.create_gist(description: description, public: public, files: payload).html_url
       rescue Octokit::Error, Faraday::Error => e
-        warn "  Warning: could not create plan gist: #{e.message}"
+        warn "  Warning: could not create gist (#{description}): #{e.message}"
         nil
       end
 

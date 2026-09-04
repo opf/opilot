@@ -299,6 +299,20 @@ module OPilot
       assert_equal [["42", "openproject", 1000]], @pull.recorded, "opilot's own reply id is recorded"
     end
 
+    # A diagram is offered on the two conversational surfaces only. fix_ci shares
+    # REPLY_CONTRACT with them, and a diagram on a run that just pushed a fix is
+    # noise — so the note must NOT live in that constant.
+    def test_a_diagram_is_offered_when_replying_but_not_when_fixing_ci
+      capture_io { @agent.handle(gh_intent) }
+      reply = @harness.runs.find { |r| r[:prompt].include?("responding to a comment") }
+      assert_includes reply[:prompt], "```mermaid fence",
+                      "a PR reply may draw a diagram — GitHub renders it"
+
+      capture_io { @agent.handle_and_ack(ci_intent) }
+      fix = @harness.runs.find { |r| r[:prompt].include?("CI failed") }
+      refute_includes fix[:prompt], "```mermaid fence", "a CI fix has nothing to draw"
+    end
+
     def test_reply_preamble_before_the_marker_is_never_posted
       # A model hitting an obstacle narrates it before "the real reply" — the
       # REPLY: contract keeps that narration off the PR.

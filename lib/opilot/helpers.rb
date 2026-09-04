@@ -277,6 +277,92 @@ module OPilot
     end
     private_class_method :work_package_fields
 
+    ARTIFACT_BEGIN         = /\A[ \t]*BEGIN ARTIFACT[ \t]*\z/
+    ARTIFACT_END           = /\A[ \t]*END ARTIFACT[ \t]*\z/
+    ARTIFACT_FILENAME_LINE = /\AFILENAME:[ \t]*(.+)\z/i
+    ARTIFACT_TITLE_LINE    = /\ATITLE:[ \t]*(.+)\z/i
+
+    # Read the artifacts a chat answer carries (Prompts.artifact_block), and
+    # return [artifacts, remainder] — the remainder being the answer with every
+    # block removed, which is what gets posted as the comment.
+    #
+    # The block shape mirrors .parse_work_packages, but the failure rule is the
+    # OPPOSITE and deliberately so: there, one bad block rejects the whole answer,
+    # because a work package can never be deleted. Here a malformed or truncated
+    # block drops only ITSELF and the reply is still posted — an unreadable
+    # diagram is no reason to swallow the answer that came with it.
+    #
+    # As there: marker lines inside a fence are text (a report quotes things, and
+    # somebody will paste opilot's own answer into a comment), and a ```mermaid
+    # fence inside a block therefore cannot end it.
+    def self.parse_artifacts(body)
+      artifacts = []
+      kept      = []   # lines outside every block, joined verbatim
+      open      = nil
+      fence     = nil
+      body.to_s.lines.each do |raw|
+        line  = raw.chomp
+        fence = fence_state(fence, line)
+        # Inside a fence: content, whatever it says.
+        unless fence.nil?
+          open ? open << line : kept << raw
+          next
+        end
+
+        if line.match?(ARTIFACT_BEGIN)
+          open = []   # a second BEGIN abandons an unterminated block
+        elsif line.match?(ARTIFACT_END)
+          artifacts << open if open
+          open = nil
+        else
+          open ? open << line : kept << raw
+        end
+      end
+      # `open` here was cut off mid-block: drop it, but keep everything before it.
+      [artifacts.filter_map { |block| artifact_fields(block) }, kept.join]
+    end
+
+    # One block's fields. Only the LEADING lines are read as a header, so a report
+    # that discusses a `TITLE:` line of its own cannot move the title. A block with
+    # no filename, or no content, is dropped rather than guessed at.
+    def self.artifact_fields(lines)
+      lines  = lines.drop_while { |l| l.strip.empty? }
+      fields = {}
+      loop do
+        line = lines.first.to_s
+        if (name = line[ARTIFACT_FILENAME_LINE, 1])
+          fields["filename"] ||= name.strip
+        elsif (title = line[ARTIFACT_TITLE_LINE, 1])
+          fields["title"] ||= title.strip
+        else
+          break
+        end
+        lines = lines.drop(1)
+      end
+      return nil if fields["filename"].to_s.empty?
+
+      content = lines.join("\n").strip
+      return nil if content.empty?
+      { "filename" => fields["filename"], "title" => fields["title"].to_s, "content" => content }
+    end
+    private_class_method :artifact_fields
+
+    # A filesystem- and gist-safe name for an artifact, always `.md` (a gist
+    # serves raw content as text/plain, so markdown with a ```mermaid fence is the
+    # one format that renders). De-duplicated against `taken`, which is
+    # load-bearing: a gist's files are keyed by name, so two blocks slugging to
+    # the same name would silently collapse into one.
+    def self.artifact_filename(raw, taken: [])
+      stem = slugify(File.basename(raw.to_s.strip).sub(/\.[^.]+\z/, ""), fallback: "artifact")
+      name = "#{stem}.md"
+      n    = 1
+      while taken.include?(name)
+        n += 1
+        name = "#{stem}-#{n}.md"
+      end
+      name
+    end
+
     # A project's work-package types as [{ "id", "name" }], from a
     # Clients::OpenProject#project_types response.
     def self.type_list(body)
@@ -482,6 +568,14 @@ module OPilot
       # The plan gist URL, cached per-WP (not per-repo): plan.md is shared across
       # every repo a WP ships to, so all their PRs link the same gist.
       def gist_url_file; item_dir / "gist_url.txt"; end
+
+      # Where one chat answer's artifacts are mirrored, keyed by the comment that
+      # asked for them so two answers cannot overwrite each other.
+      def artifact_dir(comment_at)
+        dir = item_dir / "artifacts" / Helpers.slugify(comment_at, fallback: "chat")
+        dir.mkpath
+        dir
+      end
 
       # The base branch this WP's PR targets in `repo`: the per-WP override the
       # user requested (target_base.json), else the repo's registry default. The

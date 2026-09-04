@@ -36,6 +36,7 @@ Use OPilot to remove that friction from your development workflow. It can automa
 ### General audience
 
 * **Refine work packages**: Discuss work packages in the chat via free-form chatting or preset commands like `@OPilot grill`.
+* **Draw diagrams and write reports**: Ask for a diagram or a long report in the chat. OPilot publishes it as a secret gist and links it from the comment — a diagram is a mermaid fence, which the gist renders as a picture. Needs `OPILOT_ALLOWED_OP_USER_IDS`.
 * **Create work packages**: Turn a suggestion made in a comment into its own work package(s) with `@OPilot create wp <instructions>`. OPilot builds the package content, creates them in the same project, and relates them back.
 * **[Enterprise] Run project-wide discovery**: Ask `@OPilot` anything about the reachable projects' data -- it will leverage the instance's MCP server to give you a fresh answer.
 

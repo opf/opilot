@@ -656,6 +656,46 @@ difference is who is watching: the terminal verbs have an operator at the consol
 Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
 
+**A chat answer can carry an ARTIFACT — a diagram or a long report — published as
+a secret gist and linked from the comment.** Three surfaces offer one, and they are
+deliberately **asymmetric**: a gh-agent PR reply (`Prompts::MERMAID_NOTE` in
+`gh_reply`/`pr_review`) and a plan's Approach section (`Prompts#plan_skeleton`) are
+**prompt-only**, because GitHub and gists render a ```mermaid fence themselves. Only
+op-agent chat has machinery behind it.
+
+**An artifact is markdown only.** A gist serves raw content as `text/plain`, so an
+SVG is not a picture channel at all — a diagram is a mermaid fence inside the
+markdown. That also means nothing opilot publishes can carry active content, which
+is why there is no sanitizer here. **OpenProject does not render mermaid** (checked
+in its CKEditor bundle), so the activity-tab comment carries the link and never the
+picture — hence the prompt telling the writer not to say "see the diagram below".
+
+**The artifact travels in the response text, and the runner writes it.** Chat holds
+`Harness::TOOLS_READ` and `pi-guards.ts` confines writes to `/repos`, so the model
+cannot write a file — and that read-only contract for prompt-injectable phases is
+enforced in the guard, not in the prompt, so this is not a limitation to route
+around. `Prompts.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
+`Helpers.parse_artifacts` reads it, and `Agent#publish_artifacts` mirrors, caps and
+publishes. The block sits at the **END** of the answer: everything shares one output
+budget, so a cut-off response loses the artifact and keeps the comment. The parser
+mirrors `.parse_work_packages` but inverts its failure rule — there one bad block
+rejects the whole answer, because a work package can never be deleted; here a bad
+block drops only itself and the reply is still posted. Caps live in the runner
+(`Agent::MAX_ARTIFACTS`, `MAX_ARTIFACT_BYTES`), because a prompt limit drifts, and
+the note naming what was published is composed in Ruby for `#post_options`' reason.
+
+**It needs a contributor token AND `OPILOT_ALLOWED_OP_USER_IDS`**
+(`Agent#artifacts_enabled?`), and the prompt block is omitted when either is
+missing. The reason is **exfiltration, not permanence** — a gist can be deleted,
+unlike a work package: a gist is readable by anyone holding the link, so without an
+allowlist any user who can comment could make opilot lift an internal work
+package's text onto `gist.github.com`. The accepted narrowing is that an artifact
+asked for in an *internal* comment still lands on a link-readable gist; the
+allowlist is the whole mitigation. The gate also guards the **parser**, not just
+the prompt: with artifacts off the instructions were never given, so a
+`BEGIN ARTIFACT` line is text the writer invented or quoted, and stripping it would
+delete content from someone's reply.
+
 **`:create_wp` (`@opilot create wp <what>`)** splits something out of the thread into
 its own work package — `create wp for Rosanna's suggestion` — or, when the request
 names several separate pieces of work, into **up to five at once**
@@ -797,6 +837,8 @@ globally unique, so `pr_reviews/` is flat.
 │       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
 │       ├── related.json         # related WPs pulled in at plan time
 │       ├── plan.md              # implementation plan (shared across target repos)
+│       ├── artifacts/<comment>/  # markdown a chat answer produced, keyed by the trigger's
+│       │                        #   comment_at — the local copy of what was gisted
 │       ├── options.json         # offered implementation options; present = waiting for a number
 │       ├── created_wps.json     # WPs `create wp` made FROM this one, keyed by the trigger's
 │       │                        #   comment_at (SEVERAL records per comment); `link_wanted` is
@@ -885,7 +927,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages` |
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
-| `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist; skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
+| `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist and chat artifacts; both skipped if absent). Fine-grained tokens can't open fork→upstream PRs |
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |

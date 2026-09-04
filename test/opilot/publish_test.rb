@@ -16,10 +16,11 @@ module OPilot
       def ensure_fork(upstream); @forked << upstream; @fork_result || "me/#{upstream.split('/').last}"; end
       def find_open_pr(_base_repo, head:); @existing; end
       def push_branch(repo, branch:, worktree_path:); @pushed << [repo, branch]; end
-      def create_gist(description:, filename:, content:, public: false)
-        @gist_calls << { description: description, filename: filename, content: content, public: public }
-        "https://gist.github.com/me/abc"
+      def create_gist(description:, files:, public: false)
+        @gist_calls << { description: description, files: files, public: public }
+        @gist_fails ? nil : "https://gist.github.com/me/abc"
       end
+      attr_writer :gist_fails
       def create_draft_pr(repo, base:, head:, title:, body:, maintainer_can_modify: true)
         @pr_calls << { repo: repo, base: base, head: head, title: title, body: body, mcm: maintainer_can_modify }
         "https://github.com/#{repo}/pull/7"
@@ -191,8 +192,8 @@ module OPilot
       gist = @github.gist_calls.first
       refute_nil gist, "the plan should be uploaded as a gist"
       assert_equal false, gist[:public], "the plan gist must be secret"
-      assert_equal "wp-42-plan.md", gist[:filename]
-      assert_includes gist[:content], "Do the thing."
+      assert_equal ["wp-42-plan.md"], gist[:files].keys
+      assert_includes gist[:files]["wp-42-plan.md"], "Do the thing."
 
       body = @github.pr_calls.first[:body]
       assert_includes body, "📋 **Implementation plan:** https://gist.github.com/me/abc"
@@ -218,6 +219,37 @@ module OPilot
       assert_empty @github.gist_calls, "a cached gist URL must not trigger a new upload"
       assert_includes @github.pr_calls.first[:body],
                       "📋 **Implementation plan:** https://gist.github.com/me/cached"
+    end
+
+    # --- chat artifacts ---------------------------------------------------
+
+    def test_artifacts_are_published_as_one_secret_gist
+      url = @publish.artifact_gist("42", "Fix the bug",
+                                   { "flow.md" => "```mermaid\ngraph TD;\n```", "notes.md" => "hi" })
+
+      assert_equal "https://gist.github.com/me/abc", url
+      gist = @github.gist_calls.first
+      assert_equal false, gist[:public], "an artifact gist must be secret"
+      assert_equal %w[flow.md notes.md], gist[:files].keys, "every artifact rides in ONE gist"
+      assert_includes gist[:description], "opilot artifact: #42 — Fix the bug"
+    end
+
+    def test_artifacts_need_a_publishing_identity
+      @ctx.contributor_token = nil
+      out, = capture_io { assert_nil build_publish.artifact_gist("42", "S", { "a.md" => "x" }) }
+
+      assert_includes out, "GITHUB_CONTRIBUTOR_TOKEN is not set"
+    end
+
+    def test_a_failed_artifact_gist_returns_nil
+      @github.gist_fails = true
+
+      assert_nil @publish.artifact_gist("42", "Fix the bug", { "a.md" => "x" })
+    end
+
+    def test_no_artifacts_means_no_gist
+      assert_nil @publish.artifact_gist("42", "Fix the bug", {})
+      assert_empty @github.gist_calls
     end
 
     # --- the pd spec PR (opened inside the bot's own fork) ----------------
