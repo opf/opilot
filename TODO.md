@@ -15,7 +15,8 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Switch from Docker to Podman for root-less process model
 * Replace inference-gw with a configurable tiny proxy
 
-## AI Architecture
+## Architecture & AI
+* Switch to a proper event loop so that agent work doesn't block polling
 * Set up token limits & cleanly handle threshold breaches
 * Centralize our skill and agent definitions into another OP repo, so that OPilot may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
