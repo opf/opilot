@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "uri"
 
 module OPilot
   class AgentTest < Minitest::Test
@@ -587,7 +588,18 @@ module OPilot
       @agent.handle(intent(:ship))
       assert plan_path.exist?
       assert pr_url_path.exist?
-      assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
+      assert(
+        @notes.any? do |n|
+          n.scan(%r{https?://[^\s]+}).any? do |raw_url|
+            begin
+              uri = URI.parse(raw_url)
+              uri.host == "github.com" && uri.path == "/o/r/pull/7"
+            rescue URI::InvalidURIError
+              false
+            end
+          end
+        end
+      )
     end
 
     def test_handle_ship_threads_one_session_through_plan_and_implement_but_not_pr_description
