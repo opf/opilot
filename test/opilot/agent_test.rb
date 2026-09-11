@@ -586,7 +586,8 @@ module OPilot
       @agent.handle(intent(:ship))
       assert plan_path.exist?
       assert pr_url_path.exist?
-      assert(@notes.any? { |n| n.match?(%r{https://github\.com/o/r/pull/7\b}) })
+      shipped_link = "[Fix the bug](#{pr_url_path.read.strip})"
+      assert(@notes.any? { |n| n.include?(shipped_link) })
     end
 
     def test_handle_ship_threads_one_session_through_plan_and_implement_but_not_pr_description
