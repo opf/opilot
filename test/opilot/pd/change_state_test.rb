@@ -72,7 +72,7 @@ module OPilot
         (clone / "app.rb").write("puts 2\n")
 
         git.add(all: true)
-        staged = git.status.changed.keys + git.status.added.keys
+        staged = git.status_info.changed.keys + git.status_info.added.keys
         assert_includes staged, "app.rb"
         refute staged.any? { |p| p.start_with?("openspec/") },
                "the spec tree must never reach an unrelated commit (staged: #{staged.inspect})"
@@ -93,7 +93,7 @@ module OPilot
         seed_store!
         @store.materialise!
         git.add("openspec/changes/add-recurring-meetings", force: true)
-        assert git.status.added.keys.any? { |p| p.start_with?("openspec/") },
+        assert git.status_info.added.keys.any? { |p| p.start_with?("openspec/") },
                "an explicit force-add is how the spec PR gets its content"
       end
 

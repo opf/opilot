@@ -382,7 +382,7 @@ module OPilot
         @fetched << [remote, opts]
       end
       def config_set(k, v); @configs << [k, v]; end
-      def status
+      def status_info
         @dirty ? FakeStatus.new({ "app/x.rb" => :mod }, {}, {}) : FakeStatus.new({}, {}, {})
       end
     end

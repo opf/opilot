@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y \
 # out to it, and the runner holds both API tokens, so it does not need a general
 # HTTP client sitting in the image. ca-certificates is marked manual first, or
 # --auto-remove would take it along with curl and break every HTTPS call.
-ENV OPENSPEC_VERSION=1.7.0
+ENV OPENSPEC_VERSION=1.13.2
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && apt-mark manual ca-certificates \

@@ -1055,7 +1055,7 @@ module OPilot
     # clone untracked-and-git-excluded by design, and the LLM's own scratch output
     # would otherwise pin the tree to a stale commit forever.
     def dirty_worktree?(wt)
-      st = wt.status
+      st = wt.status_info
       st.changed.any? || st.added.any? || st.deleted.any?
     end
 

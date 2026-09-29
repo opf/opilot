@@ -475,7 +475,7 @@ module OPilot
         # changes, and every revision was being discarded as out of scope.
         scope       = "changes/#{state.change_id}/"
         clone_scope = "openspec/#{scope}"
-        status  = worktree(state.repo).status
+        status  = worktree(state.repo).status_info
         tracked = (status.changed.keys + status.added.keys + status.deleted.keys + status.untracked.keys).uniq
         strays  = tracked.reject { |path| path.start_with?(clone_scope) } +
                   state.store.working_changes(outside: scope)
@@ -511,7 +511,7 @@ module OPilot
         # each time, over OpenProject's whole index. And `deleted` counts — a
         # revision that only removes an artifact ("drop design.md") was otherwise
         # reported as "no spec changes" and silently dropped.
-        st = wt.status
+        st = wt.status_info
         if st.added.empty? && st.changed.empty? && st.deleted.empty?
           log_script "#{state.change_id} — no spec changes to commit."
           return false
