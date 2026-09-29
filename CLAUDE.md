@@ -911,7 +911,7 @@ Runner POSTs to `http://harness:47291` with headers:
   sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
-  always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5`,
+  always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5.5`,
   `local/qwen2.5-coder:32b`), not bare Anthropic API ids. **The provider prefix
   selects which pi provider config `seedAgentDir()` writes.** Validated by
   format, not an allowlist — model choice grants no privilege. The format
@@ -960,7 +960,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_INFERENCE_URL` | Optional; the upstream inference-gw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via inference-gw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
 | `OPILOT_INFERENCE_KEY` | The key inference-gw presents upstream, if the upstream wants one. Lives only in inference-gw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). inference-gw always deletes the inbound `Authorization` first, whatever this names |
-| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
+| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5.5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |
 | `OPILOT_MODEL_CONTEXT_WINDOW` | Optional; context window for a self-hosted model. Omitted leaves pi's default |

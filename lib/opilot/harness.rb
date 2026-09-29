@@ -62,7 +62,7 @@ module OPilot
     # would discard the cache and resumed context. MODEL_LIGHT is for stateless
     # one-shot passes. server.js validates the value by format, not an allowlist —
     # model choice grants no privilege (unlike the tool grants above).
-    MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5")
+    MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5.5")
     MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
     # How long to wait on a silent socket. This must be the OUTER of the two
