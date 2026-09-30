@@ -1102,7 +1102,7 @@ module OPilot
       assert_empty @create_requests
       assert_empty created_wps
       assert_includes @notes.last, "6 work packages"
-      assert_includes @notes.last, "at most #{OpenProject::Agent::MAX_CREATE_WP}"
+      assert_includes @notes.last, "at most #{OpenProject::CreateWp::MAX}"
     end
 
     # The whole set is preflighted before the first POST. Half a tree is worse

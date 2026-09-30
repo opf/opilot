@@ -25,6 +25,19 @@ module OPilot
           raise Error.for(code, body, "#{request} answered HTTP #{code}#{" without a JSON body" if (200..299).cover?(code)}")
         end
 
+        # A form (`POST …/form`) answers 200 even for a payload it rejects, so its
+        # verdict is in the body. False when the form did not run at all: a 403,
+        # or a proxy's HTML.
+        def form_answered? = code == 200 && body.is_a?(Hash)
+
+        # The form's validation errors, keyed by property, or nil when there are
+        # none — or when the form did not answer (see #form_answered?).
+        def validation_errors
+          return nil unless form_answered?
+          errors = body.dig("_embedded", "validationErrors")
+          errors.is_a?(Hash) && !errors.empty? ? errors : nil
+        end
+
         # Equal to the tuple it destructures to, so `[404, nil] == response` holds.
         def ==(other)
           other.respond_to?(:to_ary) && to_ary == other.to_ary

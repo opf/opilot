@@ -5,8 +5,8 @@ require "cgi/escape"
 
 module OPilot
   module Helpers
-    # OpenProject text and payloads: mentions, links, labels, the create body,
-    # the create form's verdict, and what a posted comment is rewritten to.
+    # OpenProject text: mentions, links, labels, the prompt's type list, and what
+    # a posted comment is rewritten to.
 
     # An OpenProject mention of a user, so a comment notifies and addresses them
     # by name. Falls back to the bare name, then to "", when the details are
@@ -25,34 +25,6 @@ module OPilot
     def self.types_for_prompt(types)
       names = types.to_a.map { |t| t["name"].to_s }.reject(&:empty?)
       names.empty? ? "(unknown — leave the TYPE line out)" : names.join(", ")
-    end
-
-    # The v3 create body. `_links.type` is present only when a type was resolved:
-    # with no type at all OpenProject assigns the project's first enabled type.
-    #
-    # One definition, because the subject truncation and the markdown description
-    # shape have to hold at every site that creates a work package.
-    def self.wp_payload(project:, type:, subject:, description:)
-      links = { "project" => Clients::OpenProject::Href.link(Clients::OpenProject::Href.project(project)) }
-      links["type"] = Clients::OpenProject::Href.link(Clients::OpenProject::Href.type(type["id"])) if type
-
-      { "subject"     => subject.to_s[0, 200],
-        "description" => { "format" => "markdown", "raw" => description.to_s },
-        "_links"      => links }
-    end
-
-    # The create form's three-way answer, in one place: nil when the form did not
-    # answer about the payload at all (403, an HTML error from a proxy) or found
-    # nothing wrong, else the validation errors.
-    #
-    # The form answers **200 even for a payload it rejects**, which is why
-    # `_embedded.validationErrors` decides and the status code does not — a quirk
-    # subtle enough that Clients::OpenProject::Client#create_work_package_form documents
-    # it, and one that must not be encoded twice.
-    def self.form_validation_errors(code, form)
-      return nil unless code == 200 && form.is_a?(Hash)
-      errors = form.dig("_embedded", "validationErrors")
-      errors.is_a?(Hash) && !errors.empty? ? errors : nil
     end
 
     # A markdown link to an OpenProject document, for text that will be rendered

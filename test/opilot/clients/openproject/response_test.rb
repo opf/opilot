@@ -19,6 +19,23 @@ module OPilot
       assert_nil response(204, nil).value!, "204 carries no body by design"
     end
 
+    def test_a_form_verdict_is_read_from_the_body_not_the_status
+      rejected = response(200, { "_embedded" => { "validationErrors" => { "customField7" => { "message" => "can't be blank" } } } })
+      assert rejected.form_answered?
+      assert_equal ["customField7"], rejected.validation_errors.keys, "a form answers 200 for a payload it rejects"
+
+      accepted = response(200, { "_embedded" => { "validationErrors" => {} } })
+      assert accepted.form_answered?
+      assert_nil accepted.validation_errors
+    end
+
+    def test_a_form_that_did_not_run_gives_no_verdict
+      [response(403, { "message" => "no" }), response(200, "<html>proxy</html>")].each do |form|
+        refute form.form_answered?
+        assert_nil form.validation_errors
+      end
+    end
+
     def test_value_raises_the_class_for_each_status
       { 401 => OP::Unauthorized, 403 => OP::Forbidden, 404 => OP::NotFound, 409 => OP::Conflict,
         422 => OP::ValidationFailed, 429 => OP::RateLimited, 400 => OP::ClientError,

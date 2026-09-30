@@ -208,6 +208,33 @@ module OPilot
         assert_equal [1, 2], sent
       end
 
+      def test_link_as_parent_patches_the_child_with_the_current_lock_version
+        stub_request(:get, "#{BASE}/api/v3/work_packages/43").to_return(status: 200, body: '{"lockVersion":4}')
+        sent = nil
+        stub_request(:patch, "#{BASE}/api/v3/work_packages/43?notify=false")
+          .with { |req| sent = JSON.parse(req.body); true }
+          .to_return(status: 200, body: '{"id":43}')
+
+        assert_equal 200, @op.link_work_package(43, 42, as: :parent).code
+        assert_equal({ "_links" => { "parent" => { "href" => "/api/v3/work_packages/42" } }, "lockVersion" => 4 }, sent)
+      end
+
+      def test_link_as_relates_creates_a_relation_from_the_child
+        sent = nil
+        relation = stub_request(:post, "#{BASE}/api/v3/work_packages/43/relations?notify=false")
+                   .with { |req| sent = JSON.parse(req.body); true }
+                   .to_return(status: 201, body: '{"id":9}')
+
+        assert_equal 201, @op.link_work_package(43, 42, as: :relates).code
+        assert_requested relation
+        assert_equal "relates", sent["type"]
+        assert_equal "/api/v3/work_packages/42", sent.dig("_links", "to", "href")
+      end
+
+      def test_link_refuses_an_unknown_shape
+        assert_raises(ArgumentError) { @op.link_work_package(43, 42, as: :child) }
+      end
+
       def test_statuses_answers_a_code_like_every_other_read
         stub_request(:get, "#{BASE}/api/v3/statuses").to_return(status: 404, body: "{}")
         assert_equal 404, @op.statuses.code

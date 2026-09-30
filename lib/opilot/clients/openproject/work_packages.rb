@@ -80,8 +80,8 @@ module OPilot
         # `WorkPackages::SetAttributesService` (API::Utilities::Endpoints::Bodied
         # deduces it) and simply does not save. So a payload the form accepts is a
         # payload the create accepts, and the defaults the form fills in are the
-        # ones the create fills in too — which is why callers read the errors and
-        # send their own payload unchanged.
+        # ones the create fills in too — which is why callers read the errors
+        # (Response#validation_errors) and send their own payload unchanged.
         #
         # It answers **200 even when the payload is invalid**: validation errors are
         # this endpoint's normal output (`Endpoints::Form#success?` accepts a call
@@ -147,6 +147,23 @@ module OPilot
             { "type" => type, "_links" => { "to" => Href.link(Href.work_package(to_id)) } },
             notify: notify
           )
+        end
+
+        # Hang `child_id` off `parent_id`, as a child (`as: :parent`) or as a
+        # `relates` peer (`as: :relates`). Both ids must be numeric.
+        #
+        # A parent is a PATCH, not part of a create payload: it needs
+        # :manage_subtasks, and in a create payload a missing permission would
+        # fail the whole create.
+        def link_work_package(child_id, parent_id, as:)
+          case as
+          when :parent
+            update_work_package(child_id, { "_links" => { "parent" => Href.link(Href.work_package(parent_id)) } })
+          when :relates
+            create_relation(child_id, parent_id)
+          else
+            raise ArgumentError, "unknown link #{as.inspect}"
+          end
         end
 
         # Posts a comment to a work package. Returns [code, response_hash].

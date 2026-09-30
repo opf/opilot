@@ -195,7 +195,7 @@ module OPilot
 
       # One LLM call. Returns the parsed block, or nil having said why.
       #
-      # One retry, and it is safe for the same reason OpenProject::Agent#write_work_packages'
+      # One retry, and it is safe for the same reason OpenProject::CreateWp#write_work_packages'
       # is: nothing has been created yet, so the failure it covers is a lost
       # request rather than a duplicate work package.
       def write_work_package(number, incident_file, retry_bad: true, format_note: nil)
@@ -261,24 +261,25 @@ module OPilot
       # No match leaves the type out, and OpenProject assigns the project's own
       # default — better than refusing over a name the writer guessed.
       def payload_for(draft)
-        Helpers.wp_payload(project: @project, type: Resource.find_named(project_types, draft_type_name(draft)),
-                           subject: draft["subject"], description: draft["description"])
+        Clients::OpenProject::Payload.work_package(
+          project: @project, type: Resource.find_named(project_types, draft_type_name(draft)),
+          subject: draft["subject"], description: draft["description"]
+        )
       end
 
       # --type wins over the writer's TYPE: line — see #fix.
       def draft_type_name(draft) = @type_override || draft["type"]
 
       def payload_accepted?(payload)
-        code, form = @api.create_work_package_form(payload)
-        # nil is both "the form gave no verdict" (403, an HTML error from a proxy —
-        # let the create speak for itself rather than blocking on a preflight that
-        # did not run) and "nothing wrong". Only the first is worth a log line.
-        errors = Helpers.form_validation_errors(code, form)
-        log_script "The create form answered HTTP #{code}; creating without it." \
-          unless code == 200 && form.is_a?(Hash)
+        form = @api.create_work_package_form(payload)
+        # A form that did not run (403, an HTML error from a proxy) gives no verdict:
+        # let the create speak for itself rather than block on a missing preflight.
+        log_script "The create form answered HTTP #{form.code}; creating without it." \
+          unless form.form_answered?
+        errors = form.validation_errors
         return true unless errors
 
-        errors = hack_required_custom_fields!(payload, form, errors)
+        errors = hack_required_custom_fields!(payload, form.body, errors)
         return true unless errors
 
         # Named in the instance's own wording. opilot must not fill a required
@@ -313,7 +314,7 @@ module OPilot
       # a wrong link shape here would otherwise become a work package that can
       # never be deleted, so the one extra round trip is worth it. Returns the
       # remaining errors (nil if none are left), the same shape
-      # Helpers.form_validation_errors already returns.
+      # Response#validation_errors already returns.
       def hack_required_custom_fields!(payload, form, errors)
         schema = form.dig("_embedded", "schema") || {}
         filled = []
@@ -332,8 +333,7 @@ module OPilot
         return errors if filled.empty?
 
         log_script "appsignal: invented a value for #{filled.join(", ")} (allowlisted test field#{"s" if filled.length > 1})."
-        code, form = @api.create_work_package_form(payload)
-        Helpers.form_validation_errors(code, form)
+        @api.create_work_package_form(payload).validation_errors
       end
 
       # One candidate href for a hacked field. A schema field's `allowedValues`

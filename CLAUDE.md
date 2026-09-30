@@ -508,6 +508,7 @@ in CI.
 | `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
 | `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `openproject/agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
+| `openproject/create_wp.rb` | `@opilot create wp` — the allowlist gate, the one LLM draft, the form preflight, the creates, the links and the reply; see "`:create_wp`" below |
 | `openproject/pull.rb`, `openproject/intent.rb` | Polls OpenProject; parses `@opilot` comments into `OpenProject::Intent`s |
 | `openproject/item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
 | `openproject/health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
@@ -526,7 +527,7 @@ in CI.
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `clients/openproject.rb` | The OpenProject SDK namespace, `Clients::OpenProject`; it only requires the parts below |
 | `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). It destructures as `code, body = …`, so older callers read it as a tuple; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
-| `clients/openproject/{query,href,resource,lookup}.rb` | Logic over the endpoints. `Query` builds `filters`/`sortBy` values; `Href` the path of every payload link; `Resource` reads a v3 body (type list, `display_id`, `create_wp_allowed?`, link titles and ids). `Lookup` resolves names and ids: status, type, priority, version, principal, a field's payload key, a semantic work-package id or project identifier to its numeric id, and `#all_work_packages` pagination. A `Lookup` resolver returns `nil` for "read, not there" and raises the typed `Error` for "could not read" (`AmbiguousName`, with no code, for a name that matches twice) — callers word those differently. It caches, so build one per run |
+| `clients/openproject/{query,href,payload,resource,lookup}.rb` | Logic over the endpoints. `Query` builds `filters`/`sortBy` values; `Href` the path of every payload link; `Payload` the shared request bodies (the work-package create body); `Resource` reads a v3 body (type list, `display_id`, `create_wp_allowed?`, link titles and ids). `Lookup` resolves names and ids: status, type, priority, version, principal, a field's payload key, a semantic work-package id or project identifier to its numeric id, and `#all_work_packages` pagination. A `Lookup` resolver returns `nil` for "read, not there" and raises the typed `Error` for "could not read" (`AmbiguousName`, with no code, for a name that matches twice) — callers word those differently. It caches, so build one per run |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
@@ -782,13 +783,13 @@ delete content from someone's reply.
 **`:create_wp` (`@opilot create wp <what>`)** splits something out of the thread into
 its own work package — `create wp for Rosanna's suggestion` — or, when the request
 names several separate pieces of work, into **up to five at once**
-(`OpenProject::Agent::MAX_CREATE_WP`), each declared a child of the thread or a peer beside it.
+(`OpenProject::CreateWp::MAX`), each declared a child of the thread or a peer beside it.
 It is op-agent's **only non-comment write to OpenProject**,
 and every guard on it stands on one fact: a work package can never be deleted (the
 HTTP client has no DELETE verb anywhere), so nothing downstream can undo a wrong or
 duplicate create.
 
-- **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`OpenProject::Agent#create_wp_enabled?`),
+- **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`OpenProject::CreateWp.enabled?`),
   said once per work package (`create_wp_refusal_noted_at`) and folded into the
   no-allowlist line of the startup banner, since "created nothing" and "cannot create
   anything" look identical in a log — only in that state, because a line confirming the
@@ -798,7 +799,7 @@ duplicate create.
   `OpenProject::Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
   so every create that reaches the handler is from a listed user.
 - **Every work package it will create comes out of ONE LLM call, gated by
-  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `OpenProject::Agent#write_work_packages`). When the request
+  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `OpenProject::CreateWp#write_work_packages`). When the request
   points at nothing in the thread, questions are the only acceptable answer. N answers
   cost the same one call as one, and a call per work package would not see the others —
   two of them could write the same suggestion, and the duplicate could not be deleted.
@@ -816,7 +817,7 @@ duplicate create.
   paste opilot's own answer into a comment (`PD::TasksFile` learned this with an
   example `##` heading).
 - **The cap is stated in the prompt and enforced in the runner.** A prompt limit
-  drifts; `MAX_CREATE_WP` does not. Over the cap nothing is created and there is no
+  drifts; `CreateWp::MAX` does not. Over the cap nothing is created and there is no
   retry: the blocks read fine, so the problem is scope and a retry produces the same
   list.
 - **It is idempotent on the trigger comment's timestamp** (`created_wps.json`, each
@@ -836,7 +837,7 @@ duplicate create.
   `Helpers.create_wp_allowed?` reads the `createWorkPackage*` links the project
   resource renders only for a user who holds the permission.
 - **Every drafted payload is preflighted through the create form, before the first
-  POST** (`OpenProject::Agent#payloads_accepted?` → `#payload_accepted?` →
+  POST** (`OpenProject::CreateWp#payloads_accepted?` → `#payload_accepted?` →
   `POST /api/v3/work_packages/form`). The form does not save, so preflighting the
   whole set first is the only atomic-ish gate there is, and one rejection abandons
   **all** of them: half a tree is worse than none when the halves cannot be deleted,
@@ -845,7 +846,8 @@ duplicate create.
   ends as a 422 in the log with the reader told nothing. The form runs the same
   `SetAttributesService` the create runs and does not save, so a payload it accepts
   is one the create accepts — and it answers **200 even for a payload it rejects**,
-  which is why `_embedded.validationErrors` decides and the status code does not.
+  which is why `_embedded.validationErrors` decides and the status code does not
+  (`Clients::OpenProject::Response#validation_errors`).
   opilot **must not fill a required custom field itself**: the value carries
   business meaning only a person has, and the work package would be permanent. The
   fields are named back in the instance's own wording (naming *which* one was
@@ -869,10 +871,12 @@ duplicate create.
   `relates`.** Hierarchy needs `:manage_subtasks` — a **third** permission next to
   `:add_work_packages` and `:manage_work_package_relations` — so in the create
   payload a missing permission would kill the create itself; as a follow-up PATCH
-  (`Clients::OpenProject::Client#update_work_package`, which handles the `lockVersion` retry)
-  it costs only the shape of the link. Every link is best-effort and never raised:
-  a failure is reported and recorded (`related: false`) for the next ask to finish,
-  because the work package exists and cannot be deleted. The new description also
+  it costs only the shape of the link. Both shapes go through
+  `Clients::OpenProject::Client#link_work_package` (`as: :parent` is a PATCH through
+  `#update_work_package`, which handles the `lockVersion` retry). Every link is
+  best-effort and never raised: a failure is reported and recorded
+  (`related: false`) for the next ask to finish, because the work package exists
+  and cannot be deleted. The new description also
   backlinks the source, which is what a reader sees when the link is the part that
   failed.
 - **The declared shape is stored on each record (`link_wanted`).** Records are
