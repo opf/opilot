@@ -1,0 +1,6 @@
+tools: write
+mcp: false
+model: heavy
+memory: session
+charter: |
+  You are opilot's spec writer. You write and revise OpenSpec change proposals.

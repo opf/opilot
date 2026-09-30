@@ -500,11 +500,11 @@ bare `docker compose run …` works from the repo root.
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
-| `roles.rb` | Loads `roles/*.md`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
+| `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
-| `prompts.rb`, `prompts/` | All LLM prompts. `prompts/<role>.rb` is one module per role (`Prompts::Planner.plan`, `Prompts::PrAuthor.fix_ci`, …) holding that role's builders and whatever only that role uses (`Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/blocks.rb` (text, from `roles/_blocks/`), `prompts/sections.rb` (helpers) and `prompts/prompt.rb` (`Prompt`, `Prompts.charter`); `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
@@ -943,7 +943,7 @@ globally unique, so `pr_reviews/` is flat.
 Runner POSTs to `http://harness:47291` with headers:
 
 - `X-Harness-Role` — **required**. The role the call is made as (`Helpers#llm`).
-  `server.js` loads the same `roles/*.md` files at boot (`loadRoles`, copied into
+  `server.js` loads the same `prompts/*.yml` role files at boot (`loadRoles`, copied into
   the image by `Dockerfile.harness`) and refuses a missing role (400), an unknown
   one, a request with no tool grant — which would give pi its default tools,
   write included — and a grant the role does not allow (403): a role without
@@ -963,21 +963,20 @@ Runner POSTs to `http://harness:47291` with headers:
   (see `MCP.md`) — the other roles keep the plain grant regardless. `server.js` rejects any other
   grant, so its allowlist (`ALLOWED_TOOL_GRANTS`, four strings) must stay in
   sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
-- **Every call names a role** (`Helpers#llm`). A role is one file,
-  `roles/<name>.md`: frontmatter for `tools` (`read`/`write`), `mcp` (whether the
+- **Every call names a role** (`Helpers#llm`). A role is a YAML file,
+  `lib/opilot/prompts/<name>.yml`: `tools` (`read`/`write`), `mcp` (whether the
   MCP tools join the grant), `model` (`heavy`/`light`) and `memory`
-  (`session`/`none`); the body is the role's **charter** (HTML comments in it are
-  notes for people, stripped on load). `lib/opilot/roles.rb` loads them strictly —
+  (`session`/`none`), and the role's **charter** as a `charter: |` block. `lib/opilot/roles.rb` loads them strictly —
   an unknown key or value fails at boot — and a `memory: none` role given a
   `session_file` raises, so health's independence from chat is structural.
 
   **The charter opens every prompt that orients the model** (`Prompts.charter`,
-  called by each builder in `lib/opilot/prompts/<role>.rb`), followed by the rules
+  called by each builder in `lib/opilot/prompts/<role>.rb`, beside it), followed by the rules
   the **grant** carries: `READ_ONLY` for a read role, `WRITE_GRANT` (no commit, no
   command, and the `git rm`/`git clean` exception) for a write role. Derived, never
   pasted, so a prompt cannot state a grant its role does not hold. A follow-up turn
   in the same session (`propose_revise`, a chat's second message) carries no
-  charter. Shared prompt text lives in `roles/_blocks/*.md`; the reason for each
+  charter. Shared prompt text lives in `prompts/_blocks/*.md`; the reason for each
   block stays on the Ruby constant that loads it, and compositions
   (`REPLY_CONTRACT` + `PLAIN_ENGLISH`) stay in Ruby.
 

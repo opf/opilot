@@ -70,12 +70,13 @@ const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash,write,edit,op_query,gh_query',
 ]);
 
-// Role files (roles/<name>.md) — the same files the runner loads, so a role's
+// Role files (lib/opilot/prompts/<name>.yml) — the same files the runner loads,
+// at the same path relative to this file in the repo and in /app, so a role's
 // grant is defined once. The runner sends the role it calls as and the grant it
 // resolved; this checks that the two agree. It does not stop a compromised
 // runner, which chooses both: it stops a runner bug from sending a write grant
 // under a read role, the one mistake nothing else would catch.
-const ROLES_DIR = path.join(__dirname, 'roles');
+const ROLES_DIR = path.join(__dirname, 'lib', 'opilot', 'prompts');
 const ROLE_NAME_RE = /^[a-z_]{1,64}$/;
 const ROLE_BASES = {
   read: 'read,grep,find,ls,bash',
@@ -87,15 +88,30 @@ const ROLE_VALUES = {
 };
 
 // Strict, like the runner's loader: a typo fails at boot, not at a request.
+// Node has no YAML parser, so this reads exactly the subset a role file uses:
+// `key: value` lines, and one `charter: |` block of indented lines, which the
+// server does not need beyond checking that it is there.
 function parseRole(text, where) {
-  const m = /^---\n([\s\S]*?)\n---\n/.exec(text);
-  if (!m) throw new Error(`${where}: no frontmatter`);
   const meta = {};
-  for (const line of m[1].split('\n')) {
+  let inCharter = false;
+  let charterLines = 0;
+  for (const line of text.replace(/\n+$/, '').split('\n')) {
+    if (inCharter && (line === '' || /^\s/.test(line))) {
+      if (line.trim()) charterLines++;
+      continue;
+    }
+    inCharter = false;
+    if (line === 'charter: |' && !('charter' in meta)) {
+      meta.charter = true;
+      inCharter = true;
+      continue;
+    }
     const kv = /^([a-z]+):\s*(\S+)\s*$/.exec(line);
-    if (!kv) throw new Error(`${where}: unreadable line ${JSON.stringify(line)}`);
+    if (!kv || kv[1] in meta) throw new Error(`${where}: unreadable line ${JSON.stringify(line)}`);
     meta[kv[1]] = kv[2];
   }
+  if (!charterLines) throw new Error(`${where}: charter must be a \`charter: |\` block with text`);
+  delete meta.charter;
   if (Object.keys(meta).sort().join() !== ROLE_KEYS.join()) {
     throw new Error(`${where}: keys must be ${ROLE_KEYS.join(', ')}`);
   }
@@ -109,8 +125,8 @@ function parseRole(text, where) {
 
 function loadRoles(dir = ROLES_DIR) {
   const roles = new Map();
-  for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort()) {
-    const name = file.slice(0, -3);
+  for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.yml')).sort()) {
+    const name = file.slice(0, -4);
     if (!ROLE_NAME_RE.test(name)) throw new Error(`${file}: bad role name`);
     roles.set(name, parseRole(fs.readFileSync(path.join(dir, file), 'utf8'), file));
   }

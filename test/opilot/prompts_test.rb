@@ -59,6 +59,16 @@ module OPilot
       end
     end
 
+    # Each role is a pair side by side: <role>.yml and <role>.rb, whose module is the role's.
+    def test_each_role_is_a_yml_and_rb_pair
+      dir = Harness::ROLES_DIR
+      rb = dir.glob("[a-z]*.rb").map { |f| f.basename(".rb").to_s }
+      assert_equal Harness::ROLES.keys.map(&:to_s).sort, rb.sort
+      (BUILDERS.keys + FOLLOW_UPS).each do |mod, name|
+        assert_equal dir / "#{mod::ROLE}.rb", Pathname(mod.method(name).source_location.first), "#{mod}.#{name}"
+      end
+    end
+
     def test_a_follow_up_carries_no_charter
       text = Prompts::SpecWriter.propose_revise(change_id: "c", change_dir: "/c", failures: "f", attempt: 1, max_attempts: 2)
       refute_includes text, Harness.role(:spec_writer).charter

@@ -1,0 +1,7 @@
+tools: read
+mcp: true
+model: heavy
+memory: session
+charter: |
+  You are opilot's advisor. You answer questions about work packages, plans, and
+  code.

@@ -1,6 +1,6 @@
 // Plain-Node test for server.js's role check. Run with `node test/js/roles_test.js`.
 //
-// It loads the real roles/ directory, the same files the runner loads, so a
+// It loads the real lib/opilot/prompts/*.yml files, the same ones the runner loads, so a
 // role file the server cannot read fails here rather than at container boot.
 const assert = require('assert');
 const fs = require('fs');
@@ -22,7 +22,7 @@ function test(name, fn) {
 const READ = 'read,grep,find,ls,bash';
 const WRITE = 'read,grep,find,ls,bash,write,edit';
 const roles = loadRoles();
-const good = '---\ntools: read\nmcp: false\nmodel: heavy\nmemory: none\n---\nDoes x.\n';
+const good = 'tools: read\nmcp: false\nmodel: heavy\nmemory: none\ncharter: |\n  Does x.\n';
 
 test('the real role files load', () => {
   assert.ok(roles.size >= 11, `only ${roles.size} roles`);
@@ -67,7 +67,9 @@ test('a malformed role file fails to parse', () => {
     good.replace('read', 'admin'),
     good.replace('mcp: false\n', ''),
     good.replace('memory: none', 'memory: none\nextra: 1'),
-    'no frontmatter\n',
+    good.replace('charter: |\n  Does x.\n', ''),
+    good.replace('  Does x.', ''),
+    good + 'tools: write\n',
   ]) {
     assert.throws(() => parseRole(bad, 'x'), undefined, JSON.stringify(bad));
   }

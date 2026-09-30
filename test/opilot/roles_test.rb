@@ -60,7 +60,7 @@ module OPilot
       assert_match(/stateless/, err.message)
     end
 
-    # The table roles/*.md replaced, pinned so a role file edit is a deliberate test edit.
+    # The table the role files replaced, pinned so a role file edit is a deliberate test edit.
     EXPECTED = {
       planner:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :session],
       advisor:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :session],
@@ -91,19 +91,22 @@ module OPilot
     end
 
     def write_role(dir, text)
-      path = Pathname(dir) / "x.md"
+      path = Pathname(dir) / "x.yml"
       path.write(text)
       path
     end
 
     def test_a_bad_role_file_fails_to_load
       Dir.mktmpdir do |dir|
-        good = "---\ntools: read\nmcp: false\nmodel: heavy\nmemory: none\n---\nDoes x.\n"
-        assert_equal :x, Harness.load_role(write_role(dir, good)).name
+        good = "tools: read\nmcp: false\nmodel: heavy\nmemory: none\ncharter: |\n  Does x.\n"
+        role = Harness.load_role(write_role(dir, good))
+        assert_equal [:x, "Does x."], [role.name, role.charter]
         [good.sub("read", "admin"),                            # unknown grant
          good.sub("mcp: false\n", ""),                         # missing key
          good.sub("memory: none", "memory: none\nextra: 1"),  # unknown key
-         "no frontmatter\n"].each do |bad|
+         good.sub("charter: |\n  Does x.\n", ""),           # no charter
+         good.sub("  Does x.", ""),                          # empty charter
+         "just text\n"].each do |bad|
           assert_raises(ArgumentError, bad) { Harness.load_role(write_role(dir, bad)) }
         end
       end

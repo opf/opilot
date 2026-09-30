@@ -2,11 +2,10 @@ require "yaml"
 
 module OPilot
   class Harness
-    # One role the model plays, loaded from roles/<name>.md: frontmatter for the
-    # grant, model and memory; the body is the role's charter, which opens the
-    # role's prompts (Prompts.charter). HTML comments in the body are notes for
-    # people and never reach the model. Every LLM call names one (Helpers#llm).
-    # The MCP tools resolve per call, from the Context flags.
+    # One role the model plays, loaded from prompts/<name>.yml: its grant, model
+    # and memory, and the charter that opens its prompts (Prompts.charter).
+    # Every LLM call names one (Helpers#llm). The MCP tools resolve per call,
+    # from the Context flags.
     Role = Data.define(:name, :base, :mcp, :model, :memory, :charter) do
       def stateless = memory == :none
 
@@ -17,7 +16,7 @@ module OPilot
       end
     end
 
-    ROLES_DIR = Pathname(__dir__).join("../../roles").expand_path
+    ROLES_DIR = Pathname(__dir__).join("prompts").expand_path
 
     ROLE_VALUES = {
       "tools"  => { "read" => TOOLS_READ, "write" => TOOLS_IMPL },
@@ -29,22 +28,22 @@ module OPilot
     # Strict on purpose: a typo in a role file must fail at boot, not grant
     # something unexpected at the first call.
     def self.load_role(path)
-      name = path.basename(".md").to_s
-      _, front, body = path.read.split(/^---\s*$/, 3)
-      raise ArgumentError, "#{path}: no frontmatter" unless body
-      meta = YAML.safe_load(front) || {}
-      unless meta.keys.sort == ROLE_VALUES.keys.sort
-        raise ArgumentError, "#{path}: keys must be #{ROLE_VALUES.keys.join(", ")}"
-      end
+      name = path.basename(".yml").to_s
+      meta = YAML.safe_load(path.read)
+      raise ArgumentError, "#{path}: not a YAML mapping" unless meta.is_a?(Hash)
+      keys = ROLE_VALUES.keys + ["charter"]
+      raise ArgumentError, "#{path}: keys must be #{keys.join(", ")}" unless meta.keys.sort == keys.sort
+      charter = meta["charter"]
+      raise ArgumentError, "#{path}: charter must be text" unless charter.is_a?(String) && !charter.strip.empty?
       values = ROLE_VALUES.to_h do |key, allowed|
         raise ArgumentError, "#{path}: #{key}: #{meta[key].inspect} is not one of #{allowed.keys.join(", ")}" unless allowed.key?(meta[key])
         [key.to_sym, allowed[meta[key]]]
       end
       Role.new(name: name.to_sym, base: values[:tools], mcp: values[:mcp], model: values[:model],
-               memory: values[:memory], charter: body.gsub(/<!--.*?-->/m, "").strip)
+               memory: values[:memory], charter: charter.strip)
     end
 
-    ROLES = ROLES_DIR.glob("*.md").sort.map { |f| load_role(f) }.to_h { |r| [r.name, r] }.freeze
+    ROLES = ROLES_DIR.glob("*.yml").sort.map { |f| load_role(f) }.to_h { |r| [r.name, r] }.freeze
 
     def self.role(name) = ROLES.fetch(name)
   end
