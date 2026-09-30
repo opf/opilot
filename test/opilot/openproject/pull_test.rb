@@ -84,6 +84,39 @@ module OPilot
       assert_equal "https://example.com/work_packages/42", item["url"]
     end
 
+    CF_WP = WP.merge(
+      "customField1" => { "format" => "markdown", "raw" => "* It works\n", "html" => "<ul/>" },
+      "customField2" => nil,
+      "customField3" => 10,
+      "_links" => {
+        "schema"       => { "href" => "/api/v3/work_packages/schemas/7-8" },
+        "customField4" => { "href" => "/api/v3/users/1", "title" => "Alice" },
+        "customField5" => [{ "href" => "/api/v3/custom_options/1", "title" => "Q4" }],
+        "customField6" => []
+      }
+    ).freeze
+
+    def test_custom_fields_are_named_from_the_schema
+      stub_request(:get, "https://example.com/api/v3/work_packages/schemas/7-8")
+        .to_return(status: 200, body: JSON.generate({
+          "customField1" => { "name" => "Acceptance criteria" },
+          "customField4" => { "name" => "Designer" },
+          "customField5" => { "name" => "Quarter" }
+        }))
+      fields = @pull.send(:custom_fields, CF_WP)
+      assert_equal({ "Acceptance criteria" => "* It works", "customField3" => 10,
+                     "Designer" => "Alice", "Quarter" => ["Q4"] }, fields)
+    end
+
+    def test_custom_fields_are_nil_when_the_schema_read_fails
+      stub_request(:get, "https://example.com/api/v3/work_packages/schemas/7-8").to_return(status: 403, body: "{}")
+      assert_nil @pull.send(:custom_fields, CF_WP)
+    end
+
+    def test_custom_fields_need_no_schema_when_all_are_empty
+      assert_equal({}, @pull.send(:custom_fields, WP))
+    end
+
     def test_build_comments_filters_blank_comment_text
       activities = [
         { "id" => 1, "comment" => { "raw" => "" },    "_embedded" => { "user" => { "name" => "A" } }, "createdAt" => "t" },

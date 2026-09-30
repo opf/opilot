@@ -57,7 +57,9 @@ module OPilot
           ISSUE: #{item}  #{item_fields("type", "status", "history[]", "description_changed_at")}#{related_text}#{tree_text}#{op_query_line(op_mcp)}
           history[] holds the field changes (status, assignee, description, …) as the
           instance renders them. description_changed_at is the time of the last
-          description edit.
+          description edit. custom_fields{} maps each custom field's name to its value.
+          Text fields there (acceptance criteria, out of scope, …) are part of the
+          description: check them the same way.
           FACTS: #{facts}  (JSON — `findings` the runner already established from exact
           data, `not_checked`, and `inputs`: linked pull requests and commits. Do NOT
           repeat a fact finding and do NOT dispute it. Use `inputs` as evidence.)

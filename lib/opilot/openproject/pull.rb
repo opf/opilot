@@ -378,8 +378,8 @@ module OPilot
       # item.json's shape. The updated_at cache below would otherwise keep a work
       # package opilot has already seen on the old shape forever — which is how a
       # mirror gains a field (3: "history", "description_changed_at", and each
-      # picture's "created_at", for the health check).
-      ITEM_VERSION = 3
+      # picture's "created_at", for the health check; 4: "custom_fields").
+      ITEM_VERSION = 4
 
       # A work package is served from cache only when the mirror is COMPLETE.
       # `pictures_pending` says an attachment read failed, and updated_at cannot
@@ -413,6 +413,7 @@ module OPilot
         )
 
         full = build_full_item(wp, comments)
+        full["custom_fields"] = custom_fields(wp)
         # nil, not empty, when the read failed: "no changes" would be a false fact.
         activities = acts.dig("_embedded", "elements") || []
         full["history"] = acts_code == 200 ? build_history(activities) : nil
@@ -495,6 +496,39 @@ module OPilot
           "description" => wp.dig("description", "raw") || "",
           "comments"    => comments
         }
+      end
+
+      # Custom field values by display name ("Acceptance criteria" => "…"). The
+      # work package carries only `customField400` keys; the names are in its
+      # schema. nil, not {}, when the schema read failed.
+      def custom_fields(wp)
+        values = wp.select { |k, _| k.start_with?("customField") }
+          .merge((wp["_links"] || {}).select { |k, _| k.start_with?("customField") })
+          .transform_values { |v| custom_field_value(v) }
+          .reject { |_, v| v.nil? || v == "" || v == [] }
+        return {} if values.empty?
+
+        schema = work_package_schema(wp.dig("_links", "schema", "href"))
+        return nil unless schema
+        values.to_h { |key, v| [schema.dig(key, "name") || key, v] }
+      end
+
+      def custom_field_value(value)
+        case value
+        when Array then value.map { |v| custom_field_value(v) }.compact
+        when Hash  then value.key?("raw") ? value["raw"].to_s.strip : value["title"]
+        else value
+        end
+      end
+
+      # Schemas are few and rarely change, so one read per href per process.
+      def work_package_schema(href)
+        @schemas ||= {}
+        return @schemas[href] if @schemas.key?(href)
+        project_id, type_id = href.to_s[%r{/schemas/(\d+-\d+)\z}, 1]&.split("-")
+        return nil unless project_id
+        code, body = @api.work_package_schema(project_id, type_id)
+        code == 200 ? @schemas[href] = body : nil
       end
 
       def parse_scan_from_input(input)
