@@ -100,7 +100,7 @@ module OPilot
     # is HTML-escaped and the id must be numeric.
     def self.mention(name, user_href)
       escaped = CGI.escapeHTML(name.to_s)
-      id      = user_href.to_s.split("/").last.to_s
+      id      = Clients::OpenProject::Resource.href_id(user_href).to_s
       return escaped unless id.match?(/\A\d+\z/)
       %Q(<mention class="mention" data-id="#{id}" data-type="user" data-text="#{escaped}">@#{escaped}</mention>)
     end
@@ -414,37 +414,6 @@ module OPilot
       name
     end
 
-    # A project's work-package types as [{ "id", "name" }], from a
-    # Clients::OpenProject#project_types response.
-    def self.type_list(body)
-      ((body || {}).dig("_embedded", "elements") || [])
-        .map { |t| { "id" => t["id"], "name" => t["name"].to_s } }
-    end
-
-    # The type with this name, case-insensitively — instances style these names
-    # inconsistently ("Feature", "FEATURE"), so an exact match would be pure
-    # friction. One definition, because `pd init`, `@opilot create wp` and
-    # `./opilot op wp create` all resolve a type the operator or the writer named,
-    # and a name that resolves in one must resolve in all three.
-    def self.find_type(types, name)
-      return nil if name.to_s.strip.empty?
-      types.to_a.find { |t| t["name"].to_s.casecmp?(name.to_s) }
-    end
-
-    # Whether this token may create work packages in `project_json` (a project
-    # resource body). OpenProject renders these links only for a user who holds
-    # :add_work_packages, so their absence is a real answer rather than a guess —
-    # and a preflight beats a 403 raised after an LLM call has already run.
-    #
-    # It lives here, not in PD::ResolvedIds where it started, because agent.rb
-    # needs it too and nothing under pd/ may be required at boot.
-    CREATE_WP_LINKS = %w[createWorkPackageImmediately createWorkPackage].freeze
-
-    def self.create_wp_allowed?(project_json)
-      links = (project_json || {})["_links"] || {}
-      CREATE_WP_LINKS.any? { |name| links.key?(name) }
-    end
-
     # The TYPE line's menu. An empty registry is stated rather than left blank, so
     # the writer omits the line instead of inventing a type name. One definition,
     # because every prompt carrying a `TYPE:` line reads the same list.
@@ -459,8 +428,8 @@ module OPilot
     # One definition, because the subject truncation and the markdown description
     # shape have to hold at every site that creates a work package.
     def self.wp_payload(project:, type:, subject:, description:)
-      links = { "project" => { "href" => "/api/v3/projects/#{project}" } }
-      links["type"] = { "href" => "/api/v3/types/#{type["id"]}" } if type
+      links = { "project" => Clients::OpenProject::Href.link(Clients::OpenProject::Href.project(project)) }
+      links["type"] = Clients::OpenProject::Href.link(Clients::OpenProject::Href.type(type["id"])) if type
 
       { "subject"     => subject.to_s[0, 200],
         "description" => { "format" => "markdown", "raw" => description.to_s },
@@ -473,7 +442,7 @@ module OPilot
     #
     # The form answers **200 even for a payload it rejects**, which is why
     # `_embedded.validationErrors` decides and the status code does not — a quirk
-    # subtle enough that Clients::OpenProject#create_work_package_form documents
+    # subtle enough that Clients::OpenProject::Client#create_work_package_form documents
     # it, and one that must not be encoded twice.
     def self.form_validation_errors(code, form)
       return nil unless code == 200 && form.is_a?(Hash)
@@ -650,18 +619,6 @@ module OPilot
     def self.document_link(ctx, id, title = nil)
       label = title.to_s.empty? ? "Document ##{id}" : "##{id} #{title}"
       "[#{label}](#{ctx.op_url}/documents/#{id})"
-    end
-
-    # The user-facing id of a work-package resource: semantic ("PROJ-123") when
-    # the instance runs in semantic mode, numeric otherwise. The API accepts
-    # either form in work-package routes, so this is the only id opilot keeps.
-    # Falls back to "id" for instances that predate the displayId field.
-    #
-    # One definition, because the poll cache and every link opilot publishes must
-    # name a work package the same way.
-    def self.display_id(wp)
-      id = (wp || {})["displayId"]
-      (id.nil? || id.to_s.empty? ? (wp || {})["id"] : id).to_s
     end
 
     # The browser URL of a work package on this instance.

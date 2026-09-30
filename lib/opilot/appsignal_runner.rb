@@ -18,6 +18,8 @@ module OPilot
   #
   # It owns its own subcommand dispatch, like OpRunner and PD::Runner.
   class AppSignalRunner
+    Resource = Clients::OpenProject::Resource
+
     include Helpers
 
     FIX_FLAGS = %w[project type app].freeze
@@ -25,7 +27,7 @@ module OPilot
     def initialize(ctx, harness: Harness.new(ctx), api: nil, appsignal: nil, fix_runner: nil)
       @ctx       = ctx
       @harness   = harness
-      @api       = api || Clients::OpenProject.new(ctx.op_url, ctx.token)
+      @api       = api || Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
       @appsignal = appsignal
       @fix_runner = fix_runner
     end
@@ -157,7 +159,7 @@ module OPilot
     def require_create_permission!(project)
       code, json = @api.project(project)
       raise OPilot::FatalError, "Could not read project #{project} (HTTP #{code})." unless code == 200 && json
-      unless Helpers.create_wp_allowed?(json)
+      unless Resource.create_wp_allowed?(json)
         raise OPilot::FatalError,
               "My OpenProject token cannot create work packages in #{json["name"]} — it has no " \
               "`add_work_packages` permission there. Ask an administrator for it."
@@ -258,7 +260,7 @@ module OPilot
     # No match leaves the type out, and OpenProject assigns the project's own
     # default — better than refusing over a name the writer guessed.
     def payload_for(draft)
-      Helpers.wp_payload(project: @project, type: Helpers.find_type(project_types, draft_type_name(draft)),
+      Helpers.wp_payload(project: @project, type: Resource.find_named(project_types, draft_type_name(draft)),
                          subject: draft["subject"], description: draft["description"])
     end
 
@@ -372,7 +374,7 @@ module OPilot
     def project_types
       @project_types ||= begin
         code, body = @api.project_types(@project)
-        code == 200 && body ? Helpers.type_list(body) : []
+        code == 200 && body ? Resource.type_list(body) : []
       end
     end
 

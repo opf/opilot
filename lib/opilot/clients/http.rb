@@ -13,6 +13,10 @@ module OPilot
 
     RETRYABLE_CODES = [429, 500, 502, 503, 504].freeze
 
+    # Names opilot in the instance's logs, so an administrator can tell its
+    # traffic apart. There is no release version to add.
+    USER_AGENT = "opilot (+https://github.com/opf/opilot)".freeze
+
     # Retry tuning. base_interval is overridable so the test suite can disable
     # real backoff sleeps (see test/test_helper.rb).
     @max_tries     = 3
@@ -56,12 +60,6 @@ module OPilot
       [code, parsed]
     end
 
-    # Returns [status_code, parsed_hash], raises on non-200.
-    def self.get_json!(url, token:)
-      code, parsed = get_json(url, token: token)
-      raise Error, "#{url} returned HTTP #{code}" unless code == 200
-      [code, parsed]
-    end
 
     # Returns [status_code, raw_bytes]. Unlike .get this does not assume text —
     # it is for attachment content, which is arbitrary binary. OpenProject's
@@ -117,6 +115,7 @@ module OPilot
                         read_timeout: 30, open_timeout: 10) do |http|
           req = verb.new(uri)
           req.basic_auth("apikey", token) if token
+          req["User-Agent"] = USER_AGENT
           req["Content-Type"] = "application/json" if body
           req.body = JSON.generate(body) if body
           res = http.request(req)

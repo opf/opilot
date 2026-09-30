@@ -21,10 +21,9 @@ module OPilot
           @downloads = []
         end
 
-        def project_numeric_id(project_id)
-          return [200, project_id.to_i] if project_id.to_s.match?(/\A\d+\z/)
+        def project(project_id)
           id = @identifiers[project_id.to_s]
-          id ? [200, id] : [404, nil]
+          id ? [200, { "id" => id }] : [404, nil]
         end
 
         def documents(project_id, page: 1, page_size: 100)
@@ -238,7 +237,7 @@ module OPilot
         op = FakeOP.new(docs: { 118 => doc(118, title: "Concept") }, identifiers: { "my-project" => 42 })
         result = Intake.new(@ctx, op: op).fetch(@state, project_id: "my-project")
 
-        assert_equal 42, op.filtered_by
+        assert_equal "42", op.filtered_by
         assert_equal 1, result.documents.length
       end
 

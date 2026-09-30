@@ -6,7 +6,7 @@ module OPilot
       BASE = "https://op.test".freeze
 
       def setup
-        @op = OpenProject.new(BASE, "tok")
+        @op = OpenProject::Client.new(BASE, "tok")
       end
 
       def documents_url(project_id)
@@ -41,82 +41,40 @@ module OPilot
         assert_requested listing
       end
 
-      def test_documents_resolves_a_project_identifier_first
-        # The filter coerces its values to integers: an identifier matches
-        # nothing rather than erroring, so the sweep would come back empty.
-        lookup = stub_request(:get, "#{BASE}/api/v3/projects/my-project")
-                 .to_return(status: 200, body: '{"id":42,"identifier":"my-project"}')
-        listing = stub_documents(42)
-
-        code, = @op.documents("my-project")
-
-        assert_equal 200, code
-        assert_requested lookup
-        assert_requested listing
-      end
-
-      def test_documents_memoizes_the_resolved_identifier
-        lookup = stub_request(:get, "#{BASE}/api/v3/projects/my-project")
-                 .to_return(status: 200, body: '{"id":42}')
-        stub_documents(42)
-
-        3.times { @op.documents("my-project") }
-
-        assert_requested lookup, times: 1
-      end
-
-      def test_documents_returns_the_failing_lookup_code_when_the_project_is_unreadable
-        stub_request(:get, "#{BASE}/api/v3/projects/nope").to_return(status: 403, body: "{}")
-        # The listing must not be attempted with an unresolved project.
+      def test_documents_refuses_an_identifier_that_would_match_nothing
         listing = stub_request(:get, %r{/api/v3/documents})
-
-        code, body = @op.documents("nope")
-
-        assert_equal 403, code
-        assert_nil body
+        assert_raises(ArgumentError) { @op.documents("my-project") }
         assert_not_requested listing
       end
 
-      def test_project_numeric_id_passes_a_numeric_id_through_without_a_request
-        assert_equal [200, 42], @op.project_numeric_id("42")
-        assert_not_requested :get, %r{/api/v3/projects}
-      end
-
-      # --- the filter builder -------------------------------------------------
-
-      # The three call sites it replaced were hand-interpolated strings. Their
-      # exact bytes are what the encoded query — and so every webmock stub in the
-      # suite — is keyed on, so assert the literals rather than the shape: a
-      # drifting builder must fail here, not as an unregistered-request miss in
-      # some unrelated test.
       def test_filter_emits_the_literals_its_three_call_sites_used_to_interpolate
         assert_equal %Q([{"involved":{"operator":"=","values":["42"]}}]),
-                     OpenProject.filter("involved", "=", 42),
+                     OpenProject::Query.filter("involved", "=", 42),
                      "work_package_relations"
         assert_equal %Q([{"project":{"operator":"=","values":["7"]}}]),
-                     OpenProject.filter("project", "=", 7),
+                     OpenProject::Query.filter("project", "=", 7),
                      "documents"
         assert_equal %Q([{"comment":{"operator":"~","values":#{JSON.generate(["OPilot Bot"])}}}]),
-                     OpenProject.filter("comment", "~", "OPilot Bot"),
+                     OpenProject::Query.filter("comment", "~", "OPilot Bot"),
                      "Pull#mention_filter_json"
       end
 
       def test_filter_stringifies_values_because_the_encoded_query_is_the_identity
         # documents passes body["id"], an Integer. Left unstringified it emits
         # [42] rather than ["42"] and silently changes every URL built here.
-        assert_equal OpenProject.filter("project", "=", "7"), OpenProject.filter("project", "=", 7)
+        assert_equal OpenProject::Query.filter("project", "=", "7"), OpenProject::Query.filter("project", "=", 7)
       end
 
       def test_filter_escapes_through_json_so_a_display_name_cannot_break_the_query
         name = %Q(Bo"t \u{1F916})
         assert_equal [{ "comment" => { "operator" => "~", "values" => [name] } }],
-                     JSON.parse(OpenProject.filter("comment", "~", name))
+                     JSON.parse(OpenProject::Query.filter("comment", "~", name))
       end
 
       # --- work_packages defaults ---------------------------------------------
 
       def test_work_packages_defaults_match_the_poll_that_used_to_hardcode_them
-        sort = HTTP.encode_filters(OpenProject::SORT_UPDATED_AT)
+        sort = HTTP.encode_filters(OpenProject::Query::SORT_UPDATED_AT)
         poll = stub_request(:get, "#{BASE}/api/v3/work_packages?pageSize=50&offset=1" \
                                   "&filters=#{HTTP.encode_filters("[]")}&sortBy=#{sort}" \
                                   "&includeSubprojects=true")
@@ -231,9 +189,81 @@ module OPilot
                "a relative path in this API's own response IS this instance"
       end
 
-      def test_lock_version_is_private_so_the_locking_dance_stays_in_one_place
-        refute_respond_to @op, :lock_version
-        assert @op.respond_to?(:lock_version, true), "still there, just not part of the surface"
+      def test_the_lock_version_helper_is_private_so_the_locking_dance_stays_in_one_place
+        refute_respond_to @op, :with_lock_version
+        assert @op.respond_to?(:with_lock_version, true), "still there, just not part of the surface"
+      end
+
+      def test_update_retries_once_on_a_conflict_with_a_fresh_lock_version
+        stub_request(:get, "#{BASE}/api/v3/work_packages/42")
+          .to_return({ status: 200, body: '{"lockVersion":1}' }, { status: 200, body: '{"lockVersion":2}' })
+        sent = []
+        stub_request(:patch, "#{BASE}/api/v3/work_packages/42?notify=false")
+          .with { |req| sent << JSON.parse(req.body)["lockVersion"]; true }
+          .to_return({ status: 409, body: "{}" }, { status: 200, body: '{"id":42}' })
+
+        code, = @op.update_work_package(42, { "subject" => "New" })
+
+        assert_equal 200, code
+        assert_equal [1, 2], sent
+      end
+
+      def test_statuses_answers_a_code_like_every_other_read
+        stub_request(:get, "#{BASE}/api/v3/statuses").to_return(status: 404, body: "{}")
+        assert_equal 404, @op.statuses.code
+      end
+
+      def test_lookup_reads_reach_their_endpoints
+        {
+          -> { @op.priorities }                          => "#{BASE}/api/v3/priorities",
+          -> { @op.project_versions("demo") }            => "#{BASE}/api/v3/projects/demo/versions",
+          -> { @op.work_package_available_assignees(42) } => "#{BASE}/api/v3/work_packages/42/available_assignees",
+          -> { @op.work_package_schema(7, 5) }           => "#{BASE}/api/v3/work_packages/schemas/7-5",
+        }.each do |call, url|
+          endpoint = stub_request(:get, url).to_return(status: 200, body: "{}")
+          assert_equal 200, call.call.code
+          assert_requested endpoint
+        end
+      end
+
+      def test_principals_and_projects_carry_the_filter_and_paging
+        filter = OpenProject::Query.filter("name", "=", "Jane Doe")
+        principals = stub_request(:get, "#{BASE}/api/v3/principals?pageSize=100&offset=1&filters=#{HTTP.encode_filters(filter)}")
+                     .to_return(status: 200, body: "{}")
+        projects = stub_request(:get, "#{BASE}/api/v3/projects?pageSize=20&offset=2&filters=#{HTTP.encode_filters("[]")}")
+                   .to_return(status: 200, body: "{}")
+
+        @op.principals(filters_json: filter)
+        @op.projects(page: 2, page_size: 20)
+
+        assert_requested principals
+        assert_requested projects
+      end
+
+      def test_update_form_validates_with_the_current_lock_version_and_saves_nothing
+        stub_request(:get, "#{BASE}/api/v3/work_packages/42").to_return(status: 200, body: '{"lockVersion":3}')
+        posted = nil
+        form = stub_request(:post, "#{BASE}/api/v3/work_packages/42/form")
+               .with { |req| posted = JSON.parse(req.body); true }
+               .to_return(status: 200, body: '{"_embedded":{"validationErrors":{}}}')
+        patch = stub_request(:patch, %r{/api/v3/work_packages/42})
+
+        code, = @op.update_work_package_form(42, { "subject" => "New" })
+
+        assert_equal 200, code
+        assert_requested form
+        assert_equal({ "subject" => "New", "lockVersion" => 3 }, posted,
+                     "the update contract rejects a stale or missing lockVersion, so the form needs it too")
+        assert_not_requested patch
+      end
+
+      def test_an_unreadable_work_package_answers_with_the_read_code_not_a_conflict
+        stub_request(:get, "#{BASE}/api/v3/work_packages/42").to_return(status: 404, body: "{}")
+        writes = stub_request(:any, %r{/work_packages/42(/form)?\?|/form})
+
+        assert_equal 404, @op.update_work_package_form(42, { "subject" => "New" }).code
+        assert_equal 404, @op.update_work_package(42, { "subject" => "New" }).code
+        assert_not_requested writes
       end
     end
   end

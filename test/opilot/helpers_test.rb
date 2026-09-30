@@ -185,20 +185,6 @@ module OPilot
       assert_equal "the answer", Helpers.after_marker(text, "DRAFT")
     end
 
-    def test_create_wp_allowed_reads_the_projects_own_links
-      assert Helpers.create_wp_allowed?("_links" => { "createWorkPackage" => { "href" => "/x" } })
-      assert Helpers.create_wp_allowed?("_links" => { "createWorkPackageImmediately" => { "href" => "/x" } })
-      refute Helpers.create_wp_allowed?("_links" => { "self" => { "href" => "/x" } })
-      refute Helpers.create_wp_allowed?({})
-      refute Helpers.create_wp_allowed?(nil)
-    end
-
-    def test_display_id_prefers_the_semantic_id
-      assert_equal "PROJ-12", Helpers.display_id("id" => 12, "displayId" => "PROJ-12")
-      assert_equal "12",      Helpers.display_id("id" => 12, "displayId" => "")
-      assert_equal "12",      Helpers.display_id("id" => 12)
-    end
-
     def test_adopt_github_author_sets_git_identity_from_the_bot
       Helpers.instance_variable_set(:@github_author_adopted, nil)
       stub_request(:get, "https://api.github.com/user").to_return(

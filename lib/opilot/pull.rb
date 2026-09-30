@@ -5,13 +5,15 @@ require_relative "item_pictures"
 
 module OPilot
   class Pull
+    Resource = Clients::OpenProject::Resource
+
     # Stats from the most recent poll (for logging): total scanned, and how many
     # had changed (were re-fetched rather than served from cache).
     attr_reader :scanned_count, :changed_count
 
     def initialize(ctx)
       @ctx = ctx
-      @api = Clients::OpenProject.new(ctx.op_url, ctx.token)
+      @api = Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
       @scanned_count = 0
       @changed_count = 0
     end
@@ -162,8 +164,8 @@ module OPilot
       code, resp = @api.work_package_relations(numeric_id)
       return [] unless code == 200 && resp
       (resp.dig("_embedded", "elements") || []).filter_map do |rel|
-        from = href_id(rel.dig("_links", "from", "href"))
-        to   = href_id(rel.dig("_links", "to", "href"))
+        from = Resource.href_id(rel.dig("_links", "from", "href"))
+        to   = Resource.href_id(rel.dig("_links", "to", "href"))
         if from == numeric_id
           [to, rel["type"]]
         else
@@ -176,20 +178,14 @@ module OPilot
     # straight from the WP resource's _links (no extra request).
     private def hierarchy_pairs(wp)
       pairs = []
-      if (parent = href_id(wp.dig("_links", "parent", "href")))
+      if (parent = Resource.href_id(wp.dig("_links", "parent", "href")))
         pairs << [parent, "parent"]
       end
       Array(wp.dig("_links", "children")).each do |child|
-        id = href_id(child["href"])
+        id = Resource.href_id(child["href"])
         pairs << [id, "child"] if id
       end
       pairs
-    end
-
-    # The trailing id of a work-package href ("/api/v3/work_packages/108" → "108").
-    private def href_id(href)
-      id = href.to_s.split("/").last
-      id.to_s.empty? ? nil : id
     end
 
     private
@@ -353,10 +349,10 @@ module OPilot
       text.gsub(/<[^>]+>/, " ").gsub("&nbsp;", " ").gsub(/\s+/, " ").strip
     end
 
-    # The user-facing work package id — see Helpers.display_id, which the agent's
+    # The user-facing work package id — see Resource.display_id, which the agent's
     # `create wp` reply shares.
     def wp_display_id(wp)
-      Helpers.display_id(wp)
+      Resource.display_id(wp)
     end
 
     # The keys a refreshed item.json keeps. Everything else in the file is a
@@ -511,8 +507,7 @@ module OPilot
     # activity never carries the author's email or name, only this id, and a
     # non-admin token can't read another user's email anyway.
     def trigger_user_id(comment)
-      href = comment["user_href"].to_s
-      href.empty? ? nil : href.split("/").last
+      Resource.href_id(comment["user_href"])
     end
 
     def react_eyes(activity_id)
@@ -549,7 +544,7 @@ module OPilot
     # #ensure_bot_identity! guarantees `own_user_id` is present, so this needs
     # no bookkeeping and cannot fall behind.
     def own_comment?(comment)
-      href_id(comment["user_href"]) == own_user_id
+      Resource.href_id(comment["user_href"]) == own_user_id
     end
 
     # A comment triggers opilot when it either contains the literal text
@@ -575,7 +570,7 @@ module OPilot
     # match a literal "@opilot"/"@chomper" — see CLAUDE.md for the accepted
     # narrowing this implies.
     def mention_filter_json
-      Clients::OpenProject.filter("comment", "~", bot_display_name)
+      Clients::OpenProject::Query.filter("comment", "~", bot_display_name)
     end
 
     # OPilot's own OpenProject identity, resolved from /users/me and memoized
@@ -589,7 +584,7 @@ module OPilot
       return @own_user if defined?(@own_user)
       @own_user = begin
         _, me = @api.me
-        { "id" => me&.dig("_links", "self", "href").to_s.split("/").last.to_s,
+        { "id" => (me && Resource.link_id(me, "self")).to_s,
           "name" => me&.dig("name").to_s }
       rescue => e
         puts "  Warning: could not resolve opilot's own OpenProject identity: #{e.message}"

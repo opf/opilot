@@ -15,6 +15,9 @@ module OPilot
   class HealthCheck
     include Helpers
 
+    Lookup   = Clients::OpenProject::Lookup
+    Resource = Clients::OpenProject::Resource
+
     STALE_DAYS = 60
     MAX_COMMITS = 10
     MAX_DESCENDANTS = 200
@@ -29,7 +32,7 @@ module OPilot
       @ctx     = ctx
       @pull    = pull
       @harness = harness
-      @api     = api || Clients::OpenProject.new(ctx.op_url, ctx.token)
+      @api     = api || Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
     end
 
     # The report text, or nil when the work package cannot be fetched.
@@ -71,12 +74,11 @@ module OPilot
     # name => { "closed", "default" }, or nil when /statuses cannot be read.
     # Status names are unique on an instance, so the lookup by name is exact.
     def status_map
-      _code, body = @api.statuses
-      (body&.dig("_embedded", "elements") || []).to_h do |s|
+      Lookup.new(@api).statuses.to_h do |s|
         [s["name"].to_s, { "closed" => s["isClosed"] == true, "default" => s["isDefault"] == true }]
       end
     rescue StandardError => e
-      log_script "Health: could not read statuses (#{e.message})"
+      log_script "Health: #{e.message}"
       nil
     end
 
@@ -87,24 +89,16 @@ module OPilot
       code, wp = @api.work_package(item_id)
       return { "nodes" => nil, "truncated" => false, "code" => code } unless code == 200 && wp
       root = wp["id"].to_s
-      filter = Clients::OpenProject.filter("ancestor", "=", root)
-      raw = []
-      total = 0
-      (1..).each do |page|
-        code, resp = @api.work_packages(filters_json: filter, page: page, page_size: 100, sort_by: '[["id","asc"]]')
-        return { "nodes" => nil, "truncated" => false, "code" => code } unless code == 200 && resp
-        total = resp["total"].to_i
-        elements = resp.dig("_embedded", "elements") || []
-        raw.concat(elements)
-        break if elements.empty? || raw.length >= total || raw.length >= MAX_DESCENDANTS
-      end
-      { "nodes" => tree_nodes(raw.first(MAX_DESCENDANTS), root, Helpers.display_id(wp)),
+      filter = Clients::OpenProject::Query.filter("ancestor", "=", root)
+      code, raw, total = Lookup.new(@api).all_work_packages(filter, max: MAX_DESCENDANTS)
+      return { "nodes" => nil, "truncated" => false, "code" => code } unless raw
+      { "nodes" => tree_nodes(raw, root, Resource.display_id(wp)),
         "truncated" => total > MAX_DESCENDANTS, "code" => 200 }
     end
 
     private def tree_nodes(raw, root_numeric, root_display)
-      shown = raw.to_h { |w| [w["id"].to_s, Helpers.display_id(w)] }.merge(root_numeric => root_display)
-      parent_of = raw.to_h { |w| [w["id"].to_s, w.dig("_links", "parent", "href").to_s.split("/").last.to_s] }
+      shown = raw.to_h { |w| [w["id"].to_s, Resource.display_id(w)] }.merge(root_numeric => root_display)
+      parent_of = raw.to_h { |w| [w["id"].to_s, Resource.link_id(w, "parent").to_s] }
       depth = lambda do |id, seen = 0|
         up = parent_of[id]
         up.nil? || up == root_numeric || seen > MAX_DESCENDANTS ? 1 : 1 + depth.(up, seen + 1)
@@ -112,14 +106,9 @@ module OPilot
       raw.map do |w|
         id = w["id"].to_s
         { "id" => shown[id], "parent" => shown[parent_of[id]] || parent_of[id], "depth" => depth.(id),
-          "subject" => w["subject"], "type" => link_title(w, "type"),
-          "status" => link_title(w, "status"), "updated_at" => w["updatedAt"] }
+          "subject" => w["subject"], "type" => Resource.link_title(w, "type"),
+          "status" => Resource.link_title(w, "status"), "updated_at" => w["updatedAt"] }
       end
-    end
-
-    # A list element embeds nothing; the name is the link's title.
-    private def link_title(wp, key)
-      wp.dig("_links", key, "title") || wp.dig("_embedded", key, "name")
     end
 
     # So the model can tell opilot's own comments from the thread.

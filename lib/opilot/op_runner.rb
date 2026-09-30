@@ -21,9 +21,13 @@ module OPilot
   # Config comes from Context#load_openproject_config!, not #load_config!: `op`
   # resolves no clone, so a malformed repos.json must not stop it.
   class OpRunner
-    RESOURCES   = %w[me wp project status doc cf].freeze
-    WP_ACTIONS  = %w[get inspect list activities reactions relations create form].freeze
-    PRJ_ACTIONS = %w[get inspect types].freeze
+    Href     = Clients::OpenProject::Href
+    Resource = Clients::OpenProject::Resource
+
+    RESOURCES   = %w[me wp project status priority principal doc cf].freeze
+    WP_ACTIONS  = %w[get inspect list activities reactions relations assignees schema
+                     create form update-form].freeze
+    PRJ_ACTIONS = %w[get inspect list types versions].freeze
     DOC_ACTIONS = %w[list get inspect attachments download].freeze
     CF_ACTIONS  = %w[items].freeze
 
@@ -39,9 +43,9 @@ module OPilot
     def run(args)
       @ctx.load_openproject_config!
       dispatch(args)
-    rescue Clients::HTTP::Error => e
-      # A network failure past HTTP's retries, `statuses`' non-200 raise (the one
-      # read method that raises), or too many redirects. Never a backtrace.
+    rescue Clients::OpenProject::Error => e
+      # A network failure past HTTP's retries, or too many redirects. Never a
+      # backtrace.
       $stderr.puts e.message
       raise OPilot::FatalError
     end
@@ -49,7 +53,20 @@ module OPilot
     private
 
     def api
-      @api ||= Clients::OpenProject.new(@ctx.op_url, @ctx.token)
+      @api ||= Clients::OpenProject::Client.new(@ctx.op_url, @ctx.token)
+    end
+
+    def lookup
+      @lookup ||= Clients::OpenProject::Lookup.new(api)
+    end
+
+    # A name or semantic id resolved before the real request, failing the way
+    # #emit does: the status on stderr, no backtrace.
+    def resolve!(label)
+      yield
+    rescue Clients::OpenProject::Error => e
+      $stderr.puts "#{"HTTP #{e.code} — " if e.code}#{label}: #{e.message}"
+      raise OPilot::FatalError
     end
 
     def dispatch(args)
@@ -59,6 +76,8 @@ module OPilot
       when "wp"      then wp(rest)
       when "project" then project(rest)
       when "status"  then status(rest)
+      when "priority" then priority(rest)
+      when "principal" then principal(rest)
       when "doc"     then doc(rest)
       when "cf"      then cf(rest)
       else unknown!("resource", resource, RESOURCES)
@@ -83,8 +102,13 @@ module OPilot
         emit("wp reactions #{id}") { api.work_package_emoji_reactions(id) }
       when "relations"
         wp_relations(one!("op wp relations", rest, "<work-package-id>"))
-      when "create"     then wp_create(rest)
-      when "form"       then wp_form(rest)
+      when "assignees"
+        id = one!("op wp assignees", rest, "<work-package-id>")
+        emit("wp assignees #{id}") { api.work_package_available_assignees(id) }
+      when "schema"      then wp_schema(rest)
+      when "create"      then wp_create(rest)
+      when "form"        then wp_form(rest)
+      when "update-form" then wp_update_form(rest)
       else unknown!("wp action", action, WP_ACTIONS)
       end
     end
@@ -93,12 +117,8 @@ module OPilot
     # matches nothing rather than failing — an empty result reading as "no
     # relations". Resolve it first, as Pull#related_work_packages does.
     def wp_relations(id)
-      code, wp = api.work_package(id)
-      unless code == 200 && wp
-        $stderr.puts "HTTP #{code} — wp relations #{id}: could not read the work package to resolve its numeric id"
-        raise OPilot::FatalError
-      end
-      emit("wp relations #{id}") { api.work_package_relations(wp["id"].to_s) }
+      numeric = resolve!("wp relations #{id}") { lookup.work_package_id(id) }
+      emit("wp relations #{id}") { api.work_package_relations(numeric) }
     end
 
     CREATE_FLAGS = %w[project subject type description description-file parent relates
@@ -195,6 +215,48 @@ module OPilot
       { "requiredFields" => fields }
     end
 
+    # `wp schema` — every field of a (project, type) pair, with its key. The
+    # route takes numeric ids only, so both are resolved here first.
+    def wp_schema(args)
+      opts, rest = flags("op wp schema", args, %w[project type])
+      project = opts["project"].last
+      type    = opts["type"].last
+      usage!("op wp schema", "--project <id> --type <name|id>") if rest.any? || project.nil? || type.nil?
+
+      numeric = resolve!("wp schema") { lookup.project_id(project) }
+      emit("wp schema #{project} #{type}") { api.work_package_schema(numeric, type_id!(project, type, "op wp schema")) }
+    end
+
+    UPDATE_FLAGS = %w[field link payload-json].freeze
+
+    # `wp update-form` — the dry run of an update: would OpenProject accept
+    # this change? It saves nothing, so `op` stays read-only. Same answer
+    # shape as `wp form`: read `_embedded.validationErrors`.
+    def wp_update_form(args)
+      opts, rest = flags("op wp update-form", args, UPDATE_FLAGS)
+      spec = "<work-package-id> [--field <name>=<value>]... [--link <name>=<href>]... [--payload-json <json>]"
+      usage!("op wp update-form", spec) unless rest.length == 1
+      id = wp_id(rest.first)
+
+      emit("wp update-form #{id}") { api.update_work_package_form(id, update_payload(opts)) }
+    end
+
+    # --payload-json alone, or the --field/--link pairs. Links go under
+    # `_links`, fields at the top level, as in #create_payload.
+    def update_payload(opts)
+      command = "op wp update-form"
+      if opts["payload-json"].any?
+        reject!(command, "pass --payload-json or --field/--link, not both") if opts["field"].any? || opts["link"].any?
+        return parse_payload_json!(command, opts["payload-json"].last)
+      end
+      reject!(command, "nothing to check — pass --field, --link or --payload-json") if opts["field"].empty? && opts["link"].empty?
+
+      payload = custom_fields(opts, command)
+      links = custom_links(opts, command)
+      payload["_links"] = links if links.any?
+      payload
+    end
+
     # The NUMERIC id of a work package, for a payload link or the relations route.
     # Both resolve by primary key only — the `parent` link setter does
     # `WorkPackage.visible.find_by(id:)` and the relations route param is typed
@@ -202,16 +264,7 @@ module OPilot
     # passed through, or it reaches the API as an unresolvable link. Every other
     # `op` command takes either form, and these two must not be the exception.
     def numeric_wp_id!(given, flag)
-      id = wp_id(given)
-      return id if id.match?(/\A\d+\z/)
-
-      code, wp = api.work_package(id)
-      unless code == 200 && wp
-        $stderr.puts "HTTP #{code} — wp create #{flag} #{given}: could not read that work package " \
-                     "to resolve its numeric id"
-        raise OPilot::FatalError
-      end
-      wp["id"].to_s
+      resolve!("wp create #{flag} #{given}") { lookup.work_package_id(wp_id(given)) }
     end
 
     # --relates: link the new work package to an existing one. `to_id` is already
@@ -244,11 +297,11 @@ module OPilot
         usage!(command, "--project <id> --type <name|id>#{require_subject ? " --subject <text>" : ""} [flags]")
       end
 
-      links = { "project" => { "href" => "/api/v3/projects/#{project}" },
-                "type"    => { "href" => "/api/v3/types/#{type_id!(project, type)}" } }
+      links = { "project" => Href.link(Href.project(project)),
+                "type"    => Href.link(Href.type(type_id!(project, type))) }
       if opts["parent"].any?
         parent = numeric_wp_id!(opts["parent"].last, "--parent")
-        links["parent"] = { "href" => "/api/v3/work_packages/#{parent}" }
+        links["parent"] = Href.link(Href.work_package(parent))
       end
       custom_links(opts).each { |name, value| links[name] = value }
 
@@ -263,8 +316,8 @@ module OPilot
     # --field <name>=<value>: a plain attribute, most usefully a custom field a
     # project requires (`--field customField12=whatever`). Written at the top level
     # of the payload, which is where a non-link field lives.
-    def custom_fields(opts)
-      opts["field"].to_h { |pair| split_pair!("--field", pair) }
+    def custom_fields(opts, command = "op wp create")
+      opts["field"].to_h { |pair| split_pair!(command, "--field", pair) }
     end
 
     # --link <name>=<href>: a field whose value is a resource — every select,
@@ -276,11 +329,11 @@ module OPilot
     # (/api/v3/custom_options/N for a list, /api/v3/users/N for a user), so an id
     # alone cannot be turned into a link without guessing. `op wp form` prints the
     # exact hrefs a field allows — copy one from there.
-    def custom_links(opts)
+    def custom_links(opts, command = "op wp create")
       opts["link"].each_with_object({}) do |pair, out|
-        name, href = split_pair!("--link", pair)
+        name, href = split_pair!(command, "--link", pair)
         unless href.start_with?("/api/v3/")
-          reject!("op wp create", "--link #{name} needs an href like /api/v3/custom_options/12, " \
+          reject!(command, "--link #{name} needs an href like /api/v3/custom_options/12, " \
                                   "got #{href.inspect} — run `op wp form --project <id>` to see " \
                                   "what this field allows")
         end
@@ -293,9 +346,9 @@ module OPilot
       end
     end
 
-    def split_pair!(flag, pair)
+    def split_pair!(command, flag, pair)
       name, value = pair.to_s.split("=", 2)
-      reject!("op wp create", "#{flag} must look like <name>=<value>, got #{pair.inspect}") if value.nil? || name.to_s.empty?
+      reject!(command, "#{flag} must look like <name>=<value>, got #{pair.inspect}") if value.nil? || name.to_s.empty?
       [name, value]
     end
 
@@ -305,11 +358,15 @@ module OPilot
       conflict = (CREATE_FLAGS - %w[payload-json]).select { |f| opts[f].any? }
       reject!("op wp create", "pass --payload-json or the field flags, not both " \
                               "(also given: #{conflict.map { |f| "--#{f}" }.join(", ")})") if conflict.any?
+      parse_payload_json!("op wp create", raw)
+    end
+
+    def parse_payload_json!(command, raw)
       parsed = JSON.parse(raw)
-      reject!("op wp create", "--payload-json must be a JSON object") unless parsed.is_a?(Hash)
+      reject!(command, "--payload-json must be a JSON object") unless parsed.is_a?(Hash)
       parsed
     rescue JSON::ParserError => e
-      reject!("op wp create", "--payload-json is not valid JSON (#{e.message})")
+      reject!(command, "--payload-json is not valid JSON (#{e.message})")
     end
 
     # --description or --description-file; "-" reads stdin, because a markdown
@@ -325,33 +382,40 @@ module OPilot
     end
 
     # A --type given as a name is resolved against the project's own types
-    # (Helpers.find_type, shared with `pd init` and `@opilot create wp`), because
+    # (Resource.find_named, shared with `pd init` and `@opilot create wp`), because
     # an unresolved name reaches the API as an opaque 422. A numeric one is passed
     # through.
-    def type_id!(project, given)
+    def type_id!(project, given, command = "op wp create")
       return given if given.match?(/\A\d+\z/)
 
       code, body = api.project_types(project)
       unless code == 200 && body
-        $stderr.puts "HTTP #{code} — wp create: could not list the types of project #{project}"
+        $stderr.puts "HTTP #{code} — #{command.delete_prefix("op ")}: could not list the types of project #{project}"
         raise OPilot::FatalError
       end
-      types = Helpers.type_list(body)
-      found = Helpers.find_type(types, given)
+      types = Resource.type_list(body)
+      found = Resource.find_named(types, given)
       unless found
-        reject!("op wp create", "project #{project} has no type named #{given.inspect} " \
+        reject!(command, "project #{project} has no type named #{given.inspect} " \
                                 "(it has: #{types.map { |t| t["name"] }.sort.join(", ")})")
       end
       found["id"]
     end
 
     def wp_list(args)
-      opts, rest = flags("op wp list", args, %w[filter filter-json page page-size])
-      usage!("op wp list", "[--filter <field>~<value>]... [--filter-json <json>] [--page <n>] [--page-size <n>]") if rest.any?
-      emit("wp list") do
-        api.work_packages(filters_json: filters_json(opts),
-                          page:      positive_int!("--page", opts["page"]&.last, 1),
-                          page_size: positive_int!("--page-size", opts["page-size"]&.last, 50))
+      list("op wp list", args, page_size: 50) { |kw| api.work_packages(**kw) }
+    end
+
+    LIST_SPEC = "[--filter <field>~<value>]... [--filter-json <json>] [--page <n>] [--page-size <n>]".freeze
+
+    # Every paginated, filterable collection takes the same four flags.
+    def list(command, args, page_size:)
+      opts, rest = flags(command, args, %w[filter filter-json page page-size])
+      usage!(command, LIST_SPEC) if rest.any?
+      emit(command.delete_prefix("op ")) do
+        yield(filters_json: filters_json(opts, command),
+              page:         positive_int!(command, "--page", opts["page"]&.last, 1),
+              page_size:    positive_int!(command, "--page-size", opts["page-size"]&.last, page_size))
       end
     end
 
@@ -361,9 +425,13 @@ module OPilot
       when "get", "inspect"
         id = one!("op project get", rest, "<project-id-or-identifier>")
         emit("project get #{id}") { api.project(id) }
+      when "list" then list("op project list", rest, page_size: 100) { |kw| api.projects(**kw) }
       when "types"
         id = one!("op project types", rest, "<project-id-or-identifier>")
         emit("project types #{id}") { api.project_types(id) }
+      when "versions"
+        id = one!("op project versions", rest, "<project-id-or-identifier>")
+        emit("project versions #{id}") { api.project_versions(id) }
       else unknown!("project action", action, PRJ_ACTIONS)
       end
     end
@@ -386,12 +454,27 @@ module OPilot
       emit("status list") { api.statuses }
     end
 
+    def priority(args)
+      action, *rest = args
+      unknown!("priority action", action, %w[list]) unless action == "list"
+      no_args!("op priority list", rest)
+      emit("priority list") { api.priorities }
+    end
+
+    # Users, groups and placeholders, e.g. `--filter name~jane`.
+    def principal(args)
+      action, *rest = args
+      unknown!("principal action", action, %w[list]) unless action == "list"
+      list("op principal list", rest, page_size: 100) { |kw| api.principals(**kw) }
+    end
+
     def doc(args)
       action, *rest = args
       case action
       when "list"
         id = one!("op doc list", rest, "<project-id-or-identifier>")
-        emit("doc list #{id}") { api.documents(id) }
+        numeric = resolve!("doc list #{id}") { lookup.project_id(id) }
+        emit("doc list #{id}") { api.documents(numeric) }
       when "get", "inspect"
         id = one!("op doc get", rest, "<document-id>")
         emit("doc get #{id}") { api.document(id) }
@@ -509,26 +592,26 @@ module OPilot
       reject!(command, "takes no arguments, got #{args.map(&:inspect).join(", ")}") if args.any?
     end
 
-    def positive_int!(flag, value, default)
+    def positive_int!(command, flag, value, default)
       return default if value.nil?
-      reject!("op wp list", "#{flag} must be a positive integer, got #{value.inspect}") unless value.match?(/\A[1-9]\d*\z/)
+      reject!(command, "#{flag} must be a positive integer, got #{value.inspect}") unless value.match?(/\A[1-9]\d*\z/)
       value.to_i
     end
 
     # Giving both is named, not silently resolved. No filter sends an explicit
     # empty array: OpenProject applies its own default when `filters` is absent,
     # and an inspection command must not quietly scope its results.
-    def filters_json(opts)
+    def filters_json(opts, command)
       raw    = opts["filter-json"].last if opts["filter-json"].any?
       pairs  = opts["filter"]
-      reject!("op wp list", "pass --filter or --filter-json, not both") if raw && pairs.any?
+      reject!(command, "pass --filter or --filter-json, not both") if raw && pairs.any?
       return raw if raw
       return "[]" if pairs.empty?
 
       clauses = pairs.map do |pair|
         m = FILTER.match(pair)
-        reject!("op wp list", "--filter must look like <field>~<value> or <field>=<value>, got #{pair.inspect}") unless m
-        JSON.parse(Clients::OpenProject.filter(m[:field], m[:operator], m[:value])).first
+        reject!(command, "--filter must look like <field>~<value> or <field>=<value>, got #{pair.inspect}") unless m
+        JSON.parse(Clients::OpenProject::Query.filter(m[:field], m[:operator], m[:value])).first
       end
       JSON.generate(clauses)
     end

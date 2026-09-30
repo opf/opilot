@@ -27,7 +27,7 @@ module OPilot
       # name one that does not exist. The description is NOT written to
       # OP_COMMENT_FORMAT: a description renders in the document pane, not the
       # narrow activity column, and it does not pass through
-      # Clients::OpenProject#add_comment, so nothing demotes its headings.
+      # Clients::OpenProject::Client#add_comment, so nothing demotes its headings.
       #
       # The answer sits after a trailing `ANSWER:` marker for REPLY_CONTRACT's
       # reason, learned here the expensive way: the first version of this prompt

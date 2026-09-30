@@ -46,17 +46,6 @@ module OPilot
       assert_equal 404, code
     end
 
-    def test_get_json_bang_raises_on_non_200
-      stub_request(:get, URL).to_return(status: 404, body: "{}")
-      assert_raises(Clients::HTTP::Error) { Clients::HTTP.get_json!(URL, token: "tok") }
-    end
-
-    def test_get_json_bang_returns_on_200
-      stub_request(:get, URL).to_return(status: 200, body: '{"key":"val"}')
-      code, parsed = Clients::HTTP.get_json!(URL, token: "tok")
-      assert_equal 200, code
-      assert_equal "val", parsed["key"]
-    end
 
     def test_get_raises_http_error_on_network_failure
       stub_request(:get, URL).to_raise(SocketError.new("connection refused"))
@@ -77,6 +66,12 @@ module OPilot
       code, body = Clients::HTTP.get(URL, token: "tok")
       assert_equal 200, code
       assert_equal "ok", body
+    end
+
+    def test_every_request_names_opilot_in_the_user_agent
+      stub_request(:get, URL).with(headers: { "User-Agent" => Clients::HTTP::USER_AGENT })
+                             .to_return(status: 200, body: "{}")
+      assert_equal 200, Clients::HTTP.get_json(URL, token: "tok").first
     end
   end
 end

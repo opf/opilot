@@ -17,6 +17,9 @@ module OPilot
   # work_packages/<host>/<id>/ — plan.md present = has a plan; shipped means
   # every target repo has a repos/<name>/pr_url.txt (see Agent#shipped?).
   class Agent
+    Href     = Clients::OpenProject::Href
+    Resource = Clients::OpenProject::Resource
+
     include Helpers
 
     def initialize(ctx, pull: Pull.new(ctx), harness: Harness.new(ctx), publish: Publish.new(ctx))
@@ -24,7 +27,7 @@ module OPilot
       @pull    = pull
       @harness  = harness
       @publish = publish
-      @api     = Clients::OpenProject.new(ctx.op_url, ctx.token)
+      @api     = Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
     end
 
     def run
@@ -330,7 +333,7 @@ module OPilot
                                         "so I created nothing."))
         return nil
       end
-      project_id = wp.dig("_links", "project", "href").to_s.split("/").last
+      project_id = Resource.link_id(wp, "project")
       if project_id.to_s.empty?
         post_note(st.item_id, addressed("I could not tell which project this work package belongs to, " \
                                         "so I created nothing."))
@@ -351,7 +354,7 @@ module OPilot
                                         "so I created nothing."))
         return nil
       end
-      unless Helpers.create_wp_allowed?(project)
+      unless Resource.create_wp_allowed?(project)
         post_note(st.item_id, addressed(
           "I cannot create work packages in #{project["name"]}. My OpenProject token has no " \
           "`add_work_packages` permission there. Ask an administrator for it."
@@ -367,7 +370,7 @@ module OPilot
     def project_type_names(project_id)
       code, body = @api.project_types(project_id)
       return [] unless code == 200 && body
-      Helpers.type_list(body)
+      Resource.type_list(body)
     rescue StandardError => e
       log_script "Warning: could not list types for project #{project_id} (#{e.message})."
       []
@@ -576,7 +579,7 @@ module OPilot
     # nil only when the type list could not be read at all; then the API's default
     # is better than no work package.
     def chosen_type(st, draft, types)
-      named = Helpers.find_type(types, draft["type"])
+      named = Resource.find_named(types, draft["type"])
       return named if named
 
       fallback = types.first
@@ -620,11 +623,11 @@ module OPilot
     # another.
     def record_created_wp(st, intent, wp, body, draft:)
       record = { "comment_at"        => intent.comment_at.to_s,
-                 "id"                => Helpers.display_id(body),
+                 "id"                => Resource.display_id(body),
                  "numeric_id"        => body["id"].to_s,
                  "source_numeric_id" => wp["numeric_id"],
                  "subject"           => body["subject"].to_s,
-                 "url"               => Helpers.wp_url(@ctx, Helpers.display_id(body)),
+                 "url"               => Helpers.wp_url(@ctx, Resource.display_id(body)),
                  "type"              => body.dig("_links", "type", "title").to_s,
                  "asked_type"        => draft["type"].to_s,
                  "link_wanted"       => draft["link"] == "child" ? "parent" : "relates",
@@ -694,7 +697,7 @@ module OPilot
       code, = if shape == "parent"
                 @api.update_work_package(
                   record["numeric_id"],
-                  { "_links" => { "parent" => { "href" => "/api/v3/work_packages/#{source}" } } }
+                  { "_links" => { "parent" => Href.link(Href.work_package(source)) } }
                 )
               else
                 @api.create_relation(record["numeric_id"], source)

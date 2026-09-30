@@ -21,7 +21,7 @@ module OPilot
 
       def initialize(ctx, op: nil, intake: nil, harness: nil, publish: nil, openspec: nil, pull: nil)
         @ctx      = ctx
-        @op       = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
+        @op       = op || Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
         @intake   = intake
         @harness   = harness || Harness.new(ctx)
         @publish  = publish

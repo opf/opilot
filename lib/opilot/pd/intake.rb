@@ -29,7 +29,7 @@ module OPilot
 
       def initialize(ctx, op: nil)
         @ctx = ctx
-        @op  = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
+        @op  = op || Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
       end
 
       # Fetch the selected documents into `state`'s intake directory.
@@ -75,10 +75,10 @@ module OPilot
       # and a document's _links.project href carries the numeric id too, so both
       # the sweep and the ownership check below need it resolved once, up front.
       def numeric_project_id(project_id)
-        code, id = @op.project_numeric_id(project_id)
-        return id if id
+        Clients::OpenProject::Lookup.new(@op).project_id(project_id)
+      rescue Clients::OpenProject::Error => e
         raise OPilot::FatalError,
-              "project #{project_id} is not readable (HTTP #{code}) — pass the project's " \
+              "project #{project_id} is not readable (HTTP #{e.code}) — pass the project's " \
               "numeric id or its identifier as shown in OpenProject"
       end
 

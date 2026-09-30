@@ -152,9 +152,9 @@ module OPilot
       DEV
     end
 
-    # The `op` command list: one entry per Clients::OpenProject method `op`
+    # The `op` command list: one entry per Clients::OpenProject::Client method `op`
     # exposes, so this table and that class stay checkable against each other by
-    # eye. All reads but one — `wp create` writes.
+    # eye. All reads but one — `wp create` writes; the two forms save nothing.
     def op_commands
       <<~OP.strip
         ./opilot op me                        who the token authenticates as
@@ -164,14 +164,27 @@ module OPilot
         ./opilot op wp activities <id>        its comments and history
         ./opilot op wp reactions <id>         emoji reactions on its activities
         ./opilot op wp relations <id>         relations it takes part in
+        ./opilot op wp assignees <id>         who may be assigned to it
+        ./opilot op wp schema --project <id> --type <name|id>
+                                              every field of that pair, with the
+                                              key a payload uses (customField12)
         ./opilot op wp create [flags]         create one — see the flags below
         ./opilot op wp form [flags]           what a project requires, and what
                                               it allows — creates nothing
                                               (--required for just that list)
+        ./opilot op wp update-form <id> [flags]
+                                              would this change be accepted?
+                                              saves nothing (--field, --link,
+                                              --payload-json as for `wp create`)
 
         ./opilot op project get <id>          one project (alias: inspect)
+        ./opilot op project list [flags]      projects — the `wp list` flags
         ./opilot op project types <id>        the work-package types it allows
+        ./opilot op project versions <id>     the versions it can use
         ./opilot op status list               every status on the instance
+        ./opilot op priority list             every priority on the instance
+        ./opilot op principal list [flags]    users, groups, placeholders — the
+                                              `wp list` flags (name~jane)
         ./opilot op cf items <id>             the values a hierarchy custom
                                               field allows
 
@@ -181,10 +194,10 @@ module OPilot
         ./opilot op doc download <url> --out <path>
                                               attachment bytes, written to a file
 
-        Flags for `wp list`:
+        Flags for `wp list`, `project list` and `principal list`:
           --filter <field>~<value>            repeatable; `~` contains, `=` equals
           --filter-json <json>                raw filters JSON, for anything else
-          --page <n> / --page-size <n>        default 1 / 50
+          --page <n> / --page-size <n>        default 1 / 50 (100 for the other two)
 
         Flags for `wp create` (--project, --type and --subject are required;
         `wp form` takes the same ones and needs no --subject):

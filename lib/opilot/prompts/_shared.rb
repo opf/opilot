@@ -65,7 +65,7 @@ module OPilot
     # How to format anything posted into an OpenProject work-package comment. The
     # activity tab is a narrow column beside the work package, not a document
     # pane: markdown headings render at full heading size and a few of them push
-    # the actual answer out of view. `Clients::OpenProject#add_comment` demotes
+    # the actual answer out of view. `Clients::OpenProject::Client#add_comment` demotes
     # any that slip through, but text written for the space beats text repaired
     # afterwards — a demoted heading still occupies a line that a sentence could
     # have used.

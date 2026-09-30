@@ -336,7 +336,7 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot chat [message]
 
 # Read the OpenProject API directly — one command per client method, JSON on
-# stdout. `./opilot op --help` lists all 13.
+# stdout. `./opilot op --help` lists them all.
 ./opilot op wp get <id>
 ./opilot op wp list --filter 'subject~login'
 ./opilot op wp create --project <id> --type <name> --subject <text> [--dry-run]   # the one write
@@ -498,7 +498,7 @@ bare `docker compose run …` works from the repo root.
 | `health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
 | `health_runner.rb` | Terminal `dev health` — prints `HealthCheck`'s report, posts nothing |
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
-| `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
+| `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject::Client` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
@@ -506,7 +506,9 @@ bare `docker compose run …` works from the repo root.
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
-| `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
+| `clients/openproject.rb` | The OpenProject SDK namespace, `Clients::OpenProject`; it only requires the parts below |
+| `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). It destructures as `code, body = …`, so older callers read it as a tuple; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
+| `clients/openproject/{query,href,resource,lookup}.rb` | Logic over the endpoints. `Query` builds `filters`/`sortBy` values; `Href` the path of every payload link; `Resource` reads a v3 body (type list, `display_id`, `create_wp_allowed?`, link titles and ids). `Lookup` resolves names and ids: status, type, priority, version, principal, a field's payload key, a semantic work-package id or project identifier to its numeric id, and `#all_work_packages` pagination. A `Lookup` resolver returns `nil` for "read, not there" and raises the typed `Error` for "could not read" (`AmbiguousName`, with no code, for a name that matches twice) — callers word those differently. It caches, so build one per run |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |
 
@@ -842,14 +844,14 @@ duplicate create.
   default is the reversible direction (a person can re-parent a related work
   package; a wrong parent has already changed the source by the time they see it).
   One set may hold both shapes. `related` uses
-  `Clients::OpenProject#create_relation` (the per-work-package route — the global
+  `Clients::OpenProject::Client#create_relation` (the per-work-package route — the global
   `/api/v3/relations` has no POST); the reply states each one's shape, because the
   reader cannot read it off the list.
 - **The parent is set after the create, never in the payload, and falls back to
   `relates`.** Hierarchy needs `:manage_subtasks` — a **third** permission next to
   `:add_work_packages` and `:manage_work_package_relations` — so in the create
   payload a missing permission would kill the create itself; as a follow-up PATCH
-  (`Clients::OpenProject#update_work_package`, which handles the `lockVersion` retry)
+  (`Clients::OpenProject::Client#update_work_package`, which handles the `lockVersion` retry)
   it costs only the shape of the link. Every link is best-effort and never raised:
   a failure is reported and recorded (`related: false`) for the next ask to finish,
   because the work package exists and cannot be deleted. The new description also

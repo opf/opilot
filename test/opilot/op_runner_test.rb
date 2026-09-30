@@ -90,6 +90,9 @@ module OPilot
         %w[status list]            => "#{BASE}/api/v3/statuses",
         %w[doc get 3]              => "#{BASE}/api/v3/documents/3",
         %w[doc attachments 3]      => "#{BASE}/api/v3/documents/3/attachments?pageSize=100",
+        %w[wp assignees 42]        => "#{BASE}/api/v3/work_packages/42/available_assignees",
+        %w[project versions 7]     => "#{BASE}/api/v3/projects/7/versions",
+        %w[priority list]          => "#{BASE}/api/v3/priorities",
       }.each do |args, url|
         endpoint = stub_request(:get, url).to_return(status: 200, body: "{}")
         out, err = run_op(*args)
@@ -105,7 +108,7 @@ module OPilot
       # matches nothing at all — an empty result that reads as "no relations".
       lookup = stub_request(:get, "#{BASE}/api/v3/work_packages/STC-162")
                .to_return(status: 200, body: '{"id":9182,"displayId":"STC-162"}')
-      filters = Clients::HTTP.encode_filters(Clients::OpenProject.filter("involved", "=", 9182))
+      filters = Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter("involved", "=", 9182))
       relations = stub_request(:get, "#{BASE}/api/v3/relations?filters=#{filters}&pageSize=100")
                   .to_return(status: 200, body: '{"total":0}')
 
@@ -117,31 +120,29 @@ module OPilot
     end
 
     def test_wp_relations_reports_an_unreadable_work_package_rather_than_filtering_on_nothing
-      stub_request(:get, "#{BASE}/api/v3/work_packages/42").to_return(status: 404, body: "{}")
+      stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-42").to_return(status: 404, body: "{}")
       never = stub_request(:get, %r{/api/v3/relations})
 
-      _out, err, = run_op!("wp", "relations", "42")
+      _out, err, = run_op!("wp", "relations", "PROJ-42")
 
-      assert_includes err, "could not read the work package"
+      assert_includes err, "HTTP 404 — wp relations PROJ-42: could not read work package PROJ-42"
       assert_not_requested never
     end
 
-    def test_status_list_survives_the_one_read_method_that_raises
-      # `statuses` uses get_json!, which raises on non-200 while every sibling
-      # returns [code, nil]. The surface must not leak that asymmetry.
+    def test_status_list_reports_a_failed_read
       stub_request(:get, "#{BASE}/api/v3/statuses").to_return(status: 404, body: "{}")
 
       out, err, = run_op!("status", "list")
 
-      assert_empty out
-      assert_includes err, "404"
+      assert_equal({}, JSON.parse(out), "the body on stdout, as for every other read")
+      assert_includes err, "HTTP 404"
       refute_includes err, "Clients::HTTP::Error", "reported, not raised through"
     end
 
     def test_doc_list_resolves_a_project_identifier_the_way_the_client_does
       lookup = stub_request(:get, "#{BASE}/api/v3/projects/my-project")
                .to_return(status: 200, body: '{"id":7}')
-      filters = Clients::HTTP.encode_filters(Clients::OpenProject.filter("project", "=", 7))
+      filters = Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter("project", "=", 7))
       listing = stub_request(:get, "#{BASE}/api/v3/documents?pageSize=100&offset=1&filters=#{filters}")
                 .to_return(status: 200, body: '{"total":2}')
 
@@ -172,6 +173,63 @@ module OPilot
       yield
       payload
     end
+
+    # --- lookups ------------------------------------------------------------
+
+    def test_project_and_principal_list_take_the_wp_list_flags
+      filter = HTTP_FILTER.("name", "~", "jane")
+      principals = stub_request(:get, "#{BASE}/api/v3/principals?pageSize=100&offset=1&filters=#{filter}")
+                   .to_return(status: 200, body: "{}")
+      projects = stub_request(:get, "#{BASE}/api/v3/projects?pageSize=10&offset=2&filters=#{Clients::HTTP.encode_filters("[]")}")
+                 .to_return(status: 200, body: "{}")
+
+      run_op("principal", "list", "--filter", "name~jane")
+      run_op("project", "list", "--page", "2", "--page-size", "10")
+
+      assert_requested principals
+      assert_requested projects
+    end
+
+    def test_a_bad_list_flag_names_the_command_it_was_given_to
+      _out, err, = run_op!("principal", "list", "--page", "0")
+      assert_includes err, "op principal list: --page must be a positive integer"
+    end
+
+    def test_wp_schema_resolves_the_project_and_the_type_name_to_numeric_ids
+      stub_request(:get, "#{BASE}/api/v3/projects/demo").to_return(status: 200, body: '{"id":7}')
+      stub_request(:get, "#{BASE}/api/v3/projects/demo/types")
+        .to_return(status: 200, body: '{"_embedded":{"elements":[{"id":5,"name":"Bug"}]}}')
+      schema = stub_request(:get, "#{BASE}/api/v3/work_packages/schemas/7-5").to_return(status: 200, body: "{}")
+
+      run_op("wp", "schema", "--project", "demo", "--type", "bug")
+
+      assert_requested schema
+    end
+
+    def test_wp_update_form_sends_fields_and_links_and_never_patches
+      stub_request(:get, "#{BASE}/api/v3/work_packages/42").to_return(status: 200, body: '{"lockVersion":1}')
+      posted = nil
+      stub_request(:post, "#{BASE}/api/v3/work_packages/42/form")
+        .with { |req| posted = JSON.parse(req.body); true }
+        .to_return(status: 200, body: "{}")
+      patch = stub_request(:patch, %r{/work_packages/42})
+
+      run_op("wp", "update-form", "42", "--field", "subject=New", "--link", "status=/api/v3/statuses/3")
+
+      assert_equal({ "subject" => "New", "_links" => { "status" => { "href" => "/api/v3/statuses/3" } },
+                     "lockVersion" => 1 }, posted)
+      assert_not_requested patch
+    end
+
+    def test_wp_update_form_refuses_an_empty_change_and_mixed_forms
+      _out, err, = run_op!("wp", "update-form", "42")
+      assert_includes err, "nothing to check"
+
+      _out, err, = run_op!("wp", "update-form", "42", "--payload-json", "{}", "--field", "a=b")
+      assert_includes err, "not both"
+    end
+
+    HTTP_FILTER = ->(field, op, value) { Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter(field, op, value)) }
 
     def test_wp_create_sends_the_flags_as_the_v3_payload
       payload = created_payload do
@@ -309,7 +367,7 @@ module OPilot
 
       _out, err, = run_op!("wp", "create", "--project", "7", "--type", "5", "--subject", "x", "--relates", "PROJ-99")
 
-      assert_includes err, "could not read that work package"
+      assert_includes err, "could not read work package PROJ-99"
       assert_not_requested never
     end
 
@@ -551,7 +609,7 @@ module OPilot
 
     def wp_list_url(filters_json, page: 1, page_size: 50)
       filters = Clients::HTTP.encode_filters(filters_json)
-      sort    = Clients::HTTP.encode_filters(Clients::OpenProject::SORT_UPDATED_AT)
+      sort    = Clients::HTTP.encode_filters(Clients::OpenProject::Query::SORT_UPDATED_AT)
       "#{BASE}/api/v3/work_packages?pageSize=#{page_size}&offset=#{page}" \
         "&filters=#{filters}&sortBy=#{sort}&includeSubprojects=true"
     end

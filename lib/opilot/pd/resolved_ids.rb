@@ -11,13 +11,15 @@ module OPilot
     # project does offer. Statuses carry their `isClosed` flag rather than names,
     # since the only question asked of them is "is this child closed?".
     class ResolvedIds
+      Resource = Clients::OpenProject::Resource
+
       include Helpers
 
       Error = Class.new(StandardError)
 
       def initialize(ctx, op: nil)
         @ctx = ctx
-        @op  = op || Clients::OpenProject.new(ctx.op_url, ctx.token)
+        @op  = op || Clients::OpenProject::Client.new(ctx.op_url, ctx.token)
       end
 
       # .opilot/work_packages/<op_host>/resolved-ids.json — beside the saved
@@ -78,11 +80,11 @@ module OPilot
 
       # `pd generate-wp` POSTs work packages into this project, and a token that can
       # read but not write only reveals that after a proposal has been written and a
-      # spec PR opened. The link check itself is Helpers.create_wp_allowed? —
+      # spec PR opened. The link check itself is Resource.create_wp_allowed? —
       # `@opilot create wp` asks the same question of an arbitrary project, and one
       # definition cannot drift.
       def check_write_permission(project_id, body, problems)
-        return if Helpers.create_wp_allowed?(body)
+        return if Resource.create_wp_allowed?(body)
         problems << "this token cannot create work packages in project #{project_id} " \
                     "(no :add_work_packages) — `pd generate-wp` would fail"
       end
@@ -93,14 +95,18 @@ module OPilot
           problems << "could not list types for project #{project_id} (HTTP #{code})"
           return []
         end
-        Helpers.type_list(body)
+        Resource.type_list(body)
       end
 
       def fetch_statuses(problems)
-        # #statuses raises on a non-200 (get_json!), so the code is never inspected
-        # here — the rescue below is what reports a failure.
-        _code, body = @op.statuses
-        (body&.dig("_embedded", "elements") || []).map do |s|
+        # The rescue covers a network failure; a non-200 is reported here, or an
+        # empty list would read as "this instance has none of those statuses".
+        code, body = @op.statuses
+        unless code == 200 && body
+          problems << "could not list statuses (HTTP #{code})"
+          return []
+        end
+        (body.dig("_embedded", "elements") || []).map do |s|
           { "id" => s["id"], "name" => s["name"].to_s, "closed" => !!s["isClosed"] }
         end
       rescue StandardError => e
@@ -109,7 +115,7 @@ module OPilot
       end
 
       def find_type(types, name, problems)
-        found = Helpers.find_type(types, name)
+        found = Resource.find_named(types, name)
         problems << "no work-package type named #{name.inspect} on this project" unless found
         found
       end
