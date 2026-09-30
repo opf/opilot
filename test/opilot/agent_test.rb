@@ -28,14 +28,14 @@ module OPilot
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
-      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
         Pathname(outfile).write(@plan)
         @plan
       end
 
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << prompt
         @run_sessions << session_file
         # Checked before the chat prompt: the create-wp draft prompt also opens
@@ -59,7 +59,7 @@ module OPilot
         @plans = plans
       end
 
-      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
         plan = @plans[@captures.length - 1] || @plans.last

@@ -45,7 +45,7 @@ module OPilot
     def test_llm_passes_the_role_tools_and_model
       c = Caller.new(ctx)
       c.send(:llm, :scribe, "hi")
-      assert_equal({ tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT, session_file: nil, prompt: "hi" },
+      assert_equal({ role: :scribe, tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT, session_file: nil, prompt: "hi" },
                    c.calls.last)
     end
 

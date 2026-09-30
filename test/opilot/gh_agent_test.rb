@@ -11,7 +11,7 @@ module OPilot
                      subject: "Guard against a nil invoice total", boom: false)
         @reply = reply; @subject = subject; @boom = boom; @runs = []
       end
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << { prompt: prompt, tools: tools, model: model, session_file: session_file }
         raise "harness blew up" if @boom
         # The follow-up commit-subject pass uses a distinct prompt.

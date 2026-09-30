@@ -57,7 +57,7 @@ module OPilot
       ))
 
       text = nil
-      capture_io { text = @harness.run("prompt", session_file: @session_file) }
+      capture_io { text = @harness.run("prompt", role: :advisor, session_file: @session_file) }
 
       assert_equal "the plan", text
       assert_equal "abc-123", @session_file.read
@@ -72,7 +72,7 @@ module OPilot
 
       err = nil
       out, = capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
       end
 
       assert_match(/tool the harness hasn't granted it/, err.message)
@@ -86,7 +86,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt", session_file: @session_file) }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor, session_file: @session_file) }
         assert_equal "error_max_turns", err.message
       end
 
@@ -98,7 +98,7 @@ module OPilot
         .to_return(status: 403, body: "unknown tool grant\n")
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/HTTP 403/, err.message)
         assert_match(/unknown tool grant/, err.message)
       end
@@ -112,7 +112,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/error_during_execution/, err.message)
         assert_match(/exit 1/, err.message)
         assert_match(/API Error: 529 Overloaded/, err.message)
@@ -125,7 +125,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/exited 1 with no result/, err.message)
         assert_match(/boom/, err.message)
       end
@@ -139,7 +139,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/timed out/, err.message)
       end
     end
@@ -151,7 +151,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/stalled with no output/, err.message)
       end
     end
@@ -163,7 +163,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt") }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor) }
         assert_match(/maximum run time/, err.message)
       end
     end
@@ -176,8 +176,15 @@ module OPilot
       ))
 
       text = nil
-      capture_io { text = @harness.run("prompt") }
+      capture_io { text = @harness.run("prompt", role: :advisor) }
       assert_equal "the plan", text
+    end
+
+    def test_run_sends_the_role_and_its_grant
+      stub_harness(ndjson(assistant_text("ok"), { type: "result", subtype: "success", is_error: false, result: "ok" }))
+      capture_io { @harness.run("prompt", role: :planner, tools: Harness::TOOLS_READ) }
+      assert_requested(:post, "http://harness.test:47291",
+                       headers: { "X-Harness-Role" => "planner", "X-Harness-Tools" => Harness::TOOLS_READ })
     end
 
     def test_run_retries_fresh_when_resumed_session_is_gone
@@ -199,7 +206,7 @@ module OPilot
       )
 
       text = nil
-      out, = capture_io { text = @harness.run("prompt", session_file: @session_file) }
+      out, = capture_io { text = @harness.run("prompt", role: :advisor, session_file: @session_file) }
 
       assert_equal "fresh answer", text
       assert_equal "new-session", @session_file.read, "the recovered session id is saved"
@@ -214,7 +221,7 @@ module OPilot
       ))
 
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt", session_file: @session_file) }
+        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor, session_file: @session_file) }
         assert_match(/Overloaded/, err.message)
       end
       # Stubbed exactly one response; a spurious retry would raise a WebMock error.
@@ -228,7 +235,7 @@ module OPilot
       outfile = Pathname(@tmpdir) / "plan.md"
 
       capture_io do
-        assert_raises(Harness::Error) { @harness.capture("prompt", outfile: outfile) }
+        assert_raises(Harness::Error) { @harness.capture("prompt", role: :advisor, outfile: outfile) }
       end
 
       refute outfile.exist?, "a failed run must not leave partial text as the plan"

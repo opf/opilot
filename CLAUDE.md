@@ -942,6 +942,15 @@ globally unique, so `pr_reviews/` is flat.
 
 Runner POSTs to `http://harness:47291` with headers:
 
+- `X-Harness-Role` — **required**. The role the call is made as (`Helpers#llm`).
+  `server.js` loads the same `roles/*.md` files at boot (`loadRoles`, copied into
+  the image by `Dockerfile.harness`) and refuses a missing role (400), an unknown
+  one, a request with no tool grant — which would give pi its default tools,
+  write included — and a grant the role does not allow (403): a role without
+  `mcp` accepts only its base grant, a role with it accepts the base plus the
+  `op_query`/`gh_query` variants. The runner still chooses both the role and the
+  grant, so this does not stop a compromised runner; it stops a runner bug from
+  sending a write grant under a read role.
 - `X-Harness-Tools` — built by `Harness.tools_for`, which appends `op_query`
   then `gh_query` in that fixed order when each flag is on. `server.js`
   allowlists the resulting **eight exact strings** (`ALLOWED_TOOL_GRANTS`);

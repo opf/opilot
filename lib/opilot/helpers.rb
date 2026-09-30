@@ -933,7 +933,7 @@ module OPilot
       if prompt.is_a?(Prompts::Prompt) && prompt.role != r.name
         raise ArgumentError, "a #{prompt.role} prompt sent as #{r.name}"
       end
-      opts = { tools: r.tools(@ctx), model: r.model, session_file: session_file }
+      opts = { role: r.name, tools: r.tools(@ctx), model: r.model, session_file: session_file }
       outfile ? @harness.capture(prompt, outfile: outfile, **opts) : @harness.run(prompt, **opts)
     end
 
