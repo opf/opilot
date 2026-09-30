@@ -370,6 +370,18 @@ module OPilot
       assert_equal "2024-01-02T00:00:00Z", on_disk["updated_at"]
     end
 
+    # pi's read tool pages by line; a one-line mirror is cut at 50 KB.
+    def test_item_json_is_written_one_field_per_line
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
+        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+
+      @pull.send(:fetch_work_package_item, WP)
+      text = (Pathname(@tmpdir) / "work_packages" / "example.com" / "42" / "item.json").read
+      assert_operator text.lines.size, :>, 5
+    end
+
     # item.json is rebuilt from the API whenever the work package changes, so
     # opilot's own bookkeeping has to survive the rebuild. Both refusal markers
     # promise ONE comment per work package, ever — dropped on a refresh, that

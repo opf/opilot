@@ -108,7 +108,7 @@ module OPilot
         return unless code == 201
 
         data["create_wp_refusal_noted_at"] = Time.now.utc.iso8601
-        st.item_file.write(JSON.generate(data))
+        Helpers.write_item(st.item_file, data)
       end
 
       # The source work package, fetched FRESH: item.json caches no project, and the

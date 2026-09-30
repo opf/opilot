@@ -68,7 +68,7 @@ module OPilot
         return unless code == 201
 
         data["refusal_noted_at"] = Time.now.utc.iso8601
-        item_path.write(JSON.generate(data))
+        Helpers.write_item(item_path, data)
       end
 
       # The scan window op-agent resumes from, prompted interactively and
@@ -376,8 +376,8 @@ module OPilot
       # package opilot has already seen on the old shape forever — which is how a
       # mirror gains a field (3: "history", "description_changed_at", and each
       # picture's "created_at", for the health check; 4: "custom_fields"; 5: user
-      # names on comments and history).
-      ITEM_VERSION = 5
+      # names on comments and history; 6: pretty-printed, see Helpers.write_item).
+      ITEM_VERSION = 6
 
       # A work package is served from cache only when the mirror is COMPLETE.
       # `pictures_pending` says an attachment read failed, and updated_at cannot
@@ -418,7 +418,7 @@ module OPilot
         item_dir.mkpath
         full["item_version"] = ITEM_VERSION
         full = OpenProject::ItemPictures.mirror(full, dir: item_dir, api: @api, ctx: @ctx)
-        item_path.write(JSON.generate(full))
+        Helpers.write_item(item_path, full)
 
         # The mirrored comments, not the ones just built: the mirror rewrites the
         # picture URLs in them, and the cached branch above returns the rewritten
@@ -666,7 +666,7 @@ module OPilot
         return unless item_path.exist?
         data = JSON.parse(item_path.read)
         data["last_acted_comment_at"] = created_at
-        item_path.write(JSON.generate(data))
+        Helpers.write_item(item_path, data)
       end
 
     end

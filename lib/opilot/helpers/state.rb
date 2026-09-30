@@ -85,6 +85,12 @@ module OPilot
     # tempfile prefix. `pretty:` is for the files a human reads in a diff (the
     # `pd` pipeline commits tracker.json into the spec store) — they need the
     # same crash-safety as the machine-only caches, just not on one line.
+    # item.json is pretty-printed: pi's read tool stops at 50 KB and pages by
+    # line, so a one-line mirror of a long thread cannot be read to its end.
+    def self.write_item(path, data)
+      path.write(JSON.pretty_generate(data))
+    end
+
     def self.write_json_atomic(path, data, name, pretty: false)
       tmp = Tempfile.new(name, path.dirname)
       tmp.write(pretty ? JSON.pretty_generate(data) : JSON.generate(data))
