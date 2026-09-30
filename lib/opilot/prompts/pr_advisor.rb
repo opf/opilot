@@ -4,6 +4,12 @@ module OPilot
       extend Sections
       ROLE = :pr_advisor
 
+      # How a read-only review proposes an *applicable* code change on a PR opilot
+      # can't push to: a GitHub suggestion the author commits with one click. The
+      # block is machine-parsed (GhAgent#parse_suggestions) into inline review
+      # comments, so its shape is exact.
+      SUGGESTION_CONTRACT = Prompts.block("suggestion_contract")
+
       # Reply to an @opilot comment on an UPSTREAM PR opilot did not open
       # (read-only tools). opilot cannot push to this PR's branch, so it reviews
       # and answers in text only — it must never edit files.

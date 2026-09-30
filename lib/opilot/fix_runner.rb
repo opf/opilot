@@ -268,7 +268,7 @@ module OPilot
     end
 
     # Offer the implementation options at the console, the same list a work
-    # package gets (Prompts::OPTIONS_CONTRACT). Returns the plan focus for the
+    # package gets (Prompts::Planner::OPTIONS_CONTRACT). Returns the plan focus for the
     # chosen option, free text as its own direction (so the operator is never
     # forced to pick one of the three), :skip, or :drop.
     def prompt_option_choice(id, options)

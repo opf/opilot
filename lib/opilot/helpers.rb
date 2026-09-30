@@ -108,7 +108,7 @@ module OPilot
     # ── implementation options ──────────────────────────────────────────────
     #
     # A plan call may answer with implementation options instead of a plan (see
-    # Prompts::OPTIONS_CONTRACT). Both readers of that answer live here — the
+    # Prompts::Planner::OPTIONS_CONTRACT). Both readers of that answer live here — the
     # agent, which offers the options in a work-package comment, and the terminal
     # runner, which offers them at the console — so the parsing and the wording of
     # a chosen option are written once.
@@ -135,7 +135,7 @@ module OPilot
         .uniq { |o| o["n"] }.sort_by { |o| o["n"] }
     end
 
-    # Whether `text` answers with OPTIONS (Prompts::OPTIONS_CONTRACT) — tolerant
+    # Whether `text` answers with OPTIONS (Prompts::Planner::OPTIONS_CONTRACT) — tolerant
     # of a preamble sentence before the sentinel line, the same accommodation
     # #record_chosen_repos' REPOS: match already makes and the NEEDS_INFO check
     # below makes too: a local model in particular often reasons in prose before
@@ -143,11 +143,11 @@ module OPilot
     # Requires the sentinel ALONE on its own line, so an ordinary sentence that
     # happens to use the word "options" is never mistaken for the block.
     def self.options_sentinel?(text)
-      text.to_s.lines.any? { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+      text.to_s.lines.any? { |l| l.strip == Prompts::Planner::OPTIONS_SENTINEL }
     end
 
     # Split a writer's answer into its OPTIONS line(s) and whatever follows
-    # (Prompts::OPTIONS_CONTRACT: name the approach, then — when there's only
+    # (Prompts::Planner::OPTIONS_CONTRACT: name the approach, then — when there's only
     # one — continue straight into the plan in the same response). The
     # sentinel is found anywhere, per #options_sentinel? above, and everything
     # before and including it is dropped along with it — a preamble sentence
@@ -157,7 +157,7 @@ module OPilot
     # which a tolerant scan like parse_options' would misread as more options.
     def self.parse_leading_options(body)
       lines = body.to_s.lines
-      start = lines.index { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+      start = lines.index { |l| l.strip == Prompts::Planner::OPTIONS_SENTINEL }
       return [[], body.to_s.lstrip] unless start
       lines = lines[(start + 1)..] || []
       options = []
@@ -283,7 +283,7 @@ module OPilot
     HEALTH_GAP_LINE     = /\A[ \t]*GAP:[ \t]*(.+)\z/i
     HEALTH_CLEAN_LINE   = /\A[ \t]*NO FINDINGS[ \t.]*\z/i
 
-    # Read a health answer (Prompts::HEALTH_CONTRACT) into
+    # Read a health answer (Prompts::Auditor::HEALTH_CONTRACT) into
     # { "findings" => [...], "gaps" => [...] }, or nil when there is no complete
     # block — the answer was cut off, or ignored the format. The LAST complete
     # block wins, so a format the writer rehearsed first does not count. A
@@ -314,7 +314,7 @@ module OPilot
       readable = findings.any? || gaps.any? ||
                  block.any? { |l| l.match?(HEALTH_CLEAN_LINE) || l.match?(HEALTH_FINDING_LINE) }
       return nil unless readable
-      { "findings" => findings.first(Prompts::HEALTH_MAX_FINDINGS), "gaps" => gaps }
+      { "findings" => findings.first(Prompts::Auditor::HEALTH_MAX_FINDINGS), "gaps" => gaps }
     end
 
     def self.health_finding(text)
@@ -322,7 +322,7 @@ module OPilot
       severity, area, sentence, evidence = text.split("|", 4).map { |f| f.to_s.strip }
       severity = severity.downcase
       area     = area.to_s.downcase
-      return nil unless Prompts::HEALTH_SEVERITIES.include?(severity) && Prompts::HEALTH_AREAS.include?(area)
+      return nil unless Prompts::Auditor::HEALTH_SEVERITIES.include?(severity) && Prompts::Auditor::HEALTH_AREAS.include?(area)
       return nil if sentence.to_s.empty? || evidence.to_s.empty?
       { "severity" => severity, "area" => area, "text" => sentence, "evidence" => evidence }
     end
@@ -333,7 +333,7 @@ module OPilot
     ARTIFACT_FILENAME_LINE = /\AFILENAME:[ \t]*(.+)\z/i
     ARTIFACT_TITLE_LINE    = /\ATITLE:[ \t]*(.+)\z/i
 
-    # Read the artifacts a chat answer carries (Prompts.artifact_block), and
+    # Read the artifacts a chat answer carries (Prompts::Advisor.artifact_block), and
     # return [artifacts, remainder] — the remainder being the answer with every
     # block removed, which is what gets posted as the comment.
     #

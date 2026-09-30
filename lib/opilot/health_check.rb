@@ -9,7 +9,7 @@ module OPilot
   #   /statuses, relation labels, timestamps, PR flags, commit ids). Written to
   #   health.json, and the prompt tells the model not to dispute them — so a
   #   heuristic never belongs here.
-  # - Judgement: one read-only LLM call, answered in Prompts::HEALTH_CONTRACT.
+  # - Judgement: one read-only LLM call, answered in Prompts::Auditor::HEALTH_CONTRACT.
   #
   # The reply is composed here, not by the model, so it states what was checked.
   class HealthCheck
@@ -19,7 +19,7 @@ module OPilot
     MAX_COMMITS = 10
     MAX_DESCENDANTS = 200
     MAX_TREE_FINDINGS = 5   # per rule; the rest are counted in the text
-    SEVERITY_ORDER = Prompts::HEALTH_SEVERITIES
+    SEVERITY_ORDER = Prompts::Auditor::HEALTH_SEVERITIES
 
     # Labels from this work package's own side (Pull#relation_pairs): the other
     # one must finish first.

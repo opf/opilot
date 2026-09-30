@@ -47,7 +47,7 @@ module OPilot
 
     def test_findings_are_capped
       lines = Array.new(20) { |i| "FINDING: low | status | Finding #{i}. | ##{i}" }
-      assert_equal Prompts::HEALTH_MAX_FINDINGS, Helpers.parse_health(block(*lines))["findings"].length
+      assert_equal Prompts::Auditor::HEALTH_MAX_FINDINGS, Helpers.parse_health(block(*lines))["findings"].length
     end
   end
 

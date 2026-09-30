@@ -4,6 +4,28 @@ module OPilot
       extend Sections
       ROLE = :auditor
 
+      # The health check's answer shape (Helpers.parse_health). The END marker
+      # detects a cut-off answer; the evidence field is what keeps a finding from
+      # being an opinion, so the parser drops a finding without it.
+      HEALTH_SEVERITIES = %w[high medium low].freeze
+      HEALTH_AREAS = %w[comments designs relations status prs].freeze
+      HEALTH_MAX_FINDINGS = 15
+      HEALTH_CONTRACT = <<~TEXT.strip
+        ANSWER FORMAT — think first if you need to, then end your response with exactly
+        this block. I parse it, so keep one item on one line:
+
+        BEGIN HEALTH
+        FINDING: <#{HEALTH_SEVERITIES.join("|")}> | <#{HEALTH_AREAS.join("|")}> | <one sentence> | <evidence>
+        GAP: <what you could not check> | <why>
+        END HEALTH
+
+        - Evidence is REQUIRED. Name the comment (author and created_at), the work
+          package (#id), the picture file name, the pull request URL, or the commit sha.
+          A finding without evidence is dropped.
+        - Write NO FINDINGS alone on a line inside the block when nothing is wrong.
+        - Write at most #{HEALTH_MAX_FINDINGS} findings, the most severe first.
+      TEXT
+
       # One-shot health check of a work package (read-only tools, no session).
       # `facts` is the container path to health.json: the rules the runner already
       # checked from exact data, so the model neither repeats nor disputes them.

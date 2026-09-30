@@ -4,6 +4,49 @@ module OPilot
       extend Sections
       ROLE = :planner
 
+      # First line of an answer that names the approach before (or instead of) a
+      # plan. Shared by every reader of that answer (Agent, FixRunner) so the
+      # word is written once.
+      OPTIONS_SENTINEL = "OPTIONS"
+
+      # The second gate on a `ship` plan call: name the approach before writing
+      # the plan, and stop after naming 2-3 when there is a real choice — that
+      # choice belongs to the reporter. `Agent#produce_plan` turns a stopped
+      # multi-option answer into options.json plus one comment; a single named
+      # approach reads straight through into the plan behind it.
+      #
+      # Folded into the plan call rather than run as its own call: the writer has
+      # already read the repos, so the single-approach case costs no extra call.
+      #
+      # The option lines are pipe-delimited data, not prose — Agent#post_options
+      # composes the comment, so its wording cannot pick up a heading or sign-off.
+      OPTIONS_CONTRACT = Prompts.block("options_contract")
+
+      # The AVAILABLE REPOS block + repo-selection instruction shared by plan/replan.
+      # `repos` is an array of { name:, path:, description: }; `summary` is the
+      # registry's top-level routing hint. the LLM reads across the listed repos and
+      # declares its choice on the first line as `REPOS: <name>[, <name>…]`.
+      def self.repos_section(summary, repos)
+        listing = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})  — #{r[:description]}" }.join("\n")
+        hint = summary.to_s.strip.empty? ? "" : "\n#{summary.strip}"
+        <<~TEXT.strip
+          AVAILABLE REPOS — a fix may belong in one of these, or span several. Each is
+          checked out at the path shown; read across them as needed to decide.#{hint}
+          For each repo you touch, read its CLAUDE.md and AGENTS.md (at the repo's
+          root, if present) FIRST — the harness does not load them for you.
+          #{listing}
+
+          On the first line of the PLAN declare the repo(s) this fix will touch,
+          using only names from the list:  REPOS: <name>[@<base>][, <name>…]
+          (When an OPTIONS line precedes the plan, REPOS still opens the plan
+          itself, not the OPTIONS line — the option's own repo field is only an
+          estimate.) Append @<base> ONLY when the issue or the user explicitly
+          asks to base that repo's PR on a specific branch (e.g.
+          openproject@release/17.6); a bare name uses the repo's default base.
+          (If you emit NEEDS_INFO below, omit the REPOS line.)
+        TEXT
+      end
+
       # WRITER: produce a fresh implementation plan for an issue.
       #
       # Two gates. NEEDS_INFO is the sufficiency gate: on a vague WP the writer

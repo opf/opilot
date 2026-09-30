@@ -336,8 +336,8 @@ module OPilot
       when /\A@opilot\s+health\b\s*(.*)/im
         [:health, $1.strip]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
-      # trailing text folded in as a focus hint (see Prompts::LENSES).
-      when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts.lens($1, $2)]
+      # trailing text folded in as a focus hint (see Prompts::Advisor::LENSES).
+      when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts::Advisor.lens($1, $2)]
       else [:chat, text.sub(/@opilot\s*/i, "").strip]
       end
     end

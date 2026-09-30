@@ -85,7 +85,7 @@ has read.
 **`ship` always names the approach before it writes code.** The writer opens
 every invited plan call with a third first-line sentinel beside `NEEDS_INFO`
 and `REPOS:` — `OPTIONS`, then one pipe-delimited line per approach
-(`Prompts::OPTIONS_CONTRACT`). Most tickets have exactly one sensible approach:
+(`Prompts::Planner::OPTIONS_CONTRACT`). Most tickets have exactly one sensible approach:
 the writer names it in a single option line, then continues straight into the
 plan in the *same* response, so a one-shape ticket still costs exactly one
 plan call — just with a stated approach instead of a silent one.
@@ -180,7 +180,7 @@ opilot, not a review pass over other people's work; what differs is write access
 so these intents are `reply_only` — read-only fetch, answered in text
 (`Prompts::PrAdvisor.pr_review`), never pushed. Applicable code still lands: for lines already
 in the diff the review emits a `SUGGESTIONS:` block
-(`Prompts::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
+(`Prompts::PrAdvisor::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
 of inline `suggestion` comments (anchored to the head SHA, `event: COMMENT`) — the author
 applies each with one click; a bad line range 422s and falls back to prose. A
 failing CI run is read too (keyed by head SHA), so "why is CI red?" gets an
@@ -504,7 +504,7 @@ bare `docker compose run …` works from the repo root.
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
-| `prompts.rb`, `prompts/<role>.rb` | All LLM prompts: one module per role (`Prompts::Planner.plan`, `Prompts::PrAuthor.fix_ci`, …) holding that role's builders, and the shared blocks in `prompts.rb`. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb`, `prompts/` | All LLM prompts. `prompts/<role>.rb` is one module per role (`Prompts::Planner.plan`, `Prompts::PrAuthor.fix_ci`, …) holding that role's builders and whatever only that role uses (`Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/blocks.rb` (text, from `roles/_blocks/`), `prompts/sections.rb` (helpers) and `prompts/prompt.rb` (`Prompt`, `Prompts.charter`); `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
@@ -678,7 +678,7 @@ does; only the word people type is `build`, and `./opilot dev build` takes the s
 word for the same operation, so one thing has one name wherever it is typed. The
 difference is who is watching: the terminal verbs have an operator at the console.
 Chat lenses (`grill`, `summarize`) are preset instructions over
-the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
+the ordinary `:chat` intent (`Prompts::Advisor::LENSES`), with trailing text as a focus hint.
 
 **Health check (`@opilot health [focus]`, intent `:health`)** reports where a work
 package is inconsistent with itself. It is **not a lens**: it needs a fact pass, its
@@ -702,7 +702,7 @@ own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
   falls back to them and says so. The model gets the tree to check the description's
   scope against the descendants' subjects — no per-descendant LLM call.
 - **Judgement** — one read-only call **without the WP session**, so a check is
-  independent of earlier chat turns. The answer is `Prompts::HEALTH_CONTRACT`
+  independent of earlier chat turns. The answer is `Prompts::Auditor::HEALTH_CONTRACT`
   (`BEGIN HEALTH` … `END HEALTH`, `FINDING:`/`GAP:` lines), read by
   `Helpers.parse_health`: the END marker detects truncation (one retry, then a
   failure note), and a finding without evidence is dropped.
@@ -737,7 +737,7 @@ attached a flowchart of the same thing, and the reader read it twice.
 `Harness::TOOLS_READ` and `pi-guards.ts` confines writes to `/repos`, so the model
 cannot write a file — and that read-only contract for prompt-injectable phases is
 enforced in the guard, not in the prompt, so this is not a limitation to route
-around. `Prompts.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
+around. `Prompts::Advisor.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
 `Helpers.parse_artifacts` reads it, and `Agent#publish_artifacts` mirrors, caps and
 publishes. The block sits at the **END** of the answer: everything shares one output
 budget, so a cut-off response loses the artifact and keeps the comment. The parser

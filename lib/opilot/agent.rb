@@ -815,7 +815,7 @@ module OPilot
     #
     # This is where every `build` trigger lands (alias `fix`). There is
     # no separate plan-and-wait command any more: a fix with more than one defensible
-    # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
+    # shape stops and offers numbered options (Prompts::Planner::OPTIONS_CONTRACT), and a
     # fix with one shape is announced (#post_approach_note) and shipped in the
     # same call — so a simple ticket still costs exactly one plan call, just
     # with a stated approach instead of a silent one. NEEDS_INFO still guards
@@ -863,7 +863,7 @@ module OPilot
     #
     # `allow_options:` is the caller's judgment that no human has picked an
     # approach yet; the writer's judgment is whether the fix really has more than
-    # one shape (Prompts::OPTIONS_CONTRACT). `:failed` means the call produced
+    # one shape (Prompts::Planner::OPTIONS_CONTRACT). `:failed` means the call produced
     # neither a plan nor a usable options answer, and is handled like any other
     # failed run — logged, never commented.
     def produce_plan(st, feedback, allow_options: false, retry_bad_options: true)

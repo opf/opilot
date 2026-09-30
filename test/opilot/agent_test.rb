@@ -220,7 +220,7 @@ module OPilot
     # ── implementation options ────────────────────────────────────────────────
 
     # What a `ship` plan call answers with when the fix has more than one shape
-    # (Prompts::OPTIONS_CONTRACT).
+    # (Prompts::Planner::OPTIONS_CONTRACT).
     OPTIONS_ANSWER = <<~TEXT
       OPTIONS
       1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
@@ -228,7 +228,7 @@ module OPilot
     TEXT
 
     # The common case: one named approach, with its plan in the same response
-    # (Prompts::OPTIONS_CONTRACT — no real choice, so no reason to stop).
+    # (Prompts::Planner::OPTIONS_CONTRACT — no real choice, so no reason to stop).
     SINGLE_OPTION_ANSWER = <<~TEXT
       OPTIONS
       1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
