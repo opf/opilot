@@ -16,6 +16,8 @@ module OPilot
           end
         repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
         tagged(<<~PROMPT)
+          #{charter}
+
           TARGET REPO(S) — edit files ONLY within these worktrees, per the plan:
           #{repo_list}
           Read each target repo's CLAUDE.md and AGENTS.md (at its root, if present)
@@ -30,10 +32,6 @@ module OPilot
           Check the current state of the worktree first and continue from wherever
           things are — there may already be partial or complete work in place.
           - Write tests as specified in the plan, then implement the change.
-          - Do NOT commit or push, and do NOT run tests, linters, or builds, or any
-            other command — only read and edit files; tests run later in review/CI.
-            You MAY run read-only git (log, show, blame, diff, for-each-ref) for context.
-          #{DELETE_NOTE}
         PROMPT
       end
 
@@ -47,7 +45,9 @@ module OPilot
       # helpfully implements two of them makes both unreviewable.
       def self.implement_task(repo:, repo_path:, change_id:, change_dir:, wp_label:, section:, tasks:, item:)
         tagged(<<~PROMPT)
-          You are the IMPLEMENTER. Build work package #{wp_label} of the OpenSpec
+          #{charter}
+
+          Build work package #{wp_label} of the OpenSpec
           change `#{change_id}`.
 
           TARGET REPO — edit files ONLY inside this worktree:
@@ -81,10 +81,6 @@ module OPilot
           - Do NOT edit anything under #{change_dir} or any other `openspec/` path.
             The spec is your input here, and opilot ticks the checkboxes itself
             once this work lands.
-          - Do NOT commit or push, and do NOT run tests, linters, builds, or any
-            other command — only read and edit files; tests run later in review/CI.
-            You MAY run read-only git (log, show, blame, diff, for-each-ref) for context.
-          #{DELETE_NOTE}
         PROMPT
       end
     end

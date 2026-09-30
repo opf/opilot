@@ -24,11 +24,12 @@ module OPilot
         focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
         options_gate = allow_options ? "\nSECOND, name the approach.\n#{OPTIONS_CONTRACT}\n" : ""
         tagged(<<~PROMPT)
+          #{charter}
+
           #{repos_section(repos_summary, repos)}
 
           ISSUE:        #{item}  #{item_fields("type", "status", "version", "assignee")}#{related_line(related)}#{focus}#{op_query_line(op_mcp)}
-          You are the WRITER. Produce a plan only.
-          #{READ_ONLY}
+          Produce a plan only.
 
           #{SEARCH_STOP_RULE}
 
@@ -83,16 +84,17 @@ module OPilot
             "Read the existing plan and the issue from the paths above first."
           end
         tagged(<<~PROMPT)
+          #{charter}
+
           #{repos_section(repos_summary, repos)}
 
           ISSUE:         #{item}
           EXISTING PLAN: #{plan}
           FEEDBACK:      #{feedback}#{related_line(related)}#{op_query_line(op_mcp)}
 
-          You are the WRITER. #{context_line} Revise the plan to incorporate the feedback above.
+          #{context_line} Revise the plan to incorporate the feedback above.
           Preserve structure and content that is still valid; only change what the feedback requires.
           Produce a plan only.
-          #{READ_ONLY}
 
           #{SEARCH_STOP_RULE}
 

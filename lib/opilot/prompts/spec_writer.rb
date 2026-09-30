@@ -24,7 +24,9 @@ module OPilot
       # several must stop rather than be crammed into one proposal.
       def self.propose(change_id:, change_dir:, intake_dir:, specs_dir:, repo:, repo_path:, instructions:)
         tagged(<<~PROMPT)
-          You are the WRITER. Produce an OpenSpec change proposal for `#{change_id}`.
+          #{charter}
+
+          Produce an OpenSpec change proposal for `#{change_id}`.
 
           INTAKE (the raw human intent — read all of it first):
             #{intake_dir}
@@ -93,8 +95,10 @@ module OPilot
       # Same write scope; the reviewer's words are the instruction.
       def self.propose_feedback(change_id:, change_dir:, pr_thread:, comment_section:)
         tagged(<<~PROMPT)
-          You are the WRITER, revising the OpenSpec change proposal `#{change_id}`
-          in response to review feedback on its pull request.
+          #{charter}
+
+          Revise the OpenSpec change proposal `#{change_id}` in response to review
+          feedback on its pull request.
 
           PROPOSAL: #{change_dir}
           PR THREAD: #{pr_thread}  #{THREAD_NOTE}

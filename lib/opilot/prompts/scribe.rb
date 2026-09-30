@@ -7,8 +7,9 @@ module OPilot
       # Generate a GitHub PR description for a committed fix.
       def self.pr_description(item:, plan:, diff_stat:, template_section:)
         tagged(<<~PROMPT)
+          #{charter}
+
           Write a GitHub PR description for this change.
-          #{READ_ONLY}
 
           The issue and plan are already in this session's context — do NOT re-read them.
           Base the description on the diff below. (The paths are only a fallback for the rare
@@ -36,6 +37,8 @@ module OPilot
       # subject describes the change itself, not the feedback that prompted it.
       def self.commit_subject(diff:)
         tagged(<<~PROMPT)
+          #{charter}
+
           Write a single git commit subject line for this change:
 
           #{diff}

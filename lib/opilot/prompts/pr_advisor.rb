@@ -10,10 +10,11 @@ module OPilot
       def self.pr_review(repo:, pr_number:, title:, worktree:, base:, pr_thread:,
                          comment:, author:, comment_id:, in_reply_to: nil, ci: nil)
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant invited to review GitHub pull request
-          ##{pr_number} ("#{title}") in #{repo} — a repo you do NOT own. The PR's branch
-          is checked out at #{worktree}; its changes are `git diff origin/#{base}...HEAD`.
-          #{READ_ONLY}
+          #{charter}
+
+          You are asked about GitHub pull request ##{pr_number} ("#{title}") in #{repo} —
+          a repo you do NOT own. The PR's branch is checked out at #{worktree}; its
+          changes are `git diff origin/#{base}...HEAD`.
 
           You cannot push to this PR, and you must NEVER edit, create, or delete
           files yourself. But you CAN propose concrete edits as GitHub *suggestions*

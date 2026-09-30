@@ -3,10 +3,14 @@ require "yaml"
 module OPilot
   class Harness
     # One role the model plays, loaded from roles/<name>.md: frontmatter for the
-    # grant, model and memory, body for what the role does. Every LLM call names
-    # one (Helpers#llm). The MCP tools resolve per call, from the Context flags.
-    Role = Data.define(:name, :base, :mcp, :model, :memory, :description) do
+    # grant, model and memory; the body is the role's charter, which opens the
+    # role's prompts (Prompts.charter). HTML comments in the body are notes for
+    # people and never reach the model. Every LLM call names one (Helpers#llm).
+    # The MCP tools resolve per call, from the Context flags.
+    Role = Data.define(:name, :base, :mcp, :model, :memory, :charter) do
       def stateless = memory == :none
+
+      def write? = base == TOOLS_IMPL
 
       def tools(ctx)
         mcp ? Harness.tools_for(base, op_mcp: ctx.op_mcp?, gh_mcp: ctx.gh_mcp?) : base
@@ -37,7 +41,7 @@ module OPilot
         [key.to_sym, allowed[meta[key]]]
       end
       Role.new(name: name.to_sym, base: values[:tools], mcp: values[:mcp], model: values[:model],
-               memory: values[:memory], description: body.strip)
+               memory: values[:memory], charter: body.gsub(/<!--.*?-->/m, "").strip)
     end
 
     ROLES = ROLES_DIR.glob("*.md").sort.map { |f| load_role(f) }.to_h { |r| [r.name, r] }.freeze

@@ -78,7 +78,10 @@ module OPilot
     def test_role_files_hold_the_expected_tuples
       actual = Harness::ROLES.transform_values { |r| [r.base, r.mcp, r.model, r.memory] }
       assert_equal EXPECTED, actual
-      Harness::ROLES.each_value { |r| refute_empty r.description, r.name }
+      Harness::ROLES.each_value do |r|
+        refute_empty r.charter, r.name
+        refute_match(/<!--|Used by/, r.charter, r.name)
+      end
     end
 
     def test_every_call_site_names_a_known_role

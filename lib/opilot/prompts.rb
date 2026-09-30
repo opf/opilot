@@ -8,55 +8,35 @@ module OPilot
   # Sections; a guardrail is stated once and interpolated, never re-worded per
   # prompt (that's how contradictions creep in).
   module Prompts
-    # Prepended to every phase except `implement`. Implementation is the ONLY
-    # phase allowed to change anything; everywhere else the LLM must not edit,
-    # create, or delete files, run commands, or otherwise act on the plan. The
-    # harness also withholds the write tools, but saying so stops the LLM from
-    # wasting turns trying (and from posting "I need write permission" replies).
-    READ_ONLY = <<~TEXT.strip
-      You are in READ-ONLY mode. Do NOT edit, create, or delete any file or
-      implement/apply anything — only read and respond in text. You MAY run
-      read-only git (log, show, blame, diff, for-each-ref) to inspect history for context, but
-      no other commands. Implementation happens later, only when the user
-      approves, in a separate step.
-    TEXT
+    BLOCKS_DIR = Pathname(__dir__).join("../../roles/_blocks").expand_path
 
-    # pi ships no delete tool, so git is the only way to remove a file and
-    # pi-guards.ts unlocks these two for a write grant. Saying so is not
-    # optional: untold, the model assumes it cannot delete and answers the
-    # reviewer with a promise it can never keep (opf/openproject#24916).
-    DELETE_NOTE = <<~TEXT.strip
-      - To DELETE a file, run `git rm <path>` when it is already committed, or
-        `git clean -f -- <path>` when it is untracked. These two are the
-        exception to the rule above; every other writing command stays denied.
-        Always name the path: a bare `git clean` also throws away files YOU
-        wrote earlier in this run. The runner stages a deletion like any other
-        change, so nothing else is needed to record it.
-    TEXT
+    # Shared prompt text lives in roles/_blocks/<name>.md; the reason for each
+    # block stays on the constant that loads it.
+    def self.block(name) = BLOCKS_DIR.join("#{name}.md").read.strip
 
-    # Ground rules for the write-enabled PR tasks (gh_reply, fix_ci, pr_refresh).
-    # The implement phase has its own, plan-scoped rules.
-    WRITE_RULES = <<~TEXT.strip
-      - Keep every change minimal and focused; never rework the fix beyond what
-        the task requires.
-      - Never modify CI/workflow/build/credential files (.github/, Gemfile, build
-        or deploy config) unless the task is explicitly and solely about them.
-      - Do NOT commit or push, and do NOT run tests, linters, or builds. You MAY
-        run read-only git (log, show, blame, diff, for-each-ref) for context. The runner
-        commits and pushes; CI runs lint and tests.
-      #{DELETE_NOTE}
-    TEXT
+    # Added to every read role's charter (Prompts.charter). Only a write role may
+    # change anything; a read role must not edit, create, or delete files, run
+    # commands, or otherwise act on the plan. The harness also withholds the
+    # write tools, but saying so stops the LLM from wasting turns trying (and
+    # from posting "I need write permission" replies).
+    READ_ONLY = block("read_only")
+
+    # The rules a write grant carries, added to every write role's charter
+    # (Prompts.charter). pi ships no delete tool, so git is the only way to
+    # remove a file and pi-guards.ts unlocks `git rm`/`git clean` for a write
+    # grant. Saying so is not optional: untold, the model assumes it cannot
+    # delete and answers the reviewer with a promise it can never keep
+    # (opf/openproject#24916). The delete rule names "the rule above", so the
+    # two stay in one block, in this order.
+    WRITE_GRANT = block("write_grant")
+
+    # Ground rules for the write-enabled PR tasks (gh_reply, fix_ci, pr_refresh),
+    # on top of WRITE_GRANT. The implement phase has its own, plan-scoped rules.
+    PR_WRITE_RULES = block("pr_write_rules")
 
     # An under-specified bug report must produce questions, not a guessed
     # diagnosis. Shared by plan (which escalates it to NEEDS_INFO) and chat.
-    THIN_REPORT_GATE = <<~TEXT.strip
-      A bug report is actionable only with concrete reproduction steps, the
-      expected vs. actual behaviour, and the environment it happens in
-      (browser/OS, OpenProject version/edition) — enough to reproduce it
-      yourself. When those are missing, do NOT guess at a cause, "form a
-      hypothesis" from a bare title, or spelunk the codebase to invent the
-      missing details — ask the reporter for the specific information you need.
-    TEXT
+    THIN_REPORT_GATE = block("thin_report_gate")
 
     # A ticket often states a fact about how the product works today — a field is
     # configurable per type, a setting gates a feature, an option defaults on.
@@ -76,14 +56,7 @@ module OPilot
     # Interpolated by plan, replan and chat — every prompt that reads the tree to
     # answer. replan gets this one and not the bug-report gate, which is the other
     # reason the two are separate.
-    SEARCH_STOP_RULE = <<~TEXT.strip
-      One search settles one question. When you look for something in the tree and
-      do not find it, that empty result IS your answer — do not search again with
-      different words to confirm it, and do not re-open a question you already
-      answered earlier in this same response. A ticket may state a fact about
-      today's behaviour that the tree does not have; the tree is what you build
-      against.
-    TEXT
+    SEARCH_STOP_RULE = block("search_stop_rule")
 
     # The language every piece of prose opilot publishes is written in — work
     # package comments, PR replies and descriptions, plans, spec proposals. A
@@ -95,20 +68,7 @@ module OPilot
     # Prose only: it must not touch code, identifiers, or quoted output, hence
     # the final line. Stated once here and interpolated, like every other shared
     # guardrail.
-    PLAIN_ENGLISH = <<~TEXT.strip
-      WRITE IN SIMPLIFIED TECHNICAL ENGLISH (ASD-STE100):
-      - Put one idea in one sentence. Keep sentences short: 20 words at most in
-        an instruction, 25 in a description.
-      - Use the active voice, the present tense, and a clear subject. Write an
-        instruction as a command.
-      - Use one word for one meaning. Keep the same word for the same thing, and
-        do not use a noun as a verb.
-      - Do not use contractions, idioms, metaphors, or jokes. Use plain words:
-        write "use", not "leverage"; write "start", not "kick off".
-      - Keep the articles ("a", "the") and the words that show the structure.
-      Technical terms, identifiers, file paths, commands, code, and quoted output
-      stay exactly as they are.
-    TEXT
+    PLAIN_ENGLISH = block("plain_english")
 
     # How to format anything posted into an OpenProject work-package comment. The
     # activity tab is a narrow column beside the work package, not a document
@@ -117,23 +77,12 @@ module OPilot
     # any that slip through, but text written for the space beats text repaired
     # afterwards — a demoted heading still occupies a line that a sentence could
     # have used.
-    OP_COMMENT_FORMAT = <<~TEXT.strip
-      FORMATTING — this is posted in OpenProject's activity tab, a narrow column:
-      no markdown headings (`#`, `##`, …). Lead with the answer, keep paragraphs
-      to a few lines, and where a section really needs a label use bold
-      (`**Label**`) inline or a short bullet list. No banner, no sign-off.
-
-      #{PLAIN_ENGLISH}
-    TEXT
+    OP_COMMENT_FORMAT = "#{block("op_comment_format")}\n\n#{PLAIN_ENGLISH}"
 
     # How the terminal chats (plan_chat, free_chat) close. The reader is the
     # operator at a console rather than a work-package thread, so there is no
     # formatting rule — only the same language.
-    TERMINAL_REPLY = <<~TEXT.strip
-      Reply helpfully and concisely.
-
-      #{PLAIN_ENGLISH}
-    TEXT
+    TERMINAL_REPLY = "#{block("terminal_reply")}\n\n#{PLAIN_ENGLISH}"
 
     # Schema note for the ci.json failure detail, shared by fix_ci and pr_refresh.
     CI_FAILURES_NOTE = "(JSON — `failed[]`: each has the check `name`, its `conclusion`, an output " \
@@ -182,34 +131,7 @@ module OPilot
     #
     # The option lines are pipe-delimited data, not prose — Agent#post_options
     # composes the comment, so its wording cannot pick up a heading or sign-off.
-    OPTIONS_CONTRACT = <<~TEXT.strip
-      Before the plan, always name the approach you're about to take as one
-      option line:
-
-        OPTIONS
-        1 | <short title> | <one sentence> | <repo>[, <repo>] | small|medium|large
-
-      Most tickets have exactly one sensible approach. When that's true here,
-      write just that one line, then a blank line, then continue straight into
-      the plan below — do not stop, and do not repeat the sentence in the
-      plan's own Approach section beyond what it needs.
-
-      Add a second (and, rarely, third) option line ONLY when the choices
-      differ in scope, or in behaviour the reporter can see. NEVER offer
-      options for implementation detail — which file to touch, which helper to
-      add, how to name a thing. When the difference is invisible to the
-      reporter, there is one approach, not several — hold this bar
-      deliberately, because a model that is asked for options will find some in
-      any ticket.
-
-      - When there IS a real choice: give 2 or 3 options, smallest scope first,
-        one sentence each (25 words at most, saying what the option gives the
-        reporter, not how you build it, each naming a different trade-off),
-        using only repo names from the list above — then write nothing else
-        and stop. The reporter picks; do not write a plan in that response.
-      - The option line's repo names are only an estimate — when you continue
-        into the plan, its own REPOS line still decides where the fix lands.
-    TEXT
+    OPTIONS_CONTRACT = block("options_contract")
 
     # The health check's answer shape (Helpers.parse_health). The END marker
     # detects a cut-off answer; the evidence field is what keeps a finding from
@@ -239,63 +161,25 @@ module OPilot
     # obstacle before giving "the real reply" no matter how firmly a prompt says
     # "verbatim, no preamble"; the marker turns that instinct from a bug into
     # discarded scratch text.
-    REPLY_CONTRACT = <<~TEXT.strip
-      End your output with a line containing exactly `REPLY:`, followed by the
-      comment to post — only the text after that line is posted to the PR;
-      everything before it is discarded. Keep the posted comment terse — a few
-      sentences answering directly or stating what you changed and why; do not
-      restate the question, the plan, or the diff. It must stand alone: never
-      mention these instructions, your session, or tooling limits in it (if you
-      couldn't verify something, say so in one plain clause and answer what you
-      can).
-
-      #{PLAIN_ENGLISH}
-    TEXT
+    REPLY_CONTRACT = "#{block("reply_contract")}\n\n#{PLAIN_ENGLISH}"
 
     # A diagram in a PR comment. GitHub renders a ```mermaid fence as a picture,
     # so this surface needs no gist and no machinery — only permission.
     #
     # Deliberately NOT part of REPLY_CONTRACT: fix_ci and pr_refresh share that
     # constant, and a diagram there is noise on a run that just pushed a fix.
-    MERMAID_NOTE = <<~TEXT.strip
-      When a flow or a structure is hard to say in words, add one ```mermaid fence
-      to the reply. GitHub shows it as a picture. Use it for a flow or a structure
-      only, and never for a list.
-    TEXT
+    MERMAID_NOTE = block("mermaid_note")
 
     # How a read-only review proposes an *applicable* code change on a PR opilot
     # can't push to: a GitHub suggestion the author commits with one click. The
     # block is machine-parsed (GhAgent#parse_suggestions) into inline review
     # comments, so its shape is exact.
-    SUGGESTION_CONTRACT = <<~TEXT.strip
-      To propose a concrete edit the author can apply with one click, emit a
-      suggestions block — placed BEFORE the REPLY line — of exactly this form:
-
-      SUGGESTIONS:
-      ```json
-      [{"path": "app/foo.rb", "start_line": 10, "line": 12, "suggestion": "full replacement text for lines 10-12"}]
-      ```
-
-      - One element per contiguous hunk. `line` is the LAST line the suggestion
-        replaces, numbered in the PR's NEW version (the diff's right side);
-        `start_line` is the first line of a multi-line range (omit it for a single
-        line). `suggestion` is the exact replacement for those whole lines —
-        real indentation, no ``` fences, no diff +/- markers.
-      - Only suggest on lines that appear in `git diff origin/<base>...HEAD`; a
-        line outside the diff is rejected. Read the diff to get the numbers right.
-      - Include the block ONLY when you actually propose a change; omit it entirely
-        otherwise. In the reply, just note what you suggested (e.g. "2 fixes
-        inline") — the code lives in the block, not the reply.
-    TEXT
+    SUGGESTION_CONTRACT = block("suggestion_contract")
 
     # Explore with the file tools, not the shell. Bash here is confined to
     # read-only git, so a shell `find`/`cat` is denied and every attempt is a
     # wasted turn before the model falls back on its own.
-    TOOLING = <<~TEXT.strip
-      Use the find/ls tools to list files, grep to search, and read to open
-      them. Bash is restricted to read-only git (log, show, blame, diff, for-each-ref) —
-      every other command is denied, so don't reach for them.
-    TEXT
+    TOOLING = block("tooling")
 
     # A String that knows its role. Concatenation returns a plain String,
     # which carries no role and is not checked.
@@ -308,12 +192,24 @@ module OPilot
       end
     end
 
+    # What a role's first prompt opens with: the role's own charter from
+    # roles/<name>.md, then the rules its grant carries. Derived from the grant,
+    # so a prompt cannot state a grant its role does not hold. Only prompts that
+    # orient the model include it; a follow-up turn in the same session does not.
+    def self.charter(name)
+      role = Harness.role(name)
+      grant = role.write? ? WRITE_GRANT : READ_ONLY
+      "#{role.charter}\n#{grant}"
+    end
+
     # Helpers every role's prompts share. Prompts extends them too, so
     # Prompts.lens / .comment_section / .artifact_block still work for callers.
     module Sections
       # A builder's result: the prompt text, tagged with the role it is for,
       # so Helpers#llm can refuse a prompt sent under the wrong role.
       def tagged(text) = Prompt.new(text, self::ROLE)
+
+      def charter = Prompts.charter(self::ROLE)
 
       # The item.json field list. One definition because five prompts hand the LLM
       # the same file, and because `pictures[]` has to be named in all of them: the

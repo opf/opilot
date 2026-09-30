@@ -39,8 +39,9 @@ module OPilot
       def self.create_wp(item_id:, subject:, item:, request:, project:, types:, max:, related: nil,
                          format_note: nil)
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant reading OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
-          #{READ_ONLY}
+          #{charter}
+
+          This is OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
           A reader asks you to create one or more NEW work packages out of something
           in this thread. Write them. The runner creates them in project "#{project}"
           and links them back to this work package.

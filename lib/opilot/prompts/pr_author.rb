@@ -12,9 +12,10 @@ module OPilot
       def self.gh_reply(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:,
                         comment:, author:, comment_id:, in_reply_to: nil, op_mcp: false)
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant responding to a comment on GitHub pull
-          request ##{pr_number} ("#{title}") in #{repo}. The PR's branch is checked out
-          in the product worktree at #{worktree}.
+          #{charter}
+
+          A comment arrived on GitHub pull request ##{pr_number} ("#{title}") in #{repo}.
+          The PR's branch is checked out in the product worktree at #{worktree}.
 
           #{pr_context(item: item, plan: plan, pr_thread: pr_thread)}#{op_query_line(op_mcp)}
 
@@ -26,7 +27,7 @@ module OPilot
             reply describing what you changed.
 
           When you do change code:
-          #{WRITE_RULES}
+          #{PR_WRITE_RULES}
 
           #{MERMAID_NOTE}
 
@@ -40,9 +41,11 @@ module OPilot
       # commits and pushes to update the draft PR; the LLM must not run git itself.
       def self.fix_ci(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:, ci:, op_mcp: false)
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant. CI failed on GitHub pull request
-          ##{pr_number} ("#{title}") in #{repo} — a PR you opened. Its branch is checked
-          out in the product worktree at #{worktree}. Fix what CI is complaining about.
+          #{charter}
+
+          CI failed on GitHub pull request ##{pr_number} ("#{title}") in #{repo} — a PR
+          you opened. Its branch is checked out in the product worktree at
+          #{worktree}. Fix what CI is complaining about.
 
           CI FAILURES: #{ci}  #{CI_FAILURES_NOTE}
           #{pr_context(item: item, plan: plan, pr_thread: pr_thread)}#{op_query_line(op_mcp)}
@@ -55,7 +58,7 @@ module OPilot
             unrelated timeout, a transient runner error) rather than a defect this PR
             introduced, do NOT change code — reply saying so and that a re-run is
             likely all it needs.
-          #{WRITE_RULES}
+          #{PR_WRITE_RULES}
 
           #{REPLY_CONTRACT}
         PROMPT

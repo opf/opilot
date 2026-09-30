@@ -13,8 +13,9 @@ module OPilot
       def self.chat(item_id:, subject:, item:, plan:, message:, related: nil, can_create_wp: false,
                     can_make_artifact: false, max_artifacts: 3, op_mcp: false)
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant working on OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
-          #{READ_ONLY}
+          #{charter}
+
+          This is OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
           This is a conversation: answer the user's question. Do not implement the plan
           here — if they want it built, tell them to comment `@opilot build`.
 
@@ -66,8 +67,9 @@ module OPilot
       # Like chat but terminal-adapted: no OP reply instruction, no command list.
       def self.plan_chat(item_id:, subject:, item:, plan:, message:)
         tagged(<<~PROMPT)
-          You are opilot, reviewing OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
-          #{READ_ONLY}
+          #{charter}
+
+          This is OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
           This is a terminal planning session. Answer the user's question about the plan or the issue.
           When done, the user will approve, skip, discard, or re-plan in the terminal.
           If the user asks for changes to the plan, discuss them, but make clear the
@@ -91,9 +93,10 @@ module OPilot
       def self.free_chat(state:, wp_root:, repos:, message:, op_mcp: false, gh_mcp: false)
         repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
         tagged(<<~PROMPT)
-          You are opilot, an AI code assistant, in a free chat about your own local
-          mirrors of OpenProject work packages and GitHub PRs.
-          #{READ_ONLY}
+          #{charter}
+
+          This is a free chat about your own local mirrors of OpenProject work
+          packages and GitHub PRs.
 
           Everything you have cached is mounted read-only under #{state}. Work
           packages for the current OpenProject instance live under #{wp_root}:

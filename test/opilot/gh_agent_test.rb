@@ -304,7 +304,7 @@ module OPilot
     # noise — so the note must NOT live in that constant.
     def test_a_diagram_is_offered_when_replying_but_not_when_fixing_ci
       capture_io { @agent.handle(gh_intent) }
-      reply = @harness.runs.find { |r| r[:prompt].include?("responding to a comment") }
+      reply = @harness.runs.find { |r| r[:prompt].include?("A comment arrived on GitHub pull request") }
       assert_includes reply[:prompt], "```mermaid fence",
                       "a PR reply may draw a diagram — GitHub renders it"
 
