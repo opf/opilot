@@ -19,14 +19,14 @@ module OPilot
       return help_for(cmd) if rest.any? { |a| help_flag?(a) } && cmd != "chat"
 
       case cmd
-      when "reset"  then @ui.reset
+      when "reset"  then ResetRunner.new(@ctx).run
       when "usage"  then UsageRunner.new(@ctx).run
       # The agent loops — opilot's main mode. No arguments: they poll.
       when "agent"    then agent(rest)
       # Pre-group names for `agent op` / `agent gh`, kept because these are what
       # a service unit or a shell history calls, and the cost of breaking them is
       # a stopped agent.
-      when "op-agent" then session("agent op") { Agent.new(@ctx).run }
+      when "op-agent" then session("agent op") { OpAgent.new(@ctx).run }
       when "gh-agent" then session("agent gh") { GhAgent.new(@ctx).run }
       when "chat"     then session(cmd) { ChatRunner.new(@ctx).run(rest.join(" ")) }
       # The command groups. `dev` and `pd` are the two specializations — the kind
@@ -67,7 +67,7 @@ module OPilot
     def agent(args)
       case args[0].to_s
       when ""   then session("agent")    { CombinedAgent.new(@ctx).run }
-      when "op" then session("agent op") { Agent.new(@ctx).run }
+      when "op" then session("agent op") { OpAgent.new(@ctx).run }
       when "gh" then session("agent gh") { GhAgent.new(@ctx).run }
       else
         $stderr.puts "unknown agent subcommand #{args[0].inspect}"
@@ -92,7 +92,7 @@ module OPilot
       when "health"       then with_ids("dev health", rest) { |ids| HealthRunner.new(@ctx).run_ids(*ids) }
       when "refresh"      then refresh(rest)
       # Reads .opilot/ only — no config, no network, no log header.
-      when "status"       then @ui.status
+      when "status"       then StatusRunner.new(@ctx).run
       else
         $stderr.puts "unknown dev subcommand #{sub.inspect}"
         @ui.dev_usage

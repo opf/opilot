@@ -1,5 +1,5 @@
 require "json"
-require_relative "../pull"
+require_relative "../op_pull"
 require_relative "../ui"   # #usage! prints from UI#pd_commands, the single help source
 
 module OPilot
@@ -823,7 +823,7 @@ module OPilot
       # Built on demand, like #intake_client: most `pd` stages never talk to
       # OpenProject's work-package API at all.
       def pull_client
-        @pull ||= Pull.new(@ctx)
+        @pull ||= OpPull.new(@ctx)
       end
 
       # Which change (and which repo's store) a work-package id belongs to. The

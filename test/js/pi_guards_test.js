@@ -31,7 +31,7 @@ function loadGuard(mod) {
   return (toolName, input) => hook({ toolName, input }) || { block: false };
 }
 
-import('../../pi-guards.ts').then(mod => {
+import('../../harness/pi-guards.ts').then(mod => {
   const { withinRepos, touchesGitDir, checkBash, checkClean, writesGranted } = mod;
   const call = loadGuard(mod);
 

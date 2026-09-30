@@ -79,7 +79,7 @@ module OPilot
       # Conversational reply to an @opilot comment on a work package (read-only tools).
       #
       # `can_create_wp:` is whether `create wp` is available on this instance (it
-      # needs a non-empty allowlist — see Agent#create_wp_enabled?). It defaults to
+      # needs a non-empty allowlist — see OpAgent#create_wp_enabled?). It defaults to
       # false so a caller nobody updated advertises nothing, rather than offering a
       # command opilot would refuse.
       def self.chat(item_id:, subject:, item:, plan:, message:, related: nil, can_create_wp: false,

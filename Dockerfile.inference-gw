@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-COPY --chown=node:node inference-gw.js /app/
+COPY --chown=node:node gateways/inference-gw.js /app/
 
 USER node
 

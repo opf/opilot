@@ -2,7 +2,7 @@ require "json"
 require "time"
 
 module OPilot
-  # The work package health check, shared by `@opilot health` (Agent) and
+  # The work package health check, shared by `@opilot health` (OpAgent) and
   # `./opilot dev health` (HealthRunner). Two layers:
   #
   # - Facts: rules on exact, language-independent data (status flags from
@@ -24,7 +24,7 @@ module OPilot
     MAX_TREE_FINDINGS = 5   # per rule; the rest are counted in the text
     SEVERITY_ORDER = Prompts::Auditor::HEALTH_SEVERITIES
 
-    # Labels from this work package's own side (Pull#relation_pairs): the other
+    # Labels from this work package's own side (OpPull#relation_pairs): the other
     # one must finish first.
     PREREQUISITES = %w[blocked follows requires].freeze
 

@@ -9,7 +9,7 @@ const assert = require('assert');
 const {
   parseConfig, parseGhConfig, parseRoutes, mapPath, checkMcpCall,
   filterToolsList, unwrapSse, READ_ONLY_OPS, GH_READ_ONLY_OPS, createHandler,
-} = require('../../mcp-gw.js');
+} = require('../../gateways/mcp-gw.js');
 
 const ghCall = (name, args) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
 const ghEnv = (extra = {}) => env({ OPILOT_GH_MCP: '1', GITHUB_CONTRIBUTOR_TOKEN: 'ghp_contrib', ...extra });

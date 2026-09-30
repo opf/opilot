@@ -5,8 +5,8 @@
 const assert = require('assert');
 const {
   OPERATIONS, buildRequestBody, parseToolResult, trim, summarize, MAX_ANSWER_BYTES,
-} = require('../../gh-mcp-client.js');
-const { GH_READ_ONLY_OPS } = require('../../mcp-gw.js');
+} = require('../../harness/gh-mcp-client.js');
+const { GH_READ_ONLY_OPS } = require('../../gateways/mcp-gw.js');
 
 let failures = 0;
 function test(name, fn) {

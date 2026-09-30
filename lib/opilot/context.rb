@@ -51,7 +51,7 @@ module OPilot
       # it. An empty string beats a fetch default and would print a blank
       # upstream.
       @inference_url      = presence(ENV["OPILOT_INFERENCE_URL"]) || "https://openrouter.ai/api/v1"
-      # The OpenProject MCP gateway (see MCP.md). nil (not a hardcoded default)
+      # The OpenProject MCP gateway. nil (not a hardcoded default)
       # when unset: `./opilot` exports this only when both the harness and
       # OPILOT_OP_MCP are needed, and an absent value is what tells
       # #report_mcp_status to say so rather than try to connect nowhere.
@@ -145,7 +145,7 @@ module OPilot
       %w[1 true yes on].include?(ENV["OPILOT_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
     end
 
-    # Whether the plan/chat/gh-reply phases get the op_query tool (see MCP.md).
+    # Whether the plan/chat/gh-reply phases get the op_query tool.
     # ON by default — opt OUT with OPILOT_OP_MCP=0 (or false/no/off). An
     # instance without the (Enterprise-only) MCP server enabled just answers
     # every op_query call with "unavailable", which #report_mcp_status and

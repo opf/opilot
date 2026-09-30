@@ -9,7 +9,7 @@
 const assert = require('assert');
 const {
   parseConfig, mapPath, buildHeaders, createHandler, createResolver,
-} = require('../../inference-gw.js');
+} = require('../../gateways/inference-gw.js');
 
 const GW = 'opilot-internal-gateway';
 

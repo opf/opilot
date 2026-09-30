@@ -154,11 +154,12 @@ module OPilot
       end
 
       # An OPENPROJECT LOOKUP line for a prompt behind a call site granted the
-      # op_query tool (see MCP.md), "" otherwise — following #related_line's
+      # op_query tool, "" otherwise — following #related_line's
       # pattern. op_query is already self-describing to the model (pi injects
       # its promptSnippet/promptGuidelines whenever the tool is active); this
       # adds the guidance specific to using it well inside THIS prompt's task.
-      # Deliberately not added to pr_review — see MCP.md's Step 3 for why.
+      # Deliberately not added to pr_review: an upstream PR is third-party text,
+      # and it must not reach a tool that queries our own instance.
       def op_query_line(enabled)
         return "" unless enabled
         "\n\nOPENPROJECT LOOKUP: the op_query tool reads live data on this OpenProject " \
@@ -219,7 +220,7 @@ module OPilot
       end
 
       # The one retry's correction, when the previous answer missed the block
-      # format (Agent#format_miss). Absent on a first attempt.
+      # format (OpAgent#format_miss). Absent on a first attempt.
       def format_note_line(note)
         return "" if note.to_s.strip.empty?
         "\nFIX THIS FIRST: #{note.strip}\n"

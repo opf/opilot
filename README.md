@@ -231,7 +231,7 @@ docker compose run --no-deps --rm runner bundle exec rake
 **Run a single file:**
 
 ```bash
-docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/agent_test.rb
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/op_agent_test.rb
 ```
 
 The suite uses Minitest (ships with Ruby) and WebMock for HTTP stubs. No network calls are made during the test run.

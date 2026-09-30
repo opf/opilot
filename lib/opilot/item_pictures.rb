@@ -73,11 +73,11 @@ module OPilot
     end
 
     # An attachment read failed, which is not the same answer as "there are no
-    # pictures". The marker is what `Pull#fetch_work_package_item` adds to its
+    # pictures". The marker is what `OpPull#fetch_work_package_item` adds to its
     # updated_at cache gate: without it this incomplete index reads as current
     # until somebody edits the work package, and for a quiet one that is never.
     # Whatever the last complete run mirrored is carried over untouched
-    # (`Pull::CARRIED_KEYS`), so a transient failure loses nothing.
+    # (`OpPull::CARRIED_KEYS`), so a transient failure loses nothing.
     def unfinished(item)
       item.merge("pictures_pending" => true)
     end

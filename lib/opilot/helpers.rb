@@ -11,7 +11,7 @@ require "tty-markdown"
 module OPilot
   module Helpers
     # File/JSON idioms shared across classes that don't all `include Helpers`
-    # (Pull, UI), so they're module functions like .wp_label below.
+    # (OpPull, UI), so they're module functions like .wp_label below.
 
     # Per-WP state lives under .opilot/work_packages/<op_host>/<id>/ —
     # namespaced by the OpenProject instance (see Context#op_host) so different
@@ -27,7 +27,7 @@ module OPilot
 
     # Rewrite a host path under .opilot/ to its path inside the harness
     # container, where .opilot is mounted read-only at /state. A module function
-    # as well as an instance method (#container_path) because Pull writes
+    # as well as an instance method (#container_path) because OpPull writes
     # container paths into item.json and does not include Helpers.
     def self.state_container_path(ctx, host_path)
       host_path.to_s.sub(ctx.state_dir.to_s, ctx.state_container)
@@ -539,7 +539,7 @@ module OPilot
     # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
     # span ("1h", "2 days", "1 week", "1 month", "1 year"), an absolute time, or
     # blank/"now" (= now). Months and years use 30- and 365-day approximations,
-    # which is plenty for a scan floor. Shared by the OpenProject agent (Pull)
+    # which is plenty for a scan floor. Shared by the OpenProject agent (OpPull)
     # and the GitHub agent (GhPull) so the "scan from" prompt parses identically.
     def self.parse_scan_from(input)
       input = input.to_s.strip.downcase
@@ -895,13 +895,12 @@ module OPilot
     end
 
     # One-time, best-effort report of what the instance's MCP server actually
-    # offers (see MCP.md, "A startup check on what the instance really
-    # offers"). Call once per process — Agent#setup, GhAgent#setup, and once at
+    # offers. Call once per process — OpAgent#setup, GhAgent#setup, and once at
     # the start of each `dev` verb that grants the tool — never inside
     # guarded_tick/#tick.
     #
     # It WARNS; it never raises. That is the opposite of #ensure_harness! and
-    # Pull#ensure_bot_identity!, which raise on purpose because a run without a
+    # OpPull#ensure_bot_identity!, which raise on purpose because a run without a
     # model or an identity cannot work — this one has a working fallback (the
     # mirrors), so a 404, an unreachable gateway, or a malformed answer just
     # leaves op_query unused for the run.
@@ -1188,7 +1187,7 @@ module OPilot
     # path — or nil when there are none, so the prompt omits the RELATED section.
     # Each related WP is also cached to its own item.json (by @pull) so the LLM can
     # read the full detail on demand via the item_path in the index. Shared by the
-    # op-agent (Agent) and the terminal fix/plan flow (FixRunner).
+    # op-agent (OpAgent) and the terminal fix/plan flow (FixRunner).
     def related_ref(st)
       related = @pull.related_work_packages(st.item_id)
       return nil if related.empty?

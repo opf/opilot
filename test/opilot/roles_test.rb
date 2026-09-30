@@ -24,7 +24,7 @@ module OPilot
     end
 
     def server_grants
-      (ROOT / "server.js").read[/ALLOWED_TOOL_GRANTS = new Set\(\[(.*?)\]\)/m, 1].scan(/'([^']+)'/).flatten
+      (ROOT / "harness/server.js").read[/ALLOWED_TOOL_GRANTS = new Set\(\[(.*?)\]\)/m, 1].scan(/'([^']+)'/).flatten
     end
 
     def test_every_role_resolves_to_a_grant_server_js_allows

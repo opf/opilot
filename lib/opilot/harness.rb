@@ -31,7 +31,7 @@ module OPilot
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
-    # The op_query variants (see MCP.md), granted only to the roles marked
+    # The op_query variants, granted only to the roles marked
     # `mcp` (roles.rb). Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
     TOOLS_READ_OP = "#{TOOLS_READ},op_query"
     TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"

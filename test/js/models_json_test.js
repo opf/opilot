@@ -6,7 +6,7 @@
 // checks it — a wrong provider name or a missing compat flag surfaces as an
 // opaque pi start-up error three layers away.
 const assert = require('assert');
-const { buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS } = require('../../server.js');
+const { buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
 
 let failures = 0;
 function test(name, fn) {

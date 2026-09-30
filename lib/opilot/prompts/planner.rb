@@ -4,20 +4,20 @@ module OPilot
       extend Sections
 
       # First line of an answer that names the approach before (or instead of) a
-      # plan. Shared by every reader of that answer (Agent, FixRunner) so the
+      # plan. Shared by every reader of that answer (OpAgent, FixRunner) so the
       # word is written once.
       OPTIONS_SENTINEL = "OPTIONS"
 
       # The second gate on a `ship` plan call: name the approach before writing
       # the plan, and stop after naming 2-3 when there is a real choice — that
-      # choice belongs to the reporter. `Agent#produce_plan` turns a stopped
+      # choice belongs to the reporter. `OpAgent#produce_plan` turns a stopped
       # multi-option answer into options.json plus one comment; a single named
       # approach reads straight through into the plan behind it.
       #
       # Folded into the plan call rather than run as its own call: the writer has
       # already read the repos, so the single-approach case costs no extra call.
       #
-      # The option lines are pipe-delimited data, not prose — Agent#post_options
+      # The option lines are pipe-delimited data, not prose — OpAgent#post_options
       # composes the comment, so its wording cannot pick up a heading or sign-off.
       OPTIONS_CONTRACT = Prompts.block("options_contract")
 
@@ -49,7 +49,7 @@ module OPilot
       # WRITER: produce a fresh implementation plan for an issue.
       #
       # Two gates. NEEDS_INFO is the sufficiency gate: on a vague WP the writer
-      # emits it instead of a plan, and Agent#produce_plan posts the questions back
+      # emits it instead of a plan, and OpAgent#produce_plan posts the questions back
       # to the WP. `allow_options:` adds OPTIONS_CONTRACT whenever no human has
       # chosen an approach yet; it stays off once an option or a direction is given.
       #
@@ -59,7 +59,7 @@ module OPilot
       # writer cannot verify must default to an assumption written into
       # "Risks / assumptions", not to a question. A false NEEDS_INFO costs more than
       # the loop SEARCH_STOP_RULE exists to stop: the loop wastes one harness slot
-      # for one run, while Agent#produce_plan posts the questions into the activity
+      # for one run, while OpAgent#produce_plan posts the questions into the activity
       # tab and stalls the ticket until somebody answers them.
       def self.plan(repos_summary:, repos:, item:, item_id:, title:, hint: "", related: nil,
                     allow_options: false, op_mcp: false)

@@ -6,7 +6,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseRole, loadRoles, grantsFor, checkRole, ALLOWED_TOOL_GRANTS } = require('../../server.js');
+const { parseRole, loadRoles, grantsFor, checkRole, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
 
 let failures = 0;
 function test(name, fn) {

@@ -10,7 +10,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { translate, settleResult } = require('../../server.js');
+const { translate, settleResult } = require('../../harness/server.js');
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'pi');
 

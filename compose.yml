@@ -46,7 +46,7 @@ services:
       - OPENPROJECT_TOKEN=${OPENPROJECT_TOKEN}
       - OPILOT_ALLOWED_OP_USER_IDS=${OPILOT_ALLOWED_OP_USER_IDS:-}
       - OPILOT_ALLOWED_GH_USERS=${OPILOT_ALLOWED_GH_USERS:-}
-      # The op_query tool grant (see MCP.md). Bare form: unset must mean
+      # The op_query tool grant. Bare form: unset must mean
       # "off", not "blank" — Context#op_mcp? reads it the same way
       # OPILOT_TRACK_UPSTREAM_PRS is read.
       - OPILOT_OP_MCP
@@ -101,7 +101,7 @@ services:
   #
   # inference-gw is its ONLY egress, reachable over the internal network, and that
   # gateway forwards to one pinned upstream on an allowlisted set of paths —
-  # plus mcp-gw when OPILOT_OP_MCP is set (see MCP.md), reached the same way and
+  # plus mcp-gw when OPILOT_OP_MCP is set, reached the same way and
   # allowlisted on the JSON-RPC body rather than the path, since every mcp-gw
   # call is the same POST /mcp. There is deliberately no general-purpose proxy
   # beside them: a tinyproxy sidecar used to straddle internal and egress for
@@ -154,9 +154,9 @@ services:
       # The real OpenRouter key never reaches this container: pi-models.json
       # routes the openrouter provider through inference-gw (which holds the real
       # key) and authenticates with this non-secret handshake token. The same
-      # token authenticates pi-op-mcp.ts to mcp-gw (see MCP.md).
+      # token authenticates pi-mcp.ts to mcp-gw.
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
-      # Bare form, deliberately: pi-op-mcp.ts registers the op_query tool only
+      # Bare form, deliberately: pi-mcp.ts registers the op_query tool only
       # when this is present, so an unset value here is the second half of the
       # feature flag alongside the runner's op_query grant (OPILOT_OP_MCP).
       # ./opilot exports it only when both the harness and the flag are needed.
@@ -236,7 +236,7 @@ services:
       timeout: 5s
       retries: 15
 
-  # The OpenProject MCP gateway (see MCP.md) — the harness's only route to the
+  # The OpenProject MCP gateway — the harness's only route to the
   # OpenProject MCP server, on when OPILOT_OP_MCP is set. Same containment
   # shape as inference-gw: a fixed upstream (OPENPROJECT_URL), a pinned address, and
   # a swap of the handshake token for the real credential — but the allowlist
@@ -262,7 +262,7 @@ services:
       # Optional; defaults to GitHub's own hosted MCP server on its readonly
       # path. Points at a locally run `github-mcp-server http` instead.
       - OPILOT_GH_MCP_URL
-      # Fixed handshake value (not a secret), the same one inference-gw and pi-op-mcp.ts use.
+      # Fixed handshake value (not a secret), the same one inference-gw and pi-mcp.ts use.
       - OPILOT_GW_TOKEN
     networks:
       - internal

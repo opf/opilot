@@ -16,7 +16,7 @@ module OPilot
       # the same one call as one, and a call per work package would not see the
       # others, so two of them could write the same suggestion twice.
       #
-      # `max` is the runner's own ceiling (Agent::MAX_CREATE_WP), stated here so the
+      # `max` is the runner's own ceiling (OpAgent::MAX_CREATE_WP), stated here so the
       # writer stops before it and ENFORCED there because a prompt limit drifts.
       # Both marker lines are demanded of every block for the same reason the cap is
       # enforced twice: all the blocks share ONE output budget, so a cut-off answer

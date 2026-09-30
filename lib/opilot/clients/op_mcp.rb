@@ -4,7 +4,7 @@ require "json"
 
 module OPilot
   module Clients
-    # Reads mcp-gw's runner-only `GET /tools` route (see MCP.md, Step 1) — the
+    # Reads mcp-gw's runner-only `GET /tools` route — the
     # UNFILTERED tools/list the instance actually offers. Used once at startup
     # by Helpers#report_mcp_status, purely to report what an administrator
     # has enabled; it is never on the path of a real op_query call, which is
@@ -12,7 +12,7 @@ module OPilot
     class OpMcp
       Error = Class.new(StandardError)
       # The instance has no Enterprise MCP server enabled — a NORMAL state
-      # (MCP.md: "Availability is per instance"), not a failure. Since
+      # (availability is per instance), not a failure. Since
       # Context#op_mcp? defaults ON, this is the common case for any instance
       # without the add-on, so it is reported distinctly rather than through
       # the generic warning #summary's caller prints for a real Error.

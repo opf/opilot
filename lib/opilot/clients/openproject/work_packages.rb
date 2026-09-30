@@ -11,7 +11,7 @@ module OPilot
       module WorkPackages
         # Returns [code, response_hash]. Hits the global work-packages endpoint;
         # op-agent's poll scopes it with a `comment` filter keyed on opilot's own
-        # display name (see Pull#mention_filter_json) rather than any project
+        # display name (see OpPull#mention_filter_json) rather than any project
         # scope — the API token's own project access is the trust boundary.
         #
         # The sort and subproject values are that poll's policy, not API facts, so

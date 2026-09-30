@@ -35,7 +35,7 @@ M0–M3.
 required at boot (`CLI#pd` requires it on demand), and `intake` is lazier still
 (`PD::Runner#intake_client` requires it on first use, keeping roo/nokogiri/rubyzip
 out of every run that never reads a document). The one exception is
-`PD::ChangeStore`, which `gh_pull.rb` requires directly because identifying a spec
+`PD::ChangeStore`, which `github/gh_pull.rb` requires directly because identifying a spec
 PR needs the store's layout on every agent tick.
 
 ## Stages
