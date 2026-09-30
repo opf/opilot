@@ -500,7 +500,7 @@ bare `docker compose run …` works from the repo root.
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
-| `roles.rb` | The roles the model plays (grant, model, stateless) — every LLM call names one via `Helpers#llm` |
+| `roles.rb` | Loads `roles/*.md`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
@@ -954,14 +954,18 @@ Runner POSTs to `http://harness:47291` with headers:
   (see `MCP.md`) — the other roles keep the plain grant regardless. `server.js` rejects any other
   grant, so its allowlist (`ALLOWED_TOOL_GRANTS`, four strings) must stay in
   sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
-- **Every call names a role** (`Helpers#llm`, table in `lib/opilot/roles.rb`):
-  a role's base grant, whether the MCP tools join it, its model, and whether it is
-  **stateless** (a stateless role given a `session_file` raises, so health's
-  independence from chat is structural). Nothing outside `helpers.rb`/`harness.rb`
-  calls `@harness.run` or names `Harness::TOOLS_*` — `test/opilot/personas_test.rb`
-  checks that, and checks every role against `ALLOWED_TOOL_GRANTS`. Roles that
-  look alike but differ in grant (`pr_author` vs `pr_refresher`) stay two
-  roles until someone decides to merge them.
+- **Every call names a role** (`Helpers#llm`). A role is one file,
+  `roles/<name>.md`: frontmatter for `tools` (`read`/`write`), `mcp` (whether the
+  MCP tools join the grant), `model` (`heavy`/`light`) and `memory`
+  (`session`/`none`), and a body saying what the role does and who calls it. The
+  body is not sent to the model yet. `lib/opilot/roles.rb` loads them strictly —
+  an unknown key or value fails at boot — and a `memory: none` role given a
+  `session_file` raises, so health's independence from chat is structural.
+  `test/opilot/roles_test.rb` pins every role's tuple, checks each against
+  `ALLOWED_TOOL_GRANTS`, and fails if anything outside `helpers.rb`/`harness.rb`
+  calls `@harness.run` or names `Harness::TOOLS_*`. Roles that look alike but
+  differ in grant (`pr_author` vs `pr_refresher`) stay two roles until someone
+  decides to merge them.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
   always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5.5`,

@@ -1,4 +1,5 @@
 require_relative "../test_helper"
+require "tmpdir"
 
 module OPilot
   class RolesTest < Minitest::Test
@@ -26,7 +27,7 @@ module OPilot
       (ROOT / "server.js").read[/ALLOWED_TOOL_GRANTS = new Set\(\[(.*?)\]\)/m, 1].scan(/'([^']+)'/).flatten
     end
 
-    def test_every_persona_resolves_to_a_grant_server_js_allows
+    def test_every_role_resolves_to_a_grant_server_js_allows
       grants = server_grants
       refute_empty grants
       Harness::ROLES.each_value do |p|
@@ -36,12 +37,12 @@ module OPilot
       end
     end
 
-    def test_mcp_tools_follow_the_flags_only_for_mcp_personas
+    def test_mcp_tools_follow_the_flags_only_for_mcp_roles
       assert_equal "#{Harness::TOOLS_READ},op_query", Harness.role(:planner).tools(ctx(op: true))
       assert_equal Harness::TOOLS_READ, Harness.role(:wp_writer).tools(ctx(op: true, gh: true))
     end
 
-    def test_llm_passes_the_personas_tools_and_model
+    def test_llm_passes_the_role_tools_and_model
       c = Caller.new(ctx)
       c.send(:llm, :scribe, "hi")
       assert_equal({ tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT, session_file: nil, prompt: "hi" },
@@ -54,12 +55,58 @@ module OPilot
       assert_equal "/tmp/x", c.calls.last[:outfile]
     end
 
-    def test_a_stateless_persona_refuses_a_session
+    def test_a_stateless_role_refuses_a_session
       err = assert_raises(ArgumentError) { Caller.new(ctx).send(:llm, :auditor, "x", session_file: "s") }
       assert_match(/stateless/, err.message)
     end
 
-    def test_unknown_persona_fails
+    # The table roles/*.md replaced, pinned so a role file edit is a deliberate test edit.
+    EXPECTED = {
+      planner:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :session],
+      advisor:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :session],
+      wp_writer:    [Harness::TOOLS_READ, false, Harness::MODEL_HEAVY, :session],
+      triager:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :none],
+      auditor:      [Harness::TOOLS_READ, true,  Harness::MODEL_HEAVY, :none],
+      implementer:  [Harness::TOOLS_IMPL, false, Harness::MODEL_HEAVY, :session],
+      spec_writer:  [Harness::TOOLS_IMPL, false, Harness::MODEL_HEAVY, :session],
+      pr_author:    [Harness::TOOLS_IMPL, true,  Harness::MODEL_HEAVY, :session],
+      pr_refresher: [Harness::TOOLS_IMPL, false, Harness::MODEL_HEAVY, :session],
+      pr_advisor:   [Harness::TOOLS_READ, false, Harness::MODEL_HEAVY, :session],
+      scribe:       [Harness::TOOLS_READ, false, Harness::MODEL_LIGHT, :none],
+    }.freeze
+
+    def test_role_files_hold_the_expected_tuples
+      actual = Harness::ROLES.transform_values { |r| [r.base, r.mcp, r.model, r.memory] }
+      assert_equal EXPECTED, actual
+      Harness::ROLES.each_value { |r| refute_empty r.description, r.name }
+    end
+
+    def test_every_call_site_names_a_known_role
+      used = Dir[ROOT / "lib/**/*.rb"].flat_map { |f| File.read(f).scan(/\bllm\(\s*:(\w+)/).flatten }
+      refute_empty used
+      assert_empty used.map(&:to_sym).uniq - Harness::ROLES.keys
+    end
+
+    def write_role(dir, text)
+      path = Pathname(dir) / "x.md"
+      path.write(text)
+      path
+    end
+
+    def test_a_bad_role_file_fails_to_load
+      Dir.mktmpdir do |dir|
+        good = "---\ntools: read\nmcp: false\nmodel: heavy\nmemory: none\n---\nDoes x.\n"
+        assert_equal :x, Harness.load_role(write_role(dir, good)).name
+        [good.sub("read", "admin"),                            # unknown grant
+         good.sub("mcp: false\n", ""),                         # missing key
+         good.sub("memory: none", "memory: none\nextra: 1"),  # unknown key
+         "no frontmatter\n"].each do |bad|
+          assert_raises(ArgumentError, bad) { Harness.load_role(write_role(dir, bad)) }
+        end
+      end
+    end
+
+    def test_unknown_role_fails
       assert_raises(KeyError) { Harness.role(:nobody) }
     end
 
