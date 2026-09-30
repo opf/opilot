@@ -212,17 +212,15 @@ module OPilot
                               keyword_init: true)
 
       def own_pr_paths(intent)
-        item_dir  = Helpers.item_dir(@ctx, intent.item_id)
-        pr_dir    = item_dir / "repos" / intent.repo_name
-        item_file = item_dir / "item.json"
-        plan_file = item_dir / "plan.md"
+        pr_dir = Helpers.item_dir(@ctx, intent.item_id) / "repos" / intent.repo_name
+        item_ref, plan_ref = item_refs(intent.item_id)
         OwnPrPaths.new(
           repo:         @ctx.repos.by_upstream(intent.repo),
           pr_file:      pr_dir / "pr.json",
           ci_file:      pr_dir / "ci.json",
           session_file: pr_dir / "gh_session_id",
-          item_ref: Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)",
-          plan_ref: Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)"
+          item_ref:     item_ref,
+          plan_ref:     plan_ref
         )
       end
 

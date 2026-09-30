@@ -125,7 +125,7 @@ module OPilot
       def linked_prs(item_id)
         code, body = @api.work_package_github_pull_requests(item_id)
         return [nil, code] unless code == 200
-        prs = (body&.dig("_embedded", "elements") || []).map do |pr|
+        prs = Resource.elements(body).map do |pr|
           { "url" => pr["htmlUrl"], "repository" => pr["repository"], "number" => pr["number"],
             "title" => pr["title"], "state" => pr["state"], "merged" => pr["merged"] == true,
             "merged_at" => pr["mergedAt"], "draft" => pr["draft"] == true }

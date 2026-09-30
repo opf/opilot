@@ -119,7 +119,7 @@ module OPilot
 
         fetch_work_package_item(wp)
         path = Helpers.item_dir(@ctx, wp_display_id(wp)) / "item.json"
-        path.exist? ? JSON.parse(path.read) : nil
+        Helpers.safe_json_read(path)
       end
 
       # Work packages related to `wp_id` — its explicit relations (relates, blocks,
@@ -162,7 +162,7 @@ module OPilot
       private def relation_pairs(numeric_id)
         code, resp = @api.work_package_relations(numeric_id)
         return [] unless code == 200 && resp
-        (resp.dig("_embedded", "elements") || []).filter_map do |rel|
+        Resource.elements(resp).filter_map do |rel|
           from = Resource.href_id(rel.dig("_links", "from", "href"))
           to   = Resource.href_id(rel.dig("_links", "to", "href"))
           if from == numeric_id
@@ -219,7 +219,7 @@ module OPilot
           total = resp["total"].to_i
           break if count == 0
 
-          (resp.dig("_embedded", "elements") || []).each do |wp|
+          Resource.elements(resp).each do |wp|
             # Results are sorted updatedAt desc, and posting a @opilot comment bumps
             # the WP's updatedAt — so a WP last touched before the scan floor can't
             # carry a trigger newer than the floor, and neither can any WP after it.
@@ -259,10 +259,7 @@ module OPilot
       # session resumes from where the previous one stopped rather than skipping
       # ahead to now.
       def saved_scan_from_at
-        return nil unless agent_filters_path.exist?
-        JSON.parse(agent_filters_path.read)["scan_from_at"]
-      rescue JSON::ParserError
-        nil
+        (Helpers.safe_json_read(agent_filters_path) || {})["scan_from_at"]
       end
 
       def save_scan_from(scan_from_at)
@@ -397,10 +394,8 @@ module OPilot
         item_dir  = Helpers.item_dir(@ctx, wp_id)
         item_path = item_dir / "item.json"
 
-        if item_path.exist?
-          cached = JSON.parse(item_path.read)
-          return [true, cached["comments"] || []] if item_current?(cached, wp)
-        end
+        cached = Helpers.safe_json_read(item_path) if item_path.exist?
+        return [true, cached["comments"] || []] if cached && item_current?(cached, wp)
 
         acts_code, acts = @api.work_package_activities(wp_id)
         acts = { "_embedded" => { "elements" => [] } } unless acts_code == 200
@@ -408,19 +403,16 @@ module OPilot
         rxns_code, rxns = @api.work_package_emoji_reactions(wp_id)
         rxns = { "_embedded" => { "elements" => [] } } unless rxns_code == 200
 
-        comments = build_comments(
-          acts.dig("_embedded", "elements") || [],
-          rxns.dig("_embedded", "elements") || []
-        )
+        activities = Resource.elements(acts)
+        comments = build_comments(activities, Resource.elements(rxns))
 
         full = build_full_item(wp, comments)
         full["custom_fields"] = custom_fields(wp)
         # nil, not empty, when the read failed: "no changes" would be a false fact.
-        activities = acts.dig("_embedded", "elements") || []
         full["history"] = acts_code == 200 ? build_history(activities) : nil
         full["description_changed_at"] = acts_code == 200 ? description_changed_at(activities, wp) : nil
         if item_path.exist?
-          prev = Helpers.safe_json_read(item_path) || {}
+          prev = cached || {}
           (CARRIED_KEYS + PICTURE_KEYS).each { |key| full[key] = prev[key] if prev.key?(key) }
         end
         item_dir.mkpath
@@ -437,7 +429,7 @@ module OPilot
       def build_comments(activities, reactions)
         read_user_names(activities)
         rxn_index = reactions
-          .group_by { |r| r.dig("_links", "reactable", "href")&.split("/")&.last }
+          .group_by { |r| Resource.href_id(r.dig("_links", "reactable", "href")) }
           .transform_values { |rs| rs.map { |r| [r["reaction"], r["reactionsCount"]] }.to_h }
 
         activities

@@ -63,7 +63,7 @@ module OPilot
     # character between them silently produces a broken link.
     def self.slugify(str, fallback: "item", limit: 60)
       s = str.to_s.downcase.gsub("&", "and").gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
-      s.empty? ? fallback : s[0, limit]
+      s.empty? ? fallback : (limit ? s[0, limit] : s)
     end
 
     # A file exists and is non-empty — the "has real content" check used for
@@ -237,6 +237,15 @@ module OPilot
     # Rewrite a host path under .opilot/ to its path inside the harness container.
     def container_path(host_path)
       Helpers.state_container_path(@ctx, host_path)
+    end
+
+    # The work package's item.json and plan.md as the harness sees them, or a
+    # placeholder for each one that was never written.
+    def item_refs(item_id)
+      dir = Helpers.item_dir(@ctx, item_id)
+      [["item.json", "(no issue recorded)"], ["plan.md", "(no plan recorded)"]].map do |name, none|
+        Helpers.file_has_content?(dir / name) ? container_path(dir / name) : none
+      end
     end
 
     # Rewrite a host path inside a repo's worktree to its /repos/<name> path

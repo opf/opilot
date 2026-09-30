@@ -107,7 +107,7 @@ module OPilot
           problems << "could not list statuses (HTTP #{code})"
           return []
         end
-        (body.dig("_embedded", "elements") || []).map do |s|
+        Resource.elements(body).map do |s|
           { "id" => s["id"], "name" => s["name"].to_s, "closed" => !!s["isClosed"] }
         end
       rescue StandardError => e
@@ -128,7 +128,7 @@ module OPilot
       # exists to prevent. An empty name means that transition is switched off.
       def find_statuses(statuses, problems)
         [@ctx.pd_implementing_status, @ctx.pd_implemented_status].reject { |n| n.to_s.empty? }.uniq.each do |name|
-          next if statuses.any? { |s| s["name"].to_s.casecmp?(name) }
+          next if Resource.find_named(statuses, name)
           problems << "no status named #{name.inspect} on this instance " \
                       "(`pd implement` transitions work packages through it)"
         end

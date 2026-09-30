@@ -505,18 +505,13 @@ module OPilot
         Helpers.adopt_github_author!(publish.author_token)
         wt = worktree(repo)
         wt.add("openspec/changes/#{state.change_id}", force: true)
-        # One status call, not two: ruby-git rebuilds it from four subprocesses
-        # each time, over OpenProject's whole index. And `deleted` counts — a
-        # revision that only removes an artifact ("drop design.md") was otherwise
-        # reported as "no spec changes" and silently dropped.
-        st = wt.status_info
-        if st.added.empty? && st.changed.empty? && st.deleted.empty?
+        # `deleted` counts: a revision that only removes an artifact ("drop
+        # design.md") must not be reported as "no spec changes" and dropped.
+        unless dirty_worktree?(wt)
           log_script "#{state.change_id} — no spec changes to commit."
           return false
         end
-        wt.commit("[#{state.change_id}] #{subject}")
-        c = wt.log(1).execute.first
-        log_script "Committed to #{repo.name}: #{c.sha[0, 7]} #{c.message.lines.first.to_s.strip}"
+        commit_and_log(wt, "[#{state.change_id}] #{subject}", repo.name)
         true
       end
 
@@ -798,7 +793,7 @@ module OPilot
       # Progress") and an exact-match miss here would be pure friction.
       def resolved_status(name)
         statuses = Array(ResolvedIds.new(@ctx, op: @op).read["statuses"])
-        statuses.find { |s| s["name"].to_s.casecmp?(name.to_s) }
+        Clients::OpenProject::Resource.find_named(statuses, name)
       end
 
       # The work package as OpenProject has it, mirrored to item.json. Best-effort:

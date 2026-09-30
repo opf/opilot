@@ -76,6 +76,13 @@ module OPilot
         state
       end
 
+      # Advance a PR's replay cutoff past a comment opilot has acted on.
+      def advance_cutoff(dir, comment_at)
+        update_gh_state(dir) do |state|
+          state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
+        end
+      end
+
       # Remember a reply opilot posted so its own comment is never re-detected as
       # a trigger (mirrors OpenProject::Pull#record_opilot_comment). Capped so the list cannot
       # grow without bound on a long-lived PR. Identical for both pollers — only

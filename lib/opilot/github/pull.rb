@@ -73,9 +73,7 @@ module OPilot
       # Advance a PR's replay cutoff past a comment we've acted on (mirrors
       # OpenProject::Pull#mark_acted). Keyed by item id + repo so each PR tracks its own state.
       def mark_acted(item_id, repo_name, comment_at, spec: false)
-        update_gh_state(pr_dir(item_id, repo_name, spec: spec)) do |state|
-          state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
-        end
+        advance_cutoff(pr_dir(item_id, repo_name, spec: spec), comment_at)
       end
 
       def record_opilot_comment(item_id, repo_name, comment_id, spec: false)

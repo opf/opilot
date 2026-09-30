@@ -391,13 +391,11 @@ module OPilot
       end
 
       def refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:)
-        item_file = Helpers.item_dir(@ctx, wp_id) / "item.json"
-        plan_file = Helpers.item_dir(@ctx, wp_id) / "plan.md"
+        item_ref, plan_ref = item_refs(wp_id)
         prompt = Prompts::PrRefresher.pr_refresh(
           worktree: repo.worktree_container, repo: base_repo, pr_number: number,
           title: content["title"].to_s, base: base_ref,
-          item: Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)",
-          plan: Helpers.file_has_content?(plan_file) ? container_path(plan_file) : "(no plan recorded)",
+          item: item_ref, plan: plan_ref,
           pr_thread: container_path(dir / "pr.json"),
           ci: ci, conflicts: conflicts, feedback_count: feedback.length
         )

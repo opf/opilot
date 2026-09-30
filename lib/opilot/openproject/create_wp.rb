@@ -188,8 +188,7 @@ module OPilot
         # answer that skips it still works.
         answer = Helpers.after_marker(reply, "ANSWER")
 
-        if answer.lstrip.start_with?("NEEDS_INFO")
-          questions = answer.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
+        if (questions = Helpers.needs_info(answer))
           log_script "create wp NEEDS_INFO for #{wp_label(st.item_id)} — requesting clarification."
           @reply.(st.item_id, "I need more information before I create a work package:\n\n#{questions}")
           return nil

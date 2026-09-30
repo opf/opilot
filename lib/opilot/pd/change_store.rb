@@ -277,8 +277,7 @@ module OPilot
       # Anything staged in that state is the first commit.
       def dirty?(git_repo)
         return true unless head_sha
-        status = git_repo.status_info
-        !(status.changed.empty? && status.added.empty? && status.deleted.empty?)
+        dirty_worktree?(git_repo)
       end
     end
   end

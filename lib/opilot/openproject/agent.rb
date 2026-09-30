@@ -307,8 +307,7 @@ module OPilot
                               related: related, allow_options: allow_options, op_mcp: @ctx.op_mcp?)
         llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
 
-        if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
-          questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
+        if (questions = Helpers.needs_info(st.plan_file.read))
           safe_rm(st.plan_file)
           log_script "Plan NEEDS_INFO for #{wp_label(st.item_id)} — requesting clarification."
           post_note(st.item_id, addressed("I need more information before I can plan this change:\n\n#{questions}"))

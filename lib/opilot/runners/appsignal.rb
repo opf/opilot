@@ -207,10 +207,10 @@ module OPilot
         reply  = llm(:triager, prompt).to_s
         answer = Helpers.after_marker(reply, "ANSWER")
 
-        if answer.lstrip.start_with?("NEEDS_INFO")
+        if (questions = Helpers.needs_info(answer))
           puts ""
           puts "  ⚠ Not enough in this incident to write a work package:"
-          puts answer.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip.lines.map { |l| "    #{l}" }.join
+          puts questions.lines.map { |l| "    #{l}" }.join
           puts ""
           return nil
         end
@@ -254,7 +254,7 @@ module OPilot
           return nil
         end
         id = (body["id"] || body["_meta"]&.dig("id")).to_s
-        puts "  ✓ Created #{wp_label(id)} — #{@ctx.op_url}/work_packages/#{id}"
+        puts "  ✓ Created #{wp_label(id)} — #{Helpers.wp_url(@ctx, id)}"
         id
       end
 

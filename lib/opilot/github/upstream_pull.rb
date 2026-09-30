@@ -59,9 +59,7 @@ module OPilot
       end
 
       def mark_acted(repo_str, number, comment_at)
-        update_gh_state(pr_dir(repo_str, number)) do |state|
-          state["last_acted_comment_at"] = [state["last_acted_comment_at"], comment_at].compact.max
-        end
+        advance_cutoff(pr_dir(repo_str, number), comment_at)
       end
 
       def record_opilot_comment(repo_str, number, comment_id)

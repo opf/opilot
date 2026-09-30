@@ -108,7 +108,7 @@ module OPilot
       def collection(api, wp_id)
         code, body = api.work_package_attachments(wp_id)
         return [code, {}] unless code == 200
-        elements = body&.dig("_embedded", "elements") || []
+        elements = Clients::OpenProject::Resource.elements(body)
         [code, elements.to_h { |a| [a["id"].to_s, a] }]
       end
 

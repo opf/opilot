@@ -45,6 +45,13 @@ module OPilot
       text.to_s.lines.any? { |l| l.strip == Prompts::Planner::OPTIONS_SENTINEL }
     end
 
+    # The questions after a leading NEEDS_INFO sentinel, or nil when the answer
+    # does not open with one.
+    def self.needs_info(text)
+      return nil unless text.to_s.lstrip.start_with?("NEEDS_INFO")
+      text.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip
+    end
+
     # Split a writer's answer into its OPTIONS line(s) and whatever follows
     # (Prompts::Planner::OPTIONS_CONTRACT: name the approach, then — when there's only
     # one — continue straight into the plan in the same response). The

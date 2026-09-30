@@ -64,7 +64,7 @@ module OPilot
 
         code, body = @op.documents(numeric)
         raise OPilot::FatalError, document_error(code, project_id) unless code == 200
-        ids = (body&.dig("_embedded", "elements") || []).map { |d| d["id"] }
+        ids = Clients::OpenProject::Resource.elements(body).map { |d| d["id"] }
         ids.filter_map { |id| fetch_one(id) }
       end
 
@@ -85,7 +85,7 @@ module OPilot
           doc = fetch_one(id)
           raise OPilot::FatalError, "document #{id} not found (or not visible to this token)" unless doc
 
-          actual = href_id(doc.dig("_links", "project", "href"))
+          actual = Clients::OpenProject::Resource.href_id(doc.dig("_links", "project", "href"))
           unless actual.to_s == numeric.to_s
             raise OPilot::FatalError,
                   "document #{id} belongs to project #{actual || "(unknown)"}, not #{project_id} — " \
@@ -192,7 +192,7 @@ module OPilot
       def write_attachments(doc, dir, ordinal)
         code, body = @op.document_attachments(doc["id"])
         return [] unless code == 200
-        elements = body&.dig("_embedded", "elements") || []
+        elements = Clients::OpenProject::Resource.elements(body)
         return [] if elements.empty?
 
         Dir.mktmpdir do |tmp|
@@ -244,10 +244,6 @@ module OPilot
           lines.push("", "All attachments were converted or passed through.")
         end
         (dir / "attachments" / "README.md").write("#{lines.join("\n")}\n")
-      end
-
-      def href_id(href)
-        href.to_s[%r{/(\d+)\z}, 1]
       end
 
       def slug(str)
