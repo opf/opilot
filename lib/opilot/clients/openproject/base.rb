@@ -34,6 +34,7 @@ module OPilot
         # a request that got no answer — the one place the transport's own
         # error class is translated.
         def send_request(request)
+          RequestLog.log("OpenProject #{request}")
           code, body = yield
           Response.new(code, body, request)
         rescue HTTP::Error => e

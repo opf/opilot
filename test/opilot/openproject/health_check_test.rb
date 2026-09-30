@@ -216,9 +216,19 @@ module OPilot
         end
       end.new
       @check.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
-      @check.define_singleton_method(:sync_base!) { |_repo| true }
+      @check.define_singleton_method(:fetch_base_if_stale) { |*, **| Time.utc(2026, 1, 1) }
       found = @check.commits("5994")
+      assert_equal ["2026-01-01T00:00:00Z"], @check.instance_variable_get(:@commits_as_of).values.uniq
       assert_equal [["b" * 12]], found.values.map { |list| list.map { |c| c["sha"] } }
+    end
+
+    def test_commits_report_an_unreadable_clone_and_read_the_rest
+      @check.define_singleton_method(:worktree) { |repo| repo.name == "openproject" ? raise("no clone") : super(repo) }
+      @check.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = Class.new { def log(*) = self; def object(*) = self; def grep(*) = self; def execute = [] }.new })
+      @check.define_singleton_method(:fetch_base_if_stale) { |*, **| nil }
+      found = @check.commits("5994")
+      assert_nil found["openproject"]
+      assert(found.except("openproject").values.all? { |v| v == [] })
     end
 
     def test_commit_pattern_reads_the_forms_a_work_package_is_named_in

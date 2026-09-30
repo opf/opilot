@@ -28,6 +28,7 @@ module WebMockAlwaysReset
   def after_teardown
     super
     WebMock.reset!
+    OPilot::RequestLog.file = nil # a CLI test's session sets it to a temp dir
   end
 end
 Minitest::Test.prepend(WebMockAlwaysReset)

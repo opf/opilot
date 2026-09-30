@@ -62,7 +62,9 @@ module OPilot
           description: check them the same way.
           FACTS: #{facts}  (JSON — `findings` the runner already established from exact
           data, `not_checked`, and `inputs`: linked pull requests and commits. Do NOT
-          repeat a fact finding and do NOT dispute it. Use `inputs` as evidence.)
+          repeat a fact finding and do NOT dispute it. Use `inputs` as evidence.
+          `inputs.commits_as_of` is when each repo was last fetched: a newer commit
+          is not in `inputs.commits`.)
           #{focus_line}
           Find where this work package is not consistent with itself. Check:
           1. The description against the comments. A decision, a scope change, or a new

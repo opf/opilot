@@ -56,6 +56,7 @@ module OPilot
 
         facts = facts_for(item, related, status_map, linked_prs(item["id"]), commits(item["id"]), tree: tree)
         facts["inputs"]["opilot_user_href"] = opilot_user_href
+        facts["inputs"]["commits_as_of"] = @commits_as_of
         facts["inputs"]["opilot_prs"] = st.repos.filter_map { |r| st.pr_url_file(r).read.strip if st.pr_url_file(r).exist? }
         facts_file = st.item_dir / "health.json"
         facts_file.write(JSON.pretty_generate(facts))
@@ -153,18 +154,29 @@ module OPilot
 
       # { repo_name => [{ "sha", "subject" }] } for commits on each registry base
       # that name the work package, or { repo_name => nil } when a clone cannot
-      # be read.
+      # be read. Reads only origin/<base>, so it fetches the base alone, and only
+      # when no fetch in the last COMMITS_MAX_AGE did; the repos run in parallel.
+      # The fetch time per repo goes to @commits_as_of.
+      COMMITS_MAX_AGE = 10 * 60
+
       def commits(item_id)
         exact = OpenProject::HealthCheck.commit_pattern(item_id)
-        @ctx.repos.all.to_h do |repo|
-          sync_base!(repo)
-          found = worktree(repo).log(500).object("origin/#{repo.base}").grep(OpenProject::HealthCheck.commit_prefilter(item_id)).execute
-          hits = found.select { |c| c.message.to_s.gsub(PR_NUMBER, "").match?(exact) }.first(MAX_COMMITS)
-          [repo.name, hits.map { |c| { "sha" => c.sha[0, 12], "subject" => c.message.to_s.lines.first.to_s.strip } }]
-        rescue StandardError => e
-          log_script "Health: could not read commits in #{repo.name} (#{e.message})"
-          [repo.name, nil]
-        end
+        prefilter = OpenProject::HealthCheck.commit_prefilter(item_id)
+        @commits_as_of = {}
+        # Opened here: #worktree memoizes and must not race.
+        trees = @ctx.repos.all.to_h { |repo| [repo, (worktree(repo) rescue $!)] }
+        trees.map do |repo, wt|
+          Thread.new do
+            raise wt if wt.is_a?(Exception)
+            @commits_as_of[repo.name] = fetch_base_if_stale(wt, repo, repo.base, max_age: COMMITS_MAX_AGE)&.utc&.iso8601
+            found = wt.log(500).object("origin/#{repo.base}").grep(prefilter).execute
+            hits = found.select { |c| c.message.to_s.gsub(PR_NUMBER, "").match?(exact) }.first(MAX_COMMITS)
+            [repo.name, hits.map { |c| { "sha" => c.sha[0, 12], "subject" => c.message.to_s.lines.first.to_s.strip } }]
+          rescue StandardError => e
+            log_script "Health: could not read commits in #{repo.name} (#{e.message})"
+            [repo.name, nil]
+          end
+        end.to_h(&:value)
       end
 
       # Pure: every input already fetched, so the rules test without HTTP or git.

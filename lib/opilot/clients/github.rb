@@ -43,9 +43,18 @@ module OPilot
         PROTECTED_BRANCHES.include?(branch) || branch.start_with?("release")
       end
 
+      # Logs every API request (RequestLog).
+      class LogRequests < Faraday::Middleware
+        def call(env)
+          RequestLog.log("GitHub #{env.method.upcase} #{env.url.path.delete_prefix("/")}")
+          @app.call(env)
+        end
+      end
+
       def initialize(token)
         @token   = token
-        @octokit = Octokit::Client.new(access_token: token)
+        middleware = Octokit::Default::MIDDLEWARE.dup.tap { |stack| stack.insert(0, LogRequests) }
+        @octokit = Octokit::Client.new(access_token: token, middleware: middleware)
       end
 
       # Run an idempotent Octokit call, retrying transient network/5xx/rate-limit
@@ -168,6 +177,7 @@ module OPilot
 
       def git_over_https(repo, worktree_path, subcommand, *args)
         refspec = args.pop
+        RequestLog.log("git #{subcommand} #{repo} #{refspec}")
         system(
           { "OPILOT_GH_TOKEN" => @token },
           "git", "-C", worktree_path.to_s,

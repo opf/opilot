@@ -107,6 +107,7 @@ module OPilot
     # which made chomp.log awkward to grep.
     def session(name, targets = [])
       @ctx.load_config!
+      RequestLog.file = @ctx.log_file
       header = [name, *targets].join(" ")
       @ctx.log_file.open("a") { |f| f.puts "\n=== #{header} #{Time.now.strftime("%Y-%m-%dT%H:%M:%S")} ===" }
       yield

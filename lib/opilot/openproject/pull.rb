@@ -435,6 +435,7 @@ module OPilot
       end
 
       def build_comments(activities, reactions)
+        read_user_names(activities)
         rxn_index = reactions
           .group_by { |r| r.dig("_links", "reactable", "href")&.split("/")&.last }
           .transform_values { |rs| rs.map { |r| [r["reaction"], r["reactionsCount"]] }.to_h }
@@ -455,25 +456,46 @@ module OPilot
       end
 
       # The activity's author by name. The activities route renders only the
-      # user's href, so the name is one read per user per process.
+      # user's href, so #read_user_names reads the names first.
       def activity_user(activity)
-        name = activity.dig("_embedded", "user", "name") || activity.dig("_links", "user", "title")
-        return name if name
-        id = Resource.href_id(activity.dig("_links", "user", "href"))
-        return nil if id.to_s.empty?
-        @user_names ||= {}
-        @user_names.fetch(id) do
-          code, body = @api.user(id)
-          @user_names[id] = code == 200 ? body["name"] : nil
+        activity.dig("_embedded", "user", "name") || activity.dig("_links", "user", "title") ||
+          user_names[Resource.href_id(activity.dig("_links", "user", "href"))]
+      end
+
+      def user_names = @user_names ||= {}
+
+      # One read per user per process, in parallel: a long thread has 20+
+      # authors. Not `/principals` with an `id` filter: one id the token cannot
+      # see fails the whole query. A 404 is cached as nil; a network failure is
+      # not, so the next refresh asks again.
+      USER_READ_THREADS = 8
+
+      def read_user_names(activities)
+        ids = activities.filter_map do |a|
+          next if a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title")
+          Resource.href_id(a.dig("_links", "user", "href"))
+        end.uniq.reject { |id| id.to_s.empty? || user_names.key?(id) }
+
+        ids.each_slice(USER_READ_THREADS) do |slice|
+          slice.map { |id| Thread.new { [id, read_user_name(id)] } }.each do |t|
+            id, name = t.value
+            user_names[id] = name unless name == :failed
+          end
         end
+      end
+
+      def read_user_name(id)
+        code, body = @api.user(id)
+        code == 200 ? body["name"] : nil
       rescue Clients::OpenProject::NetworkError
-        nil # not cached: the next refresh asks again
+        :failed
       end
 
       # Field changes (status, assignee, description, …), which build_comments
       # drops. `changes` are the instance's own rendered sentences, so they are
       # language-dependent: input for the LLM, never for a Ruby rule.
       def build_history(activities)
+        read_user_names(activities)
         activities.filter_map do |a|
           changes = Array(a["details"]).map { |d| d["raw"].to_s.strip }.reject(&:empty?)
           next if changes.empty?

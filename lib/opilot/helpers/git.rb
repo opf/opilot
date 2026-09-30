@@ -1,3 +1,4 @@
+require "fileutils"
 require "git"
 
 module OPilot
@@ -145,9 +146,34 @@ module OPilot
     # origin, so no auth — mirrors how ./opilot provisions the default base. A
     # missing branch surfaces as a clear error the runner reports on the WP.
     def fetch_base(wt, repo, base)
-      wt.fetch("origin", ref: base)
-    rescue StandardError => e
-      raise "base branch #{base.inspect} not found on #{repo.upstream} (#{e.message})"
+      begin
+        RequestLog.log("git fetch #{repo.name} #{base}")
+        wt.fetch("origin", ref: base)
+      rescue StandardError => e
+        raise "base branch #{base.inspect} not found on #{repo.upstream} (#{e.message})"
+      end
+      FileUtils.touch(base_fetch_marker(repo, base)) rescue nil # a missing stamp costs one fetch
+    end
+
+    # When origin/<base> was last fetched, or nil. Every #fetch_base stamps it,
+    # so a reader that only needs the ref can skip a fetch another path just did.
+    def base_fetched_at(repo, base)
+      path = base_fetch_marker(repo, base)
+      path.exist? ? path.mtime : nil
+    end
+
+    # Fetch origin/<base> only when the last fetch is older than `max_age`
+    # seconds. For readers of the ref alone; anything that reads the tree or
+    # cuts a branch fetches every time. Returns the fetch time.
+    def fetch_base_if_stale(wt, repo, base, max_age:)
+      at = base_fetched_at(repo, base)
+      return at if at && Time.now - at < max_age
+      fetch_base(wt, repo, base)
+      base_fetched_at(repo, base)
+    end
+
+    def base_fetch_marker(repo, base)
+      Pathname(repo.worktree_host.to_s) / ".git" / "opilot-fetched-#{base.tr("/", "%")}"
     end
 
     # Refspecs the READ phases answer questions from. #fetch_base pulls exactly
@@ -168,6 +194,7 @@ module OPilot
     # #checkout_branch needs the base and nothing else, and would pay the cost
     # on every implement run for nothing.
     def fetch_read_refs(wt, repo)
+      RequestLog.log("git fetch #{repo.name} tags and release/*")
       wt.fetch("origin", ref: RELEASE_REFSPEC, tags: true)
     rescue StandardError => e
       log_script "#{repo.name}: could not refresh tags and release branches (#{e.message}) — " \

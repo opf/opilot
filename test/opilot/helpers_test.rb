@@ -552,6 +552,21 @@ module OPilot
       teardown_repo_host
     end
 
+    def test_fetch_base_if_stale_skips_a_recent_fetch_and_refetches_an_old_one
+      host = repo_host
+      repo = host.ctx.repos["openproject"]
+      (repo.worktree_host / ".git").mkpath
+      wt = FakeWorktree.new
+
+      host.send(:fetch_base_if_stale, wt, repo, "dev", max_age: 600)
+      host.send(:fetch_base_if_stale, wt, repo, "dev", max_age: 600)
+      assert_equal 1, wt.fetched.length, "the second read uses the first fetch"
+
+      File.utime(Time.now - 601, Time.now - 601, host.send(:base_fetch_marker, repo, "dev"))
+      host.send(:fetch_base_if_stale, wt, repo, "dev", max_age: 600)
+      assert_equal 2, wt.fetched.length
+    end
+
     # --- sync_base! (freshness of the tree the LLM reads) ---------------------
 
     def test_sync_base_fetches_and_moves_the_tree_onto_current_upstream
