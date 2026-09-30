@@ -486,6 +486,7 @@ bare `docker compose run …` works from the repo root.
 | `cli.rb` | Arg parsing and dispatch — the one place args are validated, config loaded, the log header stamped. `--help` works in any position (except `chat`'s free-text tail) |
 | `ui.rb` | Help text — the single home for every command description; `PD::Runner#usage!` renders `#pd_usage_text` rather than duplicating it |
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
+| `helpers.rb`, `helpers/` | Shared helpers, one file per concern, all reopening `Helpers`: `state` (paths under `.opilot/`, `ItemState`), `contracts` (the OPTIONS / WORK PACKAGE / HEALTH / ARTIFACT parsers), `work_packages` (mentions, links, the create payload), `terminal` (logging, prompts), `git` (branches, syncing, commits, the push-safety rule), `pipeline` (`#llm` and plan → implement → PR) |
 | `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
 | `op_pull.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
 | `item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
@@ -984,7 +985,7 @@ Runner POSTs to `http://harness:47291` with headers:
   (`REPLY_CONTRACT` + `PLAIN_ENGLISH`) stay in Ruby.
 
   Tests: `roles_test.rb` pins every role's tuple, checks each against
-  `ALLOWED_TOOL_GRANTS`, and fails if anything outside `helpers.rb`/`harness.rb`
+  `ALLOWED_TOOL_GRANTS`, and fails if anything outside `helpers/pipeline.rb`/`harness.rb`
   calls `@harness.run` or names `Harness::TOOLS_*`; `prompts_test.rb` renders every
   builder and checks its charter and its grant block (once, and never the other
   one). Roles that look alike but differ in grant (`pr_author` vs `pr_refresher`)

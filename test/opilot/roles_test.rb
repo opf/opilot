@@ -139,10 +139,10 @@ module OPilot
     def test_no_call_site_bypasses_llm
       files = Dir[ROOT / "lib/**/*.rb"]
       assert_operator files.size, :>, 20
-      direct = File.readlines(ROOT / "lib/opilot/helpers.rb").grep(/@harness\.(run|capture)\b/)
-      assert_equal 1, direct.size, "helpers.rb calls the harness only from #llm"
+      direct = File.readlines(ROOT / "lib/opilot/helpers/pipeline.rb").grep(/@harness\.(run|capture)\b/)
+      assert_equal 1, direct.size, "helpers/pipeline.rb calls the harness only from #llm"
       offenders = files.flat_map do |f|
-        next [] if f.end_with?("/helpers.rb", "/harness.rb", "/roles.rb")
+        next [] if f.end_with?("/helpers/pipeline.rb", "/harness.rb", "/roles.rb")
         File.readlines(f).each_with_index.filter_map do |line, i|
           "#{f}:#{i + 1}" if line.match?(/@harness\.(run|capture)\b|Harness::TOOLS_/)
         end
