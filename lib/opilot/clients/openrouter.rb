@@ -11,7 +11,7 @@ module OPilot
     #
     # Paths are /v1/…, not OpenRouter's own /api/v1/…: inference-gw owns the upstream's
     # path prefix and re-applies it, so every client speaks one uniform /v1. Only
-    # reachable when the upstream IS OpenRouter, which UsageRunner decides before
+    # reachable when the upstream IS OpenRouter, which Runners::Usage decides before
     # constructing this.
     class OpenRouter
       Error = Class.new(StandardError)

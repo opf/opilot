@@ -395,7 +395,7 @@ module OPilot
       # The scope refusal is only a refusal when it is the ANSWER: the prompt asks
       # for it on the first line, so anything further in is the LLM talking about
       # the sentinel rather than emitting it. A short preamble is tolerated the way
-      # FixRunner tolerates one before NEEDS_INFO.
+      # Runners::Fix tolerates one before NEEDS_INFO.
       def too_broad?(text)
         head = text.to_s.lstrip.lines.first(3).join
         head.match?(/^\s*TOO_BROAD\b/)
@@ -533,7 +533,7 @@ module OPilot
       # Like every other mode, `pd` publishes as the contributor bot: spec
       # branches and spec-derived work go to the bot's own fork.
       def publish
-        @publish ||= Publish.new(@ctx)
+        @publish ||= GitHub::Publish.new(@ctx)
       end
 
       # Push the spec branch, open the PR that is the approval gate, and hang a
@@ -818,7 +818,7 @@ module OPilot
       # Built on demand, like #intake_client: most `pd` stages never talk to
       # OpenProject's work-package API at all.
       def pull_client
-        @pull ||= OpPull.new(@ctx)
+        @pull ||= OpenProject::Pull.new(@ctx)
       end
 
       # Which change (and which repo's store) a work-package id belongs to. The

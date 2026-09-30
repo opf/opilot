@@ -5,7 +5,7 @@ module OPilot
 
       # How a read-only review proposes an *applicable* code change on a PR opilot
       # can't push to: a GitHub suggestion the author commits with one click. The
-      # block is machine-parsed (GhAgent#parse_suggestions) into inline review
+      # block is machine-parsed (GitHub::Agent#parse_suggestions) into inline review
       # comments, so its shape is exact.
       SUGGESTION_CONTRACT = Prompts.block("suggestion_contract")
 

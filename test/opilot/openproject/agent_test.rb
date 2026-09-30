@@ -1,0 +1,1388 @@
+require_relative "../../test_helper"
+
+module OPilot
+  class OpAgentTest < Minitest::Test
+    # ── fakes ──────────────────────────────────────────────────────────────────
+
+    # The git doubles are shared (test/support/fixtures.rb); aliased here so the
+    # nested FakeWorktree below resolves them lexically.
+    FakeCommit = TestFixtures::FakeCommit
+    FakeLog    = TestFixtures::FakeLog
+    FakeDiff   = TestFixtures::FakeDiff
+
+    class FakeHarness
+      attr_reader :runs, :captures, :run_sessions, :capture_sessions
+      # One BEGIN/END WORK PACKAGE block, the shape Prompts::WpWriter.create_wp demands.
+      # `link` is the writer's own choice per block — "child" or "related" — and
+      # nil leaves the line out, which must read as "related".
+      def self.wp_block(subject, type: "Feature", link: nil, body: "Rosanna asks for a toast.")
+        fields = +"SUBJECT: #{subject}\nTYPE: #{type}\n"
+        fields << "LINK: #{link}\n" if link
+        "BEGIN WORK PACKAGE\n#{fields}\n#{body}\nEND WORK PACKAGE\n"
+      end
+
+      def initialize(plan: "## Plan\nDo the thing.\n",
+                     chat: "Here's my take.", impl: "", pr: "# PR title\nbody",
+                     draft: FakeHarness.wp_block("Split the login toast out"))
+        @plan, @chat, @impl, @pr, @draft = plan, chat, impl, pr, draft
+        @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
+      end
+
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
+        @captures << prompt
+        @capture_sessions << session_file
+        Pathname(outfile).write(@plan)
+        @plan
+      end
+
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
+        @runs << prompt
+        @run_sessions << session_file
+        # Checked before the chat prompt: the create-wp draft prompt also opens
+        # with "You are opilot".
+        return draft_answer if prompt.include?("NEW work packages out of something")
+        return @chat if prompt.include?("You are opilot")
+        return @pr   if prompt.include?("PR description")
+        @impl
+      end
+
+      # The draft answer, so a subclass can vary it per call (a retry).
+      def draft_answer; @draft; end
+    end
+
+    # A harness that answers each successive #capture with the next entry in
+    # `plans`, holding on the last entry once exhausted. Used to drive a
+    # writer's retry (e.g. an unusable OPTIONS answer followed by a good one).
+    class SequencedHarness < FakeHarness
+      def initialize(plans)
+        super()
+        @plans = plans
+      end
+
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
+        @captures << prompt
+        @capture_sessions << session_file
+        plan = @plans[@captures.length - 1] || @plans.last
+        Pathname(outfile).write(plan)
+        plan
+      end
+    end
+
+    # A harness whose create-wp draft differs per call, to drive the one bounded
+    # retry after an unusable answer.
+    class SequencedDraftHarness < FakeHarness
+      def initialize(drafts)
+        super()
+        @drafts = drafts
+        @draft_calls = 0
+      end
+
+      def draft_answer
+        @draft_calls += 1
+        @drafts[@draft_calls - 1] || @drafts.last
+      end
+    end
+
+    # Mirrors the real Publish: open_pr writes the repo's pr_url.txt and returns
+    # the URL.
+    class FakePublish
+      attr_reader :gists
+      attr_accessor :gist_url
+      # token: nil keeps adopt_github_author! a no-op AND artifacts switched off,
+      # which is what every test that does not care about them wants.
+      def initialize(state_dir, pr:, token: nil)
+        @state_dir = state_dir; @pr = pr; @token = token
+        @gists = []; @gist_url = "https://gist.github.com/me/abc"
+      end
+      def author_token; @token; end
+      def artifact_gist(id, subject, files)
+        @gists << { id: id, subject: subject, files: files }
+        @gist_url
+      end
+      def open_pr(id, _subject, _branch, repo)
+        dir = @state_dir / "work_packages" / "op.example.com" / id.to_s / "repos" / repo.name
+        dir.mkpath
+        (dir / "pr_url.txt").write(@pr)
+        @pr
+      end
+    end
+
+    class FakePull
+      attr_reader :acted
+      attr_accessor :related
+      def initialize; @acted = []; @related = []; end
+      def mark_acted(id, at); @acted << [id, at]; end
+      def related_work_packages(_id); @related; end
+    end
+
+    # A publisher whose push always fails, to exercise the error path.
+    class BoomPublish
+      def author_token; nil; end
+      def open_pr(*); raise "git push failed for branch fix/x"; end
+    end
+
+    # A clean tree, so Helpers#sync_base! is free to move HEAD to origin/<base>.
+    class FakeStatus
+      def changed; {}; end
+      def added; {}; end
+      def deleted; {}; end
+    end
+
+    # Minimal stand-in for the ruby-git worktree handle the OpenProject::Agent uses.
+    class FakeWorktree
+      attr_reader :checkouts, :commits, :configs, :fetched
+      def initialize(has_commits: false, has_changes: true)
+        @has_commits = has_commits
+        @has_changes = has_changes
+        @checkouts = []; @commits = []; @configs = []; @fetched = []
+      end
+      def revparse(_ref); "sha"; end                 # branch "exists" → checkout, no create
+      def checkout(branch, **_opts); @checkouts << branch; end
+      def fetch(remote, **opts); @fetched << [remote, opts]; end
+      def status_info; FakeStatus.new; end
+      def config_set(key, value); @configs << [key, value]; end
+      def log(*_args); FakeLog.new(@has_commits ? [FakeCommit.new] : []); end
+      def add(**_opts); end
+      def diff(*_args); FakeDiff.new(@has_changes); end
+      def commit(msg); @commits << msg; @has_commits = true; end
+    end
+
+    # ── harness ────────────────────────────────────────────────────────────────
+
+    include TestFixtures
+
+    def setup
+      @tmpdir = Dir.mktmpdir
+      @ctx = build_ctx(@tmpdir)
+      registry = @ctx.repos
+
+      @repo    = registry.default
+      @harness  = FakeHarness.new
+      @publish = FakePublish.new(@ctx.state_dir, pr: "https://github.com/o/r/pull/7")
+      @pull    = FakePull.new
+      @agent   = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      @worktree = FakeWorktree.new
+      inject_worktree(@agent, @worktree)
+
+      # @opilot notes are posted to the activities endpoint.
+      @notes = []
+      @note_visibility = []
+      stub_request(:post, %r{/work_packages/\d+/activities}).to_return do |req|
+        body = JSON.parse(req.body)
+        @notes << body.dig("comment", "raw")
+        @note_visibility << body["internal"]
+        { status: 201, body: "{}" }
+      end
+    end
+
+    def teardown
+      FileUtils.rm_rf(@tmpdir)
+    end
+
+    def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil,
+               user_href: nil, internal: nil, comment_at: "2024-02-01T00:00:00Z")
+      OpenProject::Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
+                 comment_at: comment_at, user: user, user_href: user_href, internal: internal)
+    end
+
+    # Make worktree(repo) return the same fake for every repo, so tests can drive
+    # and inspect one handle regardless of which repo a fix targets.
+    def inject_worktree(agent, wt)
+      agent.instance_variable_set(:@worktrees, Hash.new { |h, k| h[k] = wt })
+    end
+
+    def plan_path(id = "42"); @ctx.state_dir / "work_packages" / "op.example.com" / id / "plan.md"; end
+    def pr_url_path(id = "42")
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / id / "repos" / "openproject"
+      dir.mkpath
+      dir / "pr_url.txt"
+    end
+
+    # ── produce_plan ────────────────────────────────────────────────────────
+
+    def test_produce_plan_saves_plan_and_returns_ok
+      st = @agent.send(:state_for, "42", "Fix the bug")
+      assert_equal :ok, @agent.send(:produce_plan, st, nil)
+      assert plan_path.exist?
+    end
+
+    def test_produce_plan_needs_info_posts_questions_and_writes_no_plan
+      @harness = FakeHarness.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- How do I reproduce it?")
+      @agent  = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, FakeWorktree.new)
+
+      st = @agent.send(:state_for, "42", "Fix the bug")
+      assert_equal :needs_info, @agent.send(:produce_plan, st, nil)
+      refute plan_path.exist?
+      assert(@notes.any? { |n| n.include?("How do I reproduce it?") })
+    end
+
+    # ── implementation options ────────────────────────────────────────────────
+
+    # What a `ship` plan call answers with when the fix has more than one shape
+    # (Prompts::Planner::OPTIONS_CONTRACT).
+    OPTIONS_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor and show one message. | openproject | large
+    TEXT
+
+    # The common case: one named approach, with its plan in the same response
+    # (Prompts::Planner::OPTIONS_CONTRACT — no real choice, so no reason to stop).
+    SINGLE_OPTION_ANSWER = <<~TEXT
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+
+      ## Plan: #42 — Fix the bug
+      REPOS: openproject
+      ### Files to change
+      ### Approach
+      ### Tests to run
+      ### Risks / assumptions
+    TEXT
+
+    def options_path(id = "42")
+      @ctx.state_dir / "work_packages" / "op.example.com" / id / "options.json"
+    end
+
+    # An agent whose writer answers every plan call with `plan`.
+    def agent_answering(plan)
+      @harness = FakeHarness.new(plan: plan)
+      @agent  = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, @worktree)
+      @agent
+    end
+
+    def save_options(count = 2)
+      options_path.parent.mkpath
+      rows = (1..count).map do |n|
+        { "n" => n, "title" => "Option #{n}", "summary" => "I do thing #{n}.",
+          "repos" => ["openproject"], "size" => "small" }
+      end
+      options_path.write(JSON.generate(rows))
+    end
+
+    def test_ship_offers_options_and_writes_neither_plan_nor_code
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+
+      assert options_path.exist?, "the offered options must be saved — a number means nothing without them"
+      refute plan_path.exist?
+      assert_empty @harness.runs, "must not implement while it waits for a choice"
+      refute pr_url_path.exist?
+      assert_includes @notes.last, "**1 — Guard the paste**"
+      assert_includes @notes.last, "@opilot build 1"
+    end
+
+    # A local model in particular often reasons in prose before it reaches the
+    # sentinel. Without Helpers.options_sentinel? tolerating that, this read as
+    # a failed plan rather than an options answer.
+    PREAMBLED_OPTIONS_ANSWER = <<~TEXT
+      I have enough from the issue to name the approaches. Both are legitimate,
+      so I'm offering them.
+
+      OPTIONS
+      1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
+      2 | Rebuild the editor | I rebuild the bundled editor and show one message. | openproject | large
+    TEXT
+
+    def test_a_reasoning_preamble_before_options_is_still_offered
+      agent_answering(PREAMBLED_OPTIONS_ANSWER).handle(intent(:ship))
+
+      assert options_path.exist?
+      assert_includes @notes.last, "**1 — Guard the paste**"
+    end
+
+    # No real choice to offer: the writer names the one approach and keeps
+    # going into its plan in the same response, so opilot announces it and
+    # ships immediately — no options.json, no waiting on a reply.
+    def test_ship_with_one_named_approach_announces_and_ships_without_waiting
+      agent_answering(SINGLE_OPTION_ANSWER).handle(intent(:ship))
+
+      refute options_path.exist?, "one approach is not a choice to save or offer"
+      assert plan_path.exist?
+      refute_includes plan_path.read, "OPTIONS", "the header must not leak into the saved plan"
+      assert pr_url_path.exist?, "it ships in the same call, not after a reply"
+      assert(@notes.any? { |n| n.include?("This is a straightforward problem") && n.include?("Guard the paste") },
+             "the chosen approach is announced before implementing")
+    end
+
+    def test_ship_with_an_option_number_plans_that_option_and_ships
+      save_options
+      @agent.handle(intent(:ship, text: "2"))
+
+      assert(@harness.captures.any? { |p| p.include?("chose option 2") },
+             "the chosen option must reach the plan call as its focus")
+      assert plan_path.exist?
+      assert pr_url_path.exist?
+    end
+
+    def test_ship_repeats_a_standing_offer_without_calling_harness
+      save_options
+      @agent.handle(intent(:ship))
+
+      assert_empty @harness.captures, "the saved options are re-posted, not regenerated"
+      assert_includes @notes.last, "Pick one"
+    end
+
+    def test_ship_with_free_text_beside_a_standing_offer_plans_instead_of_re_offering
+      save_options
+      @agent.handle(intent(:ship, text: "do it with a toast instead"))
+
+      assert plan_path.exist?, "free text is direction, not a selection"
+      assert pr_url_path.exist?
+    end
+
+    def test_offer_from_an_internal_comment_stays_internal
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship, internal: true))
+      assert_equal true, @note_visibility.last
+    end
+
+    def test_offer_names_the_allowlist_when_one_is_set
+      @ctx.allowed_op_user_ids = ["7"]
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+      assert_includes @notes.last, "allowlist"
+    end
+
+    # A settled approach must never re-open the question.
+    def test_ship_with_a_saved_plan_never_asks_for_options
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+
+      refute options_path.exist?
+      refute(@harness.captures.any? { |p| p.include?("Before the plan, always name the approach") },
+             "the options gate is only for a work package with no approach yet")
+    end
+
+    def test_options_without_a_usable_list_asks_once_for_a_plan_then_gives_up
+      agent = agent_answering("OPTIONS\nnot a list at all\n")
+      st    = agent.send(:state_for, "42", "Fix the bug")
+
+      assert_equal :failed, agent.send(:produce_plan, st, nil, allow_options: true)
+      assert_equal 2, @harness.captures.length, "one retry, never a loop"
+      refute plan_path.exist?
+      refute options_path.exist?
+    end
+
+    # A writer that names one option but stops without its plan is unusable
+    # (produce_plan's own bar), so the retry fires — but the ticket is still a
+    # single-shape one, and a later well-formed single-option answer must
+    # still be shipped with the approach announced.
+    def test_retry_after_a_stalled_single_option_still_announces_it
+      stalled = "OPTIONS\n1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small\n"
+      @harness = SequencedHarness.new([stalled, SINGLE_OPTION_ANSWER])
+      agent    = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(agent, FakeWorktree.new)
+      st = agent.send(:state_for, "42", "Fix the bug")
+
+      assert_equal :ok, agent.send(:produce_plan, st, nil, allow_options: true)
+      assert_equal 2, @harness.captures.length, "one retry, never a loop"
+      assert plan_path.exist?
+      assert(@notes.any? { |n| n.include?("This is a straightforward problem") && n.include?("Guard the paste") },
+             "allow_options must survive the retry so a later single option is still announced")
+    end
+
+    def test_parse_options_skips_junk_and_orders_by_number
+      rows = Helpers.parse_options(
+                         "OPTIONS\nnonsense\n2 | B | second | openproject | large\n" \
+                         "**1** | A | first | openproject | small\n")
+
+      assert_equal [1, 2], rows.map { |o| o["n"] }
+      assert_equal "first", rows.first["summary"]
+    end
+
+    def test_parse_leading_options_splits_one_option_from_its_plan
+      options, remainder = Helpers.parse_leading_options(SINGLE_OPTION_ANSWER)
+
+      assert_equal [1], options.map { |o| o["n"] }
+      assert_equal "Guard the paste", options.first["title"]
+      assert_equal "## Plan: #42 — Fix the bug", remainder.lines.first.chomp
+    end
+
+    def test_parse_leading_options_stops_at_the_last_option_line_when_options_only
+      options, remainder = Helpers.parse_leading_options(OPTIONS_ANSWER)
+
+      assert_equal [1, 2], options.map { |o| o["n"] }
+      assert_equal "", remainder
+    end
+
+    def test_parse_leading_options_does_not_mistake_a_plan_table_for_more_options
+      body = "OPTIONS\n1 | Guard the paste | I stop the broken paste. | openproject | small\n\n" \
+             "## Plan: #42 — Fix\n| file | change |\n| a.rb | 3 | guard |\n"
+      options, remainder = Helpers.parse_leading_options(body)
+
+      assert_equal [1], options.map { |o| o["n"] }
+      assert_includes remainder, "| a.rb | 3 | guard |"
+    end
+
+    def test_ship_with_a_number_and_trailing_words_keeps_both
+      save_options
+      @agent.handle(intent(:ship, text: "2 but keep the toast"))
+
+      prompt = @harness.captures.find { |p| p.include?("chose option 2") }
+      assert prompt, "a leading number still selects the option"
+      assert_includes prompt, "The reporter added: but keep the toast"
+    end
+
+    def test_offer_passes_the_option_repos_on_as_the_expected_targets
+      save_options
+      @agent.handle(intent(:ship, text: "1"))
+
+      prompt = @harness.captures.find { |p| p.include?("chose option 1") }
+      assert_includes prompt, "The offer named these repos for it: openproject"
+    end
+
+    def test_offer_labels_the_repo_and_size_line_as_an_estimate
+      agent_answering(OPTIONS_ANSWER).handle(intent(:ship))
+      assert_includes @notes.last, "estimate: openproject"
+    end
+
+    # ── an existing prototype ─────────────────────────────────────────────────
+
+    def test_direction_after_shipping_points_at_the_pr_and_plans_nothing
+      pr_url_path.write("https://github.com/o/r/pull/1\n")
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
+      before = plan_path.read
+
+      @agent.handle(intent(:ship, text: "use a toast instead"))
+
+      assert_empty @harness.captures, "a shipped work package must not spend a plan call"
+      assert_equal before, plan_path.read, "the plan the PR links must not be rewritten"
+      assert_includes @notes.last, "Ask for the change on the pull request"
+      assert_includes @notes.last, "https://github.com/o/r/pull/1"
+    end
+
+    def test_option_switch_after_shipping_also_points_at_the_pr
+      save_options
+      pr_url_path.write("https://github.com/o/r/pull/1\n")
+
+      @agent.handle(intent(:ship, text: "2"))
+
+      assert_empty @harness.captures
+      assert_includes @notes.last, "pull request"
+    end
+
+    # ── ship ──────────────────────────────────────────────────────────────────
+
+    def test_ship_reports_existing_pr_without_reimplementing
+      st = @agent.send(:state_for, "42", "Fix the bug")
+      pr_url_path.write("https://github.com/o/r/pull/1\n")
+
+      @agent.send(:ship, st)
+      assert_empty @harness.runs, "should not implement when already shipped"
+      assert(@notes.any? { |n| n.include?("already shipped") })
+    end
+
+    def test_ship_implements_commits_and_opens_pr
+      st = @agent.send(:state_for, "42", "Fix the bug")
+      plan_path.write("## Plan\nDo it.\n")
+
+      @agent.send(:ship, st)
+      assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
+      assert pr_url_path.exist?
+    end
+
+    def test_ship_skips_implementation_when_branch_already_has_commits
+      st = @agent.send(:state_for, "42", "Fix the bug")
+      plan_path.write("## Plan\nDo it.\n")
+      inject_worktree(@agent, FakeWorktree.new(has_commits: true))
+
+      @agent.send(:ship, st)
+      refute(@harness.runs.any? { |p| p.include?("APPROVED PLAN") }, "should not re-run implement")
+      assert pr_url_path.exist?
+    end
+
+    def test_checkout_branch_tracks_the_pr_branch_not_dev
+      st = @agent.send(:state_for, "42", "Fix the bug", "bug")
+      @agent.send(:checkout_branch, st, @repo)
+
+      configs = @worktree.configs
+      assert_includes configs, ["branch.#{st.branch}.remote", "origin"]
+      assert_includes configs, ["branch.#{st.branch}.merge", "refs/heads/#{st.branch}"],
+                      "the fix branch must track its own PR branch, never origin/dev"
+    end
+
+    # ── multi-repo selection ──────────────────────────────────────────────────
+
+    def test_plan_with_a_repos_line_ships_a_pr_to_each_chosen_repo
+      (Pathname(@tmpdir) / "repos.json").write(JSON.generate(
+        "repos" => [
+          { "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev", "shared_repo_path" => @tmpdir },
+          { "name" => "ck", "upstream" => "opf/commonmark-ckeditor-build", "base" => "main" }
+        ]
+      ))
+      @ctx.repos = Registry.build(script_dir: Pathname(@tmpdir), state_dir: @ctx.state_dir, op_repo_path: @tmpdir)
+      @harness = FakeHarness.new(plan: "REPOS: openproject, ck\n## Plan\nDo it across both.\n")
+      @agent  = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, FakeWorktree.new)
+
+      @agent.handle(intent(:ship))
+
+      items = @ctx.state_dir / "work_packages" / "op.example.com" / "42"
+      assert (items / "repos" / "openproject" / "pr_url.txt").exist?, "openproject PR opened"
+      assert (items / "repos" / "ck" / "pr_url.txt").exist?, "ck PR opened"
+      assert_equal %w[ck openproject], JSON.parse((items / "target_repos.json").read).sort
+      refute_includes plan_path.read, "REPOS:", "the REPOS line is stripped from the saved plan"
+    end
+
+    def test_plan_without_a_repos_line_falls_back_to_the_default_repo
+      @agent.handle(intent(:ship))   # FakeHarness's plan has no REPOS line
+      assert pr_url_path.exist?, "ships to the default repo when no REPOS line is given"
+    end
+
+    # ── handlers / routing ────────────────────────────────────────────────────
+
+    def test_reply_is_internal_when_trigger_is_internal
+      @agent.handle(intent(:ship, internal: true))
+      assert_equal [true], @note_visibility
+    end
+
+    def test_reply_is_public_when_trigger_is_public
+      @agent.handle(intent(:ship, internal: false))
+      assert_equal [false], @note_visibility
+    end
+
+    def test_reply_defaults_to_internal_when_visibility_unknown
+      @agent.handle(intent(:ship, internal: nil))
+      assert_equal [true], @note_visibility
+    end
+
+    def test_handle_ship_skips_ship_when_needs_info
+      @harness = FakeHarness.new(plan: "NEEDS_INFO\n### Questions for the reporter\n- repro?")
+      @agent  = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, FakeWorktree.new)
+
+      @agent.handle(intent(:ship))
+      refute pr_url_path.exist?, "must not ship when info is missing"
+    end
+
+    # The clone is otherwise wherever the last run left it: `./opilot` fetches
+    # each base once at launch and never moves the working tree onto it, and no
+    # run checks the tree back off its fix branch. So a long-lived agent loop
+    # planned against months-old code, or against an unrelated WP's fix branch.
+    def test_planning_syncs_the_clone_to_current_upstream_first
+      wt = FakeWorktree.new
+      inject_worktree(@agent, wt)
+
+      @agent.handle(intent(:ship))
+
+      assert_includes wt.fetched, ["origin", { ref: "dev" }],
+                      "the base must be re-fetched at plan time, not trusted from launch"
+      assert_includes wt.checkouts, "origin/dev",
+                      "and the tree moved onto it before the LLM reads anything"
+    end
+
+    def test_chat_syncs_the_clone_before_answering
+      wt = FakeWorktree.new
+      inject_worktree(@agent, wt)
+
+      @agent.handle(intent(:chat))
+
+      assert_includes wt.fetched, ["origin", { ref: "dev" }]
+      assert_includes wt.checkouts, "origin/dev"
+    end
+
+    def test_handle_ship_plans_and_ships
+      @agent.handle(intent(:ship))
+      assert plan_path.exist?
+      assert pr_url_path.exist?
+      assert(@notes.any? { |n| n.include?("https://github.com/o/r/pull/7") })
+    end
+
+    def test_handle_ship_threads_one_session_through_plan_and_implement_but_not_pr_description
+      @agent.handle(intent(:ship))
+      session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
+      assert_equal [session], @harness.capture_sessions.uniq, "plan must use the per-WP session"
+
+      pr_index = @harness.runs.index { |p| p.include?("PR description") }
+      refute_nil pr_index, "a PR description pass should run"
+      implement_sessions = @harness.run_sessions.each_index.reject { |i| i == pr_index }.map { |i| @harness.run_sessions[i] }
+      assert_equal [session], implement_sessions.uniq, "implement must resume the planning session"
+      assert_nil @harness.run_sessions[pr_index],
+                 "the PR description is a separate, stateless call — not part of the resumed session"
+    end
+
+    # A work package planned by an earlier run (when `plan` was its own command)
+    # ships on the next trigger, with no approval step left to wait for.
+    def test_ship_ships_a_plan_left_by_an_earlier_run
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")
+
+      @agent.handle(intent(:ship))
+      assert pr_url_path.exist?
+      assert_empty @harness.captures, "a plan a human has read is built as it reads, never rewritten"
+    end
+
+    def test_handle_chat_posts_reply_and_changes_no_files
+      @agent.handle(intent(:chat, text: "what about tests?"))
+      refute plan_path.exist?
+      refute pr_url_path.exist?
+      assert_includes @notes, "Here's my take."
+    end
+
+    # ── related work packages ─────────────────────────────────────────────────
+
+    def related_path(id = "42"); @ctx.state_dir / "work_packages" / "op.example.com" / id / "related.json"; end
+
+    def test_ship_writes_related_index_and_injects_it
+      @pull.related = [{ "id" => "200", "relation" => "relates", "subject" => "Other", "status" => "New" }]
+      @agent.handle(intent(:ship))
+
+      assert related_path.exist?, "the related index should be written"
+      index = JSON.parse(related_path.read)
+      assert_equal "/state/work_packages/op.example.com/200/item.json", index.first["item_path"]
+
+      plan_prompt = @harness.captures.find { |p| p.include?("AVAILABLE REPOS") }
+      assert_includes plan_prompt, "RELATED:"
+      assert_includes plan_prompt, "/state/work_packages/op.example.com/42/related.json"
+    end
+
+    def test_handle_chat_injects_related_context
+      @pull.related = [{ "id" => "50", "relation" => "parent", "subject" => "Epic", "status" => "New" }]
+      @agent.handle(intent(:chat, text: "how does this relate to the epic?"))
+
+      chat_prompt = @harness.runs.find { |p| p.include?("You are opilot") }
+      assert_includes chat_prompt, "RELATED:"
+    end
+
+    def test_no_related_means_no_index_and_no_related_line
+      @agent.handle(intent(:ship))   # FakePull.related defaults to []
+      refute related_path.exist?
+      plan_prompt = @harness.captures.find { |p| p.include?("AVAILABLE REPOS") }
+      refute_includes plan_prompt, "RELATED:"
+    end
+
+    def test_handle_and_ack_marks_but_posts_no_note_on_error
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: BoomPublish.new)
+      inject_worktree(agent, FakeWorktree.new)
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")   # approve will reach the failing push
+
+      agent.send(:handle_and_ack, intent(:ship, user: "Jane", user_href: "/api/v3/users/2"))
+
+      # Acked despite the failure → no infinite re-try on the next poll.
+      assert_equal [["42", "2024-02-01T00:00:00Z"]], @pull.acted
+      # A handled error is logged, not posted — no error note left on the WP.
+      refute(@notes.any? { |n| n.include?("hit an error") }, "must not post an error note on the WP")
+      refute pr_url_path.exist?
+    end
+
+    # ── create wp ───────────────────────────────────────────────────────────
+    #
+    # Every assertion here guards one fact: a work package cannot be deleted.
+
+    OP = "https://op.example.com/api/v3".freeze
+
+    def allow_users(*ids); @ctx.allowed_op_user_ids = ids.map(&:to_s); end
+
+    def created_wps_path(id = "42")
+      @ctx.state_dir / "work_packages" / "op.example.com" / id / "created_wps.json"
+    end
+
+    def created_wps(id = "42")
+      created_wps_path(id).exist? ? JSON.parse(created_wps_path(id).read) : []
+    end
+
+    # Every request a create walks through. `project_links` empty models a token
+    # without :add_work_packages.
+    #
+    # `create_status` may be one status or one per work package, so a partial
+    # create is expressible: the set is created in order, and a POST that does
+    # not 201 leaves that one out.
+    def stub_create_wp(project_links: { "createWorkPackage" => { "href" => "/x" } },
+                       types: [{ "id" => 5, "name" => "Feature" }],
+                       create_status: 201, relation_status: 201, parent_status: 200,
+                       form_status: 200, validation_errors: {})
+      stub_request(:get, "#{OP}/work_packages/42")
+        .to_return(status: 200, body: JSON.generate(
+          "id" => 42, "_links" => { "project" => { "href" => "/api/v3/projects/7" } }
+        ))
+      stub_request(:get, "#{OP}/projects/7")
+        .to_return(status: 200, body: JSON.generate("name" => "Demo", "_links" => project_links))
+      stub_request(:get, "#{OP}/projects/7/types")
+        .to_return(status: 200, body: JSON.generate("_embedded" => { "elements" => types }))
+      # The preflight. The real endpoint answers 200 even for a payload it
+      # rejects — validation errors are its normal output.
+      @form_requests = []
+      stub_request(:post, "#{OP}/work_packages/form").to_return do |req|
+        @form_requests << JSON.parse(req.body)
+        { status: form_status,
+          body: JSON.generate("_type" => "Form",
+                              "_embedded" => { "validationErrors" => validation_errors }) }
+      end
+      # One id per created work package: 99, 100, 101 …
+      statuses = Array(create_status)
+      @create_requests = []
+      stub_request(:post, "#{OP}/work_packages?notify=false").to_return do |req|
+        payload = JSON.parse(req.body)
+        @create_requests << payload
+        status = statuses[@create_requests.length - 1] || statuses.last
+        # The real API titles the type it stored, and the report reads it.
+        type_id = payload.dig("_links", "type", "href").to_s.split("/").last.to_i
+        title   = types.find { |t| t["id"] == type_id }&.fetch("name", nil)
+        { status: status,
+          body: JSON.generate("id" => 98 + @create_requests.length,
+                              "displayId" => (98 + @create_requests.length).to_s,
+                              "subject" => payload["subject"],
+                              "_links" => { "type" => { "title" => title } }) }
+      end
+      # Both link shapes, for every id a create can hand out. The GET is what
+      # Clients::OpenProject#update_work_package reads the lockVersion from.
+      @relation_requests = []
+      @parent_requests   = []
+      (99..104).each do |id|
+        stub_request(:get, "#{OP}/work_packages/#{id}")
+          .to_return(status: 200, body: JSON.generate("id" => id, "lockVersion" => 1))
+        stub_request(:post, "#{OP}/work_packages/#{id}/relations?notify=false").to_return do |req|
+          @relation_requests << JSON.parse(req.body).merge("from" => id)
+          { status: relation_status, body: "{}" }
+        end
+        stub_request(:patch, "#{OP}/work_packages/#{id}?notify=false").to_return do |req|
+          @parent_requests << JSON.parse(req.body).merge("id" => id)
+          { status: parent_status, body: "{}" }
+        end
+      end
+    end
+
+    # Several blocks in one answer, the multi-work-package shape.
+    def multi_draft(*subjects, link: "child")
+      subjects.map { |s| FakeHarness.wp_block(s, link: link, body: "#{s} — asked for in the thread.") }.join("\n")
+    end
+
+    def multi_agent(*subjects, link: "child")
+      harness = FakeHarness.new(draft: multi_draft(*subjects, link: link))
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+    end
+
+    def test_create_wp_is_off_without_an_allowlist_and_says_so_once
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @notes.length
+      assert_includes @notes.last, "OPILOT_ALLOWED_OP_USER_IDS"
+      assert_empty @harness.runs, "no LLM call before the allowlist is checked"
+      assert_empty @create_requests, "and nothing is created"
+
+      # A second ask adds no second note: with no allowlist, anyone could
+      # otherwise fill the activity tab by repeating the trigger.
+      @agent.handle(intent(:create_wp, text: "again", comment_at: "2024-02-02T00:00:00Z"))
+      assert_equal 1, @notes.length
+    end
+
+    def test_create_wp_creates_relates_and_reports_the_link
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      payload = @create_requests.fetch(0)
+      assert_equal "Split the login toast out", payload["subject"]
+      assert_equal "/api/v3/projects/7", payload.dig("_links", "project", "href")
+      assert_equal "/api/v3/types/5", payload.dig("_links", "type", "href"), "the drafted type name resolved"
+      assert_includes payload.dig("description", "raw"), "/work_packages/42",
+                      "the description backlinks the source, so the origin survives a failed relation"
+
+      # The relation runs from the NEW work package, with numeric ids on both
+      # sides. One split-out is a PEER, so it is related and never re-parented:
+      # a parent link would change the source's own dates and progress.
+      assert_equal [{ "type" => "relates", "from" => 99,
+                      "_links" => { "to" => { "href" => "/api/v3/work_packages/42" } } }],
+                   @relation_requests
+      assert_empty @parent_requests
+
+      record = created_wps.fetch(0)
+      assert_equal "2024-02-01T00:00:00Z", record["comment_at"]
+      assert_equal "99", record["id"]
+      assert record["related"]
+      assert_equal "relates", record["link"]
+
+      assert_includes @notes.last, "/work_packages/99"
+      refute_includes @notes.last, "@opilot",
+                      "a reply naming @opilot would make opilot read its own comment as a trigger"
+    end
+
+    def test_create_wp_is_idempotent_on_the_trigger_comment
+      allow_users(2)
+      stub_create_wp
+      trigger = intent(:create_wp, text: "for Rosanna's suggestion")
+      @agent.handle(trigger)
+      @agent.handle(trigger)   # a re-fired trigger — a crash before the ack, say
+
+      assert_equal 1, @create_requests.length, "one request, one work package — it can never be deleted"
+      assert_equal 1, @relation_requests.length, "and the recorded relation is not posted twice either"
+      assert_equal 1, created_wps.length
+      assert_includes @notes.last, "I already created"
+    end
+
+    # The writer narrates before it answers, whatever the prompt says — so the
+    # answer is what follows the last ANSWER: marker, and the deliberation above
+    # it is scratch. The first version of this prompt demanded SUBJECT: on line 1 and
+    # a real run burned its whole output limit getting ready to comply.
+    def test_create_wp_reads_the_draft_after_the_marker_and_discards_the_narration
+      allow_users(2)
+      stub_create_wp
+      narrated = "Let me think. Is this really a bug?\n" \
+                 "#{FakeHarness.wp_block("a decoy in my notes", body: "Not the answer.")}" \
+                 "I will go with the reporter's wording.\n\nANSWER:\n" \
+                 "#{FakeHarness.wp_block("The real subject", body: "The real body.")}"
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: FakeHarness.new(draft: narrated))
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      payload = @create_requests.fetch(0)
+      assert_equal "The real subject", payload["subject"], "not the decoy above the marker"
+      assert_includes payload.dig("description", "raw"), "The real body."
+      refute_includes payload.dig("description", "raw"), "Let me think"
+    end
+
+    def test_create_wp_reads_needs_info_after_the_marker_too
+      allow_users(2)
+      stub_create_wp
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish,
+                        harness: FakeHarness.new(draft: "Thinking about it.\n\nANSWER:\nNEEDS_INFO\nWhich one?\n"))
+      agent.handle(intent(:create_wp, text: "for the suggestion"))
+
+      assert_includes @notes.last, "Which one?"
+      assert_empty @create_requests
+    end
+
+    # A model that spends its whole output limit deliberating stops with
+    # `error_length` and returns nothing. The reader is waiting, so say that
+    # plainly rather than showing them the subtype.
+    def test_create_wp_explains_an_output_limit_instead_of_showing_error_length
+      allow_users(2)
+      stub_create_wp
+      boom = Class.new(FakeHarness) do
+        def run(prompt, **) = prompt.include?("NEW work packages out of something") ? raise(Harness::Error, "error_length") : super
+      end.new
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: boom)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "ran out of writing space"
+      refute_includes @notes.last, "error_length", "the subtype belongs in the log, not the thread"
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_needs_info_asks_and_creates_nothing
+      allow_users(2)
+      stub_create_wp
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish,
+                        harness: FakeHarness.new(draft: "NEEDS_INFO\nWhich suggestion? I see three.\n"))
+      agent.handle(intent(:create_wp, text: "for the suggestion"))
+
+      assert_includes @notes.last, "Which suggestion?"
+      assert_empty @create_requests
+      assert_empty created_wps
+    end
+
+    def test_create_wp_retries_an_unusable_draft_once_then_gives_up
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["I think we should do this.", "still no subject line"])
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 2, harness.runs.length, "one retry, then stop"
+      assert_empty @create_requests
+      assert_includes @notes.last, "could not draft"
+    end
+
+    def test_create_wp_retry_that_answers_properly_creates_it
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["no fields here", FakeHarness.wp_block("A real one", body: "Body.")])
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal "A real one", @create_requests.fetch(0)["subject"]
+    end
+
+    # The block format is strict and the retry prompt is otherwise identical, so
+    # the retry must say what the last answer missed — else both attempts go on
+    # the same slip.
+    def test_create_wp_retry_names_the_format_the_last_answer_missed
+      allow_users(2)
+      stub_create_wp
+      unclosed = "BEGIN WORK PACKAGE\nSUBJECT: Half of one\n\nThe body sto"
+      harness  = SequencedDraftHarness.new([unclosed, FakeHarness.wp_block("A whole one", body: "Body.")])
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      refute_includes harness.runs.fetch(0), "FIX THIS FIRST", "nothing to fix on the first attempt"
+      assert_includes harness.runs.fetch(1), "FIX THIS FIRST"
+      assert_includes harness.runs.fetch(1), "never closed it", "the miss is named, not just repeated"
+      assert_equal ["A whole one"], @create_requests.map { |p| p["subject"] }
+    end
+
+    def test_create_wp_retry_names_a_missing_begin_marker
+      allow_users(2)
+      stub_create_wp
+      harness = SequencedDraftHarness.new(["SUBJECT: No markers at all\n\nBody.", "still nothing"])
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes harness.runs.fetch(1), "no `BEGIN WORK PACKAGE` line"
+      assert_empty @create_requests
+    end
+
+    # A drafted type name the project does not have falls back to the project's
+    # first type, NAMED in the payload. The API would pick its own default anyway,
+    # but a schema is per project and type, so a type nobody stated is a payload
+    # validated against something nobody chose — and `op wp create` requires one
+    # for the same reason.
+    def test_create_wp_names_a_fallback_type_when_the_draft_names_an_unknown_one
+      allow_users(2)
+      stub_create_wp(types: [{ "id" => 8, "name" => "Bug" }])
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal "/api/v3/types/8", @create_requests.fetch(0).dig("_links", "type", "href")
+    end
+
+    # Unless the type list could not be read at all — then the API's default beats
+    # no work package.
+    def test_create_wp_omits_the_type_only_when_no_type_is_known
+      allow_users(2)
+      stub_create_wp(types: [])
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      refute @create_requests.fetch(0)["_links"].key?("type")
+    end
+
+    def test_create_wp_refuses_without_the_add_work_packages_permission
+      allow_users(2)
+      stub_create_wp(project_links: {})
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "add_work_packages"
+      assert_empty @harness.runs, "the preflight runs before the LLM call, not after it"
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_with_no_request_asks_what_to_create
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: ""))
+
+      assert_includes @notes.last, "Tell me what to create"
+      assert_empty @harness.runs
+      assert_empty @create_requests
+    end
+
+    def test_create_wp_reports_a_failed_relation_and_retries_it_next_time
+      allow_users(2)
+      stub_create_wp(relation_status: 403)
+      trigger = intent(:create_wp, text: "for Rosanna's suggestion")
+      @agent.handle(trigger)
+
+      assert_includes @notes.last, "could not link"
+      refute created_wps.fetch(0)["related"], "recorded as unlinked, so a later run can finish it"
+
+      # The work package stands; only the link is missing — so the next ask
+      # relates it instead of creating a second one.
+      stub_request(:post, "#{OP}/work_packages/99/relations?notify=false").to_return(status: 201, body: "{}")
+      @agent.handle(trigger)
+      assert_equal 1, @create_requests.length
+      assert created_wps.fetch(0)["related"]
+    end
+
+    # ── create wp: several at once ──────────────────────────────────────────
+    #
+    # One request stays one LLM call: a call per work package would not see the
+    # others, and two of them could write the same suggestion twice.
+    #
+    # Whether an offshoot is a CHILD of the thread or a PEER beside it is stated
+    # per block on the LINK line, never inferred from how many there are — a
+    # child changes the source work package's own dates and progress.
+
+    def test_create_wp_creates_several_as_children_when_the_blocks_ask_for_it
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", "Document the timeout", link: "child")
+        .handle(intent(:create_wp, text: "split this into three tasks"))
+
+      assert_equal ["Show a toast", "Log the reason", "Document the timeout"],
+                   @create_requests.map { |p| p["subject"] }
+      assert_equal 3, @form_requests.length, "each payload is preflighted"
+
+      # Each new work package is PATCHed to the source as its parent, and nothing
+      # is related: `relates` is the peer shape, and these are children.
+      assert_equal [99, 100, 101], @parent_requests.map { |p| p["id"] }
+      assert_equal ["/api/v3/work_packages/42"] * 3,
+                   @parent_requests.map { |p| p.dig("_links", "parent", "href") }
+      assert_empty @relation_requests
+
+      records = created_wps
+      assert_equal %w[99 100 101], records.map { |r| r["id"] }
+      assert_equal ["parent"] * 3, records.map { |r| r["link"] }
+      assert(records.all? { |r| r["comment_at"] == "2024-02-01T00:00:00Z" },
+             "one trigger comment holds every record it created")
+
+      note = @notes.last
+      assert_includes note, "I created 3 work packages"
+      assert_includes note, "/work_packages/101"
+      assert_equal 3, note.scan("child of this work package").length,
+                   "every line states its own shape — the count never implies it"
+    end
+
+    # The same request shape, with blocks that ask to stay peers. Nothing is
+    # re-parented, so the source work package's own dates and progress are
+    # untouched.
+    def test_create_wp_relates_several_when_the_blocks_ask_for_it
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", link: "related")
+        .handle(intent(:create_wp, text: "file both of those separately"))
+
+      assert_equal 2, @create_requests.length
+      assert_empty @parent_requests, "no block asked to be a child"
+      assert_equal [99, 100], @relation_requests.map { |r| r["from"] }
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+      refute_includes @notes.last, "child of this work package"
+    end
+
+    # A missing LINK line is `related`, whatever the count: a relation is the
+    # reversible direction, and a parent has already changed this work package by
+    # the time a person sees it.
+    def test_create_wp_defaults_to_related_when_no_block_states_a_link
+      allow_users(2)
+      stub_create_wp
+      multi_agent("Show a toast", "Log the reason", link: nil)
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_empty @parent_requests
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+    end
+
+    # One set may hold both shapes — the decision is per work package.
+    def test_create_wp_creates_a_mixed_set
+      allow_users(2)
+      stub_create_wp
+      draft = FakeHarness.wp_block("A subtask of this", link: "child") +
+              FakeHarness.wp_block("A separate bug", link: "related")
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: FakeHarness.new(draft: draft))
+           .handle(intent(:create_wp, text: "one subtask and one separate bug"))
+
+      assert_equal [99], @parent_requests.map { |p| p["id"] }
+      assert_equal [100], @relation_requests.map { |r| r["from"] }
+      assert_equal %w[parent relates], created_wps.map { |r| r["link"] }
+
+      note = @notes.last
+      assert_includes note, "child of this work package"
+      assert_match(/A separate bug.*— related/, note)
+    end
+
+    # The parent needs :manage_subtasks, which is a THIRD permission next to
+    # :add_work_packages and :manage_work_package_relations. Without it the work
+    # packages still stand, so they are related instead and the reader is told.
+    def test_create_wp_falls_back_to_a_relation_when_it_cannot_set_a_parent
+      allow_users(2)
+      stub_create_wp(parent_status: 403)
+      multi_agent("Show a toast", "Log the reason")
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_equal 2, @create_requests.length, "the work packages are created either way"
+      assert_equal [99, 100], @parent_requests.map { |p| p["id"] }, "the parent was attempted first"
+      assert_equal [99, 100], @relation_requests.map { |r| r["from"] }
+      assert_equal ["relates"] * 2, created_wps.map { |r| r["link"] }
+      assert(created_wps.all? { |r| r["related"] })
+      assert_includes @notes.last, "I could not make it a child",
+                      "the reader asked for children and did not get them — say so"
+    end
+
+    # A work package can never be deleted, so the cap is enforced here and not
+    # only asked for in the prompt. Over it, nothing is created — and there is no
+    # retry, because the blocks read fine and the problem is scope.
+    def test_create_wp_refuses_more_than_the_cap_and_creates_nothing
+      allow_users(2)
+      stub_create_wp
+      harness = FakeHarness.new(draft: multi_draft("One", "Two", "Three", "Four", "Five", "Six"))
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for every suggestion in this thread"))
+
+      assert_equal 1, harness.runs.length, "no retry — the answer was readable, the request was too big"
+      assert_empty @create_requests
+      assert_empty created_wps
+      assert_includes @notes.last, "6 work packages"
+      assert_includes @notes.last, "at most #{OpenProject::Agent::MAX_CREATE_WP}"
+    end
+
+    # The whole set is preflighted before the first POST. Half a tree is worse
+    # than none when the halves cannot be deleted.
+    def test_create_wp_creates_none_of_the_set_when_one_payload_is_rejected
+      allow_users(2)
+      stub_create_wp(validation_errors: {
+                       "customField205" => { "message" => "Release train can't be blank." }
+                     })
+      multi_agent("Show a toast", "Log the reason")
+        .handle(intent(:create_wp, text: "for both suggestions"))
+
+      assert_empty @create_requests, "one rejection abandons the whole set"
+      assert_empty created_wps
+      note = @notes.last
+      assert_includes note, "Release train can't be blank."
+      assert_includes note, "Show a toast", "the reader is told WHICH one carried the rejection"
+      assert_includes note, "created none of them"
+    end
+
+    # A block with no END marker means the answer was cut off mid-write. Nothing
+    # is created from it, and the one bounded retry applies — safe, because
+    # nothing has been created yet.
+    def test_create_wp_retries_a_cut_off_answer_and_creates_nothing_from_it
+      allow_users(2)
+      stub_create_wp
+      cut = "#{FakeHarness.wp_block("Complete one")}BEGIN WORK PACKAGE\nSUBJECT: Half of one\n\nThe body sto"
+      harness = SequencedDraftHarness.new([cut, FakeHarness.wp_block("A whole one", body: "Body.")])
+      OpenProject::Agent.new(@ctx, pull: @pull, publish: @publish, harness: harness)
+           .handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 2, harness.runs.length
+      assert_equal ["A whole one"], @create_requests.map { |p| p["subject"] },
+                   "the complete block of a cut-off answer is not created either"
+    end
+
+    # Records are written per-201, so a partial create leaves fewer records than
+    # the request asked for. The survivor keeps the shape ITS OWN block asked
+    # for — a link worked out from the set's size would read this one as a peer
+    # and relate it for good.
+    def test_create_wp_parents_the_survivor_of_a_partial_create
+      allow_users(2)
+      stub_create_wp(create_status: [201, 422, 422])
+      multi_agent("Show a toast", "Log the reason", "Document the timeout", link: "child")
+        .handle(intent(:create_wp, text: "for each of the three suggestions"))
+
+      assert_equal 1, created_wps.length
+      assert_equal "parent", created_wps.fetch(0)["link"]
+      assert_equal [99], @parent_requests.map { |p| p["id"] }
+
+      note = @notes.last
+      assert_includes note, "/work_packages/99"
+      assert_includes note, "could not create", "the two that failed are named"
+      assert_includes note, "Log the reason"
+    end
+
+    # A re-fired trigger creates nothing more, whatever it created the first
+    # time: the records are keyed on the trigger comment, and every one of them
+    # is reported back.
+    def test_create_wp_re_fire_reports_the_whole_set_and_creates_nothing_more
+      allow_users(2)
+      stub_create_wp
+      agent   = multi_agent("Show a toast", "Log the reason")
+      trigger = intent(:create_wp, text: "for both suggestions")
+      agent.handle(trigger)
+      agent.handle(trigger)
+
+      assert_equal 2, @create_requests.length, "no second set — a work package can never be deleted"
+      assert_equal 2, created_wps.length
+      assert_includes @notes.last, "I already created these"
+      assert_includes @notes.last, "/work_packages/100"
+    end
+
+    # A project can REQUIRE custom fields, and required-ness is per project and
+    # type. Without the preflight this ends as a 422 in the log, after an LLM call
+    # has been spent, with the reader told nothing.
+    def test_create_wp_names_the_required_fields_it_must_not_invent
+      allow_users(2)
+      stub_create_wp(
+        types: [{ "id" => 5, "name" => "Feature" }, { "id" => 8, "name" => "Bug" }],
+        validation_errors: {
+          "customField205" => { "message" => "Cécile List Type Multi Select Custom Field can't be blank." },
+          "customField223" => { "message" => "Cécile Hierarchy SingleSelect Required CF can't be blank." }
+        }
+      )
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @form_requests.length, "the payload is checked before it is written"
+      assert_empty @create_requests, "nothing is created, and no value is guessed"
+      assert_empty created_wps
+
+      note = @notes.last
+      assert_includes note, "Cécile List Type Multi Select Custom Field can't be blank.",
+                      "the instance's own wording, not a paraphrase"
+      assert_includes note, "customField223"
+      assert_includes note, "Feature, Bug", "required-ness is per type, so name the alternatives"
+      assert_includes note, "ask me again and name a different type",
+                      "naming a type in one comment is the way out — opilot must not re-classify the work itself"
+    end
+
+    def test_create_wp_preflights_before_every_create
+      allow_users(2)
+      stub_create_wp
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @form_requests.length
+      assert_equal @form_requests.fetch(0), @create_requests.fetch(0),
+                   "the same payload is sent on unchanged — the form applies no defaults the create won't"
+    end
+
+    # A form that answers something else about itself (403, an HTML proxy error)
+    # is not an answer about the payload, so it must not block the create.
+    def test_create_wp_creates_anyway_when_the_form_endpoint_is_unavailable
+      allow_users(2)
+      stub_create_wp(form_status: 403)
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_equal 1, @create_requests.length
+      assert_includes @notes.last, "/work_packages/99"
+    end
+
+    def test_create_wp_reports_a_failed_create
+      allow_users(2)
+      stub_create_wp(create_status: 422)
+      @agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+
+      assert_includes @notes.last, "HTTP 422"
+      assert_empty created_wps
+    end
+
+    def test_chat_offers_create_wp_only_when_it_is_available
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      refute_includes @harness.runs.last, "create wp", "never offer a command that would be refused"
+
+      allow_users(2)
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      assert_includes @harness.runs.last, "@opilot create wp"
+    end
+
+    # ── chat artifacts ──────────────────────────────────────────────────────
+
+    ARTIFACT_ANSWER = <<~TEXT
+      Here is how the two services talk.
+
+      BEGIN ARTIFACT
+      FILENAME: call-flow.md
+      TITLE: Call flow
+      ```mermaid
+      sequenceDiagram
+        A->>B: hello
+      ```
+      END ARTIFACT
+    TEXT
+
+    # Artifacts on: a publishing identity plus an allowlist.
+    def with_artifacts(chat)
+      allow_users(7)
+      @harness = FakeHarness.new(chat: chat)
+      @publish = FakePublish.new(@ctx.state_dir, pr: "https://github.com/o/r/pull/7", token: "bot-tok")
+      @agent   = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, @worktree)
+    end
+
+    def artifact_dir(slug = "2024-02-01t00-00-00z")
+      @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "artifacts" / slug
+    end
+
+    # The report itself is HealthCheckTest's; this is the routing, and the
+    # answer to a work package the check cannot read — never silence.
+    def test_health_answers_even_when_the_work_package_cannot_be_read
+      @pull.define_singleton_method(:fetch_single_item) { |_id| nil }
+      @agent.handle(intent(:health, text: "", user: "Ana", user_href: "/api/v3/users/5", internal: false))
+      assert_equal 1, @notes.length
+      assert_includes @notes.first, "could not read this work package"
+      assert_equal [false], @note_visibility, "a public trigger gets a public answer"
+    end
+
+    # The guard on the surface that already worked: an ordinary answer must be
+    # posted exactly as it is, artifacts on or off.
+    def test_chat_without_an_artifact_posts_the_answer_unchanged
+      with_artifacts("Here's my take.")
+      @agent.handle(intent(:chat, text: "why?"))
+
+      assert_equal 1, @notes.size
+      assert_includes @notes.last, "Here's my take."
+      refute_includes @notes.last, "gist.github.com"
+      assert_empty @publish.gists, "no artifact means no gist"
+    end
+
+    def test_chat_artifact_is_published_as_a_gist_and_linked
+      with_artifacts(ARTIFACT_ANSWER)
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      gist = @publish.gists.first
+      refute_nil gist, "the artifact is published"
+      assert_equal ["call-flow.md"], gist[:files].keys
+      assert_includes gist[:files]["call-flow.md"], "sequenceDiagram"
+
+      note = @notes.last
+      assert_includes note, "Here is how the two services talk."
+      assert_includes note, "📎 [Call flow](https://gist.github.com/me/abc)"
+      refute_includes note, "sequenceDiagram", "the diagram is linked, never pasted into the comment"
+      refute_includes note, "BEGIN ARTIFACT"
+    end
+
+    def test_chat_artifact_is_mirrored_on_disk
+      with_artifacts(ARTIFACT_ANSWER)
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      file = artifact_dir / "call-flow.md"
+      assert file.exist?, "the artifact is mirrored so a later chat can read it from /state"
+      assert_includes file.read, "sequenceDiagram"
+    end
+
+    def test_a_failed_gist_still_posts_the_reply
+      with_artifacts(ARTIFACT_ANSWER)
+      @publish.gist_url = nil
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      note = @notes.last
+      assert_includes note, "Here is how the two services talk.", "the answer is not lost"
+      assert_includes note, "could not publish the artifact"
+      refute_includes note, "sequenceDiagram"
+    end
+
+    def test_artifacts_over_the_count_cap_are_dropped_and_named
+      blocks = (1..4).map { |n| "BEGIN ARTIFACT\nFILENAME: a#{n}.md\nTITLE: A#{n}\nbody #{n}\nEND ARTIFACT\n" }
+      with_artifacts("Answer.\n\n#{blocks.join}")
+      @agent.handle(intent(:chat, text: "draw four things"))
+
+      assert_equal %w[a1.md a2.md a3.md], @publish.gists.first[:files].keys,
+                   "the cap is enforced in the runner, because a prompt limit drifts"
+      assert_includes @notes.last, "I did not publish 1 more artifact(s). One answer may hold 3 at most",
+                     "the note states the rule — naming one cap would be false when the other bound"
+    end
+
+    def test_an_oversized_artifact_is_dropped
+      big = "x" * (OpenProject::Agent::MAX_ARTIFACT_BYTES + 1)
+      answer = "Answer.\n" \
+               "BEGIN ARTIFACT\nFILENAME: small.md\nTITLE: Small\nfits\nEND ARTIFACT\n" \
+               "BEGIN ARTIFACT\nFILENAME: big.md\nTITLE: Big\n#{big}\nEND ARTIFACT\n"
+      with_artifacts(answer)
+      @agent.handle(intent(:chat, text: "draw two things"))
+
+      assert_equal ["small.md"], @publish.gists.first[:files].keys
+      assert_includes @notes.last, "I did not publish 1 more artifact(s). One answer may hold 3 at most",
+                     "the same true sentence covers the byte cap"
+    end
+
+    def test_chat_offers_artifacts_only_when_they_are_available
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      refute_includes @harness.runs.last, "BEGIN ARTIFACT",
+                      "never offer what has no publishing identity behind it"
+
+      with_artifacts("ok")
+      @agent.handle(intent(:chat, text: "what can you do?"))
+      assert_includes @harness.runs.last, "BEGIN ARTIFACT"
+      assert_includes @harness.runs.last, "put the FULL answer in it",
+                      "an artifact holds the whole answer; the comment is a lead plus the link"
+    end
+
+    # With the feature off the instructions were never given, so a BEGIN ARTIFACT
+    # line is text the writer invented or quoted — stripping it would delete
+    # content from someone's reply.
+    def test_an_artifact_block_is_left_alone_when_artifacts_are_off
+      @harness = FakeHarness.new(chat: ARTIFACT_ANSWER)
+      @agent   = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(@agent, @worktree)
+
+      @agent.handle(intent(:chat, text: "draw the call flow"))
+
+      assert_includes @notes.last, "BEGIN ARTIFACT", "the answer is posted as it stands"
+      assert_includes @notes.last, "sequenceDiagram"
+    end
+
+    def test_replies_mention_the_requesting_user
+      @agent.handle(intent(:ship, user: "Jane Doe", user_href: "/api/v3/users/2"))
+      note = @notes.last
+      assert_includes note, %q(<mention class="mention" data-id="2" data-type="user" data-text="Jane Doe">@Jane Doe</mention>)
+      assert_includes note, "https://github.com/o/r/pull/7"
+    end
+  end
+end

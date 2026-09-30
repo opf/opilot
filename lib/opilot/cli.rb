@@ -19,16 +19,16 @@ module OPilot
       return help_for(cmd) if rest.any? { |a| help_flag?(a) } && cmd != "chat"
 
       case cmd
-      when "reset"  then ResetRunner.new(@ctx).run
-      when "usage"  then UsageRunner.new(@ctx).run
+      when "reset"  then Runners::Reset.new(@ctx).run
+      when "usage"  then Runners::Usage.new(@ctx).run
       # The agent loops — opilot's main mode. No arguments: they poll.
       when "agent"    then agent(rest)
       # Pre-group names for `agent op` / `agent gh`, kept because these are what
       # a service unit or a shell history calls, and the cost of breaking them is
       # a stopped agent.
-      when "op-agent" then session("agent op") { OpAgent.new(@ctx).run }
-      when "gh-agent" then session("agent gh") { GhAgent.new(@ctx).run }
-      when "chat"     then session(cmd) { ChatRunner.new(@ctx).run(rest.join(" ")) }
+      when "op-agent" then session("agent op") { OpenProject::Agent.new(@ctx).run }
+      when "gh-agent" then session("agent gh") { GitHub::Agent.new(@ctx).run }
+      when "chat"     then session(cmd) { Runners::Chat.new(@ctx).run(rest.join(" ")) }
       # The command groups. `dev` and `pd` are the two specializations — the kind
       # of work opilot does; `op` is an integration — the system it reads.
       when "dev"      then dev(rest)
@@ -67,8 +67,8 @@ module OPilot
     def agent(args)
       case args[0].to_s
       when ""   then session("agent")    { CombinedAgent.new(@ctx).run }
-      when "op" then session("agent op") { OpAgent.new(@ctx).run }
-      when "gh" then session("agent gh") { GhAgent.new(@ctx).run }
+      when "op" then session("agent op") { OpenProject::Agent.new(@ctx).run }
+      when "gh" then session("agent gh") { GitHub::Agent.new(@ctx).run }
       else
         $stderr.puts "unknown agent subcommand #{args[0].inspect}"
         @ui.agent_usage
@@ -86,13 +86,13 @@ module OPilot
       sub, *rest = args
       case sub
       # `dev fix` mirrors `@opilot fix`; logged and reported as `build`.
-      when "build", "fix" then with_ids("dev build", rest) { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
-      when "commit"       then with_ids("dev commit", rest) { |ids| FixRunner.new(@ctx).commit_ids(*ids) }
-      when "plan"         then with_ids("dev plan", rest) { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
-      when "health"       then with_ids("dev health", rest) { |ids| HealthRunner.new(@ctx).run_ids(*ids) }
+      when "build", "fix" then with_ids("dev build", rest) { |ids| Runners::Fix.new(@ctx).ship_ids(*ids) }
+      when "commit"       then with_ids("dev commit", rest) { |ids| Runners::Fix.new(@ctx).commit_ids(*ids) }
+      when "plan"         then with_ids("dev plan", rest) { |ids| Runners::Fix.new(@ctx).plan_ids(*ids) }
+      when "health"       then with_ids("dev health", rest) { |ids| Runners::Health.new(@ctx).run_ids(*ids) }
       when "refresh"      then refresh(rest)
       # Reads .opilot/ only — no config, no network, no log header.
-      when "status"       then StatusRunner.new(@ctx).run
+      when "status"       then Runners::Status.new(@ctx).run
       else
         $stderr.puts "unknown dev subcommand #{sub.inspect}"
         @ui.dev_usage
@@ -131,7 +131,7 @@ module OPilot
                        "e.g. 59942, PROJ-123, or https://github.com/opf/openproject/pull/123")
       end
       session("dev refresh", targets.map { |t| t.match?(Helpers::WP_ID_PATTERN) ? Helpers.wp_label(t) : t }) do
-        PrRunner.new(@ctx).run(*targets)
+        Runners::Pr.new(@ctx).run(*targets)
       end
     end
 
@@ -139,12 +139,12 @@ module OPilot
       !!(Clients::GitHub.repo_from_url(target) && Clients::GitHub.pr_number_from_url(target))
     end
 
-    # `op` reads the OpenProject API directly; OpRunner owns its own dispatch,
+    # `op` reads the OpenProject API directly; Runners::Op owns its own dispatch,
     # like PD::Runner. Deliberately NOT in #session: its stdout is JSON for a
     # pipe, so no log header, and it loads only the OpenProject credentials.
     def op(args)
       return @ui.op_usage if args.empty?
-      OpRunner.new(@ctx).run(args)
+      Runners::Op.new(@ctx).run(args)
     end
 
     # `appsignal` is an integration — the system it reads — so it sits beside
@@ -152,7 +152,7 @@ module OPilot
     # calls the LLM and opens a PR, so it wants the full config and a log header.
     def appsignal(args)
       return @ui.appsignal_usage if args.empty?
-      session("appsignal", args.first(2)) { AppSignalRunner.new(@ctx).run(args) }
+      session("appsignal", args.first(2)) { Runners::AppSignal.new(@ctx).run(args) }
     end
 
     # `pd` is the product-development (spec-driven) pipeline; PD::Runner owns its

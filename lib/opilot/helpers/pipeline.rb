@@ -27,12 +27,12 @@ module OPilot
     end
 
     # One-time, best-effort report of what the instance's MCP server actually
-    # offers. Call once per process — OpAgent#setup, GhAgent#setup, and once at
+    # offers. Call once per process — OpenProject::Agent#setup, GitHub::Agent#setup, and once at
     # the start of each `dev` verb that grants the tool — never inside
     # guarded_tick/#tick.
     #
     # It WARNS; it never raises. That is the opposite of #ensure_harness! and
-    # OpPull#ensure_bot_identity!, which raise on purpose because a run without a
+    # OpenProject::Pull#ensure_bot_identity!, which raise on purpose because a run without a
     # model or an identity cannot work — this one has a working fallback (the
     # mirrors), so a 404, an unreachable gateway, or a malformed answer just
     # leaves op_query unused for the run.
@@ -65,7 +65,7 @@ module OPilot
     # path — or nil when there are none, so the prompt omits the RELATED section.
     # Each related WP is also cached to its own item.json (by @pull) so the LLM can
     # read the full detail on demand via the item_path in the index. Shared by the
-    # op-agent (OpAgent) and the terminal fix/plan flow (FixRunner).
+    # op-agent (OpenProject::Agent) and the terminal fix/plan flow (Runners::Fix).
     def related_ref(st)
       related = @pull.related_work_packages(st.item_id)
       return nil if related.empty?

@@ -54,13 +54,13 @@ without the noun is chat as well: alone it could mean a branch, a PR or a commen
 and the noun is what makes it one operation.
 
 **Discovery is server-side comment search, not project scanning.** Each tick,
-`OpPull#poll_intents` asks OpenProject's own `comment` filter (`~`, "contains") for
+`OpenProject::Pull#poll_intents` asks OpenProject's own `comment` filter (`~`, "contains") for
 work packages whose comments mention opilot — keyed on the bot's own OpenProject
-display name, fetched dynamically from `/users/me` (`OpPull#mention_filter_json`),
+display name, fetched dynamically from `/users/me` (`OpenProject::Pull#mention_filter_json`),
 never hardcoded. There is no project scope in this query at all: the API token's
 own project access is the trust boundary instead, so op-agent needs no
 project-picker setup. This is a **hard dependency** — a failed identity lookup
-(`OpPull#ensure_bot_identity!`) raises before the loop starts (`OpAgent#setup`, so it
+(`OpenProject::Pull#ensure_bot_identity!`) raises before the loop starts (`OpenProject::Agent#setup`, so it
 fails loudly once rather than being silently retried forever by `guarded_tick`)
 and again at the top of every `poll_intents` call.
 
@@ -89,7 +89,7 @@ and `REPOS:` — `OPTIONS`, then one pipe-delimited line per approach
 the writer names it in a single option line, then continues straight into the
 plan in the *same* response, so a one-shape ticket still costs exactly one
 plan call — just with a stated approach instead of a silent one.
-`OpAgent#produce_plan` reads that as a single named approach, saves the plan
+`OpenProject::Agent#produce_plan` reads that as a single named approach, saves the plan
 (header stripped), posts "This is a straightforward problem, so I will now
 implement the following approach: `<title>` — `<summary>`", and ships
 immediately — no reply required. A fix with more than one defensible shape is
@@ -112,7 +112,7 @@ targets so the two rarely disagree.
 
 Selecting is allowlist-gated like any comment trigger, which the offer says out
 loud when `OPILOT_ALLOWED_OP_USER_IDS` is set. A rejected trigger is no longer
-silent: `OpPull#note_refused_trigger` answers the commenter **once per WP**
+silent: `OpenProject::Pull#note_refused_trigger` answers the commenter **once per WP**
 (`refusal_noted_at`), because opilot offers options to anyone who can comment while
 only allowlisted users may choose one, and because a reply is the one thing an
 unlisted user can make opilot do — a per-comment answer would let anyone fill the
@@ -126,19 +126,19 @@ prompts reference. `dev build`/`commit`/`plan` share this.
 
 Polls two sources each tick. Both watch the thread and inline review comments, are
 gated by the GitHub-login allowlist, and never merge. Shared caching and
-mention-matching live in `GhPrCache`.
+mention-matching live in `GitHub::PrCache`.
 
-**OPilot's own PRs** (`GhPull`, those with a `repos/<name>/pr_url.txt`) — always
+**OPilot's own PRs** (`GitHub::Pull`, those with a `repos/<name>/pr_url.txt`) — always
 reply, code if asked, pushing to the fork. There are two command words
-(`GhPull#parse_command`), and both are acted on **only here** — `!reply_only` — so
+(`GitHub::Pull#parse_command`), and both are acted on **only here** — `!reply_only` — so
 an upstream PR's "refresh"/"close" is read as prose and answered in text.
 
 **`@opilot refresh`** is the full `dev refresh` treatment
-(`PrRunner#refresh_one`) with the base merge forced and the CI fix run regardless of
+(`Runners::Pr#refresh_one`) with the base merge forced and the CI fix run regardless of
 act-state or cap. Built `interactive: false`, so fork pushes go straight through
 while a canonical-repo target is refused and the refresh discarded.
 
-**`@opilot close`** closes the PR unmerged (`GhAgent#handle_close`) — the one way to
+**`@opilot close`** closes the PR unmerged (`GitHub::Agent#handle_close`) — the one way to
 retire a prototype nobody wants without a maintainer opening GitHub. It needs no
 access to the canonical repo: GitHub lets a PR's own author close it, and opilot
 opened this one. Closing is not merging, so nothing lands and the "never merge"
@@ -154,10 +154,10 @@ The command is allowlist-gated like every other trigger, and the WP stays shippe
 a closed prototype does not re-open its work package for planning.
 
 `close` is also the **one command word a `pd` spec PR recognises**
-(`GhPull#command_for`), and `GhAgent#handle` checks it *ahead of* the spec branch: a
+(`GitHub::Pull#command_for`), and `GitHub::Agent#handle` checks it *ahead of* the spec branch: a
 proposal PR is opilot's own too, so retiring it is the same need — and without the
 reorder, "close this" would spend a `revise_proposal` call and push a spec edit.
-`refresh` stays off spec PRs, since `PrRunner` is keyed by work package and a change
+`refresh` stays off spec PRs, since `Runners::Pr` is keyed by work package and a change
 id names no WP dir.
 
 It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 failure,
@@ -173,14 +173,14 @@ register over time, so a just-pushed commit can look green before its failing jo
 appear. Check-run reads are fully paginated (`auto_paginate` is off by default,
 which would truncate a big CI matrix).
 
-**Tracked upstream PRs** (`UpstreamGhPull`) — open PRs on a registry `upstream` that
+**Tracked upstream PRs** (`GitHub::UpstreamPull`) — open PRs on a registry `upstream` that
 @-mention opilot, except the bot's own (`own_pr?`). Found via the search API so a
 an LLM call is spent only on real mentions. The trigger is a prompt addressed to
 opilot, not a review pass over other people's work; what differs is write access,
 so these intents are `reply_only` — read-only fetch, answered in text
 (`Prompts::PrAdvisor.pr_review`), never pushed. Applicable code still lands: for lines already
 in the diff the review emits a `SUGGESTIONS:` block
-(`Prompts::PrAdvisor::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
+(`Prompts::PrAdvisor::SUGGESTION_CONTRACT`) that `GitHub::Agent#post_suggestions` posts as a review
 of inline `suggestion` comments (anchored to the head SHA, `event: COMMENT`) — the author
 applies each with one click; a bad line range 422s and falls back to prose. A
 failing CI run is read too (keyed by head SHA), so "why is CI red?" gets an
@@ -206,10 +206,10 @@ nothing" and "not scanning" look identical in the log.
 - **`dev commit <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
 - **`dev plan <id>...`** — stop at the approved plan.
-- **`dev health <id>...`** — the `@opilot health` check (`HealthRunner` →
-  `HealthCheck`), printed to the terminal; it posts nothing, so a prompt change can
+- **`dev health <id>...`** — the `@opilot health` check (`Runners::Health` →
+  `OpenProject::HealthCheck`), printed to the terminal; it posts nothing, so a prompt change can
   be tuned on a real work package first.
-- **`dev refresh <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
+- **`dev refresh <id|pr-url>...`** — refresh shipped PRs (`Runners::Pr`). A URL is matched
   against local state, else *adopted* via the OpenProject ticket link in the
   description's top 15 lines; a WP id with no state is *discovered* by searching each
   upstream for open bot-authored PRs mentioning the id, adopted only after verifying
@@ -234,7 +234,7 @@ nothing" and "not scanning" look identical in the log.
 ### appsignal (production errors)
 
 `./opilot appsignal` turns an AppSignal exception incident into a work package and
-a draft PR (`AppSignalRunner`). It is an **integration** — the system it reads —
+a draft PR (`Runners::AppSignal`). It is an **integration** — the system it reads —
 so it sits beside `op` rather than under `dev`, per `cli.rb`'s own rule; unlike
 `op` it goes through `CLI#session`, because `fix` calls the LLM and publishes.
 
@@ -292,7 +292,7 @@ mcp-gw and inference-gw contain the *harness*, which reads untrusted text. The r
 already holds the GitHub and OpenProject tokens. The model never reaches
 AppSignal — it reads the cached `incident.json`.
 
-**`fix` mostly delegates.** Once the work package exists, `FixRunner#ship_ids` is
+**`fix` mostly delegates.** Once the work package exists, `Runners::Fix#ship_ids` is
 already the whole plan → approve → implement → publish pipeline with its own
 prompts; nothing about a fix that started at an incident makes it different. What
 is new is only: read the incident, draft one work package, create it. Every
@@ -360,7 +360,7 @@ before touching anything under `lib/opilot/pd/`.
 
 # Tests
 docker compose run --no-deps --rm runner bundle exec rake
-docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/op_agent_test.rb
+docker compose run --no-deps --rm runner bundle exec ruby -Itest test/opilot/openproject/agent_test.rb
 
 # Rebuild runner image (required after editing Gemfile)
 docker compose run --no-deps --rm runner bundle lock
@@ -483,9 +483,13 @@ bare `docker compose run …` works from the repo root.
 
 **Zeitwerk autoloads `lib/opilot/`** (`lib/opilot.rb`), so `require "opilot"` is
 the only project require a caller needs. The rule is **one constant per file,
-named after the file**; acronyms are listed in the loader's inflections, and
-`runners/` and `github/` are collapsed, so they group files without adding a
-namespace. Four places are not autoloaded, because they reopen a module or hold
+named after the file**, and **a folder is a namespace**: `openproject/` holds the
+op-agent (`OpenProject::Agent`, `::Pull`, `::Intent`, `::ItemPictures`,
+`::HealthCheck`), `github/` the gh-agent (`GitHub::Agent`, `::Pull`,
+`::UpstreamPull`, `::PrCache`, `::Intent`, `::Publish`), and `runners/` the
+terminal commands (`Runners::Fix`, `::Pr`, `::Health`, `::Op`, `::AppSignal`, …).
+These are not the API clients, which stay `Clients::OpenProject` and
+`Clients::GitHub`. Acronyms are listed in the loader's inflections. Four places are not autoloaded, because they reopen a module or hold
 several constants: `helpers/` (required by `helpers.rb`), `prompts/_shared.rb`
 (by `prompts.rb`), `roles.rb` (by `harness.rb`) and `clients/openproject/errors.rb`
 (by `openproject.rb`). A file still requires the **libraries** it uses (`git`,
@@ -500,26 +504,26 @@ in CI.
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `helpers.rb`, `helpers/` | Shared helpers, one file per concern, all reopening `Helpers`: `state` (paths under `.opilot/`, `ItemState`), `contracts` (the OPTIONS / WORK PACKAGE / HEALTH / ARTIFACT parsers), `work_packages` (mentions, links, the create payload), `terminal` (logging, prompts), `git` (branches, syncing, commits, the push-safety rule), `pipeline` (`#llm` and plan → implement → PR) |
 | `repo.rb`, `registry.rb` | `Repo`, and `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
-| `op_pull.rb`, `intent.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
-| `item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
-| `op_agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
-| `github/gh_pull.rb`, `github/gh_intent.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
-| `github/upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
-| `github/gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
-| `github/gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
-| `runners/fix_runner.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
-| `health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
-| `runners/health_runner.rb` | Terminal `dev health` — prints `HealthCheck`'s report, posts nothing |
-| `runners/status_runner.rb`, `runners/reset_runner.rb` | Terminal `dev status` (reads `.opilot/` only) and `reset` (deletes it, after a confirmation) |
-| `runners/pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
-| `runners/op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject::Client` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
-| `runners/appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
+| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `openproject/agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
+| `openproject/pull.rb`, `openproject/intent.rb` | Polls OpenProject; parses `@opilot` comments into `OpenProject::Intent`s |
+| `openproject/item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
+| `openproject/health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
+| `github/agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
+| `github/pull.rb`, `github/intent.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GitHub::Intent`s and per-head-SHA `:ci` intents |
+| `github/upstream_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
+| `github/pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
+| `github/publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
+| `runners/fix.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
+| `runners/pr.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
+| `runners/health.rb` | Terminal `dev health` — prints `OpenProject::HealthCheck`'s report, posts nothing |
+| `runners/op.rb` | Terminal `op` — one command per `Clients::OpenProject::Client` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
+| `runners/appsignal.rb` | Terminal `appsignal` — incident → work package, then hands off to `Runners::Fix#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
+| `runners/status.rb`, `runners/reset.rb` | Terminal `dev status` (reads `.opilot/` only) and `reset` (deletes it, after a confirmation) |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
-| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
-| `github/publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | The OpenProject SDK namespace, `Clients::OpenProject`; it only requires the parts below |
 | `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). It destructures as `code, body = …`, so older callers read it as a tuple; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
 | `clients/openproject/{query,href,resource,lookup}.rb` | Logic over the endpoints. `Query` builds `filters`/`sortBy` values; `Href` the path of every payload link; `Resource` reads a v3 body (type list, `display_id`, `create_wp_allowed?`, link titles and ids). `Lookup` resolves names and ids: status, type, priority, version, principal, a field's payload key, a semantic work-package id or project identifier to its numeric id, and `#all_work_packages` pagination. A `Lookup` resolver returns `nil` for "read, not there" and raises the typed `Error` for "could not read" (`AmbiguousName`, with no code, for a name that matches twice) — callers word those differently. It caches, so build one per run |
@@ -534,25 +538,25 @@ every stage. It shares nothing with the bug-fix flow but the core above, and
 autoloading keeps that boundary: nothing under `pd/` loads until code names a
 `PD` constant, and `PD::Intake` is lazier still, keeping roo/nokogiri/rubyzip out
 of runs that never read a document. The one exception is `PD::ChangeStore`, which
-`GhPull` names on every tick because identifying a spec PR needs the store's
+`GitHub::Pull` names on every tick because identifying a spec PR needs the store's
 layout.
 
 ### Per-work-package state machine
 
-1. **Poll** — `OpPull#poll_intents` fetches WPs matching the comment-search filter and
+1. **Poll** — `OpenProject::Pull#poll_intents` fetches WPs matching the comment-search filter and
    their comments, de-dupes by `last_acted_comment_at`, and drops every comment
-   opilot wrote itself (`OpPull#own_comment?`, on the author's user id). That guard
+   opilot wrote itself (`OpenProject::Pull#own_comment?`, on the author's user id). That guard
    has to be complete rather than best-effort, because the cutoff cannot back it
    up: a reply is always posted *after* the trigger it answers, so it always sits
    above `last_acted_comment_at`, and opilot's own comments quote the command word
    routinely (`#post_options` tells the reader to answer `@opilot build 1`). It
    replaced a record of the last comment id, which covered one reply and no more —
-   a handler that posts two left the first one live, and the notes `OpPull` itself
-   posts were never recorded at all. This is why `OpPull#ensure_bot_identity!`
+   a handler that posts two left the first one live, and the notes `OpenProject::Pull` itself
+   posts were never recorded at all. This is why `OpenProject::Pull#ensure_bot_identity!`
    demands the bot's **user id** as well as its display name.
 
    A refreshed `item.json` also **mirrors the pictures the work package shows**
-   (`OPilot::ItemPictures`), because a screenshot is often the whole report. pi's
+   (`OPilot::OpenProject::ItemPictures`), because a screenshot is often the whole report. pi's
    `read` tool inlines png/jpeg/gif/webp/bmp as images, but it has no fetch tool
    and the harness has no egress, so `/api/v3/attachments/<id>/content` in the
    mirrored text is dead until the bytes are on disk **and** the reference points
@@ -578,10 +582,10 @@ layout.
    field would reach exactly the work packages that did not need it.
 
    **An attachment read that failed is not the answer "no pictures", and the
-   cache gate (`OpPull#item_current?`) knows the difference.** A failure sets
+   cache gate (`OpenProject::Pull#item_current?`) knows the difference.** A failure sets
    `pictures_pending`, which suppresses the cache for that work package until a
    run finishes, prunes nothing (a bad minute at the API must not delete a
-   picture), and carries the last complete index forward (`OpPull::PICTURE_KEYS`,
+   picture), and carries the last complete index forward (`OpenProject::Pull::PICTURE_KEYS`,
    deliberately *not* in `CARRIED_KEYS`, whose promise is "never dropped").
    Retrying is keyed on the **status code**, not on "it failed": a 429 or 5xx has
    already exhausted the transport's own retries, so it means a bad minute, while
@@ -626,13 +630,13 @@ layout.
 
    The body's WP link is **defanged** (`http`→`hxxp`) so OpenProject's GitHub
    integration doesn't clutter the activity tab with a fork PR nobody has adopted;
-   `PrRunner#op_ticket_id` accepts `hxxp` so opilot reads it back, and
+   `Runners::Pr#op_ticket_id` accepts `hxxp` so opilot reads it back, and
    `opilot-adopt` re-fangs it. The body opens with a bot-only preamble — the
    AI-prototype disclaimer plus an **adopt note** (`opilot-adopt <number>`) telling
    maintainers how to re-publish under their own account, since fork PRs can't run
    secret-gated CI (`#add_adopt_note`; the number only exists post-create, hence
    the follow-up body edit). Both are fenced between
-   `Publish::BANNER_OPEN`/`BANNER_CLOSE` (`<!-- opilot:banner -->` …
+   `GitHub::Publish::BANNER_OPEN`/`BANNER_CLOSE` (`<!-- opilot:banner -->` …
    `<!-- /opilot:banner -->`), because neither is true of an adopted PR:
    `opilot-adopt` deletes exactly that range and prepends `Adapted from #<bot-pr>`.
    **The fence is a published interface** — changing a marker orphans every PR
@@ -698,9 +702,9 @@ the ordinary `:chat` intent (`Prompts::Advisor::LENSES`), with trailing text as 
 
 **Health check (`@opilot health [focus]`, intent `:health`)** reports where a work
 package is inconsistent with itself. It is **not a lens**: it needs a fact pass, its
-own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
+own prompt, a parser and a Ruby-composed reply (`OpenProject::HealthCheck`). Two layers:
 
-- **Facts** (`HealthCheck#facts_for`, no LLM) — only rules on exact,
+- **Facts** (`OpenProject::HealthCheck#facts_for`, no LLM) — only rules on exact,
   language-independent data, because the prompt tells the model not to dispute them:
   status meaning from `GET /statuses` (`isClosed`, `isDefault`, looked up by name —
   names are unique), relation labels, timestamps, linked-PR flags
@@ -710,7 +714,7 @@ own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
   fire only on the **default** status: "Developed" is open and has merged PRs.
   Anything heuristic — a reopen report, which status-name matching would confuse
   with a subject edit — goes to the model as `history[]` instead.
-- **Descendants** (`HealthCheck#descendants`) — the whole subtree at any depth from
+- **Descendants** (`OpenProject::HealthCheck#descendants`) — the whole subtree at any depth from
   ONE paginated `ancestor` filter query, capped at `MAX_DESCENDANTS`, written to
   `descendants.json`. A list element embeds nothing, so status and type come from
   `_links.<key>.title`. The tree rules (closed over open at any depth, a subtree all
@@ -723,7 +727,7 @@ own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
   `Helpers.parse_health`: the END marker detects truncation (one retry, then a
   failure note), and a finding without evidence is dropped.
 
-The reply is composed in Ruby (`HealthCheck#report`), for `#post_options`' reason,
+The reply is composed in Ruby (`OpenProject::HealthCheck#report`), for `#post_options`' reason,
 and always lists **Not checked** — skipped attachments, an unreadable PR list or
 status list, the model's own gaps — because silence about an input reads as "it is
 fine". A **public** reply drops any finding whose evidence names an internal
@@ -754,17 +758,17 @@ attached a flowchart of the same thing, and the reader read it twice.
 cannot write a file — and that read-only contract for prompt-injectable phases is
 enforced in the guard, not in the prompt, so this is not a limitation to route
 around. `Prompts::Advisor.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
-`Helpers.parse_artifacts` reads it, and `OpAgent#publish_artifacts` mirrors, caps and
+`Helpers.parse_artifacts` reads it, and `OpenProject::Agent#publish_artifacts` mirrors, caps and
 publishes. The block sits at the **END** of the answer: everything shares one output
 budget, so a cut-off response loses the artifact and keeps the comment. The parser
 mirrors `.parse_work_packages` but inverts its failure rule — there one bad block
 rejects the whole answer, because a work package can never be deleted; here a bad
 block drops only itself and the reply is still posted. Caps live in the runner
-(`OpAgent::MAX_ARTIFACTS`, `MAX_ARTIFACT_BYTES`), because a prompt limit drifts, and
+(`OpenProject::Agent::MAX_ARTIFACTS`, `MAX_ARTIFACT_BYTES`), because a prompt limit drifts, and
 the note naming what was published is composed in Ruby for `#post_options`' reason.
 
 **It needs a contributor token AND `OPILOT_ALLOWED_OP_USER_IDS`**
-(`OpAgent#artifacts_enabled?`), and the prompt block is omitted when either is
+(`OpenProject::Agent#artifacts_enabled?`), and the prompt block is omitted when either is
 missing. The reason is **exfiltration, not permanence** — a gist can be deleted,
 unlike a work package: a gist is readable by anyone holding the link, so without an
 allowlist any user who can comment could make opilot lift an internal work
@@ -778,23 +782,23 @@ delete content from someone's reply.
 **`:create_wp` (`@opilot create wp <what>`)** splits something out of the thread into
 its own work package — `create wp for Rosanna's suggestion` — or, when the request
 names several separate pieces of work, into **up to five at once**
-(`OpAgent::MAX_CREATE_WP`), each declared a child of the thread or a peer beside it.
+(`OpenProject::Agent::MAX_CREATE_WP`), each declared a child of the thread or a peer beside it.
 It is op-agent's **only non-comment write to OpenProject**,
 and every guard on it stands on one fact: a work package can never be deleted (the
 HTTP client has no DELETE verb anywhere), so nothing downstream can undo a wrong or
 duplicate create.
 
-- **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`OpAgent#create_wp_enabled?`),
+- **It refuses outright without `OPILOT_ALLOWED_OP_USER_IDS`** (`OpenProject::Agent#create_wp_enabled?`),
   said once per work package (`create_wp_refusal_noted_at`) and folded into the
   no-allowlist line of the startup banner, since "created nothing" and "cannot create
   anything" look identical in a log — only in that state, because a line confirming the
   normal state is noise on every start.
   With no allowlist every user who can comment could mint work packages without limit.
   The requirement also makes the allowlist gate *unconditional* for this command:
-  `OpPull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
+  `OpenProject::Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
   so every create that reaches the handler is from a listed user.
 - **Every work package it will create comes out of ONE LLM call, gated by
-  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `OpAgent#write_work_packages`). When the request
+  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `OpenProject::Agent#write_work_packages`). When the request
   points at nothing in the thread, questions are the only acceptable answer. N answers
   cost the same one call as one, and a call per work package would not see the others —
   two of them could write the same suggestion, and the duplicate could not be deleted.
@@ -817,8 +821,8 @@ duplicate create.
   list.
 - **It is idempotent on the trigger comment's timestamp** (`created_wps.json`, each
   record written the instant its POST returns 201, before the link and before the
-  reply). `Intent` carries no comment id, and `comment_at` is the key
-  `OpPull#mark_acted` already de-dupes on; one comment now holds **several** records.
+  reply). `OpenProject::Intent` carries no comment id, and `comment_at` is the key
+  `OpenProject::Pull#mark_acted` already de-dupes on; one comment now holds **several** records.
   A re-fired trigger re-reports every record it finds and creates nothing more —
   including after a *partial* create, where the ones that landed are the answer and
   the reader is told to ask for the rest on their own.
@@ -832,7 +836,7 @@ duplicate create.
   `Helpers.create_wp_allowed?` reads the `createWorkPackage*` links the project
   resource renders only for a user who holds the permission.
 - **Every drafted payload is preflighted through the create form, before the first
-  POST** (`OpAgent#payloads_accepted?` → `#payload_accepted?` →
+  POST** (`OpenProject::Agent#payloads_accepted?` → `#payload_accepted?` →
   `POST /api/v3/work_packages/form`). The form does not save, so preflighting the
   whole set first is the only atomic-ish gate there is, and one rejection abandons
   **all** of them: half a tree is worse than none when the halves cannot be deleted,
@@ -879,10 +883,10 @@ duplicate create.
   every record written before this got.
 - **Nothing is posted on the new work package, and no reply names `@opilot`.** The poll
   filter searches comment *content*, and a new work package has no acted-state or
-  cutoff under it. `OpPull#own_comment?` now rejects any comment opilot authored, so
+  cutoff under it. `OpenProject::Pull#own_comment?` now rejects any comment opilot authored, so
   this is belt-and-braces rather than the only guard — but it costs nothing, and a
   work package that cannot be deleted is the wrong place to lean on one check.
-  Same reasoning as `OpPull#note_refused_trigger`'s wording.
+  Same reasoning as `OpenProject::Pull#note_refused_trigger`'s wording.
 - **This handler answers its own failures**, unlike every other one (`#handle_and_ack`
   stays silent by design): a reader who asked for a work package waits for a link, and
   silence reads as a broken bot. The reply is composed in Ruby (`#created_note`,
@@ -918,8 +922,8 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── pictures/            # every picture the WP shows, mirrored so the LLM can `read`
 │       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
 │       ├── related.json         # related WPs pulled in at plan time
-│       ├── health.json          # the last health check's facts (HealthCheck#facts_for)
-│       ├── descendants.json     # the subtree the last health check read (HealthCheck#descendants)
+│       ├── health.json          # the last health check's facts (OpenProject::HealthCheck#facts_for)
+│       ├── descendants.json     # the subtree the last health check read (OpenProject::HealthCheck#descendants)
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── artifacts/<comment>/  # markdown a chat answer produced, keyed by the trigger's
 │       │                        #   comment_at — the local copy of what was gisted

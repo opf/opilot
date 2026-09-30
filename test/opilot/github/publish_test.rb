@@ -49,7 +49,7 @@ module OPilot
     end
 
     def build_publish
-      publish = Publish.new(@ctx)
+      publish = GitHub::Publish.new(@ctx)
       publish.instance_variable_set(:@github, FakeGitHub.new)
       publish.instance_variable_set(:@worktrees, { @repo.name => FakeWorktree.new })
       publish
@@ -105,14 +105,14 @@ module OPilot
       capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
 
       body = @github.body_updates.first[:body]
-      fenced = body[/#{Regexp.escape(Publish::BANNER_OPEN)}\n(.*?)\n#{Regexp.escape(Publish::BANNER_CLOSE)}/m, 1]
+      fenced = body[/#{Regexp.escape(GitHub::Publish::BANNER_OPEN)}\n(.*?)\n#{Regexp.escape(GitHub::Publish::BANNER_CLOSE)}/m, 1]
       refute_nil fenced, "the preamble is wrapped in the fence the adopt script deletes"
       assert_includes fenced, "AI-generated prototype"
       assert_includes fenced, "opilot-adopt 7"
-      assert body.start_with?(Publish::BANNER_OPEN), "the fence opens the body"
+      assert body.start_with?(GitHub::Publish::BANNER_OPEN), "the fence opens the body"
 
       # What `opilot-adopt` is left with once it deletes the range.
-      rest = body.sub(/#{Regexp.escape(Publish::BANNER_OPEN)}.*?#{Regexp.escape(Publish::BANNER_CLOSE)}\n/m, "")
+      rest = body.sub(/#{Regexp.escape(GitHub::Publish::BANNER_OPEN)}.*?#{Regexp.escape(GitHub::Publish::BANNER_CLOSE)}\n/m, "")
       refute_includes rest, "AI-generated prototype", "the disclaimer does not survive adoption"
       refute_includes rest, "opilot-adopt", "the adopt note does not survive adoption"
       assert_includes rest, "PR body here", "the description does"
@@ -291,7 +291,7 @@ module OPilot
 
     def test_an_existing_spec_pr_is_reused_rather_than_reopened
       github = FakeGitHub.new(existing: "https://github.com/me/openproject/pull/3")
-      publish = Publish.new(@ctx)
+      publish = GitHub::Publish.new(@ctx)
       publish.instance_variable_set(:@github, github)
       state = spec_state
 

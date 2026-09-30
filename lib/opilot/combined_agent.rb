@@ -1,6 +1,6 @@
 module OPilot
-  # The `agent` command: the OpenProject loop (OpAgent) and the GitHub-PR loop
-  # (GhAgent) in one single-threaded process, each tick polling GitHub then
+  # The `agent` command: the OpenProject loop (OpenProject::Agent) and the GitHub-PR loop
+  # (GitHub::Agent) in one single-threaded process, each tick polling GitHub then
   # OpenProject, one intent at a time.
   #
   # Single-threaded on purpose: both loops drive the *same* clones, so their work
@@ -10,7 +10,7 @@ module OPilot
   class CombinedAgent
     include Helpers
 
-    def initialize(ctx, agent: OpAgent.new(ctx), gh_agent: GhAgent.new(ctx))
+    def initialize(ctx, agent: OpenProject::Agent.new(ctx), gh_agent: GitHub::Agent.new(ctx))
       @ctx      = ctx
       @agent    = agent
       @gh_agent = gh_agent

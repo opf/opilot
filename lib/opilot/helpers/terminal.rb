@@ -18,8 +18,8 @@ module OPilot
     # Turn a "how far back" answer into an ISO8601 cutoff. Accepts a relative
     # span ("1h", "2 days", "1 week", "1 month", "1 year"), an absolute time, or
     # blank/"now" (= now). Months and years use 30- and 365-day approximations,
-    # which is plenty for a scan floor. Shared by the OpenProject agent (OpPull)
-    # and the GitHub agent (GhPull) so the "scan from" prompt parses identically.
+    # which is plenty for a scan floor. Shared by the OpenProject agent (OpenProject::Pull)
+    # and the GitHub agent (GitHub::Pull) so the "scan from" prompt parses identically.
     def self.parse_scan_from(input)
       input = input.to_s.strip.downcase
       return Time.now.utc.iso8601 if input.empty? || input == "now"
@@ -113,8 +113,8 @@ module OPilot
     # drift from what the prompt accepts. `default:` is what an empty line means,
     # for the prompts that have an obvious yes.
     #
-    # Prompts that accept free text (FixRunner#prompt_option_choice) or that ask
-    # once without re-asking (ResetRunner#run) are deliberately not routed through here.
+    # Prompts that accept free text (Runners::Fix#prompt_option_choice) or that ask
+    # once without re-asking (Runners::Reset#run) are deliberately not routed through here.
     def prompt_choice(label, choices, default: nil)
       table   = {}
       choices.each { |result, answers| Array(answers).each { |a| table[a] = result } }

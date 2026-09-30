@@ -26,7 +26,7 @@ module OPilot
       # Per-change local cache files. Derived rather than stored: they are all
       # `state_dir / <name>`. gh-agent's own per-PR state (gh_pr.json,
       # gh_session_id) is deliberately NOT here — it keys on a PR directory from
-      # `GhPull#pr_dir(…, spec: true)` rather than on a change, so accessors for it
+      # `GitHub::Pull#pr_dir(…, spec: true)` rather than on a change, so accessors for it
       # on this class went unused and were removed.
       def session_file = state_dir / "session_id"
       def pr_url_file  = state_dir / "pr_url.txt"

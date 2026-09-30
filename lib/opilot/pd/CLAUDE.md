@@ -36,7 +36,7 @@ The pipeline stays out of every other run because it is autoloaded: nothing
 here loads until code names a `PD` constant (see `lib/opilot.rb`). `Intake` loads
 later still — only `PD::Runner#intake_client` names it — which keeps
 roo/nokogiri/rubyzip out of every run that never reads a document. The one part
-an agent run loads is `PD::ChangeStore`: `GhPull` names it on every tick to
+an agent run loads is `PD::ChangeStore`: `GitHub::Pull` names it on every tick to
 identify a spec PR.
 
 ## Stages
@@ -82,7 +82,7 @@ identify a spec PR.
   Anything outside `changes/<change-id>/` resets the clone and fails the run before
   any commit.
 
-  `Publish#open_spec_pr` pushes `spec/<change-id>` to the fork and opens a draft PR
+  `GitHub::Publish#open_spec_pr` pushes `spec/<change-id>` to the fork and opens a draft PR
   **inside that fork** (head and base both `<bot>/<repo>`,
   `maintainer_can_modify: false` — GitHub 422s on a same-repo PR otherwise), after
   levelling the fork's base with upstream (`sync_fork_branch` → the `merge-upstream`
@@ -129,7 +129,7 @@ identify a spec PR.
   stray spec edit is the wrong trade. Checkboxes are ticked by the harness
   (`TasksFile.set_section_done`) and **only after a commit exists** — a run that
   produced nothing leaves them unticked and opens no PR, which is the honest record.
-  Publishing goes through the same `Publish#open_pr` as the bug-fix flow, so
+  Publishing goes through the same `GitHub::Publish#open_pr` as the bug-fix flow, so
   `gh-agent` picks the result up from `pr_url.txt` and `./opilot dev refresh <id>` can
   refresh it. The work package is **transitioned twice** (`#transition!`): to
   `OPILOT_PD_IMPLEMENTING_STATUS` when the LLM run starts (inside the

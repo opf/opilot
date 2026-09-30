@@ -14,20 +14,16 @@ module OPilot
     loader.push_dir(root, namespace: OPilot)
 
     loader.inflector.inflect(
-      "cli"              => "CLI",
-      "ui"               => "UI",
-      "pd"               => "PD",
-      "http"             => "HTTP",
-      "github"           => "GitHub",
-      "openproject"      => "OpenProject",
-      "openrouter"       => "OpenRouter",
-      "appsignal"        => "AppSignal",
-      "openspec"         => "OpenSpec",
-      "appsignal_runner" => "AppSignalRunner"
+      "cli"         => "CLI",
+      "ui"          => "UI",
+      "pd"          => "PD",
+      "http"        => "HTTP",
+      "github"      => "GitHub",
+      "openproject" => "OpenProject",
+      "openrouter"  => "OpenRouter",
+      "appsignal"   => "AppSignal",
+      "openspec"    => "OpenSpec"
     )
-
-    # Folders that group files without adding a namespace.
-    loader.collapse("#{root}/runners", "#{root}/github")
 
     # Files that reopen a module or hold several constants. Their index file
     # requires them, so they are always loaded with it.

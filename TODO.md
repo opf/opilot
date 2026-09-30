@@ -36,5 +36,5 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * There _are_ ways of giving the runner container access to Docker via a shared socket. However, this breaks the sandbox model, as it escalates the runner's permissions to run/access any containers on the host system.
   * Or just run OPilot in the same local network as the docker stack, then trigger commands via a HTTP API slapped into the main OP container
 * Idea: Use sub-WPs for any OPilot interactions in agent mode
-* Intent classification interface?
+* OpenProject::Intent classification interface?
   * user issues a free-text prompt ("generate a PR pls") → a light model converts it to a "build" command

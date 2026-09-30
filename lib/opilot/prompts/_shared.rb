@@ -222,7 +222,7 @@ module OPilot
       end
 
       # The one retry's correction, when the previous answer missed the block
-      # format (OpAgent#format_miss). Absent on a first attempt.
+      # format (OpenProject::Agent#format_miss). Absent on a first attempt.
       def format_note_line(note)
         return "" if note.to_s.strip.empty?
         "\nFIX THIS FIRST: #{note.strip}\n"

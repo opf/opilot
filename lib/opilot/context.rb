@@ -137,7 +137,7 @@ module OPilot
     # OFF unless explicitly asked for: the one gh-agent source that reaches outside
     # opilot's own PRs, across whole public repos, so opting in is a decision about
     # a specific repo set. Still requires OPILOT_ALLOWED_GH_USERS — this flag says
-    # which PRs to watch, the allowlist whose mentions count (UpstreamGhPull#enabled?).
+    # which PRs to watch, the allowlist whose mentions count (GitHub::UpstreamPull#enabled?).
     def track_upstream_prs?
       %w[1 true yes on].include?(ENV["OPILOT_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
     end

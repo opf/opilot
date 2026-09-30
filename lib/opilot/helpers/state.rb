@@ -21,7 +21,7 @@ module OPilot
 
     # Rewrite a host path under .opilot/ to its path inside the harness
     # container, where .opilot is mounted read-only at /state. A module function
-    # as well as an instance method (#container_path) because OpPull writes
+    # as well as an instance method (#container_path) because OpenProject::Pull writes
     # container paths into item.json and does not include Helpers.
     def self.state_container_path(ctx, host_path)
       host_path.to_s.sub(ctx.state_dir.to_s, ctx.state_container)

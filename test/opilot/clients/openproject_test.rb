@@ -56,7 +56,7 @@ module OPilot
                      "documents"
         assert_equal %Q([{"comment":{"operator":"~","values":#{JSON.generate(["OPilot Bot"])}}}]),
                      OpenProject::Query.filter("comment", "~", "OPilot Bot"),
-                     "OpPull#mention_filter_json"
+                     "OpenProject::Pull#mention_filter_json"
       end
 
       def test_filter_stringifies_values_because_the_encoded_query_is_the_identity
