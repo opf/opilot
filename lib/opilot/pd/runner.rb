@@ -174,7 +174,7 @@ module OPilot
 
         reply = llm(
           :spec_writer,
-          Prompts.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
+          Prompts::SpecWriter.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
                                    pr_thread: pr_thread, comment_section: comment_section),
           session_file: session_file
         )
@@ -368,7 +368,7 @@ module OPilot
         log_script "Proposing #{state.change_id} in #{repo.name}…"
         text = llm(
           :spec_writer,
-          Prompts.propose(
+          Prompts::SpecWriter.propose(
             change_id:    state.change_id,
             change_dir:   state.working_change_container,
             intake_dir:   "#{state.working_change_container}/intake",
@@ -453,7 +453,7 @@ module OPilot
           log_script "openspec validate failed (attempt #{attempt + 1}/#{MAX_VALIDATE_ATTEMPTS}) — re-prompting"
           llm(
             :spec_writer,
-            Prompts.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
+            Prompts::SpecWriter.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
                                    failures: failures, attempt: attempt + 1,
                                    max_attempts: MAX_VALIDATE_ATTEMPTS),
             session_file: state.session_file
@@ -741,7 +741,7 @@ module OPilot
           transition!(wp_id, item, @ctx.pd_implementing_status)
           llm(
             :implementer,
-            Prompts.implement_task(
+            Prompts::Implementer.implement_task(
               repo: repo.name, repo_path: repo.worktree_container,
               change_id: found[:change_id], change_dir: state.working_change_container,
               wp_label: wp_label(wp_id), section: found[:section].title,

@@ -197,7 +197,7 @@ module OPilot
     # request rather than a duplicate work package.
     def write_work_package(number, incident_file, retry_bad: true, format_note: nil)
       log_script "Drafting a work package from AppSignal incident ##{number}…"
-      prompt = Prompts.appsignal_wp(
+      prompt = Prompts::Triager.appsignal_wp(
         incident: container_path(incident_file), number: number, app: @app,
         repos: repos_for_prompt(@ctx.repos.all), types: Helpers.types_for_prompt(project_types), format_note: format_note
       )

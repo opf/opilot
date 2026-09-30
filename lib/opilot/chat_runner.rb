@@ -55,7 +55,7 @@ module OPilot
         prompt  = if oriented
                     pending
                   else
-                    Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos,
+                    Prompts::Advisor.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos,
                                       message: pending, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
                   end
         llm(:advisor, prompt, session_file: session_file)

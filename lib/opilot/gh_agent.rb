@@ -143,7 +143,7 @@ module OPilot
       @github.fetch_branch(head_repo(intent), branch: intent.branch, worktree_path: repo.worktree_host)
       checkout_pr_branch(repo, intent.branch)
 
-      prompt = Prompts.pr_review(
+      prompt = Prompts::PrAdvisor.pr_review(
         repo: intent.repo, pr_number: intent.pr_number, title: intent.subject,
         worktree: repo.worktree_container, base: repo.base, pr_thread: container_path(pr_file),
         comment: intent.text.to_s, author: intent.user_login.to_s,
@@ -252,7 +252,7 @@ module OPilot
 
     def handle_own(intent)
       run_on_pr_head(intent) do |p|
-        Prompts.gh_reply(
+        Prompts::PrAuthor.gh_reply(
           worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
           title: intent.subject, item: p.item_ref, plan: p.plan_ref,
           pr_thread: container_path(p.pr_file), comment: intent.text.to_s,
@@ -267,7 +267,7 @@ module OPilot
     # it in the worktree, then commit and push to update the draft PR.
     def handle_ci(intent)
       run_on_pr_head(intent) do |p|
-        Prompts.fix_ci(
+        Prompts::PrAuthor.fix_ci(
           op_mcp: @ctx.op_mcp?,
           worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
           title: intent.subject, item: p.item_ref, plan: p.plan_ref,

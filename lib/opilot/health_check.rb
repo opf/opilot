@@ -56,7 +56,7 @@ module OPilot
       facts_file = st.item_dir / "health.json"
       facts_file.write(JSON.pretty_generate(facts))
 
-      prompt = Prompts.health(item_id: st.item_id, subject: st.subject,
+      prompt = Prompts::Auditor.health(item_id: st.item_id, subject: st.subject,
                               item: container_path(st.item_file), facts: container_path(facts_file),
                               related: related_path, descendants: tree_ref, focus: focus, internal: internal,
                               op_mcp: @ctx.op_mcp?)

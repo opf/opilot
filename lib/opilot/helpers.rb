@@ -183,7 +183,7 @@ module OPilot
     WP_LINKS        = %w[child related].freeze
     DEFAULT_WP_LINK = "related".freeze
 
-    # Read the work packages a `create wp` answer asks for (Prompts.create_wp).
+    # Read the work packages a `create wp` answer asks for (Prompts::WpWriter.create_wp).
     # Each one is a block — BEGIN WORK PACKAGE, a SUBJECT: line, an optional
     # TYPE: and LINK: line, the description, END WORK PACKAGE — and a request
     # that names several pieces of work answers with several blocks, in order.
@@ -930,6 +930,9 @@ module OPilot
     def llm(role, prompt, session_file: nil, outfile: nil)
       r = Harness.role(role)
       raise ArgumentError, "role #{r.name} is stateless" if r.stateless && session_file
+      if prompt.is_a?(Prompts::Prompt) && prompt.role != r.name
+        raise ArgumentError, "a #{prompt.role} prompt sent as #{r.name}"
+      end
       opts = { tools: r.tools(@ctx), model: r.model, session_file: session_file }
       outfile ? @harness.capture(prompt, outfile: outfile, **opts) : @harness.run(prompt, **opts)
     end
@@ -1319,7 +1322,7 @@ module OPilot
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
         llm(:implementer,
-            Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
+            Prompts::Implementer.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
                               resumed: session_resumable?(st)),
             session_file: st.session_file)
         st.repos.each { |r| commit(st, r) }
@@ -1344,7 +1347,7 @@ module OPilot
     # on any failure so the caller can fall back to a generic subject. Shared by
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
-      prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
+      prompt = Prompts::Scribe.commit_subject(diff: diff.patch.to_s[0, 6000])
       reply = llm(:scribe, prompt)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
@@ -1368,7 +1371,7 @@ module OPilot
       diff_stat = wt.diff("HEAD~1", "HEAD").stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
-      prompt = Prompts.pr_description(
+      prompt = Prompts::Scribe.pr_description(
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )

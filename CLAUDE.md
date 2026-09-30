@@ -162,7 +162,7 @@ id names no WP dir.
 
 It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 failure,
 the detail (annotations, output summaries, failed-job log tails) is cached to
-`ci.json`, fixed with `Prompts.fix_ci`, committed and pushed. The trigger is the
+`ci.json`, fixed with `Prompts::PrAuthor.fix_ci`, committed and pushed. The trigger is the
 **head SHA**: `gh_pr.json` tracks `ci_acted_sha` (once per commit) and `ci_attempts`
 (`OPILOT_CI_MAX_ATTEMPTS`, default 5; past the cap it posts a one-time "needs a
 human" note and sets `ci_gave_up`). It acts on the *first* failure rather than
@@ -178,7 +178,7 @@ which would truncate a big CI matrix).
 an LLM call is spent only on real mentions. The trigger is a prompt addressed to
 opilot, not a review pass over other people's work; what differs is write access,
 so these intents are `reply_only` — read-only fetch, answered in text
-(`Prompts.pr_review`), never pushed. Applicable code still lands: for lines already
+(`Prompts::PrAdvisor.pr_review`), never pushed. Applicable code still lands: for lines already
 in the diff the review emits a `SUGGESTIONS:` block
 (`Prompts::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
 of inline `suggestion` comments (anchored to the head SHA, `event: COMMENT`) — the author
@@ -225,7 +225,7 @@ nothing" and "not scanning" look identical in the log.
   is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
   fetching, planning, or shipping. `.opilot/` is mounted read-only at `/state`, so
-  `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
+  `Prompts::Advisor.free_chat` orients the LLM at the layout and it Greps/Reads from there.
   Fresh per-run session; needs no tokens or allowlist. **It reads only what another
   run already mirrored** — a `dev` verb or an agent tick. Nothing seeds the cache on
   its own: `op wp get` prints a work package but caches nothing, so a WP opilot has
@@ -504,7 +504,7 @@ bare `docker compose run …` works from the repo root.
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
-| `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb`, `prompts/<role>.rb` | All LLM prompts: one module per role (`Prompts::Planner.plan`, `Prompts::PrAuthor.fix_ci`, …) holding that role's builders, and the shared blocks in `prompts.rb`. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
@@ -717,7 +717,7 @@ is not enough. Like `create wp`, the handler answers its own failure.
 **A chat answer can carry an ARTIFACT — a diagram or a long report — published as
 a secret gist and linked from the comment.** Three surfaces offer one, and they are
 deliberately **asymmetric**: a gh-agent PR reply (`Prompts::MERMAID_NOTE` in
-`gh_reply`/`pr_review`) and a plan's Approach section (`Prompts#plan_skeleton`) are
+`gh_reply`/`pr_review`) and a plan's Approach section (`Prompts::Planner.plan_skeleton`) are
 **prompt-only**, because GitHub and gists render a ```mermaid fence themselves. Only
 op-agent chat has machinery behind it.
 
@@ -778,7 +778,7 @@ duplicate create.
   `Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
   so every create that reaches the handler is from a listed user.
 - **Every work package it will create comes out of ONE LLM call, gated by
-  `NEEDS_INFO`** (`Prompts.create_wp`, `Agent#write_work_packages`). When the request
+  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `Agent#write_work_packages`). When the request
   points at nothing in the thread, questions are the only acceptable answer. N answers
   cost the same one call as one, and a call per work package would not see the others —
   two of them could write the same suggestion, and the duplicate could not be deleted.

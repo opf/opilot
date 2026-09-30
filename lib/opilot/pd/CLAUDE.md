@@ -71,7 +71,7 @@ PR needs the store's layout on every agent tick.
   `MAX_VALIDATE_ATTEMPTS` (2) revisions in the same session — the CLI isn't in the
   harness container, so "the agent iterates on its own output" is a runner-driven
   re-prompt loop. Intake spanning more than one atomic feature returns `TOO_BROAD`
-  with a suggested split (mirroring `Prompts.plan`'s `NEEDS_INFO`), since one change
+  with a suggested split (mirroring `Prompts::Planner.plan`'s `NEEDS_INFO`), since one change
   becomes exactly one FEATURE.
 
   **The write scope is enforced** (`#enforce_write_scope!`) — a planning stage must
@@ -118,7 +118,7 @@ PR needs the store's layout on every agent tick.
   change in one pass produces the unreviewable PR the decomposition exists to avoid.
   Change and repo are resolved *from* the id via `reverse_index` (`--repo` narrows
   it); an unbound id lists what *is* bound instead of just failing.
-  `Prompts.implement_task` carries the spec paths, the WP's `item.json` (a human
+  `Prompts::Implementer.implement_task` carries the spec paths, the WP's `item.json` (a human
   comment added after the proposal qualifies or overrides it) and **only this
   section's checklist** — a sibling section is another work package's PR. The write
   scope is `propose`'s mirror image: there the spec was output and source off limits;
@@ -210,7 +210,7 @@ produced a proposal with none of the template's four required headings and still
 passed validation. So `PD::Runner#artifact_instructions` calls `openspec
 instructions <artifact> --change <id>` for each of `proposal`/`specs`/`design`/
 `tasks` (dependency order — proposal `<unlocks>` the rest) and drops the result
-straight into `Prompts.propose`. Each block carries the CLI's own `<task>`,
+straight into `Prompts::SpecWriter.propose`. Each block carries the CLI's own `<task>`,
 `<instruction>`, `<template>` and output path — including the parts the paraphrase
 had missed: the `## Capabilities` contract that tells the specs phase which spec
 files to create, `RENAMED Requirements`, MODIFIED needing full content, REMOVED

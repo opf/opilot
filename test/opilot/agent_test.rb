@@ -12,7 +12,7 @@ module OPilot
 
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
-      # One BEGIN/END WORK PACKAGE block, the shape Prompts.create_wp demands.
+      # One BEGIN/END WORK PACKAGE block, the shape Prompts::WpWriter.create_wp demands.
       # `link` is the writer's own choice per block — "child" or "related" — and
       # nil leaves the line out, which must read as "related".
       def self.wp_block(subject, type: "Feature", link: nil, body: "Rosanna asks for a toast.")

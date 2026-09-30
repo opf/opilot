@@ -119,7 +119,7 @@ module OPilot
             # the revised plan. Branch checkout waits until #ship.
             llm(
               :planner,
-              Prompts.replan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
+              Prompts::Planner.replan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                              item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject, resumed: session_resumable?(st),
@@ -139,7 +139,7 @@ module OPilot
             # Pass session_file so a prior chat's context carries into the (re-)plan.
             llm(
               :planner,
-              Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
+              Prompts::Planner.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                            item: container_path(st.item_file),
                            item_id: id, title: subject, hint: option_focus.to_s,
                            related: related_ref(st), allow_options: option_focus.nil?, op_mcp: @ctx.op_mcp?),
@@ -332,7 +332,7 @@ module OPilot
         prompt = if oriented
                    msg
                  else
-                   Prompts.plan_chat(
+                   Prompts::Advisor.plan_chat(
                      item_id: st.item_id, subject: st.subject,
                      item: container_path(st.item_file), plan: plan_ref, message: msg
                    )

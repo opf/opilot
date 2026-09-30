@@ -106,6 +106,25 @@ module OPilot
       end
     end
 
+    def role_modules
+      Prompts.constants.map { |c| Prompts.const_get(c) }
+             .select { |m| m.is_a?(Module) && m.const_defined?(:ROLE, false) }
+    end
+
+    def test_every_role_has_one_prompt_module
+      assert_equal Harness::ROLES.keys.sort, role_modules.map { |m| m::ROLE }.sort
+    end
+
+    def test_a_prompt_sent_under_another_role_raises
+      prompt = Prompts::Scribe.commit_subject(diff: "d")
+      assert_equal :scribe, prompt.role
+      c = Caller.new(ctx)
+      c.send(:llm, :scribe, prompt)
+      err = assert_raises(ArgumentError) { c.send(:llm, :planner, prompt, session_file: "s") }
+      assert_match(/scribe prompt sent as planner/, err.message)
+      c.send(:llm, :planner, "a bare follow-up message", session_file: "s")
+    end
+
     def test_unknown_role_fails
       assert_raises(KeyError) { Harness.role(:nobody) }
     end
