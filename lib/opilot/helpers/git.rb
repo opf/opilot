@@ -1,3 +1,5 @@
+require "git"
+
 module OPilot
   module Helpers
     # Git work in the clones: the push-safety rule, branches, syncing a clone

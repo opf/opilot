@@ -1,8 +1,4 @@
 require "json"
-require_relative "../clients"
-require_relative "gh_pull"
-require_relative "upstream_gh_pull"
-require_relative "../runners/pr_runner"
 
 module OPilot
   # The GitHub counterpart of OpAgent. Two sources, polled together every tick:
@@ -350,10 +346,7 @@ module OPilot
     # Built lazily and without a PD::Intake: revising a proposal never reads a
     # document, and Intake would drag roo/nokogiri into every gh-agent run.
     def product_runner
-      @product_runner ||= begin
-        require_relative "../pd"
-        PD::Runner.new(@ctx, harness: @harness)
-      end
+      @product_runner ||= PD::Runner.new(@ctx, harness: @harness)
     end
 
     # Built lazily: PrRunner's default OpenProject client (for the WP mirror)

@@ -1,3 +1,5 @@
+require "json"
+
 module OPilot
   module Helpers
     # The LLM call and the plan -> implement -> commit -> PR steps built on it.

@@ -1,5 +1,3 @@
-require_relative "../clients"
-
 module OPilot
   class Publish
     include Helpers

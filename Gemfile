@@ -6,6 +6,7 @@ gem "octokit"
 gem "faraday-retry" # silences octokit/faraday v2 warning; not called directly
 gem "git"
 gem "retriable"
+gem "zeitwerk" # autoloads lib/opilot/ — see lib/opilot.rb
 # Spreadsheet reader for intake attachments (xlsx/xlsm/ods/csv). Also pulls in
 # rubyzip + nokogiri, which the hand-rolled docx/pptx extraction reuses — so
 # this one gem covers every OOXML format the intake converter handles.

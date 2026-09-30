@@ -1,3 +1,5 @@
+require "json"
+
 module OPilot
   module Prompts
     module Triager

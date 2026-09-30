@@ -1,7 +1,5 @@
 require "json"
 require "time"
-require_relative "clients"
-require_relative "item_pictures"
 
 module OPilot
   class OpPull

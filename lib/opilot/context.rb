@@ -2,11 +2,8 @@ require "pathname"
 require "rainbow"
 require "uri"
 require "ipaddr"
-require_relative "repo"
 
 module OPilot
-  FatalError = Class.new(StandardError)
-
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
                 :log_file, :harness_url, :contributor_token,

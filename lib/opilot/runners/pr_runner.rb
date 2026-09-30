@@ -1,9 +1,6 @@
 require "json"
 require "git"
-require_relative "../clients"
-require_relative "../op_pull"
-require_relative "../github/gh_pull"
-require_relative "../github/gh_pr_cache"
+require "time"
 
 module OPilot
   # The terminal `pr` command: for each open PR a WP shipped (one per

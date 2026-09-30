@@ -161,11 +161,6 @@ module OPilot
       # A bare `./opilot pd` is a request for help, so answer it before
       # load_config! can fail at it for an unrelated reason.
       return @ui.pd_usage if args.empty?
-      # Required here rather than at boot: no other command touches the pipeline.
-      # The intake converter (roo, nokogiri, rubyzip) is deliberately NOT pulled
-      # in — PD::Runner#intake_client requires it on first use, so the stages
-      # that never read a document don't pay for it.
-      require "opilot/pd"
       session("pd", args.first(1)) { PD::Runner.new(@ctx).run(args) }
     end
 

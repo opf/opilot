@@ -9,16 +9,5 @@ module OPilot
   end
 end
 
+# Several error classes in one file, so it is not autoloaded (see lib/opilot.rb).
 require_relative "openproject/errors"
-require_relative "openproject/response"
-require_relative "openproject/query"
-require_relative "openproject/base"
-require_relative "openproject/work_packages"
-require_relative "openproject/projects"
-require_relative "openproject/instance"
-require_relative "openproject/attachments"
-require_relative "openproject/documents"
-require_relative "openproject/client"
-require_relative "openproject/href"
-require_relative "openproject/resource"
-require_relative "openproject/lookup"

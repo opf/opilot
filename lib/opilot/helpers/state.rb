@@ -1,5 +1,6 @@
 require "json"
 require "tempfile"
+require "pathname"
 
 module OPilot
   module Helpers

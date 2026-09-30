@@ -1,6 +1,4 @@
 require "json"
-require_relative "../op_pull"
-require_relative "../ui"   # #usage! prints from UI#pd_commands, the single help source
 
 module OPilot
   module PD
@@ -33,10 +31,7 @@ module OPilot
       # constructs a PD::Runner purely to revise a proposal — a path that never
       # reads a document.
       def intake_client
-        @intake ||= begin
-          require_relative "intake"
-          Intake.new(@ctx, op: @op)
-        end
+        @intake ||= Intake.new(@ctx, op: @op)
       end
 
       # How many times the LLM gets to fix its own output before the run fails.

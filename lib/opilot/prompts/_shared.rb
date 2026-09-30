@@ -1,3 +1,5 @@
+require "pathname"
+
 module OPilot
   module Prompts
     BLOCKS_DIR = Pathname(__dir__).join("_blocks").expand_path

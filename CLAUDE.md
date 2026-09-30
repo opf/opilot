@@ -481,17 +481,29 @@ bare `docker compose run …` works from the repo root.
 
 ### Core Ruby modules (`lib/opilot/`)
 
+**Zeitwerk autoloads `lib/opilot/`** (`lib/opilot.rb`), so `require "opilot"` is
+the only project require a caller needs. The rule is **one constant per file,
+named after the file**; acronyms are listed in the loader's inflections, and
+`runners/` and `github/` are collapsed, so they group files without adding a
+namespace. Four places are not autoloaded, because they reopen a module or hold
+several constants: `helpers/` (required by `helpers.rb`), `prompts/_shared.rb`
+(by `prompts.rb`), `roles.rb` (by `harness.rb`) and `clients/openproject/errors.rb`
+(by `openproject.rb`). A file still requires the **libraries** it uses (`git`,
+`json`, …): nothing loads them at boot any more. `test/opilot/loader_test.rb`
+eager-loads everything, so a file whose name does not match its constant fails
+in CI.
+
 | File | Role |
 |------|------|
 | `cli.rb` | Arg parsing and dispatch — the one place args are validated, config loaded, the log header stamped. `--help` works in any position (except `chat`'s free-text tail) |
 | `ui.rb` | Help text — the single home for every command description; `PD::Runner#usage!` renders `#pd_usage_text` rather than duplicating it |
 | `context.rb` | Singleton config — env vars, paths, allowed users, the repo registry |
 | `helpers.rb`, `helpers/` | Shared helpers, one file per concern, all reopening `Helpers`: `state` (paths under `.opilot/`, `ItemState`), `contracts` (the OPTIONS / WORK PACKAGE / HEALTH / ARTIFACT parsers), `work_packages` (mentions, links, the create payload), `terminal` (logging, prompts), `git` (branches, syncing, commits, the push-safety rule), `pipeline` (`#llm` and plan → implement → PR) |
-| `repo.rb` | `Repo` + `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
-| `op_pull.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
+| `repo.rb`, `registry.rb` | `Repo`, and `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
+| `op_pull.rb`, `intent.rb` | Polls OpenProject; parses `@opilot` comments into `Intent`s |
 | `item_pictures.rb` | Mirrors a work package's pictures beside its `item.json`, rewrites the inline references to the local files, and indexes them in `pictures[]` |
 | `op_agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
-| `github/gh_pull.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
+| `github/gh_pull.rb`, `github/gh_intent.rb` | Polls opilot's own open PRs (one seen merged/closed is stamped `pr_done` and dropped for good; `pr` clears it on reopen); yields `GhIntent`s and per-head-SHA `:ci` intents |
 | `github/upstream_gh_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `github/gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `github/gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
@@ -519,11 +531,11 @@ bare `docker compose run …` works from the repo root.
 Its own namespace and its own doc — see
 **[`lib/opilot/pd/CLAUDE.md`](lib/opilot/pd/CLAUDE.md)** for the file table and
 every stage. It shares nothing with the bug-fix flow but the core above, and
-`lib/opilot/pd.rb` keeps that boundary load-bearing: nothing under `pd/` is
-required at boot (`CLI#pd` requires it on demand), and `pd/intake` is lazier still,
-keeping roo/nokogiri/rubyzip out of runs that never read a document. The one
-exception is `PD::ChangeStore`, required by `github/gh_pull.rb` because identifying a spec
-PR needs the store's layout on every tick.
+autoloading keeps that boundary: nothing under `pd/` loads until code names a
+`PD` constant, and `PD::Intake` is lazier still, keeping roo/nokogiri/rubyzip out
+of runs that never read a document. The one exception is `PD::ChangeStore`, which
+`GhPull` names on every tick because identifying a spec PR needs the store's
+layout.
 
 ### Per-work-package state machine
 

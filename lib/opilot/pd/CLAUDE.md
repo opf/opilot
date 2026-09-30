@@ -24,19 +24,20 @@ M0–M3.
 | File | Role |
 |------|------|
 | `runner.rb` | The `pd` command family; always publishes as `:contributor` |
-| `change_state.rb` | `ChangeState` (per-change paths, branch, `tracker.json`) + `ChangeStore` (canonical store, materialise/persist, `.git/info/exclude`, WP→change reverse index) |
+| `change_state.rb` | `ChangeState` (per-change paths, branch, `tracker.json`) |
+| `change_store.rb` | `ChangeStore` (canonical store, materialise/persist, `.git/info/exclude`, WP→change reverse index) |
 | `resolved_ids.rb` | Id resolution by name — project, types, statuses with `isClosed`; fails fast |
 | `openspec.rb` | Open3 wrapper around the `openspec` CLI (runner-only) |
 | `tasks_file.rb` | Parse/rewrite `tasks.md` — sections, `(#id)` bindings, checkboxes; blanks fenced code so an example `##` can't mint a work package |
 | `intake.rb` | Documents → `intake/*.md` + attachments, `intake.hash` short-circuit |
 | `intake/converter.rb` | Attachment conversion, `unconvertible[]`, zip-bomb guards |
 
-`lib/opilot/pd.rb` is the load boundary, and it is load-bearing: nothing here is
-required at boot (`CLI#pd` requires it on demand), and `intake` is lazier still
-(`PD::Runner#intake_client` requires it on first use, keeping roo/nokogiri/rubyzip
-out of every run that never reads a document). The one exception is
-`PD::ChangeStore`, which `github/gh_pull.rb` requires directly because identifying a spec
-PR needs the store's layout on every agent tick.
+The pipeline stays out of every other run because it is autoloaded: nothing
+here loads until code names a `PD` constant (see `lib/opilot.rb`). `Intake` loads
+later still — only `PD::Runner#intake_client` names it — which keeps
+roo/nokogiri/rubyzip out of every run that never reads a document. The one part
+an agent run loads is `PD::ChangeStore`: `GhPull` names it on every tick to
+identify a spec PR.
 
 ## Stages
 
@@ -148,7 +149,7 @@ silently rewriting it would break the binding the operator thinks they made.
 
 ## The spec tree exists in three copies
 
-`PD::ChangeStore` (`change_state.rb`) owns all movement between them:
+`PD::ChangeStore` (`change_store.rb`) owns all movement between them:
 
 - **canonical** — `.opilot/openspec/<repo>/`, a runner-owned `git init` repo. The
   durable copy, carrying its own commit identity since it is never pushed.

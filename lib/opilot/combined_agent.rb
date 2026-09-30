@@ -1,6 +1,3 @@
-require_relative "op_agent"
-require_relative "github/gh_agent"
-
 module OPilot
   # The `agent` command: the OpenProject loop (OpAgent) and the GitHub-PR loop
   # (GhAgent) in one single-threaded process, each tick polling GitHub then

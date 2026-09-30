@@ -3,6 +3,7 @@ require "uri"
 require "json"
 require "rainbow"
 require "tty-markdown"
+require "pathname"
 
 module OPilot
   class Harness

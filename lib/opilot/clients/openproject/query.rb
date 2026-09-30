@@ -1,3 +1,5 @@
+require "json"
+
 module OPilot
   module Clients
     module OpenProject

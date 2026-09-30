@@ -13,5 +13,5 @@ module OPilot
   end
 end
 
+# Not autoloaded: it defines Prompt, Sections and every shared text block.
 require_relative "prompts/_shared"
-Dir[File.join(__dir__, "prompts/[a-z]*.rb")].sort.each { |f| require f }

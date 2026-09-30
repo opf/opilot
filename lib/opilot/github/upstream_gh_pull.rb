@@ -1,6 +1,4 @@
 require "json"
-require_relative "../clients"
-require_relative "gh_pr_cache"
 
 module OPilot
   # gh-agent's second source: @opilot mentions on the registry repos' *upstream*

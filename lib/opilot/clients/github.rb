@@ -2,6 +2,7 @@ require "octokit"
 require "faraday"
 require "retriable"
 require "open-uri"
+require "uri"
 
 module OPilot
   module Clients

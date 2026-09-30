@@ -4,37 +4,13 @@ require "webmock/minitest"
 require "json"
 require "pathname"
 require "fileutils"
+# Tests build git fixtures and stub Open3 directly; lib/ loads each on demand.
+require "git"
+require "open3"
 
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 
-require "opilot/context"
-require "opilot/clients"
-require "opilot/helpers"
-require "opilot/prompts"
-require "opilot/harness"
-require "opilot/ui"
-require "opilot/item_pictures"
-require "opilot/op_pull"
-require "opilot/github/publish"
-require "opilot/op_agent"
-require "opilot/github/gh_pull"
-require "opilot/github/gh_agent"
-require "opilot/combined_agent"
-require "opilot/runners/fix_runner"
-require "opilot/health_check"
-require "opilot/runners/health_runner"
-require "opilot/runners/pr_runner"
-require "opilot/runners/chat_runner"
-require "opilot/runners/usage_runner"
-require "opilot/runners/status_runner"
-require "opilot/runners/reset_runner"
-require "opilot/runners/op_runner"
-require "opilot/runners/appsignal_runner"
-# The `pd` pipeline is lazily required in production (see bin/opilot); the suite
-# loads all of it, intake converter included, since it tests every stage.
-require "opilot/pd"
-require "opilot/pd/intake"
-require "opilot/cli"
+require "opilot"
 
 require_relative "support/fixtures"
 

@@ -1,3 +1,5 @@
+require "uri"
+
 module OPilot
   module Clients
     module OpenProject

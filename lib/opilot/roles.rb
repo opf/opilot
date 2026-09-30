@@ -1,4 +1,5 @@
 require "yaml"
+require "pathname"
 
 module OPilot
   class Harness

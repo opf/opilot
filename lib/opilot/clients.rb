@@ -1,7 +1,0 @@
-require_relative "clients/http"
-require_relative "clients/openproject"
-require_relative "clients/github"
-require_relative "clients/openrouter"
-require_relative "clients/op_mcp"
-require_relative "clients/inference_gw"
-require_relative "clients/appsignal"

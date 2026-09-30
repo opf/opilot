@@ -10,8 +10,9 @@
 # real path, so a relative path resolves to the same absolute path the host sees,
 # and `git clone --reference-if-able` lines up.
 
+require "bundler/setup"
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
-require "opilot/repo"
+require "opilot"
 
 script_dir = ENV.fetch("SCRIPT_DIR", Dir.pwd)
 state_dir  = File.join(script_dir, ".opilot")

@@ -3,8 +3,6 @@ require "fileutils"
 require "json"
 require "tmpdir"
 
-require_relative "intake/converter"
-
 module OPilot
   module PD
     # Stage 1 of the `pd` pipeline: pull raw human intent onto disk.
