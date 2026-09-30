@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Planner
       extend Sections
-      ROLE = :planner
 
       # First line of an answer that names the approach before (or instead of) a
       # plan. Shared by every reader of that answer (Agent, FixRunner) so the

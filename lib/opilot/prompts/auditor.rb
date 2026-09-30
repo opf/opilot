@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Auditor
       extend Sections
-      ROLE = :auditor
 
       # The health check's answer shape (Helpers.parse_health). The END marker
       # detects a cut-off answer; the evidence field is what keeps a finding from

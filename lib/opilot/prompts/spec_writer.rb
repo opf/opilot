@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module SpecWriter
       extend Sections
-      ROLE = :spec_writer
 
       # The write scope every propose/revise run is held to. Enforced afterwards by
       # the runner (which resets anything outside it), but stated here too so a run

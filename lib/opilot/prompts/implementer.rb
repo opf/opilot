@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Implementer
       extend Sections
-      ROLE = :implementer
 
       # IMPLEMENTER: apply the approved plan to the worktree (tools: read/write/edit/bash).
       # `resumed:` — true when the call resumes the planning session (the plan is

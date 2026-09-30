@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Scribe
       extend Sections
-      ROLE = :scribe
 
       # Generate a GitHub PR description for a committed fix.
       def self.pr_description(item:, plan:, diff_stat:, template_section:)

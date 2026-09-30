@@ -39,7 +39,7 @@ module OPilot
 
     def test_every_builder_is_covered
       builders = Prompts.constants.map { |c| Prompts.const_get(c) }
-                        .select { |m| m.is_a?(Module) && m.const_defined?(:ROLE, false) }
+                        .select { |m| m.is_a?(Module) && m.singleton_class.include?(Prompts::Sections) }
                         .flat_map { |m| m.singleton_methods(false).map { |n| [m, n] } }
                         .select { |m, n| m.method(n).parameters.any? { |type, _| type == :keyreq } }
       assert_equal (BUILDERS.keys + FOLLOW_UPS).sort_by(&:inspect), builders.sort_by(&:inspect)
@@ -48,14 +48,14 @@ module OPilot
     def test_each_builder_opens_with_its_charter_and_its_grant_once
       BUILDERS.each_key do |mod, name|
         text = render(mod, name)
-        role = Harness.role(mod::ROLE)
+        role = Harness.role(mod.role)
         own, other = role.write? ? [Prompts::WRITE_GRANT, Prompts::READ_ONLY] : [Prompts::READ_ONLY, Prompts::WRITE_GRANT]
         label = "#{mod}.#{name}"
         assert text.start_with?(role.charter), label
         assert_equal 1, text.scan(own).size, "#{label}: its grant block once"
         refute_includes text, other, "#{label}: the other grant's block"
         refute_match(/You are (the WRITER|the IMPLEMENTER|opilot,)/, text, label)
-        assert_equal mod::ROLE, text.role, label
+        assert_equal mod.role, text.role, label
       end
     end
 
@@ -65,7 +65,7 @@ module OPilot
       rb = dir.glob("[a-z]*.rb").map { |f| f.basename(".rb").to_s }
       assert_equal Harness::ROLES.keys.map(&:to_s).sort, rb.sort
       (BUILDERS.keys + FOLLOW_UPS).each do |mod, name|
-        assert_equal dir / "#{mod::ROLE}.rb", Pathname(mod.method(name).source_location.first), "#{mod}.#{name}"
+        assert_equal dir / "#{mod.role}.rb", Pathname(mod.method(name).source_location.first), "#{mod}.#{name}"
       end
     end
 

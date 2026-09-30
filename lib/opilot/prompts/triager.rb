@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Triager
       extend Sections
-      ROLE = :triager
 
       # Write ONE work package from ONE AppSignal exception incident
       # (`./opilot appsignal fix`; read-only tools, the runner does the POST).

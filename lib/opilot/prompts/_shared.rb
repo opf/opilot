@@ -125,9 +125,13 @@ module OPilot
     module Sections
       # A builder's result: the prompt text, tagged with the role it is for,
       # so Helpers#llm can refuse a prompt sent under the wrong role.
-      def tagged(text) = Prompt.new(text, self::ROLE)
+      def tagged(text) = Prompt.new(text, role)
 
-      def charter = Prompts.charter(self::ROLE)
+      def charter = Prompts.charter(role)
+
+      # The role a module's prompts are for, from its name: PrAdvisor is
+      # :pr_advisor, which pairs it with pr_advisor.yml beside it.
+      def role = @role ||= name.split("::").last.gsub(/(?<=[a-z])(?=[A-Z])/, "_").downcase.to_sym
 
       # The item.json field list. One definition because five prompts hand the LLM
       # the same file, and because `pictures[]` has to be named in all of them: the

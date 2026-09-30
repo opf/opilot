@@ -114,11 +114,11 @@ module OPilot
 
     def role_modules
       Prompts.constants.map { |c| Prompts.const_get(c) }
-             .select { |m| m.is_a?(Module) && m.const_defined?(:ROLE, false) }
+             .select { |m| m.is_a?(Module) && m.singleton_class.include?(Prompts::Sections) }
     end
 
     def test_every_role_has_one_prompt_module
-      assert_equal Harness::ROLES.keys.sort, role_modules.map { |m| m::ROLE }.sort
+      assert_equal Harness::ROLES.keys.sort, role_modules.map { |m| m.role }.sort
     end
 
     def test_a_prompt_sent_under_another_role_raises

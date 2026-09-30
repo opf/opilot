@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module Advisor
       extend Sections
-      ROLE = :advisor
 
       # How the terminal chats (plan_chat, free_chat) close. The reader is the
       # operator at a console rather than a work-package thread, so there is no

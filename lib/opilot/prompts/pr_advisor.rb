@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module PrAdvisor
       extend Sections
-      ROLE = :pr_advisor
 
       # How a read-only review proposes an *applicable* code change on a PR opilot
       # can't push to: a GitHub suggestion the author commits with one click. The

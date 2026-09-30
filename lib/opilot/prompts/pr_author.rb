@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module PrAuthor
       extend Sections
-      ROLE = :pr_author
 
       # Reply to a comment on a opilot-opened GitHub PR (tools: read/write/edit).
       # "Always reply, code if asked": the LLM answers every comment, and edits the

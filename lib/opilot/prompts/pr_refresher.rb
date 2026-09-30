@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module PrRefresher
       extend Sections
-      ROLE = :pr_refresher
 
       # Refresh a stale opilot-opened PR on demand (tools: read/write/edit).
       # Unlike gh_reply/fix_ci (comment- and CI-triggered), the trigger is the

@@ -2,7 +2,6 @@ module OPilot
   module Prompts
     module WpWriter
       extend Sections
-      ROLE = :wp_writer
 
       # Write the NEW work packages a thread asks for — `@opilot create wp for
       # Rosanna's suggestion` (read-only tools; the runner does the POSTs).
