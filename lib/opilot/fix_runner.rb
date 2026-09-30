@@ -95,11 +95,6 @@ module OPilot
       # One guard for all three verbs — `plan` stops here too, which the old
       # per-verb check inside #commit/#ship could not do.
       return if report_already_shipped(st)
-      # One model for every session-bound phase of this WP (plan, chat, replan,
-      # implement) — switching mid-session would drop the context. The PR
-      # description is a separate, stateless call and picks its own model.
-      model   = Harness::MODEL_HEAVY
-
       replan_feedback = nil
       # Set once the operator picks an option (or types their own direction) at
       # the options prompt below. Present means the approach is settled, so the
@@ -122,13 +117,14 @@ module OPilot
           begin
             # Read-only across all repos; the LLM re-declares the target repo(s) in
             # the revised plan. Branch checkout waits until #ship.
-            @harness.capture(
+            llm(
+              :planner,
               Prompts.replan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                              item: container_path(st.item_file),
                              plan: container_path(st.plan_file), feedback: replan_feedback,
                              item_id: id, title: subject, resumed: session_resumable?(st),
                              related: related_ref(st), op_mcp: @ctx.op_mcp?),
-              tools: read_tools, model: model, outfile: st.plan_file, session_file: st.session_file
+              outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st)
           rescue Harness::Error
@@ -141,12 +137,13 @@ module OPilot
           log_script "Planning #{wp_label(id)} — #{subject}"
           begin
             # Pass session_file so a prior chat's context carries into the (re-)plan.
-            @harness.capture(
+            llm(
+              :planner,
               Prompts.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                            item: container_path(st.item_file),
                            item_id: id, title: subject, hint: option_focus.to_s,
                            related: related_ref(st), allow_options: option_focus.nil?, op_mcp: @ctx.op_mcp?),
-              tools: read_tools, model: model, outfile: st.plan_file, session_file: st.session_file
+              outfile: st.plan_file, session_file: st.session_file
             )
             record_chosen_repos(st) if plan_present?(st)
           rescue Harness::Error
@@ -194,7 +191,7 @@ module OPilot
           puts "  ⚠ Plan generation failed — no plan came back."
           case prompt_plan_failed(id)
           when :retry then next   # plan.md is gone, so the loop regenerates it
-          when :chat  then run_chat(st, model); next
+          when :chat  then run_chat(st); next
           when :skip  then log_script "#{wp_label(id)} skipped."; break
           when :drop  then log_script "#{wp_label(id)} dropped."; break
           end
@@ -211,7 +208,7 @@ module OPilot
           puts ""
           case prompt_needs_info(id)
           when :chat
-            run_chat(st, model)
+            run_chat(st)
             next   # retry planning — chat session carries context forward
           when :skip
             log_script "#{wp_label(id)} skipped (needs info)."
@@ -238,11 +235,11 @@ module OPilot
             # `build`/`ship` picks it up.
             log_script "#{wp_label(id)} — plan approved; build or ship it later with " \
                        "`dev commit #{id}` / `dev build #{id}`."
-          when :commit then commit(st, model)
-          when :ship   then ship(st, model)
+          when :commit then commit(st)
+          when :ship   then ship(st)
           end
           break
-        when :chat    then run_chat(st, model)
+        when :chat    then run_chat(st)
         when :replan  then replan_feedback = prompt_replan_feedback
         when :skip    then log_script "#{wp_label(id)} skipped."; break
         when :drop    then safe_rm(st.plan_file); log_script "#{wp_label(id)} dropped."; break
@@ -317,7 +314,7 @@ module OPilot
       msg.empty? ? "Revise the plan to incorporate the changes requested in the preceding conversation." : msg
     end
 
-    def run_chat(st, model = Harness::MODEL_HEAVY)
+    def run_chat(st)
       # The session already holds the plan (just generated/revised), so pass its
       # path as a fallback rather than re-embedding the full text on every turn.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
@@ -340,7 +337,7 @@ module OPilot
                      item: container_path(st.item_file), plan: plan_ref, message: msg
                    )
                  end
-        @harness.run(prompt, tools: read_tools, model: model, session_file: st.session_file)
+        llm(:advisor, prompt, session_file: st.session_file)
         oriented = true
         # Ring after the reply, not before the first message: the user just
         # chose [c]hat and is present; it's the LLM's answers they wander off on.
@@ -351,8 +348,8 @@ module OPilot
 
     # Helpers#implement_plan plus the console's own report of a no-op plan (the
     # agent answers that on the work package instead).
-    def implement(st, model = Harness::MODEL_HEAVY)
-      changed = implement_plan(st, model: model)
+    def implement(st)
+      changed = implement_plan(st)
       if changed.empty?
         log_script "#{wp_label(st.item_id)} — no changes produced."
         puts "  ⚠ No changes produced — plan may be a no-op or already applied."
@@ -363,15 +360,15 @@ module OPilot
     # `commit`: implement and commit, then stop — nothing is pushed and no PR is
     # opened. The committed branch sits in the local clone for review; a later
     # `dev build <id>` finds it via branch_has_commits? and goes straight to publish.
-    def commit(st, model = Harness::MODEL_HEAVY)
-      implement(st, model).each do |repo|
+    def commit(st)
+      implement(st).each do |repo|
         record_progress(st.item_id, st.branch, "built:#{repo.name}")
         puts "  ✓ Committed #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./opilot dev build #{st.item_id}`"
       end
     end
 
-    def ship(st, model = Harness::MODEL_HEAVY)
-      implement(st, model).each do |repo|
+    def ship(st)
+      implement(st).each do |repo|
         generate_pr_description(st, repo)
         url = @publish.open_pr(st.item_id, st.subject, st.branch, repo)
         if url

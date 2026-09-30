@@ -31,10 +31,8 @@ module OPilot
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
-    # The op_query variants (see MCP.md), granted only at the call sites named
-    # in Context#op_mcp?'s call table via Helpers#read_tools/#impl_tools — most
-    # TOOLS_READ/TOOLS_IMPL call sites keep the plain constant even when the
-    # flag is on. Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
+    # The op_query variants (see MCP.md), granted only to the roles marked
+    # `mcp` (roles.rb). Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
     TOOLS_READ_OP = "#{TOOLS_READ},op_query"
     TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"
 
@@ -84,6 +82,8 @@ module OPilot
       (env_minutes("OPILOT_PI_MAX_RUN_MIN", 45) +
        env_minutes("OPILOT_PI_IDLE_TIMEOUT_MIN", 5) + 2) * 60
     ).round
+
+    require_relative "roles"
 
     def initialize(ctx)
       @ctx = ctx

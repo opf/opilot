@@ -150,7 +150,7 @@ module OPilot
         comment_id: intent.comment_id, in_reply_to: intent.in_reply_to,
         ci: review_ci_ref(ci_file, intent.head_sha)
       )
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: session_file)
+      reply = llm(:pr_advisor, prompt, session_file: session_file)
       post_suggestions(intent, reply)
       post_reply(intent, reply)
     end
@@ -244,7 +244,7 @@ module OPilot
                            worktree_path: paths.repo.worktree_host)
       checkout_pr_branch(paths.repo, intent.branch)
 
-      reply = @harness.run(yield(paths), tools: impl_tools, session_file: paths.session_file)
+      reply = llm(:pr_author, yield(paths), session_file: paths.session_file)
 
       post_reply(intent, reply)
       push_followup(intent, paths.repo) if commit_followup(intent, paths.repo)

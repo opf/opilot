@@ -925,20 +925,13 @@ module OPilot
       @harness.ensure_available! if @harness.respond_to?(:ensure_available!)
     end
 
-    # The tool grant for a read-only LLM phase — includes op_query when
-    # OPILOT_OP_MCP is on (see MCP.md). Use ONLY at the specific call sites
-    # named in that plan's Step 3 table; every other TOOLS_READ call site
-    # (upstream PR review, the `create wp` draft, light one-shot passes) keeps
-    # the plain constant even when the flag is on.
-    def read_tools
-      Harness.tools_for(Harness::TOOLS_READ, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
-    end
-
-    # As #read_tools, for the one write-enabled call site the plan grants the
-    # tool to: gh-agent's own-PR reply and CI fix. The fix implement run keeps
-    # no MCP tool at all — see MCP.md's Step 3 table for why.
-    def impl_tools
-      Harness.tools_for(Harness::TOOLS_IMPL, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+    # The one way to call the model: the role decides tools and model.
+    # A stateless role refuses a session, so its independence is structural.
+    def llm(role, prompt, session_file: nil, outfile: nil)
+      r = Harness.role(role)
+      raise ArgumentError, "role #{r.name} is stateless" if r.stateless && session_file
+      opts = { tools: r.tools(@ctx), model: r.model, session_file: session_file }
+      outfile ? @harness.capture(prompt, outfile: outfile, **opts) : @harness.run(prompt, **opts)
     end
 
     # One-time, best-effort report of what the instance's MCP server actually
@@ -1320,16 +1313,15 @@ module OPilot
     #
     # Reporting the result is deliberately left to the caller — a work-package
     # comment and a console line are not the same message.
-    def implement_plan(st, model: Harness::MODEL_HEAVY)
+    def implement_plan(st)
       st.repos.each { |r| checkout_branch(st, r) }
 
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @harness.run(
-          Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
-                            resumed: session_resumable?(st)),
-          tools: Harness::TOOLS_IMPL, model: model, session_file: st.session_file
-        )
+        llm(:implementer,
+            Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
+                              resumed: session_resumable?(st)),
+            session_file: st.session_file)
         st.repos.each { |r| commit(st, r) }
       end
 
@@ -1353,7 +1345,7 @@ module OPilot
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
       prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT)
+      reply = llm(:scribe, prompt)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
         .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" the LLM prepended anyway
@@ -1367,7 +1359,7 @@ module OPilot
     # Stateless — a fresh, cheap-model call rather than a resumed session, since
     # the item/plan/diff are all passed as file paths or plain text the model can
     # read itself, with nothing depending on the implement session's history.
-    def generate_pr_description(st, repo, model: Harness::MODEL_LIGHT)
+    def generate_pr_description(st, repo)
       pr_desc_file = st.pr_desc_file(repo)
       return if Helpers.file_has_content?(pr_desc_file)
       wt               = worktree(repo)
@@ -1380,7 +1372,7 @@ module OPilot
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @harness.run(prompt, tools: Harness::TOOLS_READ, model: model)
+      pr_text = llm(:scribe, prompt)
       pr_body = pr_text[/^#.*/m] || pr_text
       pr_desc_file.write(strip_ansi(pr_body))
     end

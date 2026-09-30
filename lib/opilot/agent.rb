@@ -130,7 +130,7 @@ module OPilot
                             related: related_ref(st), can_create_wp: create_wp_enabled?,
                             can_make_artifact: artifacts_enabled?, max_artifacts: MAX_ARTIFACTS,
                             op_mcp: @ctx.op_mcp?)
-      reply = @harness.run(prompt, tools: read_tools, session_file: st.session_file)
+      reply = llm(:advisor, prompt, session_file: st.session_file)
       # Only when artifacts are on: with the instructions never given, a BEGIN
       # ARTIFACT line is text the writer invented or quoted, and stripping it
       # would delete content from someone's reply.
@@ -391,7 +391,7 @@ module OPilot
                                  item: container_path(st.item_file), request: request,
                                  project: project_name, types: Helpers.types_for_prompt(types),
                                  max: MAX_CREATE_WP, related: related, format_note: format_note)
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file).to_s
+      reply = llm(:wp_writer, prompt, session_file: st.session_file).to_s
       # Only what follows the last `ANSWER:` marker; the writer's own deliberation
       # is scratch (Prompts.create_wp). Text with no marker is read whole, so an
       # answer that skips it still works.
@@ -885,8 +885,7 @@ module OPilot
         prompt = Prompts.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
                                 resumed: session_resumable?(st), related: related, op_mcp: @ctx.op_mcp?)
-        @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
-                        session_file: st.session_file)
+        llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
         record_chosen_repos(st)
         return :ok
       end
@@ -895,8 +894,7 @@ module OPilot
       prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
                             related: related, allow_options: allow_options, op_mcp: @ctx.op_mcp?)
-      @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
-                      session_file: st.session_file)
+      llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip

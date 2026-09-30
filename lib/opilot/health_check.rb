@@ -347,8 +347,8 @@ module OPilot
                  "Answer again, and end with that block exactly as described."
 
     private def ask(prompt)
-      answer = Helpers.parse_health(@harness.run(prompt, tools: read_tools))
-      answer || Helpers.parse_health(@harness.run(prompt + RETRY_NOTE, tools: read_tools))
+      answer = Helpers.parse_health(llm(:auditor, prompt))
+      answer || Helpers.parse_health(llm(:auditor, prompt + RETRY_NOTE))
     end
 
     private def failed_note

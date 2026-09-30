@@ -58,7 +58,7 @@ module OPilot
                     Prompts.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos,
                                       message: pending, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
                   end
-        @harness.run(prompt, tools: read_tools, session_file: session_file)
+        llm(:advisor, prompt, session_file: session_file)
         # Set only after the run returns: a failed turn never reached the model,
         # so the next one still has to orient it.
         oriented = true

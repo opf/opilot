@@ -404,7 +404,7 @@ module OPilot
         ci: ci, conflicts: conflicts, feedback_count: feedback.length
       )
       # Shares gh-agent's per-PR session so prior PR conversations carry over.
-      @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: dir / "gh_session_id")
+      llm(:pr_refresher, prompt, session_file: dir / "gh_session_id")
     end
 
     # Commit what the refresh produced. A conflicted merge is concluded here (the

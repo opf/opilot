@@ -201,7 +201,7 @@ module OPilot
         incident: container_path(incident_file), number: number, app: @app,
         repos: repos_for_prompt(@ctx.repos.all), types: Helpers.types_for_prompt(project_types), format_note: format_note
       )
-      reply  = @harness.run(prompt, tools: read_tools, model: Harness::MODEL_HEAVY).to_s
+      reply  = llm(:triager, prompt).to_s
       answer = Helpers.after_marker(reply, "ANSWER")
 
       if answer.lstrip.start_with?("NEEDS_INFO")

@@ -172,10 +172,11 @@ module OPilot
         state = change_state_for(change_id, store)
         store.materialise!
 
-        reply = @harness.run(
+        reply = llm(
+          :spec_writer,
           Prompts.propose_feedback(change_id: change_id, change_dir: state.working_change_container,
                                    pr_thread: pr_thread, comment_section: comment_section),
-          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: session_file
+          session_file: session_file
         )
 
         # A question rather than a change request leaves the tree untouched: reply
@@ -365,7 +366,8 @@ module OPilot
       def write_proposal(state, repo)
         change_dir = state.working_change_dir
         log_script "Proposing #{state.change_id} in #{repo.name}…"
-        text = @harness.run(
+        text = llm(
+          :spec_writer,
           Prompts.propose(
             change_id:    state.change_id,
             change_dir:   state.working_change_container,
@@ -375,7 +377,7 @@ module OPilot
             repo_path:    repo.worktree_container,
             instructions: artifact_instructions(state, repo)
           ),
-          tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: state.session_file
+          session_file: state.session_file
         )
 
         # What the LLM DID beats what it said about what it did. It routinely
@@ -449,11 +451,12 @@ module OPilot
                   "#{MAX_VALIDATE_ATTEMPTS} revisions:\n#{failures}"
           end
           log_script "openspec validate failed (attempt #{attempt + 1}/#{MAX_VALIDATE_ATTEMPTS}) — re-prompting"
-          @harness.run(
+          llm(
+            :spec_writer,
             Prompts.propose_revise(change_id: state.change_id, change_dir: state.working_change_container,
                                    failures: failures, attempt: attempt + 1,
                                    max_attempts: MAX_VALIDATE_ATTEMPTS),
-            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: state.session_file
+            session_file: state.session_file
           )
         end
       end
@@ -736,14 +739,15 @@ module OPilot
           # Inside this branch, not above it: a re-run that only publishes an
           # already-built branch must not rewind the status it set last time.
           transition!(wp_id, item, @ctx.pd_implementing_status)
-          @harness.run(
+          llm(
+            :implementer,
             Prompts.implement_task(
               repo: repo.name, repo_path: repo.worktree_container,
               change_id: found[:change_id], change_dir: state.working_change_container,
               wp_label: wp_label(wp_id), section: found[:section].title,
               tasks: render_tasks(found[:section]), item: container_path(st.item_file)
             ),
-            tools: Harness::TOOLS_IMPL, model: Harness::MODEL_HEAVY, session_file: st.session_file
+            session_file: st.session_file
           )
           restore_spec_tree!(found[:store], found[:change_id])
           publish # memoize the identity commit() authors as
