@@ -115,6 +115,13 @@ module OPilot
       end
     end
 
+    def test_dev_health_reaches_the_runner
+      capture_io do
+        error = assert_raises(OPilot::FatalError) { CLI.new(ctx_double).run(%w[dev health 42]) }
+        assert_match(/Config not found/, error.message)
+      end
+    end
+
     def test_a_bare_op_is_a_help_request_and_needs_no_config
       out, = capture_io { CLI.new(ctx_double).run(["op"]) }
       assert_includes out, "Usage: ./opilot op <resource> <action>"

@@ -257,7 +257,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 _needs_harness() {
   _is agent op-agent gh-agent chat && return 0
   case "$CMD" in
-    dev) case "$SUB" in build|fix|commit|plan|refresh) return 0 ;; esac ;;
+    dev) case "$SUB" in build|fix|commit|plan|health|refresh) return 0 ;; esac ;;
     pd)  case "$SUB" in propose|implement) return 0 ;; esac ;;
     # `fix` is appsignal's only verb, so a bare incident number reads as one
     # (`./opilot appsignal 2025`). Matched by EXCLUSION for that reason: a list

@@ -44,9 +44,10 @@ every documented path goes through the script.
 
 ### op-agent
 
-Polls work packages, driven by `@opilot` comments. There are two command words —
-**`@opilot build`** (alias `fix`) and **`@opilot create wp`** (long form
-`create work package`); every other word is chat. The words `build` replaced —
+Polls work packages, driven by `@opilot` comments. There are three command words —
+**`@opilot build`** (alias `fix`), **`@opilot create wp`** (long form
+`create work package`) and **`@opilot health`** (see "Health check" below); every
+other word is chat. The words `build` replaced —
 `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too, so an old
 habit gets an answer that names the real command rather than silence. `create`
 without the noun is chat as well: alone it could mean a branch, a PR or a comment,
@@ -205,6 +206,9 @@ nothing" and "not scanning" look identical in the log.
 - **`dev commit <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
 - **`dev plan <id>...`** — stop at the approved plan.
+- **`dev health <id>...`** — the `@opilot health` check (`HealthRunner` →
+  `HealthCheck`), printed to the terminal; it posts nothing, so a prompt change can
+  be tuned on a real work package first.
 - **`dev refresh <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
   against local state, else *adopted* via the OpenProject ticket link in the
   description's top 15 lines; a WP id with no state is *discovered* by searching each
@@ -323,6 +327,7 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot dev build <id>...
 ./opilot dev commit <id>...   # stop after the local commit — no push, no PR
 ./opilot dev plan <id>...    # stop at the approved plan
+./opilot dev health <id>...  # check the WP for drift; prints, posts nothing
 
 # Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
 ./opilot dev refresh <id|pr-url>...
@@ -490,6 +495,8 @@ bare `docker compose run …` works from the repo root.
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
+| `health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
+| `health_runner.rb` | Terminal `dev health` — prints `HealthCheck`'s report, posts nothing |
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
@@ -658,7 +665,7 @@ up front rather than after a full plan and implement run (`build`/`plan` need no
 `Helpers#require_clone!` is called from **`Helpers#worktree`**, the funnel every git
 operation goes through, because a per-command check gets forgotten — `./opilot`
 only *warns* when a clone fails, and `Git.open`'s error names neither the repo nor
-the fix. `#ensure_claude!` fails with "start the container" at every entry point that
+the fix. `#ensure_harness!` fails with "start the container" at every entry point that
 will call the LLM, not mid-run with a connection error.
 
 `:ship` (`@opilot build`, alias `fix`) is the fix intent: it plans and
@@ -671,6 +678,40 @@ word for the same operation, so one thing has one name wherever it is typed. The
 difference is who is watching: the terminal verbs have an operator at the console.
 Chat lenses (`grill`, `summarize`) are preset instructions over
 the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
+
+**Health check (`@opilot health [focus]`, intent `:health`)** reports where a work
+package is inconsistent with itself. It is **not a lens**: it needs a fact pass, its
+own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
+
+- **Facts** (`HealthCheck#facts_for`, no LLM) — only rules on exact,
+  language-independent data, because the prompt tells the model not to dispute them:
+  status meaning from `GET /statuses` (`isClosed`, `isDefault`, looked up by name —
+  names are unique), relation labels, timestamps, linked-PR flags
+  (`/work_packages/:id/github_pull_requests`, which needs `show_github_content`),
+  and commits naming the WP on each registry base (`git log --grep` as a prefilter,
+  then a word-boundary match, so `#5994` never matches `#59942`). PR and commit rules
+  fire only on the **default** status: "Developed" is open and has merged PRs.
+  Anything heuristic — a reopen report, which status-name matching would confuse
+  with a subject edit — goes to the model as `history[]` instead.
+- **Descendants** (`HealthCheck#descendants`) — the whole subtree at any depth from
+  ONE paginated `ancestor` filter query, capped at `MAX_DESCENDANTS`, written to
+  `descendants.json`. A list element embeds nothing, so status and type come from
+  `_links.<key>.title`. The tree rules (closed over open at any depth, a subtree all
+  closed, stale open descendants) **replace** the direct-child rules; a failed read
+  falls back to them and says so. The model gets the tree to check the description's
+  scope against the descendants' subjects — no per-descendant LLM call.
+- **Judgement** — one read-only call **without the WP session**, so a check is
+  independent of earlier chat turns. The answer is `Prompts::HEALTH_CONTRACT`
+  (`BEGIN HEALTH` … `END HEALTH`, `FINDING:`/`GAP:` lines), read by
+  `Helpers.parse_health`: the END marker detects truncation (one retry, then a
+  failure note), and a finding without evidence is dropped.
+
+The reply is composed in Ruby (`HealthCheck#report`), for `#post_options`' reason,
+and always lists **Not checked** — skipped attachments, an unreadable PR list or
+status list, the model's own gaps — because silence about an input reads as "it is
+fine". A **public** reply drops any finding whose evidence names an internal
+comment's timestamp: the evidence is printed verbatim, so the prompt rule alone
+is not enough. Like `create wp`, the handler answers its own failure.
 
 **A chat answer can carry an ARTIFACT — a diagram or a long report — published as
 a secret gist and linked from the comment.** Three surfaces offer one, and they are
@@ -852,12 +893,16 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── item.json            # WP metadata + poll cache + acted_at + item_version
 │       │                        #   + refusal_noted_at (the one allowlist note per WP)
 │       │                        #   + create_wp_refusal_noted_at (the one `create wp` off note)
-│       │                        #   + pictures[] / pictures_skipped[] (see pictures/ below)
+│       │                        #   + pictures[] (with created_at) / pictures_skipped[]
+│       │                        #   + history[] (field changes, no comment text) and
+│       │                        #     description_changed_at, for `health`
 │       │                        #   + pictures_pending (an attachment read failed —
 │       │                        #     suppresses the cache until a run finishes)
 │       ├── pictures/            # every picture the WP shows, mirrored so the LLM can `read`
 │       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
 │       ├── related.json         # related WPs pulled in at plan time
+│       ├── health.json          # the last health check's facts (HealthCheck#facts_for)
+│       ├── descendants.json     # the subtree the last health check read (HealthCheck#descendants)
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── artifacts/<comment>/  # markdown a chat answer produced, keyed by the trigger's
 │       │                        #   comment_at — the local copy of what was gisted
@@ -946,7 +991,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages` |
+| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages`. `health` reads linked PRs only with `:show_github_content` (without it, that input is listed as not checked) |
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist and chat artifacts; both skipped if absent). Fine-grained tokens can't open fork→upstream PRs |

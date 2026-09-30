@@ -96,6 +96,7 @@ module OPilot
       when :chat      then handle_chat(intent)
       when :ship      then handle_ship(intent)
       when :create_wp then handle_create_wp(intent)
+      when :health    then handle_health(intent)
       end
     end
 
@@ -135,6 +136,19 @@ module OPilot
       # would delete content from someone's reply.
       reply = publish_artifacts(st, intent, reply) if artifacts_enabled?
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
+    end
+
+    # Answers its own failure, like create wp: the reader waits for a report.
+    def handle_health(intent)
+      check = HealthCheck.new(@ctx, pull: @pull, harness: @harness, api: @api)
+      report = begin
+        check.run(intent.item_id, focus: intent.text.to_s, internal: intent.internal != false) ||
+          "The health check could not read this work package."
+      rescue Harness::Error => e
+        log_script "Health check failed on #{wp_label(intent.item_id)}: #{e.message}"
+        "The health check did not finish: the model run failed. Ask again with `@opilot health`."
+      end
+      post_note(intent.item_id, addressed(report))
     end
 
     # Take the artifacts out of a chat answer, mirror them, publish them as one

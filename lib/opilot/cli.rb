@@ -89,6 +89,7 @@ module OPilot
       when "build", "fix" then with_ids("dev build", rest) { |ids| FixRunner.new(@ctx).ship_ids(*ids) }
       when "commit"       then with_ids("dev commit", rest) { |ids| FixRunner.new(@ctx).commit_ids(*ids) }
       when "plan"         then with_ids("dev plan", rest) { |ids| FixRunner.new(@ctx).plan_ids(*ids) }
+      when "health"       then with_ids("dev health", rest) { |ids| HealthRunner.new(@ctx).run_ids(*ids) }
       when "refresh"      then refresh(rest)
       # Reads .opilot/ only — no config, no network, no log header.
       when "status"       then @ui.status

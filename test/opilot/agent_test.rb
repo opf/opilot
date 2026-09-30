@@ -1270,6 +1270,16 @@ module OPilot
       @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "artifacts" / slug
     end
 
+    # The report itself is HealthCheckTest's; this is the routing, and the
+    # answer to a work package the check cannot read — never silence.
+    def test_health_answers_even_when_the_work_package_cannot_be_read
+      @pull.define_singleton_method(:fetch_single_item) { |_id| nil }
+      @agent.handle(intent(:health, text: "", user: "Ana", user_href: "/api/v3/users/5", internal: false))
+      assert_equal 1, @notes.length
+      assert_includes @notes.first, "could not read this work package"
+      assert_equal [false], @note_visibility, "a public trigger gets a public answer"
+    end
+
     # The guard on the surface that already worked: an ordinary answer must be
     # posted exactly as it is, artifacts on or off.
     def test_chat_without_an_artifact_posts_the_answer_unchanged

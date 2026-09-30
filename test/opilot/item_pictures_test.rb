@@ -85,6 +85,12 @@ module OPilot
       assert_equal "\x89PNG-data".b, (@dir / "pictures" / "7-shot.png").binread
     end
 
+    def test_a_picture_records_when_it_was_attached
+      api = FakeOP.new(attached: [attachment("7").merge("createdAt" => "2026-09-10T00:00:00Z")])
+      out = mirror(item(description: "![](#{ref(7)})"), api)
+      assert_equal "2026-09-10T00:00:00Z", out["pictures"].first["created_at"]
+    end
+
     def test_the_inline_reference_is_rewritten_to_the_local_file
       # The half that makes a picture readable rather than merely present: the
       # harness has no egress, so the URL is dead either way.

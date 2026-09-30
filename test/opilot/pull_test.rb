@@ -180,6 +180,36 @@ module OPilot
       assert_equal [:create_wp, "for Rosanna"], @pull.send(:parse_command, "#{MENTION} Create WP for Rosanna")
     end
 
+    def test_parse_command_health_is_its_own_intent_with_a_focus
+      assert_equal [:health, "the toast"], @pull.send(:parse_command, "#{MENTION} Health the toast")
+      assert_equal [:health, ""], @pull.send(:parse_command, "@opilot health")
+    end
+
+    # ── field-change history ──────────────────────────────────────────────────
+
+    ACTIVITIES = [
+      { "id" => 1, "createdAt" => "2024-01-03T00:00:00Z", "comment" => { "raw" => "hi" }, "details" => [] },
+      { "id" => 2, "createdAt" => "2024-01-04T00:00:00Z", "comment" => { "raw" => "" },
+        "_embedded" => { "user" => { "name" => "Ana" } },
+        "details" => [{ "raw" => "Beschreibung geändert (/journals/9/diff/description)", "html" => "" },
+                      { "raw" => "Status changed from New to Developed", "html" => "" }] },
+      { "id" => 3, "createdAt" => "2024-01-05T00:00:00Z", "comment" => { "raw" => "" },
+        "details" => [{ "raw" => "Assignee set to Bo", "html" => "" }] }
+    ].freeze
+
+    def test_history_keeps_field_changes_that_carry_no_comment
+      history = @pull.send(:build_history, ACTIVITIES)
+      assert_equal %w[2 3], history.map { |h| h["id"] }
+      assert_equal "Ana", history.first["user"]
+      assert_equal 2, history.first["changes"].length
+    end
+
+    def test_description_changed_at_follows_the_diff_link_in_any_language
+      assert_equal "2024-01-04T00:00:00Z", @pull.send(:description_changed_at, ACTIVITIES, WP)
+      assert_equal WP["createdAt"], @pull.send(:description_changed_at, ACTIVITIES.last(1), WP),
+                   "never edited = the creation time"
+    end
+
     # ── chat lenses ───────────────────────────────────────────────────────────
 
     def test_parse_command_grill_is_a_chat_with_the_lens_instruction

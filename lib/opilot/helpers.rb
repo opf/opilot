@@ -277,6 +277,57 @@ module OPilot
     end
     private_class_method :work_package_fields
 
+    HEALTH_BEGIN = /\A[ \t]*BEGIN HEALTH[ \t]*\z/
+    HEALTH_END   = /\A[ \t]*END HEALTH[ \t]*\z/
+    HEALTH_FINDING_LINE = /\A[ \t]*FINDING:[ \t]*(.+)\z/i
+    HEALTH_GAP_LINE     = /\A[ \t]*GAP:[ \t]*(.+)\z/i
+    HEALTH_CLEAN_LINE   = /\A[ \t]*NO FINDINGS[ \t.]*\z/i
+
+    # Read a health answer (Prompts::HEALTH_CONTRACT) into
+    # { "findings" => [...], "gaps" => [...] }, or nil when there is no complete
+    # block — the answer was cut off, or ignored the format. The LAST complete
+    # block wins, so a format the writer rehearsed first does not count. A
+    # malformed line drops only itself; so does a finding with no evidence.
+    def self.parse_health(body)
+      block = nil
+      open  = nil
+      fence = nil
+      body.to_s.lines.each do |raw|
+        line  = raw.chomp
+        fence = fence_state(fence, line)
+        next unless fence.nil?
+
+        if line.match?(HEALTH_BEGIN) then open = []
+        elsif line.match?(HEALTH_END)
+          block = open if open
+          open = nil
+        else open&.<<(line)
+        end
+      end
+      return nil unless block
+
+      findings = block.filter_map { |l| health_finding(l[HEALTH_FINDING_LINE, 1]) }
+      gaps = block.filter_map do |l|
+        what, why = l[HEALTH_GAP_LINE, 1]&.split("|", 2)&.map(&:strip)
+        { "what" => what, "why" => why.to_s } unless what.to_s.empty?
+      end
+      readable = findings.any? || gaps.any? ||
+                 block.any? { |l| l.match?(HEALTH_CLEAN_LINE) || l.match?(HEALTH_FINDING_LINE) }
+      return nil unless readable
+      { "findings" => findings.first(Prompts::HEALTH_MAX_FINDINGS), "gaps" => gaps }
+    end
+
+    def self.health_finding(text)
+      return nil unless text
+      severity, area, sentence, evidence = text.split("|", 4).map { |f| f.to_s.strip }
+      severity = severity.downcase
+      area     = area.to_s.downcase
+      return nil unless Prompts::HEALTH_SEVERITIES.include?(severity) && Prompts::HEALTH_AREAS.include?(area)
+      return nil if sentence.to_s.empty? || evidence.to_s.empty?
+      { "severity" => severity, "area" => area, "text" => sentence, "evidence" => evidence }
+    end
+    private_class_method :health_finding
+
     ARTIFACT_BEGIN         = /\A[ \t]*BEGIN ARTIFACT[ \t]*\z/
     ARTIFACT_END           = /\A[ \t]*END ARTIFACT[ \t]*\z/
     ARTIFACT_FILENAME_LINE = /\AFILENAME:[ \t]*(.+)\z/i

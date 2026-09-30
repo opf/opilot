@@ -185,6 +185,7 @@ module OPilot
 
       [{ "id" => want["id"], "where" => want["where"], "name" => name,
          "content_type" => meta["contentType"], "bytes" => dest.size,
+         "created_at" => meta["createdAt"],
          "file" => Helpers.state_container_path(ctx, dest) }, false]
     end
 
