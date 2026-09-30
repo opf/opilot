@@ -8,6 +8,10 @@ module OPilot
           get("users/me")
         end
 
+        def user(id)
+          get("users/#{id}")
+        end
+
         def statuses
           get("statuses")
         end

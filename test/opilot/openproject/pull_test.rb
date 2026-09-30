@@ -117,6 +117,19 @@ module OPilot
       assert_equal({}, @pull.send(:custom_fields, WP))
     end
 
+    # The activities route renders the author as a bare href.
+    def test_build_comments_resolves_the_author_name_once_per_user
+      stub = stub_request(:get, "https://example.com/api/v3/users/7")
+        .to_return(status: 200, body: JSON.generate({ "name" => "Carol" }))
+      activities = [1, 2].map do |id|
+        { "id" => id, "comment" => { "raw" => "Hi" }, "createdAt" => "t",
+          "_links" => { "user" => { "href" => "/api/v3/users/7" } } }
+      end
+      result = @pull.send(:build_comments, activities, [])
+      assert_equal %w[Carol Carol], result.map { |c| c["user"] }
+      assert_requested stub, times: 1
+    end
+
     def test_build_comments_filters_blank_comment_text
       activities = [
         { "id" => 1, "comment" => { "raw" => "" },    "_embedded" => { "user" => { "name" => "A" } }, "createdAt" => "t" },

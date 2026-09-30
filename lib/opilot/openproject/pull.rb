@@ -378,8 +378,9 @@ module OPilot
       # item.json's shape. The updated_at cache below would otherwise keep a work
       # package opilot has already seen on the old shape forever — which is how a
       # mirror gains a field (3: "history", "description_changed_at", and each
-      # picture's "created_at", for the health check; 4: "custom_fields").
-      ITEM_VERSION = 4
+      # picture's "created_at", for the health check; 4: "custom_fields"; 5: user
+      # names on comments and history).
+      ITEM_VERSION = 5
 
       # A work package is served from cache only when the mirror is COMPLETE.
       # `pictures_pending` says an attachment read failed, and updated_at cannot
@@ -443,7 +444,7 @@ module OPilot
           .map do |a|
             {
               "id"         => a["id"].to_s,
-              "user"       => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
+              "user"       => activity_user(a),
               "user_href"  => a.dig("_links", "user", "href"),
               "created_at" => a["createdAt"],
               "text"       => a.dig("comment", "raw"),
@@ -451,6 +452,22 @@ module OPilot
               "reactions"  => rxn_index[a["id"].to_s] || {}
             }
           end
+      end
+
+      # The activity's author by name. The activities route renders only the
+      # user's href, so the name is one read per user per process.
+      def activity_user(activity)
+        name = activity.dig("_embedded", "user", "name") || activity.dig("_links", "user", "title")
+        return name if name
+        id = Resource.href_id(activity.dig("_links", "user", "href"))
+        return nil if id.to_s.empty?
+        @user_names ||= {}
+        @user_names.fetch(id) do
+          code, body = @api.user(id)
+          @user_names[id] = code == 200 ? body["name"] : nil
+        end
+      rescue Clients::OpenProject::NetworkError
+        nil # not cached: the next refresh asks again
       end
 
       # Field changes (status, assignee, description, …), which build_comments
@@ -461,7 +478,7 @@ module OPilot
           changes = Array(a["details"]).map { |d| d["raw"].to_s.strip }.reject(&:empty?)
           next if changes.empty?
           { "id" => a["id"].to_s,
-            "user" => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
+            "user" => activity_user(a),
             "created_at" => a["createdAt"], "changes" => changes }
         end
       end
