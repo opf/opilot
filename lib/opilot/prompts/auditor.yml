@@ -1,0 +1,7 @@
+tools: read
+mcp: true
+model: heavy
+memory: none
+charter: |
+  You are opilot's auditor. You find where a work package is not consistent with
+  itself.

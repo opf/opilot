@@ -109,7 +109,7 @@ module OPilot
     def triggers
       <<~TRIGGERS.strip
         Triggers — on a work package:  @opilot build | create wp | grill |
-                                       summarize, or anything else to just talk.
+                                       summarize | health, or just talk.
                                        build offers numbered options when a fix
                                        has more than one shape; reply `build <n>`
                                        to build one (one alias: fix). create wp
@@ -136,6 +136,11 @@ module OPilot
         ./opilot dev build <id>...
             Same, then open a draft PR from the bot's fork; picks up a branch an
             earlier commit left behind. (`dev fix` is an alias.)
+
+        ./opilot dev health <id>...
+            Check a work package for drift: description against comments,
+            pictures, related work packages, status, linked PRs and commits.
+            Prints the report and posts nothing. Same as `@opilot health`.
 
         ./opilot dev refresh <id | pr-url>...
             Refresh a shipped PR: merge the base branch in, fix failing CI,
@@ -327,7 +332,7 @@ module OPilot
         #{indent(triggers, 2)}
 
         Terminal:
-          ./opilot dev <command>    software development: plan, commit, build, refresh, status
+          ./opilot dev <command>    software development: plan, commit, build, health, refresh, status
           ./opilot pd <command>     product development: the spec-driven pipeline
           ./opilot op <command>     read the OpenProject API directly (JSON out)
           ./opilot appsignal <cmd>  turn a production error into a work package and a PR

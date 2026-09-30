@@ -180,25 +180,55 @@ module OPilot
       assert_equal [:create_wp, "for Rosanna"], @pull.send(:parse_command, "#{MENTION} Create WP for Rosanna")
     end
 
+    def test_parse_command_health_is_its_own_intent_with_a_focus
+      assert_equal [:health, "the toast"], @pull.send(:parse_command, "#{MENTION} Health the toast")
+      assert_equal [:health, ""], @pull.send(:parse_command, "@opilot health")
+    end
+
+    # ── field-change history ──────────────────────────────────────────────────
+
+    ACTIVITIES = [
+      { "id" => 1, "createdAt" => "2024-01-03T00:00:00Z", "comment" => { "raw" => "hi" }, "details" => [] },
+      { "id" => 2, "createdAt" => "2024-01-04T00:00:00Z", "comment" => { "raw" => "" },
+        "_embedded" => { "user" => { "name" => "Ana" } },
+        "details" => [{ "raw" => "Beschreibung geändert (/journals/9/diff/description)", "html" => "" },
+                      { "raw" => "Status changed from New to Developed", "html" => "" }] },
+      { "id" => 3, "createdAt" => "2024-01-05T00:00:00Z", "comment" => { "raw" => "" },
+        "details" => [{ "raw" => "Assignee set to Bo", "html" => "" }] }
+    ].freeze
+
+    def test_history_keeps_field_changes_that_carry_no_comment
+      history = @pull.send(:build_history, ACTIVITIES)
+      assert_equal %w[2 3], history.map { |h| h["id"] }
+      assert_equal "Ana", history.first["user"]
+      assert_equal 2, history.first["changes"].length
+    end
+
+    def test_description_changed_at_follows_the_diff_link_in_any_language
+      assert_equal "2024-01-04T00:00:00Z", @pull.send(:description_changed_at, ACTIVITIES, WP)
+      assert_equal WP["createdAt"], @pull.send(:description_changed_at, ACTIVITIES.last(1), WP),
+                   "never edited = the creation time"
+    end
+
     # ── chat lenses ───────────────────────────────────────────────────────────
 
     def test_parse_command_grill_is_a_chat_with_the_lens_instruction
       command, text = @pull.send(:parse_command, "@opilot grill")
       assert_equal :chat, command
-      assert_equal Prompts::LENSES["grill"], text
+      assert_equal Prompts::Advisor::LENSES["grill"], text
     end
 
     def test_parse_command_lens_folds_trailing_text_into_a_focus_hint
       command, text = @pull.send(:parse_command, "@opilot summarize the permissions discussion")
       assert_equal :chat, command
-      assert text.start_with?(Prompts::LENSES["summarize"])
+      assert text.start_with?(Prompts::Advisor::LENSES["summarize"])
       assert_includes text, "Focus especially on: the permissions discussion"
     end
 
     def test_parse_command_lens_is_case_insensitive_and_handles_mention_markup
       command, text = @pull.send(:parse_command, "#{MENTION} GRILL")
       assert_equal :chat, command
-      assert_equal Prompts::LENSES["grill"], text
+      assert_equal Prompts::Advisor::LENSES["grill"], text
     end
 
     # OpenProject wraps the handle in CKEditor mention markup.

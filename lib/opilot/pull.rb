@@ -331,9 +331,13 @@ module OPilot
       # the whitespace, so "create   wp" arrives normalised.
       when /\A@opilot\s+create\s+(?:wp|work\s+package)\b\s*(.*)/im
         [:create_wp, $1.strip]
+      # Not a lens: it needs a fact pass, its own prompt and a composed reply
+      # (HealthCheck). Trailing text is a focus hint, as for a lens.
+      when /\A@opilot\s+health\b\s*(.*)/im
+        [:health, $1.strip]
       # Chat lenses: a preset instruction over the ordinary chat path, with any
-      # trailing text folded in as a focus hint (see Prompts::LENSES).
-      when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts.lens($1, $2)]
+      # trailing text folded in as a focus hint (see Prompts::Advisor::LENSES).
+      when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts::Advisor.lens($1, $2)]
       else [:chat, text.sub(/@opilot\s*/i, "").strip]
       end
     end
@@ -378,8 +382,9 @@ module OPilot
 
     # item.json's shape. The updated_at cache below would otherwise keep a work
     # package opilot has already seen on the old shape forever — which is how a
-    # mirror gains a field (this is 2 because "pictures" was added).
-    ITEM_VERSION = 2
+    # mirror gains a field (3: "history", "description_changed_at", and each
+    # picture's "created_at", for the health check).
+    ITEM_VERSION = 3
 
     # A work package is served from cache only when the mirror is COMPLETE.
     # `pictures_pending` says an attachment read failed, and updated_at cannot
@@ -413,6 +418,10 @@ module OPilot
       )
 
       full = build_full_item(wp, comments)
+      # nil, not empty, when the read failed: "no changes" would be a false fact.
+      activities = acts.dig("_embedded", "elements") || []
+      full["history"] = acts_code == 200 ? build_history(activities) : nil
+      full["description_changed_at"] = acts_code == 200 ? description_changed_at(activities, wp) : nil
       if item_path.exist?
         prev = Helpers.safe_json_read(item_path) || {}
         (CARRIED_KEYS + PICTURE_KEYS).each { |key| full[key] = prev[key] if prev.key?(key) }
@@ -446,6 +455,31 @@ module OPilot
             "reactions"  => rxn_index[a["id"].to_s] || {}
           }
         end
+    end
+
+    # Field changes (status, assignee, description, …), which build_comments
+    # drops. `changes` are the instance's own rendered sentences, so they are
+    # language-dependent: input for the LLM, never for a Ruby rule.
+    def build_history(activities)
+      activities.filter_map do |a|
+        changes = Array(a["details"]).map { |d| d["raw"].to_s.strip }.reject(&:empty?)
+        next if changes.empty?
+        { "id" => a["id"].to_s,
+          "user" => a.dig("_embedded", "user", "name") || a.dig("_links", "user", "title"),
+          "created_at" => a["createdAt"], "changes" => changes }
+      end
+    end
+
+    # When the description last changed, or the creation time if it never did.
+    # The detail links to the journals diff route
+    # (`/journals/<id>/diff/description`), which is language-independent.
+    DESCRIPTION_DIFF = %r{/diff/description\b}
+
+    def description_changed_at(activities, wp)
+      edits = activities.select do |a|
+        Array(a["details"]).any? { |d| "#{d["raw"]} #{d["html"]}".match?(DESCRIPTION_DIFF) }
+      end
+      edits.map { |a| a["createdAt"].to_s }.max || wp["createdAt"]
     end
 
     def build_full_item(wp, comments)
@@ -565,6 +599,8 @@ module OPilot
 
     def own_user_id;      own_user["id"];   end
     def bot_display_name; own_user["name"]; end
+    # The health check tells the model which comments are opilot's own.
+    public :own_user_id
 
     def mark_opilot_acted(wp_id, created_at)
       item_path = Helpers.item_dir(@ctx, wp_id) / "item.json"

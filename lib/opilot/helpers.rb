@@ -108,7 +108,7 @@ module OPilot
     # ── implementation options ──────────────────────────────────────────────
     #
     # A plan call may answer with implementation options instead of a plan (see
-    # Prompts::OPTIONS_CONTRACT). Both readers of that answer live here — the
+    # Prompts::Planner::OPTIONS_CONTRACT). Both readers of that answer live here — the
     # agent, which offers the options in a work-package comment, and the terminal
     # runner, which offers them at the console — so the parsing and the wording of
     # a chosen option are written once.
@@ -135,7 +135,7 @@ module OPilot
         .uniq { |o| o["n"] }.sort_by { |o| o["n"] }
     end
 
-    # Whether `text` answers with OPTIONS (Prompts::OPTIONS_CONTRACT) — tolerant
+    # Whether `text` answers with OPTIONS (Prompts::Planner::OPTIONS_CONTRACT) — tolerant
     # of a preamble sentence before the sentinel line, the same accommodation
     # #record_chosen_repos' REPOS: match already makes and the NEEDS_INFO check
     # below makes too: a local model in particular often reasons in prose before
@@ -143,11 +143,11 @@ module OPilot
     # Requires the sentinel ALONE on its own line, so an ordinary sentence that
     # happens to use the word "options" is never mistaken for the block.
     def self.options_sentinel?(text)
-      text.to_s.lines.any? { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+      text.to_s.lines.any? { |l| l.strip == Prompts::Planner::OPTIONS_SENTINEL }
     end
 
     # Split a writer's answer into its OPTIONS line(s) and whatever follows
-    # (Prompts::OPTIONS_CONTRACT: name the approach, then — when there's only
+    # (Prompts::Planner::OPTIONS_CONTRACT: name the approach, then — when there's only
     # one — continue straight into the plan in the same response). The
     # sentinel is found anywhere, per #options_sentinel? above, and everything
     # before and including it is dropped along with it — a preamble sentence
@@ -157,7 +157,7 @@ module OPilot
     # which a tolerant scan like parse_options' would misread as more options.
     def self.parse_leading_options(body)
       lines = body.to_s.lines
-      start = lines.index { |l| l.strip == Prompts::OPTIONS_SENTINEL }
+      start = lines.index { |l| l.strip == Prompts::Planner::OPTIONS_SENTINEL }
       return [[], body.to_s.lstrip] unless start
       lines = lines[(start + 1)..] || []
       options = []
@@ -183,7 +183,7 @@ module OPilot
     WP_LINKS        = %w[child related].freeze
     DEFAULT_WP_LINK = "related".freeze
 
-    # Read the work packages a `create wp` answer asks for (Prompts.create_wp).
+    # Read the work packages a `create wp` answer asks for (Prompts::WpWriter.create_wp).
     # Each one is a block — BEGIN WORK PACKAGE, a SUBJECT: line, an optional
     # TYPE: and LINK: line, the description, END WORK PACKAGE — and a request
     # that names several pieces of work answers with several blocks, in order.
@@ -277,12 +277,63 @@ module OPilot
     end
     private_class_method :work_package_fields
 
+    HEALTH_BEGIN = /\A[ \t]*BEGIN HEALTH[ \t]*\z/
+    HEALTH_END   = /\A[ \t]*END HEALTH[ \t]*\z/
+    HEALTH_FINDING_LINE = /\A[ \t]*FINDING:[ \t]*(.+)\z/i
+    HEALTH_GAP_LINE     = /\A[ \t]*GAP:[ \t]*(.+)\z/i
+    HEALTH_CLEAN_LINE   = /\A[ \t]*NO FINDINGS[ \t.]*\z/i
+
+    # Read a health answer (Prompts::Auditor::HEALTH_CONTRACT) into
+    # { "findings" => [...], "gaps" => [...] }, or nil when there is no complete
+    # block — the answer was cut off, or ignored the format. The LAST complete
+    # block wins, so a format the writer rehearsed first does not count. A
+    # malformed line drops only itself; so does a finding with no evidence.
+    def self.parse_health(body)
+      block = nil
+      open  = nil
+      fence = nil
+      body.to_s.lines.each do |raw|
+        line  = raw.chomp
+        fence = fence_state(fence, line)
+        next unless fence.nil?
+
+        if line.match?(HEALTH_BEGIN) then open = []
+        elsif line.match?(HEALTH_END)
+          block = open if open
+          open = nil
+        else open&.<<(line)
+        end
+      end
+      return nil unless block
+
+      findings = block.filter_map { |l| health_finding(l[HEALTH_FINDING_LINE, 1]) }
+      gaps = block.filter_map do |l|
+        what, why = l[HEALTH_GAP_LINE, 1]&.split("|", 2)&.map(&:strip)
+        { "what" => what, "why" => why.to_s } unless what.to_s.empty?
+      end
+      readable = findings.any? || gaps.any? ||
+                 block.any? { |l| l.match?(HEALTH_CLEAN_LINE) || l.match?(HEALTH_FINDING_LINE) }
+      return nil unless readable
+      { "findings" => findings.first(Prompts::Auditor::HEALTH_MAX_FINDINGS), "gaps" => gaps }
+    end
+
+    def self.health_finding(text)
+      return nil unless text
+      severity, area, sentence, evidence = text.split("|", 4).map { |f| f.to_s.strip }
+      severity = severity.downcase
+      area     = area.to_s.downcase
+      return nil unless Prompts::Auditor::HEALTH_SEVERITIES.include?(severity) && Prompts::Auditor::HEALTH_AREAS.include?(area)
+      return nil if sentence.to_s.empty? || evidence.to_s.empty?
+      { "severity" => severity, "area" => area, "text" => sentence, "evidence" => evidence }
+    end
+    private_class_method :health_finding
+
     ARTIFACT_BEGIN         = /\A[ \t]*BEGIN ARTIFACT[ \t]*\z/
     ARTIFACT_END           = /\A[ \t]*END ARTIFACT[ \t]*\z/
     ARTIFACT_FILENAME_LINE = /\AFILENAME:[ \t]*(.+)\z/i
     ARTIFACT_TITLE_LINE    = /\ATITLE:[ \t]*(.+)\z/i
 
-    # Read the artifacts a chat answer carries (Prompts.artifact_block), and
+    # Read the artifacts a chat answer carries (Prompts::Advisor.artifact_block), and
     # return [artifacts, remainder] — the remainder being the answer with every
     # block removed, which is what gets posted as the comment.
     #
@@ -874,20 +925,16 @@ module OPilot
       @harness.ensure_available! if @harness.respond_to?(:ensure_available!)
     end
 
-    # The tool grant for a read-only LLM phase — includes op_query when
-    # OPILOT_OP_MCP is on (see MCP.md). Use ONLY at the specific call sites
-    # named in that plan's Step 3 table; every other TOOLS_READ call site
-    # (upstream PR review, the `create wp` draft, light one-shot passes) keeps
-    # the plain constant even when the flag is on.
-    def read_tools
-      Harness.tools_for(Harness::TOOLS_READ, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
-    end
-
-    # As #read_tools, for the one write-enabled call site the plan grants the
-    # tool to: gh-agent's own-PR reply and CI fix. The fix implement run keeps
-    # no MCP tool at all — see MCP.md's Step 3 table for why.
-    def impl_tools
-      Harness.tools_for(Harness::TOOLS_IMPL, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+    # The one way to call the model: the role decides tools and model.
+    # A stateless role refuses a session, so its independence is structural.
+    def llm(role, prompt, session_file: nil, outfile: nil)
+      r = Harness.role(role)
+      raise ArgumentError, "role #{r.name} is stateless" if r.stateless && session_file
+      if prompt.is_a?(Prompts::Prompt) && prompt.role != r.name
+        raise ArgumentError, "a #{prompt.role} prompt sent as #{r.name}"
+      end
+      opts = { role: r.name, tools: r.tools(@ctx), model: r.model, session_file: session_file }
+      outfile ? @harness.capture(prompt, outfile: outfile, **opts) : @harness.run(prompt, **opts)
     end
 
     # One-time, best-effort report of what the instance's MCP server actually
@@ -1269,16 +1316,15 @@ module OPilot
     #
     # Reporting the result is deliberately left to the caller — a work-package
     # comment and a console line are not the same message.
-    def implement_plan(st, model: Harness::MODEL_HEAVY)
+    def implement_plan(st)
       st.repos.each { |r| checkout_branch(st, r) }
 
       unless st.repos.all? { |r| branch_has_commits?(st, r) }
         log_script "Implementing #{wp_label(st.item_id)} in #{st.repos.map(&:name).join(", ")}"
-        @harness.run(
-          Prompts.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
-                            resumed: session_resumable?(st)),
-          tools: Harness::TOOLS_IMPL, model: model, session_file: st.session_file
-        )
+        llm(:implementer,
+            Prompts::Implementer.implement(repos: repos_for_prompt(st.repos), plan: container_path(st.plan_file),
+                              resumed: session_resumable?(st)),
+            session_file: st.session_file)
         st.repos.each { |r| commit(st, r) }
       end
 
@@ -1301,8 +1347,8 @@ module OPilot
     # on any failure so the caller can fall back to a generic subject. Shared by
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
-      prompt = Prompts.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, model: Harness::MODEL_LIGHT)
+      prompt = Prompts::Scribe.commit_subject(diff: diff.patch.to_s[0, 6000])
+      reply = llm(:scribe, prompt)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
         .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" the LLM prepended anyway
@@ -1316,7 +1362,7 @@ module OPilot
     # Stateless — a fresh, cheap-model call rather than a resumed session, since
     # the item/plan/diff are all passed as file paths or plain text the model can
     # read itself, with nothing depending on the implement session's history.
-    def generate_pr_description(st, repo, model: Harness::MODEL_LIGHT)
+    def generate_pr_description(st, repo)
       pr_desc_file = st.pr_desc_file(repo)
       return if Helpers.file_has_content?(pr_desc_file)
       wt               = worktree(repo)
@@ -1325,11 +1371,11 @@ module OPilot
       diff_stat = wt.diff("HEAD~1", "HEAD").stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
-      prompt = Prompts.pr_description(
+      prompt = Prompts::Scribe.pr_description(
         item: container_path(st.item_file), plan: container_path(st.plan_file),
         diff_stat: diff_stat, template_section: template_section
       )
-      pr_text = @harness.run(prompt, tools: Harness::TOOLS_READ, model: model)
+      pr_text = llm(:scribe, prompt)
       pr_body = pr_text[/^#.*/m] || pr_text
       pr_desc_file.write(strip_ansi(pr_body))
     end

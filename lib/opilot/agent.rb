@@ -96,6 +96,7 @@ module OPilot
       when :chat      then handle_chat(intent)
       when :ship      then handle_ship(intent)
       when :create_wp then handle_create_wp(intent)
+      when :health    then handle_health(intent)
       end
     end
 
@@ -123,18 +124,31 @@ module OPilot
       # Pass the plan's path, not its text: a resumed session already holds the
       # plan, so re-embedding it every turn just burns tokens.
       plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
-      prompt = Prompts.chat(item_id: st.item_id, subject: st.subject,
+      prompt = Prompts::Advisor.chat(item_id: st.item_id, subject: st.subject,
                             item: container_path(st.item_file),
                             plan: plan_ref, message: intent.text.to_s,
                             related: related_ref(st), can_create_wp: create_wp_enabled?,
                             can_make_artifact: artifacts_enabled?, max_artifacts: MAX_ARTIFACTS,
                             op_mcp: @ctx.op_mcp?)
-      reply = @harness.run(prompt, tools: read_tools, session_file: st.session_file)
+      reply = llm(:advisor, prompt, session_file: st.session_file)
       # Only when artifacts are on: with the instructions never given, a BEGIN
       # ARTIFACT line is text the writer invented or quoted, and stripping it
       # would delete content from someone's reply.
       reply = publish_artifacts(st, intent, reply) if artifacts_enabled?
       post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
+    end
+
+    # Answers its own failure, like create wp: the reader waits for a report.
+    def handle_health(intent)
+      check = HealthCheck.new(@ctx, pull: @pull, harness: @harness, api: @api)
+      report = begin
+        check.run(intent.item_id, focus: intent.text.to_s, internal: intent.internal != false) ||
+          "The health check could not read this work package."
+      rescue Harness::Error => e
+        log_script "Health check failed on #{wp_label(intent.item_id)}: #{e.message}"
+        "The health check did not finish: the model run failed. Ask again with `@opilot health`."
+      end
+      post_note(intent.item_id, addressed(report))
     end
 
     # Take the artifacts out of a chat answer, mirror them, publish them as one
@@ -284,7 +298,7 @@ module OPilot
     # enforced HERE, because a prompt limit drifts and a work package can never
     # be deleted: "create one for every suggestion in this thread" must not be
     # able to mint twenty rows nobody can remove. Five also sits well inside one
-    # output budget — see Prompts.create_wp on why a cut-off answer is the
+    # output budget — see Prompts::WpWriter.create_wp on why a cut-off answer is the
     # failure mode to fear.
     MAX_CREATE_WP = 5
 
@@ -373,13 +387,13 @@ module OPilot
     # is a lost request, not a duplicate work package.
     def write_work_packages(st, request, project_name, types, related, retry_bad: true, format_note: nil)
       log_script "Writer: drafting work packages from #{wp_label(st.item_id)} — #{request}"
-      prompt = Prompts.create_wp(item_id: st.item_id, subject: st.subject,
+      prompt = Prompts::WpWriter.create_wp(item_id: st.item_id, subject: st.subject,
                                  item: container_path(st.item_file), request: request,
                                  project: project_name, types: Helpers.types_for_prompt(types),
                                  max: MAX_CREATE_WP, related: related, format_note: format_note)
-      reply = @harness.run(prompt, tools: Harness::TOOLS_READ, session_file: st.session_file).to_s
+      reply = llm(:wp_writer, prompt, session_file: st.session_file).to_s
       # Only what follows the last `ANSWER:` marker; the writer's own deliberation
-      # is scratch (Prompts.create_wp). Text with no marker is read whole, so an
+      # is scratch (Prompts::WpWriter.create_wp). Text with no marker is read whole, so an
       # answer that skips it still works.
       answer = Helpers.after_marker(reply, "ANSWER")
 
@@ -490,7 +504,7 @@ module OPilot
     # customer?"), a work package can never be deleted, and a guess would be
     # permanent. So the fields are named back to the reader, who can create it in
     # OpenProject or NAME A DIFFERENT TYPE — required-ness is per type, and their
-    # answer lands in this thread, which the next draft reads (Prompts.create_wp's
+    # answer lands in this thread, which the next draft reads (Prompts::WpWriter.create_wp's
     # TYPE line). Choosing another type here instead would be opilot re-classifying
     # somebody's work to get past a validation, on a work package nobody can delete.
     #
@@ -740,7 +754,7 @@ module OPilot
     #
     # The shape is always STATED, never implied: whether an offshoot is a child of
     # this work package or a peer beside it is the writer's per-block decision
-    # (Prompts.create_wp's LINK line), so the reader cannot work it out from the
+    # (Prompts::WpWriter.create_wp's LINK line), so the reader cannot work it out from the
     # count and must be told.
     def single_notes(record)
       notes = +""
@@ -801,7 +815,7 @@ module OPilot
     #
     # This is where every `build` trigger lands (alias `fix`). There is
     # no separate plan-and-wait command any more: a fix with more than one defensible
-    # shape stops and offers numbered options (Prompts::OPTIONS_CONTRACT), and a
+    # shape stops and offers numbered options (Prompts::Planner::OPTIONS_CONTRACT), and a
     # fix with one shape is announced (#post_approach_note) and shipped in the
     # same call — so a simple ticket still costs exactly one plan call, just
     # with a stated approach instead of a silent one. NEEDS_INFO still guards
@@ -849,7 +863,7 @@ module OPilot
     #
     # `allow_options:` is the caller's judgment that no human has picked an
     # approach yet; the writer's judgment is whether the fix really has more than
-    # one shape (Prompts::OPTIONS_CONTRACT). `:failed` means the call produced
+    # one shape (Prompts::Planner::OPTIONS_CONTRACT). `:failed` means the call produced
     # neither a plan nor a usable options answer, and is handled like any other
     # failed run — logged, never commented.
     def produce_plan(st, feedback, allow_options: false, retry_bad_options: true)
@@ -868,21 +882,19 @@ module OPilot
 
       if feedback && !feedback.empty? && st.plan_file.exist?
         log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
-        prompt = Prompts.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
+        prompt = Prompts::Planner.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                 feedback: feedback, item_id: st.item_id, title: st.subject,
                                 resumed: session_resumable?(st), related: related, op_mcp: @ctx.op_mcp?)
-        @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
-                        session_file: st.session_file)
+        llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
         record_chosen_repos(st)
         return :ok
       end
 
       log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
-      prompt = Prompts.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
+      prompt = Prompts::Planner.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                             item_id: st.item_id, title: st.subject, hint: feedback.to_s,
                             related: related, allow_options: allow_options, op_mcp: @ctx.op_mcp?)
-      @harness.capture(prompt, tools: read_tools, outfile: st.plan_file,
-                      session_file: st.session_file)
+      llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
 
       if st.plan_file.read.lstrip.start_with?("NEEDS_INFO")
         questions = st.plan_file.read.sub(/\A\s*NEEDS_INFO\s*\n?/, "").strip

@@ -18,7 +18,7 @@ module OPilot
       def initialize(reply: "Fixed the failing spec.", subject: "Guard the nil case")
         @reply = reply; @subject = subject; @runs = []
       end
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << { prompt: prompt, tools: tools, model: model, session_file: session_file }
         prompt.include?("commit subject line") ? @subject : @reply
       end

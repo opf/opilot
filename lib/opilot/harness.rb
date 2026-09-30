@@ -31,10 +31,8 @@ module OPilot
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
-    # The op_query variants (see MCP.md), granted only at the call sites named
-    # in Context#op_mcp?'s call table via Helpers#read_tools/#impl_tools — most
-    # TOOLS_READ/TOOLS_IMPL call sites keep the plain constant even when the
-    # flag is on. Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
+    # The op_query variants (see MCP.md), granted only to the roles marked
+    # `mcp` (roles.rb). Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
     TOOLS_READ_OP = "#{TOOLS_READ},op_query"
     TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"
 
@@ -85,6 +83,8 @@ module OPilot
        env_minutes("OPILOT_PI_IDLE_TIMEOUT_MIN", 5) + 2) * 60
     ).round
 
+    require_relative "roles"
+
     def initialize(ctx)
       @ctx = ctx
       @uri = URI(@ctx.harness_url)
@@ -116,7 +116,7 @@ module OPilot
     # Runs the LLM with the given prompt. Streams tool-use lines to tty, returns text output.
     # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
     # read for the session ID before the call and updated with the new ID after.
-    def run(prompt, tools: nil, model: MODEL_HEAVY, session_file: nil)
+    def run(prompt, role:, tools: nil, model: MODEL_HEAVY, session_file: nil)
       session_id = session_file&.exist? ? session_file.read.strip : nil
 
       header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
@@ -129,7 +129,7 @@ module OPilot
       puts resp_header
       log_append(resp_header)
 
-      text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: session_id)
+      text, new_session_id, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id)
 
       # A resumed session the CLI no longer has (e.g. the harness container was
       # recreated/killed before the transcript was durably written) makes
@@ -140,7 +140,7 @@ module OPilot
       if error && session_id && lost_session?(error)
         log_append("session #{session_id} is gone — retrying fresh")
         $stdout.puts Rainbow("  ⚠ session #{session_id} not found — starting fresh").yellow
-        text, new_session_id, error = http_stream(prompt, tools: tools, model: model, session_id: nil)
+        text, new_session_id, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: nil)
       end
 
       # Save the session even on error, so a retry can resume with context.
@@ -158,15 +158,15 @@ module OPilot
     end
 
     # Like run, but also writes ANSI-stripped output to outfile.
-    def capture(prompt, tools: nil, model: MODEL_HEAVY, outfile:, session_file: nil)
-      text = run(prompt, tools: tools, model: model, session_file: session_file)
+    def capture(prompt, role:, outfile:, tools: nil, model: MODEL_HEAVY, session_file: nil)
+      text = run(prompt, role: role, tools: tools, model: model, session_file: session_file)
       Pathname(outfile).write(strip_ansi(text))
       text
     end
 
     private
 
-    def http_stream(prompt, tools:, model:, session_id: nil)
+    def http_stream(prompt, role:, tools:, model:, session_id: nil)
       attempts = 0
       begin
         attempts += 1
@@ -181,6 +181,7 @@ module OPilot
         exit_info           = nil
 
         req = Net::HTTP::Post.new(@uri)
+        req["X-Harness-Role"]    = role.to_s
         req["X-Harness-Tools"]   = tools      if tools
         req["X-Harness-Model"]   = model      if model
         req["X-Harness-Session"] = session_id if session_id

@@ -110,7 +110,7 @@ module OPilot
           @on_run  = on_run
         end
 
-        def run(prompt, tools: nil, model: nil, session_file: nil)
+        def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
           @prompts << prompt
           @on_run ? @on_run.call : ""
         end

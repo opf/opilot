@@ -11,7 +11,7 @@ module OPilot
                      subject: "Guard against a nil invoice total", boom: false)
         @reply = reply; @subject = subject; @boom = boom; @runs = []
       end
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << { prompt: prompt, tools: tools, model: model, session_file: session_file }
         raise "harness blew up" if @boom
         # The follow-up commit-subject pass uses a distinct prompt.
@@ -304,7 +304,7 @@ module OPilot
     # noise — so the note must NOT live in that constant.
     def test_a_diagram_is_offered_when_replying_but_not_when_fixing_ci
       capture_io { @agent.handle(gh_intent) }
-      reply = @harness.runs.find { |r| r[:prompt].include?("responding to a comment") }
+      reply = @harness.runs.find { |r| r[:prompt].include?("A comment arrived on GitHub pull request") }
       assert_includes reply[:prompt], "```mermaid fence",
                       "a PR reply may draw a diagram — GitHub renders it"
 

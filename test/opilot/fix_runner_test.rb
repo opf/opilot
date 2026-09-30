@@ -24,7 +24,7 @@ module OPilot
 
       def initialize; @prompts = []; end
 
-      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         @prompts << prompt
         Pathname(outfile).write("## Revised plan")
       end
@@ -34,7 +34,7 @@ module OPilot
     class RecordingChatHarness
       attr_reader :prompts
       def initialize; @prompts = []; end
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @prompts << prompt
         "ok"
       end
@@ -45,7 +45,7 @@ module OPilot
     class ScriptedPlanHarness
       def initialize(*outputs); @outputs = outputs; end
 
-      def capture(_prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(_prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         out = @outputs.shift or raise "unexpected capture call"
         raise Harness::Error, "run died" if out == :error
         Pathname(outfile).write(out)

@@ -70,6 +70,87 @@ const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash,write,edit,op_query,gh_query',
 ]);
 
+// Role files (lib/opilot/prompts/<name>.yml) — the same files the runner loads,
+// at the same path relative to this file in the repo and in /app, so a role's
+// grant is defined once. The runner sends the role it calls as and the grant it
+// resolved; this checks that the two agree. It does not stop a compromised
+// runner, which chooses both: it stops a runner bug from sending a write grant
+// under a read role, the one mistake nothing else would catch.
+const ROLES_DIR = path.join(__dirname, 'lib', 'opilot', 'prompts');
+const ROLE_NAME_RE = /^[a-z_]{1,64}$/;
+const ROLE_BASES = {
+  read: 'read,grep,find,ls,bash',
+  write: 'read,grep,find,ls,bash,write,edit',
+};
+const ROLE_KEYS = ['mcp', 'memory', 'model', 'tools'];
+const ROLE_VALUES = {
+  tools: ['read', 'write'], mcp: ['true', 'false'], model: ['heavy', 'light'], memory: ['session', 'none'],
+};
+
+// Strict, like the runner's loader: a typo fails at boot, not at a request.
+// Node has no YAML parser, so this reads exactly the subset a role file uses:
+// `key: value` lines, and one `charter: |` block of indented lines, which the
+// server does not need beyond checking that it is there.
+function parseRole(text, where) {
+  const meta = {};
+  let inCharter = false;
+  let charterLines = 0;
+  for (const line of text.replace(/\n+$/, '').split('\n')) {
+    if (inCharter && (line === '' || /^\s/.test(line))) {
+      if (line.trim()) charterLines++;
+      continue;
+    }
+    inCharter = false;
+    if (line === 'charter: |' && !('charter' in meta)) {
+      meta.charter = true;
+      inCharter = true;
+      continue;
+    }
+    const kv = /^([a-z]+):\s*(\S+)\s*$/.exec(line);
+    if (!kv || kv[1] in meta) throw new Error(`${where}: unreadable line ${JSON.stringify(line)}`);
+    meta[kv[1]] = kv[2];
+  }
+  if (!charterLines) throw new Error(`${where}: charter must be a \`charter: |\` block with text`);
+  delete meta.charter;
+  if (Object.keys(meta).sort().join() !== ROLE_KEYS.join()) {
+    throw new Error(`${where}: keys must be ${ROLE_KEYS.join(', ')}`);
+  }
+  for (const key of ROLE_KEYS) {
+    if (!ROLE_VALUES[key].includes(meta[key])) {
+      throw new Error(`${where}: ${key}: ${meta[key]} is not one of ${ROLE_VALUES[key].join(', ')}`);
+    }
+  }
+  return { base: ROLE_BASES[meta.tools], mcp: meta.mcp === 'true' };
+}
+
+function loadRoles(dir = ROLES_DIR) {
+  const roles = new Map();
+  for (const file of fs.readdirSync(dir).filter(f => f.endsWith('.yml')).sort()) {
+    const name = file.slice(0, -4);
+    if (!ROLE_NAME_RE.test(name)) throw new Error(`${file}: bad role name`);
+    roles.set(name, parseRole(fs.readFileSync(path.join(dir, file), 'utf8'), file));
+  }
+  if (roles.size === 0) throw new Error(`no role files in ${dir}`);
+  return roles;
+}
+
+// The grants a role may use: its base, plus — for an mcp role — the MCP tools
+// in Harness.tools_for's fixed order.
+function grantsFor(role) {
+  if (!role.mcp) return [role.base];
+  return [role.base, `${role.base},op_query`, `${role.base},gh_query`, `${role.base},op_query,gh_query`];
+}
+
+// null when the request may run, else [status, message].
+function checkRole(roles, name, tools) {
+  if (!name) return [400, 'missing role'];
+  if (!ROLE_NAME_RE.test(name) || !roles.has(name)) return [403, 'unknown role'];
+  // No grant means pi's default tools, which include write.
+  if (!tools) return [403, 'missing tool grant'];
+  if (!grantsFor(roles.get(name)).includes(tools)) return [403, `tool grant not allowed for role ${name}`];
+  return null;
+}
+
 const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 // A model id carries a vendor slug behind a provider prefix, e.g.
 // "openrouter/anthropic/claude-opus-4.8" or "local/qwen2.5-coder:7b"
@@ -435,6 +516,7 @@ function runPi(body, tools, model, sessionId, res, done) {
 // functions — it doesn't seed the agent dir or bind a port as a side effect.
 function startServer() {
   seedAgentDir();
+  const roles = loadRoles();
 
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/health') {
@@ -449,6 +531,7 @@ function startServer() {
       return;
     }
 
+    const role      = req.headers['x-harness-role'] || null;
     const tools     = req.headers['x-harness-tools'];
     const model     = req.headers['x-harness-model'] || null;
     const sessionId = req.headers['x-harness-session'] || null;
@@ -456,6 +539,12 @@ function startServer() {
     if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
       res.end('unknown tool grant\n');
+      return;
+    }
+    const refusal = checkRole(roles, role, tools);
+    if (refusal) {
+      res.writeHead(refusal[0], { 'Content-Type': 'text/plain' });
+      res.end(`${refusal[1]}\n`);
       return;
     }
     if (model && !MODEL_RE.test(model)) {
@@ -484,4 +573,5 @@ if (require.main === module) startServer();
 module.exports = {
   translate, settleResult, extractText, lastAssistantOf,
   buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS,
+  parseRole, loadRoles, grantsFor, checkRole,
 };

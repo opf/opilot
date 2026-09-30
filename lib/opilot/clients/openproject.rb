@@ -94,6 +94,13 @@ module OPilot
         HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}/activities_emoji_reactions", token: @token)
       end
 
+      # PRs the GitHub integration linked to a work package. Needs
+      # :show_github_content and the project's `github` module, so a 403 or 404
+      # is a normal answer. `merged` is a boolean; `state` is open/closed/deployed.
+      def work_package_github_pull_requests(wp_id)
+        HTTP.get_json("#{@base}/api/v3/work_packages/#{wp_id}/github_pull_requests", token: @token)
+      end
+
       def me
         HTTP.get_json("#{@base}/api/v3/users/me", token: @token)
       end

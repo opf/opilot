@@ -11,7 +11,7 @@ module OPilot
 
       def initialize; @prompts = []; @session_files = []; end
 
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @tools = tools
         @prompts << prompt
         @session_files << session_file

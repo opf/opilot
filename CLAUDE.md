@@ -44,9 +44,10 @@ every documented path goes through the script.
 
 ### op-agent
 
-Polls work packages, driven by `@opilot` comments. There are two command words —
-**`@opilot build`** (alias `fix`) and **`@opilot create wp`** (long form
-`create work package`); every other word is chat. The words `build` replaced —
+Polls work packages, driven by `@opilot` comments. There are three command words —
+**`@opilot build`** (alias `fix`), **`@opilot create wp`** (long form
+`create work package`) and **`@opilot health`** (see "Health check" below); every
+other word is chat. The words `build` replaced —
 `ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too, so an old
 habit gets an answer that names the real command rather than silence. `create`
 without the noun is chat as well: alone it could mean a branch, a PR or a comment,
@@ -84,7 +85,7 @@ has read.
 **`ship` always names the approach before it writes code.** The writer opens
 every invited plan call with a third first-line sentinel beside `NEEDS_INFO`
 and `REPOS:` — `OPTIONS`, then one pipe-delimited line per approach
-(`Prompts::OPTIONS_CONTRACT`). Most tickets have exactly one sensible approach:
+(`Prompts::Planner::OPTIONS_CONTRACT`). Most tickets have exactly one sensible approach:
 the writer names it in a single option line, then continues straight into the
 plan in the *same* response, so a one-shape ticket still costs exactly one
 plan call — just with a stated approach instead of a silent one.
@@ -161,7 +162,7 @@ id names no WP dir.
 
 It also **auto-fixes failed CI** (always on). Once checks complete with ≥1 failure,
 the detail (annotations, output summaries, failed-job log tails) is cached to
-`ci.json`, fixed with `Prompts.fix_ci`, committed and pushed. The trigger is the
+`ci.json`, fixed with `Prompts::PrAuthor.fix_ci`, committed and pushed. The trigger is the
 **head SHA**: `gh_pr.json` tracks `ci_acted_sha` (once per commit) and `ci_attempts`
 (`OPILOT_CI_MAX_ATTEMPTS`, default 5; past the cap it posts a one-time "needs a
 human" note and sets `ci_gave_up`). It acts on the *first* failure rather than
@@ -177,9 +178,9 @@ which would truncate a big CI matrix).
 an LLM call is spent only on real mentions. The trigger is a prompt addressed to
 opilot, not a review pass over other people's work; what differs is write access,
 so these intents are `reply_only` — read-only fetch, answered in text
-(`Prompts.pr_review`), never pushed. Applicable code still lands: for lines already
+(`Prompts::PrAdvisor.pr_review`), never pushed. Applicable code still lands: for lines already
 in the diff the review emits a `SUGGESTIONS:` block
-(`Prompts::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
+(`Prompts::PrAdvisor::SUGGESTION_CONTRACT`) that `GhAgent#post_suggestions` posts as a review
 of inline `suggestion` comments (anchored to the head SHA, `event: COMMENT`) — the author
 applies each with one click; a bad line range 422s and falls back to prose. A
 failing CI run is read too (keyed by head SHA), so "why is CI red?" gets an
@@ -205,6 +206,9 @@ nothing" and "not scanning" look identical in the log.
 - **`dev commit <id>...`** — stop after the local commit. A later `ship` finds the
   branch (`branch_has_commits?`) and goes straight to publish.
 - **`dev plan <id>...`** — stop at the approved plan.
+- **`dev health <id>...`** — the `@opilot health` check (`HealthRunner` →
+  `HealthCheck`), printed to the terminal; it posts nothing, so a prompt change can
+  be tuned on a real work package first.
 - **`dev refresh <id|pr-url>...`** — refresh shipped PRs (`PrRunner`). A URL is matched
   against local state, else *adopted* via the OpenProject ticket link in the
   description's top 15 lines; a WP id with no state is *discovered* by searching each
@@ -221,7 +225,7 @@ nothing" and "not scanning" look identical in the log.
   is posted as a 🤖 comment and the cutoff advances so gh-agent doesn't re-handle it.
 - **`chat [message]`** — free read-only conversation over the local mirrors, never
   fetching, planning, or shipping. `.opilot/` is mounted read-only at `/state`, so
-  `Prompts.free_chat` orients the LLM at the layout and it Greps/Reads from there.
+  `Prompts::Advisor.free_chat` orients the LLM at the layout and it Greps/Reads from there.
   Fresh per-run session; needs no tokens or allowlist. **It reads only what another
   run already mirrored** — a `dev` verb or an agent tick. Nothing seeds the cache on
   its own: `op wp get` prints a work package but caches nothing, so a WP opilot has
@@ -323,6 +327,7 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot dev build <id>...
 ./opilot dev commit <id>...   # stop after the local commit — no push, no PR
 ./opilot dev plan <id>...    # stop at the approved plan
+./opilot dev health <id>...  # check the WP for drift; prints, posts nothing
 
 # Refresh shipped PRs: merge base, fix CI, address new comments, push (confirmed)
 ./opilot dev refresh <id|pr-url>...
@@ -490,13 +495,16 @@ bare `docker compose run …` works from the repo root.
 | `gh_pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `gh_agent.rb` | `gh-agent` loop — own PRs: reply + code + push; upstream: read-only. `#sources` keeps the banner honest |
 | `fix_runner.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
+| `health_check.rb` | `@opilot health` and `dev health`: the fact rules, the one LLM call, the composed report |
+| `health_runner.rb` | Terminal `dev health` — prints `HealthCheck`'s report, posts nothing |
 | `pr_runner.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `op_runner.rb` | Terminal `op` — one command per `Clients::OpenProject` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
+| `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
 | `appsignal_runner.rb` | Terminal `appsignal` — incident → work package, then hands off to `FixRunner#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
-| `prompts.rb` | All LLM prompts in one place. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `#plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
 | `publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
 | `clients/openproject.rb` | OpenProject REST API. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column |
 | `clients/github.rb` | GitHub API (Octokit) |
@@ -658,7 +666,7 @@ up front rather than after a full plan and implement run (`build`/`plan` need no
 `Helpers#require_clone!` is called from **`Helpers#worktree`**, the funnel every git
 operation goes through, because a per-command check gets forgotten — `./opilot`
 only *warns* when a clone fails, and `Git.open`'s error names neither the repo nor
-the fix. `#ensure_claude!` fails with "start the container" at every entry point that
+the fix. `#ensure_harness!` fails with "start the container" at every entry point that
 will call the LLM, not mid-run with a connection error.
 
 `:ship` (`@opilot build`, alias `fix`) is the fix intent: it plans and
@@ -670,12 +678,46 @@ does; only the word people type is `build`, and `./opilot dev build` takes the s
 word for the same operation, so one thing has one name wherever it is typed. The
 difference is who is watching: the terminal verbs have an operator at the console.
 Chat lenses (`grill`, `summarize`) are preset instructions over
-the ordinary `:chat` intent (`Prompts::LENSES`), with trailing text as a focus hint.
+the ordinary `:chat` intent (`Prompts::Advisor::LENSES`), with trailing text as a focus hint.
+
+**Health check (`@opilot health [focus]`, intent `:health`)** reports where a work
+package is inconsistent with itself. It is **not a lens**: it needs a fact pass, its
+own prompt, a parser and a Ruby-composed reply (`HealthCheck`). Two layers:
+
+- **Facts** (`HealthCheck#facts_for`, no LLM) — only rules on exact,
+  language-independent data, because the prompt tells the model not to dispute them:
+  status meaning from `GET /statuses` (`isClosed`, `isDefault`, looked up by name —
+  names are unique), relation labels, timestamps, linked-PR flags
+  (`/work_packages/:id/github_pull_requests`, which needs `show_github_content`),
+  and commits naming the WP on each registry base (`git log --grep` as a prefilter,
+  then a word-boundary match, so `#5994` never matches `#59942`). PR and commit rules
+  fire only on the **default** status: "Developed" is open and has merged PRs.
+  Anything heuristic — a reopen report, which status-name matching would confuse
+  with a subject edit — goes to the model as `history[]` instead.
+- **Descendants** (`HealthCheck#descendants`) — the whole subtree at any depth from
+  ONE paginated `ancestor` filter query, capped at `MAX_DESCENDANTS`, written to
+  `descendants.json`. A list element embeds nothing, so status and type come from
+  `_links.<key>.title`. The tree rules (closed over open at any depth, a subtree all
+  closed, stale open descendants) **replace** the direct-child rules; a failed read
+  falls back to them and says so. The model gets the tree to check the description's
+  scope against the descendants' subjects — no per-descendant LLM call.
+- **Judgement** — one read-only call **without the WP session**, so a check is
+  independent of earlier chat turns. The answer is `Prompts::Auditor::HEALTH_CONTRACT`
+  (`BEGIN HEALTH` … `END HEALTH`, `FINDING:`/`GAP:` lines), read by
+  `Helpers.parse_health`: the END marker detects truncation (one retry, then a
+  failure note), and a finding without evidence is dropped.
+
+The reply is composed in Ruby (`HealthCheck#report`), for `#post_options`' reason,
+and always lists **Not checked** — skipped attachments, an unreadable PR list or
+status list, the model's own gaps — because silence about an input reads as "it is
+fine". A **public** reply drops any finding whose evidence names an internal
+comment's timestamp: the evidence is printed verbatim, so the prompt rule alone
+is not enough. Like `create wp`, the handler answers its own failure.
 
 **A chat answer can carry an ARTIFACT — a diagram or a long report — published as
 a secret gist and linked from the comment.** Three surfaces offer one, and they are
 deliberately **asymmetric**: a gh-agent PR reply (`Prompts::MERMAID_NOTE` in
-`gh_reply`/`pr_review`) and a plan's Approach section (`Prompts#plan_skeleton`) are
+`gh_reply`/`pr_review`) and a plan's Approach section (`Prompts::Planner.plan_skeleton`) are
 **prompt-only**, because GitHub and gists render a ```mermaid fence themselves. Only
 op-agent chat has machinery behind it.
 
@@ -695,7 +737,7 @@ attached a flowchart of the same thing, and the reader read it twice.
 `Harness::TOOLS_READ` and `pi-guards.ts` confines writes to `/repos`, so the model
 cannot write a file — and that read-only contract for prompt-injectable phases is
 enforced in the guard, not in the prompt, so this is not a limitation to route
-around. `Prompts.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
+around. `Prompts::Advisor.artifact_block` states the `BEGIN ARTIFACT` … `END ARTIFACT` shape,
 `Helpers.parse_artifacts` reads it, and `Agent#publish_artifacts` mirrors, caps and
 publishes. The block sits at the **END** of the answer: everything shares one output
 budget, so a cut-off response loses the artifact and keeps the comment. The parser
@@ -736,7 +778,7 @@ duplicate create.
   `Pull#intent_from_comments` drops a non-allowlisted trigger whenever a list exists,
   so every create that reaches the handler is from a listed user.
 - **Every work package it will create comes out of ONE LLM call, gated by
-  `NEEDS_INFO`** (`Prompts.create_wp`, `Agent#write_work_packages`). When the request
+  `NEEDS_INFO`** (`Prompts::WpWriter.create_wp`, `Agent#write_work_packages`). When the request
   points at nothing in the thread, questions are the only acceptable answer. N answers
   cost the same one call as one, and a call per work package would not see the others —
   two of them could write the same suggestion, and the duplicate could not be deleted.
@@ -852,12 +894,16 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── item.json            # WP metadata + poll cache + acted_at + item_version
 │       │                        #   + refusal_noted_at (the one allowlist note per WP)
 │       │                        #   + create_wp_refusal_noted_at (the one `create wp` off note)
-│       │                        #   + pictures[] / pictures_skipped[] (see pictures/ below)
+│       │                        #   + pictures[] (with created_at) / pictures_skipped[]
+│       │                        #   + history[] (field changes, no comment text) and
+│       │                        #     description_changed_at, for `health`
 │       │                        #   + pictures_pending (an attachment read failed —
 │       │                        #     suppresses the cache until a run finishes)
 │       ├── pictures/            # every picture the WP shows, mirrored so the LLM can `read`
 │       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
 │       ├── related.json         # related WPs pulled in at plan time
+│       ├── health.json          # the last health check's facts (HealthCheck#facts_for)
+│       ├── descendants.json     # the subtree the last health check read (HealthCheck#descendants)
 │       ├── plan.md              # implementation plan (shared across target repos)
 │       ├── artifacts/<comment>/  # markdown a chat answer produced, keyed by the trigger's
 │       │                        #   comment_at — the local copy of what was gisted
@@ -896,6 +942,15 @@ globally unique, so `pr_reviews/` is flat.
 
 Runner POSTs to `http://harness:47291` with headers:
 
+- `X-Harness-Role` — **required**. The role the call is made as (`Helpers#llm`).
+  `server.js` loads the same `prompts/*.yml` role files at boot (`loadRoles`, copied into
+  the image by `Dockerfile.harness`) and refuses a missing role (400), an unknown
+  one, a request with no tool grant — which would give pi its default tools,
+  write included — and a grant the role does not allow (403): a role without
+  `mcp` accepts only its base grant, a role with it accepts the base plus the
+  `op_query`/`gh_query` variants. The runner still chooses both the role and the
+  grant, so this does not stop a compromised runner; it stops a runner bug from
+  sending a write grant under a read role.
 - `X-Harness-Tools` — built by `Harness.tools_for`, which appends `op_query`
   then `gh_query` in that fixed order when each flag is on. `server.js`
   allowlists the resulting **eight exact strings** (`ALLOWED_TOOL_GRANTS`);
@@ -904,11 +959,33 @@ Runner POSTs to `http://harness:47291` with headers:
   `test/js/models_json_test.js` makes adding one deliberate. The base is
   `"read,grep,find,ls,bash"` (planning/chat) or
   `"read,grep,find,ls,bash,write,edit"` (implementation), each with a `,op_query`
-  variant sent by the specific call sites `Helpers#read_tools`/`#impl_tools`
-  cover when `Context#op_mcp?` is on (see `MCP.md`) — most `TOOLS_READ`/`TOOLS_IMPL`
-  call sites keep the plain grant regardless. `server.js` rejects any other
+  variant sent only by the roles marked `mcp` when `Context#op_mcp?` is on
+  (see `MCP.md`) — the other roles keep the plain grant regardless. `server.js` rejects any other
   grant, so its allowlist (`ALLOWED_TOOL_GRANTS`, four strings) must stay in
   sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
+- **Every call names a role** (`Helpers#llm`). A role is a YAML file,
+  `lib/opilot/prompts/<name>.yml`: `tools` (`read`/`write`), `mcp` (whether the
+  MCP tools join the grant), `model` (`heavy`/`light`) and `memory`
+  (`session`/`none`), and the role's **charter** as a `charter: |` block. `lib/opilot/roles.rb` loads them strictly —
+  an unknown key or value fails at boot — and a `memory: none` role given a
+  `session_file` raises, so health's independence from chat is structural.
+
+  **The charter opens every prompt that orients the model** (`Prompts.charter`,
+  called by each builder in `lib/opilot/prompts/<role>.rb`, beside it), followed by the rules
+  the **grant** carries: `READ_ONLY` for a read role, `WRITE_GRANT` (no commit, no
+  command, and the `git rm`/`git clean` exception) for a write role. Derived, never
+  pasted, so a prompt cannot state a grant its role does not hold. A follow-up turn
+  in the same session (`propose_revise`, a chat's second message) carries no
+  charter. Shared prompt text lives in `prompts/_blocks/*.md`; the reason for each
+  block stays on the Ruby constant that loads it, and compositions
+  (`REPLY_CONTRACT` + `PLAIN_ENGLISH`) stay in Ruby.
+
+  Tests: `roles_test.rb` pins every role's tuple, checks each against
+  `ALLOWED_TOOL_GRANTS`, and fails if anything outside `helpers.rb`/`harness.rb`
+  calls `@harness.run` or names `Harness::TOOLS_*`; `prompts_test.rb` renders every
+  builder and checks its charter and its grant block (once, and never the other
+  one). Roles that look alike but differ in grant (`pr_author` vs `pr_refresher`)
+  stay two roles until someone decides to merge them.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
   always `<provider>/<model-id>` (`openrouter/anthropic/claude-sonnet-5.5`,
@@ -946,7 +1023,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | Variable | Purpose |
 |----------|---------|
 | `OPENPROJECT_URL` | OpenProject instance URL |
-| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages` |
+| `OPENPROJECT_TOKEN` | API token. Read access suffices for `op`/`chat` (except `op wp create`); agent mode needs write (to comment), plus `:add_work_packages` once `@opilot create wp` is enabled, `:manage_work_package_relations` for its backlink and `:manage_subtasks` to make several of them children of the source (without either link permission the work packages are still created, only unlinked — or related instead of parented); `pd` needs `:add_work_packages`. `health` reads linked PRs only with `:show_github_content` (without it, that input is listed as not checked) |
 | `HARNESS_URL` | Optional; where the runner reaches the harness container (default `http://harness:47291`) |
 | `OP_REPO_PATH` | Optional; local openproject checkout to seed that clone from. openproject-only — other repos are configured in `repos.json` |
 | `GITHUB_CONTRIBUTOR_TOKEN` | The **contributor identity** — a bot account that is **not a collaborator on the canonical repos** (that lack of access is what enforces isolation). Classic token with `public_repo`, `workflow` (the lagging fork re-introduces upstream's `.github/workflows/*`, rejected without it) and `gist` (the plan gist and chat artifacts; both skipped if absent). Fine-grained tokens can't open fork→upstream PRs |

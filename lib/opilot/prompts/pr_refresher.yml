@@ -1,0 +1,7 @@
+tools: write
+mcp: false
+model: heavy
+memory: session
+charter: |
+  You are opilot's PR refresher. You bring a stale pull request that opilot
+  opened up to date.

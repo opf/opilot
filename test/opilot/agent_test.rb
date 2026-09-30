@@ -12,7 +12,7 @@ module OPilot
 
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
-      # One BEGIN/END WORK PACKAGE block, the shape Prompts.create_wp demands.
+      # One BEGIN/END WORK PACKAGE block, the shape Prompts::WpWriter.create_wp demands.
       # `link` is the writer's own choice per block — "child" or "related" — and
       # nil leaves the line out, which must read as "related".
       def self.wp_block(subject, type: "Feature", link: nil, body: "Rosanna asks for a toast.")
@@ -28,14 +28,14 @@ module OPilot
         @runs = []; @captures = []; @run_sessions = []; @capture_sessions = []
       end
 
-      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
         Pathname(outfile).write(@plan)
         @plan
       end
 
-      def run(prompt, tools: nil, model: nil, session_file: nil)
+      def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << prompt
         @run_sessions << session_file
         # Checked before the chat prompt: the create-wp draft prompt also opens
@@ -59,7 +59,7 @@ module OPilot
         @plans = plans
       end
 
-      def capture(prompt, tools: nil, model: nil, outfile:, session_file: nil)
+      def capture(prompt, role: nil, tools: nil, model: nil, outfile:, session_file: nil)
         @captures << prompt
         @capture_sessions << session_file
         plan = @plans[@captures.length - 1] || @plans.last
@@ -220,7 +220,7 @@ module OPilot
     # ── implementation options ────────────────────────────────────────────────
 
     # What a `ship` plan call answers with when the fix has more than one shape
-    # (Prompts::OPTIONS_CONTRACT).
+    # (Prompts::Planner::OPTIONS_CONTRACT).
     OPTIONS_ANSWER = <<~TEXT
       OPTIONS
       1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
@@ -228,7 +228,7 @@ module OPilot
     TEXT
 
     # The common case: one named approach, with its plan in the same response
-    # (Prompts::OPTIONS_CONTRACT — no real choice, so no reason to stop).
+    # (Prompts::Planner::OPTIONS_CONTRACT — no real choice, so no reason to stop).
     SINGLE_OPTION_ANSWER = <<~TEXT
       OPTIONS
       1 | Guard the paste | I stop the broken paste and insert plain text. | openproject | small
@@ -1268,6 +1268,16 @@ module OPilot
 
     def artifact_dir(slug = "2024-02-01t00-00-00z")
       @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "artifacts" / slug
+    end
+
+    # The report itself is HealthCheckTest's; this is the routing, and the
+    # answer to a work package the check cannot read — never silence.
+    def test_health_answers_even_when_the_work_package_cannot_be_read
+      @pull.define_singleton_method(:fetch_single_item) { |_id| nil }
+      @agent.handle(intent(:health, text: "", user: "Ana", user_href: "/api/v3/users/5", internal: false))
+      assert_equal 1, @notes.length
+      assert_includes @notes.first, "could not read this work package"
+      assert_equal [false], @note_visibility, "a public trigger gets a public answer"
     end
 
     # The guard on the surface that already worked: an ordinary answer must be

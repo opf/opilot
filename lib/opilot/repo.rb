@@ -3,7 +3,7 @@ require "pathname"
 
 module OPilot
   # One product repo opilot can plan and ship fixes in. A work package's fix may
-  # land in one repo or several; the LLM chooses which (see Prompts.plan). Each
+  # land in one repo or several; the LLM chooses which (see Prompts::Planner.plan). Each
   # repo is a self-contained clone under .opilot/repos/<name>, mounted into the
   # harness container at /repos/<name>.
   #

@@ -43,7 +43,7 @@ module OPilot
       assert_equal "#42",      Helpers.wp_label(42)
     end
 
-    # ── parse_work_packages (Prompts.create_wp's answer) ────────────────────
+    # ── parse_work_packages (Prompts::WpWriter.create_wp's answer) ────────────────────
 
     def block(subject, type: "Feature", body: "Rosanna asked for it.")
       type_line = type ? "TYPE: #{type}\n" : ""

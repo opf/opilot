@@ -395,7 +395,7 @@ module OPilot
     def refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:)
       item_file = Helpers.item_dir(@ctx, wp_id) / "item.json"
       plan_file = Helpers.item_dir(@ctx, wp_id) / "plan.md"
-      prompt = Prompts.pr_refresh(
+      prompt = Prompts::PrRefresher.pr_refresh(
         worktree: repo.worktree_container, repo: base_repo, pr_number: number,
         title: content["title"].to_s, base: base_ref,
         item: Helpers.file_has_content?(item_file) ? container_path(item_file) : "(no issue recorded)",
@@ -404,7 +404,7 @@ module OPilot
         ci: ci, conflicts: conflicts, feedback_count: feedback.length
       )
       # Shares gh-agent's per-PR session so prior PR conversations carry over.
-      @harness.run(prompt, tools: Harness::TOOLS_IMPL, session_file: dir / "gh_session_id")
+      llm(:pr_refresher, prompt, session_file: dir / "gh_session_id")
     end
 
     # Commit what the refresh produced. A conflicted merge is concluded here (the
