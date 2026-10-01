@@ -285,7 +285,7 @@ module OPilot
         Usage: ./opilot <command> [arguments]
 
         Agent mode — how opilot is normally run (polls every 20s):
-          ./opilot agent            watch OpenProject and GitHub, and act
+          ./opilot agent            watch OpenProject, GitHub and Matrix, and act
 
         #{indent(triggers, 2)}
 

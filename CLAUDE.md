@@ -392,7 +392,7 @@ before touching anything under `lib/opilot/pd/`.
 ## Commands
 
 ```bash
-# Run both agent loops (polls every 20s) — the normal way to run opilot.
+# Run every agent loop (polls every 20s; Matrix only when configured) — the normal way to run opilot.
 # `agent op` / `agent gh` run one.
 ./opilot agent
 ./opilot agent matrix   # only the Matrix room: chat, and the @opilot words with the WP id first
@@ -538,7 +538,7 @@ starts only when `OPILOT_OP_MCP` is set):
   the model is never shown a tool it cannot call. A second route, `GET
   /tools`, answers the runner with the **unfiltered** list — logged once per
   **process** (`Helpers#report_mcp_status`, guarded by
-  `Helpers.first_mcp_report?` since `./opilot agent` sets up two loops) as
+  `Helpers.first_mcp_report?` since `./opilot agent` sets up as many as three loops) as
   one short line: how many tools the allowlist passes, and how many write tools
   the instance has enabled. Counts, not names — opilot cannot disable those
   anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP

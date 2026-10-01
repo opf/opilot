@@ -57,7 +57,7 @@ module OPilot
     end
 
     # `agent` is both a group and opilot's main entry point: bare `./opilot
-    # agent` runs both loops, so the group's default is to act rather than to
+    # agent` runs every loop, so the group's default is to act rather than to
     # print help (`agent --help` does that).
     def agent(args)
       case args[0].to_s

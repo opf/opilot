@@ -4,7 +4,7 @@ module OPilot
   # single-threaded process, each tick polling GitHub, OpenProject, then Matrix,
   # one intent at a time.
   #
-  # Single-threaded on purpose: both loops drive the *same* clones, so their work
+  # Single-threaded on purpose: the loops drive the *same* clones, so their work
   # has to be serialized anyway — parallelism would only add a lock around every
   # checkout. Without GITHUB_CONTRIBUTOR_TOKEN the GitHub side is skipped and this
   # degrades to an OpenProject-only loop rather than erroring out.

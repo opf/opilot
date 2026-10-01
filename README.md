@@ -78,7 +78,7 @@ docker compose build
 ```
 
 ### Agent mode
-Scans for new activity on OpenProject WPs + its own GitHub PRs, and acts on @OPilot mentions
+Scans for new activity on OpenProject WPs, its own GitHub PRs and (when configured) a Matrix room, and acts on @OPilot mentions
 ```bash
 ./opilot agent
 ```

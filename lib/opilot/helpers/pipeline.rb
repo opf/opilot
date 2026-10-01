@@ -53,7 +53,7 @@ module OPilot
       log_script "OpenProject MCP: startup check failed (#{e.message}) — the OpenProject tools may be absent."
     end
 
-    # True once per process — `./opilot agent` sets up both loops.
+    # True once per process — `./opilot agent` sets up every loop.
     def self.first_mcp_report?
       return false if @op_mcp_reported
       @op_mcp_reported = true
