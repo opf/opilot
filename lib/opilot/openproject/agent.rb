@@ -10,6 +10,8 @@ module OPilot
     class Agent
       include Helpers
 
+      attr_reader :pull
+
       def initialize(ctx, pull: OpenProject::Pull.new(ctx), harness: Harness.new(ctx), publish: GitHub::Publish.new(ctx))
         @ctx     = ctx
         @pull    = pull
@@ -89,6 +91,17 @@ module OPilot
         when :create_wp then handle_create_wp(intent)
         when :health    then handle_health(intent)
         end
+      end
+
+      # Run a command for another interface (Matrix::Agent): the same handler, with
+      # every note sent to `reply` instead of the work package. `build_ref` goes
+      # between `build` and the option number, so the offer names the id.
+      def handle_elsewhere(intent, reply:, build_ref: nil)
+        @reply_sink = reply
+        @build_ref  = build_ref
+        handle(intent)
+      ensure
+        @reply_sink = @build_ref = nil
       end
 
       private
@@ -388,9 +401,10 @@ module OPilot
         first = options.first["n"]
         body = +"I can fix this in #{options.length} ways. Pick one, or describe a different way.\n\n"
         body << entries.join("\n\n")
-        body << "\n\nReply `@opilot build #{first}` to build option #{first}. " \
+        build = ["@opilot build", @build_ref].compact.join(" ")
+        body << "\n\nReply `#{build} #{first}` to build option #{first}. " \
                 "Add words after the number to change that option. " \
-                "Reply `@opilot build` with your own approach if no option fits."
+                "Reply `#{build}` with your own approach if no option fits."
         body << "\n\nOnly a user on opilot's allowlist can select an option." if @ctx.allowed_op_user_ids.any?
 
         post_note(st.item_id, addressed(body))
@@ -471,6 +485,7 @@ module OPilot
       # (the safer side) when visibility is unknown — e.g. an error before #handle
       # set @reply_internal.
       def post_note(item_id, raw)
+        return @reply_sink.call(item_id, raw) if @reply_sink
         internal = @reply_internal.nil? ? true : @reply_internal
         # The reply's id is not recorded anywhere: OpenProject::Pull#own_comment? recognises
         # opilot's own comments by their author, so there is nothing to bookkeep.

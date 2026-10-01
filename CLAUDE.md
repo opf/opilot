@@ -23,7 +23,8 @@ a fresh clone).
 
 ## Modes
 
-Agent loops: `./opilot agent` (both), `agent op`, `agent gh` — the older
+Agent loops: `./opilot agent` (both, plus Matrix when configured), `agent op`,
+`agent gh`, `agent matrix` — the older
 `op-agent`/`gh-agent` names still work and are used below.
 
 **Only one agent runs at a time**, whichever loops it starts. A second one is
@@ -192,6 +193,81 @@ predates this framing; renaming it orphans every tracked PR's act-state).
 The startup banner names which of the three states the run is in, since "scanned
 nothing" and "not scanning" look identical in the log.
 
+### matrix-agent (chat interface)
+
+`./opilot agent matrix`, and part of `./opilot agent` when `MATRIX_HOMESERVER_URL`,
+`MATRIX_ACCESS_TOKEN` and `MATRIX_ROOM_ID` are set. It answers messages addressed to
+opilot in **one** room (`Matrix::Pull` → `Matrix::Agent`). **The command words are
+OpenProject's**, each naming its work package first because a room has none of its
+own (`Pull#parse`): `health <id>... [focus]` (at most `Pull::MAX_IDS`),
+`grill|summarize <id> [focus]`, `build|fix <id> [direction | option number]` and
+`create wp <id> <what>`. **Any other text is chat**, as in an OpenProject comment; a
+command word with no id first gets a reply that says so. It runs in the same process
+as the other loops because every command writes the same work-package state and
+reads the same clones. opilot reacts 👀 when it starts, as in OpenProject.
+
+**`build` and `create wp` are OpenProject::Agent's own handlers**
+(`OpenProject::Agent#handle_elsewhere`), run on a fresh fetch of the work package.
+Every note they would comment — options, the approach note, NEEDS_INFO, the PR
+links — goes to the Matrix thread instead (`post_note`'s reply sink), and nothing is
+commented on the work package. The offer names the id (`@opilot build #1323 2`), and
+the state is shared: an option offered in the room can be picked in OpenProject. The
+trigger key is `matrix:<event id>`, which keeps `create wp` idempotent. `create wp`
+still needs `OPILOT_ALLOWED_OP_USER_IDS` (`CreateWp.enabled?`). So a Matrix allowlist
+user can open a draft PR on the fork and create work packages — the same reach as an
+OpenProject allowlist user. Unlike in OpenProject, a crashed handler is answered in
+the thread: there, the 👀 stays on the comment; here, the reader would wait. **The
+build notes have no audience rule**: the planner reads internal comments and is told
+its reply is internal, which holds only because the room is trusted. **A build from
+the room leaves no record on the work package** — the PR body's link is defanged, so
+the GitHub tab does not show it either. `create wp` off is answered every time in the
+room, not once per work package (`#on_work_package`).
+
+`grill` and `summarize` are room chat with the lens instruction
+(`Prompts::Advisor.lens`) on the named, freshly fetched work package.
+
+**Chat is `./opilot chat` posted to the room** (`Prompts::Advisor.room_chat`, the
+`advisor` role): the model reads every mirror under `/state` and the clones, plus
+the MCP tools. A room has no work package, so a work package the message names
+(`#1323`, `PROJ-7` — never a bare number) is fetched first (`fetch_single_item`);
+without that, chat sees only what an earlier run mirrored. **One session per Matrix
+thread** (`matrix/<host>/sessions/<root event>`): a top-level message starts one and
+syncs the clones, an `@opilot` message in its thread resumes it (`room_follow_up`),
+and every answer goes into that thread. **Internal comments are kept out by the prompt only**
+(`ROOM_AUDIENCE`) — Ruby cannot filter a free-form answer as it filters the health
+report, and `/state` holds every mirror and the logs — so the room is trusted at the
+operator's own level. That was a deliberate choice; keep membership to match.
+
+- **The commands are a fixed table, never passed to `CLI`.** A pass-through would
+  hand room members `reset`, `dev build` and `op wp create`.
+- **It refuses to start without `OPILOT_ALLOWED_MATRIX_USERS`.** A Matrix user is
+  not an OpenProject user, yet reaches whatever `OPENPROJECT_TOKEN` can read.
+- **The report is public** (`HealthCheck#run(internal: false)`): room members are
+  not an OpenProject audience, so findings citing an internal comment stay out.
+  The allowlist decides who may *ask*; every room member *reads* the answer,
+  including public text of work packages they may not open in OpenProject — so
+  keep room membership to people with that access.
+- `setup` refuses a missing config, a bad token and a room the bot has not
+  joined (`/joined_rooms`): an unjoined room syncs as empty, like a quiet one.
+- A *reply* to opilot's own message mentions opilot through `m.mentions`, so it is
+  chat too. A plain message in a thread is not a reply (`is_falling_back`); clients
+  should add no mention to it, so it is ignored — start it with `@opilot`, as in
+  OpenProject. (Not yet checked against Nheko.)
+- **The first sync answers nothing**, so history is never replayed. The sync token
+  advances only after a batch is handled; handled event ids, and a `txn_id` derived
+  from the trigger, stop a second answer after a crash.
+- It addresses opilot by `m.mentions` or a leading MXID / `@localpart` / display
+  name (Element's pill puts the display name in `body`). It never answers an
+  `m.notice` (bot loops) or its own messages, and ignores invites and other rooms.
+- **The room must be unencrypted**: there is no Ruby Olm/Megolm library. An
+  encrypted event logs one warning per run. Replies are plain-text `m.notice`
+  threaded to the trigger; Markdown is not rendered.
+- `Clients::Matrix` is the runner's client, over `Clients::HTTP` with
+  `bearer: true`. The model never reaches Matrix, so no gateway is involved.
+- **The command words live in one table, `CommandWords`**, read by both
+  `OpenProject::Pull#parse_command` and `Matrix::Pull#parse`; each keeps its own
+  argument rules. An alias added there reaches both interfaces.
+
 ### Terminal modes (`dev`)
 
 - **`dev build <id>...`** (alias `dev fix`) — fetch by id (ignoring filters), run a
@@ -322,6 +398,7 @@ before touching anything under `lib/opilot/pd/`.
 # Run both agent loops (polls every 20s) — the normal way to run opilot.
 # `agent op` / `agent gh` run one; the old op-agent / gh-agent names still work.
 ./opilot agent
+./opilot agent matrix   # only the Matrix room: chat, and the @opilot words with the WP id first
 
 # Plan and ship work packages by id (terminal approval; `dev fix` is an alias)
 ./opilot dev build <id>...
@@ -545,6 +622,7 @@ in CI.
 | `github/upstream_pull.rb` | Tracks registry upstreams for PRs mentioning opilot; `reply_only` intents. `#enabled?` gates on the flag **and** an allowlist |
 | `github/pr_cache.rb` | PR-content cache (`pr.json`, keyed by `updated_at`), mention matching, fresh-comment filtering, CI cache (`ci.json`, keyed by head SHA) |
 | `github/publish.rb` | Pushes branches to the fork; opens cross-repo draft PRs via Octokit |
+| `matrix/agent.rb`, `matrix/pull.rb`, `matrix/intent.rb` | The Matrix chat interface: syncs one room, turns the `@opilot` command words (work package first) and chat into `Matrix::Intent`s, answers with an `m.notice` in the trigger's thread; `build`/`create wp` via `OpenProject::Agent#handle_elsewhere` |
 | `runners/fix.rb` | Terminal `dev build`/`commit`/`plan` — one pipeline named by where it stops |
 | `runners/pr.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `runners/health.rb` | Terminal `dev health` — prints `OpenProject::HealthCheck`'s report, posts nothing |
@@ -552,6 +630,8 @@ in CI.
 | `runners/appsignal.rb` | Terminal `appsignal` — incident → work package, then hands off to `Runners::Fix#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
 | `runners/status.rb`, `runners/reset.rb` | Terminal `dev status` (reads `.opilot/` only) and `reset` (deletes it, after a confirmation) |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
+| `clients/matrix.rb` | Matrix Client-Server API: whoami, display name, `/sync`, `m.notice` replies, reactions, typing. Over `Clients::HTTP` with a Bearer header |
+| `command_words.rb` | The `@opilot` command words (`build`/`fix`, `create wp`, `health`, the lenses), shared by the OpenProject and Matrix parsers |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `clients/openproject.rb` | The OpenProject SDK namespace, `Clients::OpenProject`; it only requires the parts below |
 | `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). It destructures as `code, body = …`, so older callers read it as a tuple; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
@@ -983,6 +1063,9 @@ globally unique, so `pr_reviews/` is flat.
 │   └── wp_id.txt            # the WP created from it; present = create nothing more
 │                            #   (namespaced by op_host because THIS is the record
 │                            #    that names a work package on one instance)
+├── matrix/<host>/
+│   ├── sync.json            # matrix-agent: next_batch + the last handled event ids
+│   └── sessions/<root>      # one chat LLM session per Matrix thread
 ├── changes/ , openspec/     # `pd` state — see lib/opilot/pd/CLAUDE.md
 ├── repos/<repo_name>/       # this repo's standalone clone (mounted at /repos/<name>)
 ├── pi-agent/                # pi's config dir (settings.json/models.json seeded by
@@ -1091,6 +1174,8 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
+| `MATRIX_HOMESERVER_URL` / `MATRIX_ACCESS_TOKEN` / `MATRIX_ROOM_ID` | Optional; all three switch on the Matrix chat interface. The URL is the client API address (not derived from the MXID); the room must be unencrypted and use its `!id`, not an alias |
+| `OPILOT_ALLOWED_MATRIX_USERS` | Comma-separated Matrix user ids (`@you:server`) allowed to address opilot in the room — including `build` (a draft PR on the fork) and `create wp`. **Required** — the Matrix loop refuses to start without it |
 | `OPILOT_OP_MCP` | Optional; grants the OpenProject MCP tools (the `op_query` token — live lookups via the instance's MCP server) to the plan/chat/gh-reply phases and starts the `mcp-gw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. On an instance with no Enterprise MCP server the tools are simply absent, which is a normal, quiet state |
 | `OPILOT_GH_MCP` | Optional; the switch for the **GitHub route** on `mcp-gw` and the GitHub MCP tools (the `gh_query` token), read on both sides (the gateway builds the route, the runner grants the tools via `Context#gh_mcp?`). **Off by default** — the opposite of `OPILOT_OP_MCP`, because GitHub is a **third party**: the same reasoning that keeps `OPILOT_TRACK_UPSTREAM_PRS` off while the operator's own instance is on. The route reaches **any public repository**, not only the registry's: a question about an external library is a normal use, the credential is the same one the runner already reads public GitHub with, and the read-only guarantee comes from the pinned `/readonly` path rather than from confinement |
 | `OPILOT_GH_MCP_URL` | Optional; the GitHub MCP upstream (default `https://api.githubcopilot.com/mcp/readonly`). **`readonly` is in the PATH, not a header** — a live probe showed the path beats a hostile `X-MCP-Readonly: false`, while the same call without it exposes 38 tools of which 16 write. Point it at a locally run `github-mcp-server http` to pin the version |

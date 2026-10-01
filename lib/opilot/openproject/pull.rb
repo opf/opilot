@@ -306,32 +306,17 @@ module OPilot
         )
       end
 
-      # Map @opilot trigger text to a [command, free-text] pair. Anything that is
-      # not a known command word becomes a :chat carrying the message body.
+      # Map @opilot trigger text to a [command, free-text] pair. A command word
+      # counts only right after a leading @opilot (CommandWords); anything else
+      # becomes a :chat carrying the message body.
       def parse_command(raw)
         text = strip_mention(raw)
-        case text
-        # `build`, alias `fix` — the same pair `./opilot dev` takes. The list is
-        # deliberately short: an unknown word still gets an answer, falling through
-        # to :chat, whose prompt names the real command. The intent stays `:ship`
-        # because publishing is what the handler does.
-        when /\A@opilot\s+(?:build|fix)\b\s*(.*)/im
-          [:ship, $1.strip]
-        # The second command word. Two words, because `create` alone would read as
-        # a request to create anything at all — a branch, a PR, a comment — and the
-        # noun is what makes it one operation. #strip_mention has already collapsed
-        # the whitespace, so "create   wp" arrives normalised.
-        when /\A@opilot\s+create\s+(?:wp|work\s+package)\b\s*(.*)/im
-          [:create_wp, $1.strip]
-        # Not a lens: it needs a fact pass, its own prompt and a composed reply
-        # (OpenProject::HealthCheck). Trailing text is a focus hint, as for a lens.
-        when /\A@opilot\s+health\b\s*(.*)/im
-          [:health, $1.strip]
-        # Chat lenses: a preset instruction over the ordinary chat path, with any
-        # trailing text folded in as a focus hint (see Prompts::Advisor::LENSES).
-        when /\A@opilot\s+(grill|summarize)\b\s*(.*)/im then [:chat, Prompts::Advisor.lens($1, $2)]
-        else [:chat, text.sub(/@opilot\s*/i, "").strip]
+        body = text[/\A@opilot\s+(.*)/im, 1]
+        if (cmd = CommandWords.match(body))
+          return [:chat, Prompts::Advisor.lens(cmd[:word], cmd[:rest])] if cmd[:verb] == :lens
+          return [cmd[:verb], cmd[:rest]]
         end
+        [:chat, text.sub(/@opilot\s*/i, "").strip]
       end
 
       # OpenProject's CKEditor wraps the @opilot handle in mention markup, e.g.

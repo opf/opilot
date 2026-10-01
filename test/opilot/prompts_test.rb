@@ -14,6 +14,7 @@ module OPilot
       [Prompts::Advisor, :chat] => { item_id: 1, subject: "S", item: "/i", plan: "/p", message: "m" },
       [Prompts::Advisor, :plan_chat] => { item_id: 1, subject: "S", item: "/i", plan: "/p", message: "m" },
       [Prompts::Advisor, :free_chat] => { state: "/s", wp_root: "/s/w", repos: REPOS, message: "m" },
+      [Prompts::Advisor, :room_chat] => { state: "/s", wp_root: "/s/w", repos: REPOS, message: "m", sender: "@a:l" },
       [Prompts::WpWriter, :create_wp] => { item_id: 1, subject: "S", item: "/i", request: "r", project: "P", types: "Task", max: 5 },
       [Prompts::Triager, :appsignal_wp] => { incident: "/x", number: 7, app: "a", repos: REPOS, types: "Bug" },
       [Prompts::Auditor, :health] => { item_id: 1, subject: "S", item: "/i", facts: "/f" },
@@ -33,7 +34,7 @@ module OPilot
     }.freeze
 
     # Sent inside a session the role's first prompt already opened.
-    FOLLOW_UPS = [[Prompts::SpecWriter, :propose_revise]].freeze
+    FOLLOW_UPS = [[Prompts::SpecWriter, :propose_revise], [Prompts::Advisor, :room_follow_up]].freeze
 
     def render(mod, name) = mod.public_send(name, **BUILDERS.fetch([mod, name]))
 

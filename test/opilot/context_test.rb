@@ -210,6 +210,19 @@ module OPilot
 
     private
 
+    def test_matrix_needs_url_token_and_room
+      env = { "MATRIX_HOMESERVER_URL" => "http://host.docker.internal:8008/", "MATRIX_ACCESS_TOKEN" => "t",
+              "MATRIX_ROOM_ID" => "!r:localhost", "OPILOT_ALLOWED_MATRIX_USERS" => " @a:l, @B:l ,," }
+      with_env(env) do
+        ctx = Context.build(@tmpdir)
+        assert ctx.matrix?
+        assert_equal "http://host.docker.internal:8008", ctx.matrix_url
+        assert_equal "host.docker.internal_8008", ctx.matrix_host
+        assert_equal ["@a:l", "@B:l"], ctx.allowed_matrix_users
+      end
+      with_env(env.merge("MATRIX_ROOM_ID" => " ")) { refute Context.build(@tmpdir).matrix? }
+    end
+
     def with_env(vars)
       saved = vars.map { |k, _| [k, ENV[k]] }
       vars.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }

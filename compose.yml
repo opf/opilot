@@ -74,6 +74,11 @@ services:
       - OPILOT_PI_IDLE_TIMEOUT_MIN
       - OPILOT_PI_MAX_RUN_MIN
       - OPILOT_TRACK_UPSTREAM_PRS
+      # The Matrix chat interface (Matrix::Agent). Bare form: unset = off.
+      - MATRIX_HOMESERVER_URL
+      - MATRIX_ACCESS_TOKEN
+      - MATRIX_ROOM_ID
+      - OPILOT_ALLOWED_MATRIX_USERS
       - OPILOT_PD_PARENT_TYPE
       - OPILOT_PD_CHILD_TYPE
       - OPILOT_PD_IMPLEMENTING_STATUS

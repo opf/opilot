@@ -11,6 +11,7 @@ module OPilot
                 :inference_gw_url, :gw_token, :inference_url, :mcp_gw_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
     attr_reader   :appsignal_token, :appsignal_app_id, :appsignal_project
+    attr_reader   :matrix_url, :matrix_token, :matrix_room_id, :allowed_matrix_users
 
     def self.build(script_dir = nil)
       script_dir = Pathname(script_dir || File.expand_path("../../..", __FILE__))
@@ -83,6 +84,15 @@ module OPilot
       # otherwise. An identifier ("COMMS") or a numeric id; both are valid in
       # /api/v3/projects/<id>.
       @appsignal_project  = presence(ENV["OPILOT_APPSIGNAL_PROJECT"])
+      # The Matrix chat interface (Matrix::Agent). The URL is the client API
+      # address, which is not always the server name in the bot's MXID.
+      @matrix_url         = presence(ENV["MATRIX_HOMESERVER_URL"])&.sub(%r{/+\z}, "")
+      @matrix_token       = presence(ENV["MATRIX_ACCESS_TOKEN"])
+      @matrix_room_id     = presence(ENV["MATRIX_ROOM_ID"])
+      # Required, not optional: a Matrix user is not an OpenProject user, yet
+      # reaches whatever OPENPROJECT_TOKEN can read. MXIDs are case-sensitive.
+      @allowed_matrix_users = ENV.fetch("OPILOT_ALLOWED_MATRIX_USERS", "")
+                                 .split(",").map(&:strip).reject(&:empty?)
 
       @state_dir.mkpath
       @progress_file.open("a") {} # touch
@@ -107,13 +117,7 @@ module OPilot
     # Keeps dots for readability ("community.openproject.org") and folds in a
     # non-default port so two local instances (":8080" vs ":9090") don't clash.
     def op_host
-      @op_host ||= begin
-        uri  = URI(@op_url.to_s)
-        host = uri.host || @op_url.to_s
-        seg  = uri.port && ![80, 443].include?(uri.port) ? "#{host}_#{uri.port}" : host
-        s = seg.downcase.gsub(/[^a-z0-9._-]+/, "-").gsub(/\A-+|-+\z/, "")
-        s.empty? ? "unknown-host" : s
-      end
+      @op_host ||= host_segment(@op_url)
     end
 
     # Just the OpenProject credentials. Split out so `op`, which resolves no
@@ -263,7 +267,25 @@ module OPilot
          .split(",").map { |s| s.strip.downcase }.reject(&:empty?)
     end
 
+    # The Matrix chat interface is configured: homeserver, token and room.
+    def matrix?
+      !!(@matrix_url && @matrix_token && @matrix_room_id)
+    end
+
+    # A filesystem-safe segment naming the homeserver, for .opilot/matrix/<host>/.
+    def matrix_host
+      @matrix_host ||= host_segment(@matrix_url)
+    end
+
     private
+
+    def host_segment(url)
+      uri  = URI(url.to_s)
+      host = uri.host || url.to_s
+      seg  = uri.port && ![80, 443].include?(uri.port) ? "#{host}_#{uri.port}" : host
+      s = seg.downcase.gsub(/[^a-z0-9._-]+/, "-").gsub(/\A-+|-+\z/, "")
+      s.empty? ? "unknown-host" : s
+    end
 
     # nil for a missing OR blank value, so callers can test one thing.
     def presence(value)

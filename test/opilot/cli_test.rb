@@ -63,7 +63,7 @@ module OPilot
 
     def test_the_agent_group_lists_its_commands_and_triggers
       out, = capture_io { CLI.new(ctx_double).run(["agent", "--help"]) }
-      assert_includes out, "Usage: ./opilot agent [op | gh]"
+      assert_includes out, "Usage: ./opilot agent [op | gh | matrix]"
       assert_includes out, "./opilot agent op"
       assert_includes out, "Triggers", "the commands are useless without what fires them"
     end
@@ -72,7 +72,7 @@ module OPilot
       cli = CLI.new(ctx_double)
       out, err = capture_io { assert_raises(OPilot::FatalError) { cli.run(["agent", "both"]) } }
       assert_includes err, "unknown agent subcommand \"both\""
-      assert_includes out, "Usage: ./opilot agent [op | gh]"
+      assert_includes out, "Usage: ./opilot agent [op | gh | matrix]"
     end
 
     def test_the_pre_group_agent_names_still_run

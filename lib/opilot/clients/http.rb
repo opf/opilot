@@ -94,6 +94,14 @@ module OPilot
       [code, parsed]
     end
 
+    # Any verb, JSON in and out, for a client whose API wants a Bearer token
+    # (Clients::Matrix). Returns [status_code, parsed_or_nil], like .post_json.
+    def self.request_json(verb, url, token:, body: nil, bearer: false)
+      code, raw, = request_raw(verb, url, token: token, body: body, bearer: bearer)
+      parsed = JSON.parse(raw.to_s) rescue nil
+      [code, parsed]
+    end
+
     def self.encode_filters(filters_json)
       URI.encode_www_form_component(filters_json)
     end
@@ -107,14 +115,18 @@ module OPilot
     # redirects, and sends no JSON Content-Type when there is no body (an
     # attachment download is not a JSON request). A nil token skips auth
     # entirely — see .get_binary on why redirect hops must not carry the key.
-    private_class_method def self.request_raw(verb, url, token:, body: nil)
+    private_class_method def self.request_raw(verb, url, token:, body: nil, bearer: false)
       uri = URI(url)
       last_response = nil
       Retriable.retriable(**retry_opts) do
         Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
                         read_timeout: 30, open_timeout: 10) do |http|
           req = verb.new(uri)
-          req.basic_auth("apikey", token) if token
+          if bearer && token
+            req["Authorization"] = "Bearer #{token}"
+          elsif token
+            req.basic_auth("apikey", token)
+          end
           req["User-Agent"] = USER_AGENT
           req["Content-Type"] = "application/json" if body
           req.body = JSON.generate(body) if body

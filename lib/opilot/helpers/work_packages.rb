@@ -47,6 +47,14 @@ module OPilot
     # WorkPackage::SemanticIdentifier::ID_ROUTE_CONSTRAINT.
     WP_ID_PATTERN = /\A(?:\d+|[A-Z][A-Z0-9_]*-\d+)\z/
 
+    # Ids pasted from OpenProject often carry the "#" prefix ("#59942",
+    # "#PROJ-123") — accept it, and upcase semantic ids typed in lowercase
+    # ("proj-123"); WP_ID_PATTERN validation downstream rejects garbage.
+    def self.wp_id_arg(arg)
+      id = arg.to_s.strip.delete_prefix("#")
+      id.match?(/\A[A-Za-z][A-Za-z0-9_]*-\d+\z/) ? id.upcase : id
+    end
+
     # Inline label for a work package id, mirroring OpenProject's
     # WorkPackage::SemanticIdentifier.format_display_id: semantic ids are
     # self-describing ("PROJ-42"); classic numeric ids keep the "#42" prefix.

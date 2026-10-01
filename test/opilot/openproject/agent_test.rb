@@ -196,6 +196,28 @@ module OPilot
       dir / "pr_url.txt"
     end
 
+    # ── handle_elsewhere ────────────────────────────────────────────────────
+
+    def test_handle_elsewhere_sends_every_note_to_the_sink_and_names_the_id
+      dir = @ctx.state_dir / "work_packages" / "op.example.com" / "42"
+      dir.mkpath
+      (dir / "options.json").write(JSON.generate([{ "n" => 1, "title" => "A", "summary" => "a" },
+                                                 { "n" => 2, "title" => "B", "summary" => "b" }]))
+      got = []
+      capture_io do
+        @agent.handle_elsewhere(intent(:ship, text: ""), build_ref: "#42", reply: ->(id, msg) { got << [id, msg] })
+      end
+
+      assert_empty @notes, "nothing is commented on the work package"
+      assert_equal "42", got.first.first
+      assert_includes got.first.last, "`@opilot build #42 1`"
+      assert_includes got.first.last, "`@opilot build #42` with your own approach"
+
+      capture_io { @agent.handle(intent(:ship, text: "")) }
+      assert_includes @notes.last, "`@opilot build 1`", "the sink and the id do not outlive the call"
+      assert_includes @notes.last, "`@opilot build` with your own approach"
+    end
+
     # ── produce_plan ────────────────────────────────────────────────────────
 
     def test_produce_plan_saves_plan_and_returns_ok

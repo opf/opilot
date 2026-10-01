@@ -29,6 +29,10 @@ module OPilot
       # failure mode to fear.
       MAX = 5
 
+      # Why the command is off. Shared with Matrix::Agent, which answers it every time.
+      DISABLED_NOTE = "I do not create work packages on this instance. The administrator must set " \
+                      "OPILOT_ALLOWED_OP_USER_IDS first, because a work package can never be deleted.".freeze
+
       # Whether `create wp` runs at all. It needs a non-empty allowlist, and that is
       # not a style choice: a work package can never be deleted, and with no
       # allowlist every user who can comment could mint them without limit.
@@ -101,10 +105,7 @@ module OPilot
         data = Helpers.safe_json_read(st.item_file) || {}
         return if data["create_wp_refusal_noted_at"]
 
-        code = @reply.(st.item_id,
-          "I do not create work packages on this instance. The administrator must set " \
-          "OPILOT_ALLOWED_OP_USER_IDS first, because a work package can never be deleted."
-        )
+        code = @reply.(st.item_id, DISABLED_NOTE)
         return unless code == 201
 
         data["create_wp_refusal_noted_at"] = Time.now.utc.iso8601

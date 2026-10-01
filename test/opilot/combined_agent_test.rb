@@ -20,7 +20,7 @@ module OPilot
         @tag # stands in for filters / scan_from_at
       end
 
-      def tick(arg)
+      def tick(arg = nil)
         @calls << "#{@tag}:tick(#{arg})"
         raise StopLoop if @stop_after
       end
@@ -28,7 +28,7 @@ module OPilot
 
     def setup
       @calls = []
-      @ctx   = Struct.new(:contributor_token).new("ghp_token")
+      @ctx   = Struct.new(:contributor_token, :matrix?).new("ghp_token", false)
     end
 
     def test_polls_github_before_openproject_each_cycle
@@ -43,7 +43,7 @@ module OPilot
     end
 
     def test_runs_openproject_only_when_no_github_token
-      @ctx = Struct.new(:contributor_token).new(nil)
+      @ctx = Struct.new(:contributor_token, :matrix?).new(nil, false)
       gh = FakeLoop.new("gh", @calls)
       op = FakeLoop.new("op", @calls, stop_after: true)
       assert_raises(StopLoop) do
@@ -52,6 +52,16 @@ module OPilot
 
       # No GitHub setup or tick — degrades to the OpenProject loop.
       assert_equal ["op:setup", "op:tick(op)"], @calls
+    end
+  
+    def test_polls_matrix_last_when_configured
+      gh = FakeLoop.new("gh", @calls)
+      op = FakeLoop.new("op", @calls)
+      mx = FakeLoop.new("mx", @calls, stop_after: true)
+      assert_raises(StopLoop) do
+        capture_io { CombinedAgent.new(@ctx, agent: op, gh_agent: gh, matrix_agent: mx).run }
+      end
+      assert_equal ["gh:setup", "op:setup", "mx:setup", "gh:tick(gh)", "op:tick(op)", "mx:tick()"], @calls
     end
   end
 end

@@ -69,6 +69,7 @@ module OPilot
       when ""   then session("agent")    { CombinedAgent.new(@ctx).run }
       when "op" then session("agent op") { OpenProject::Agent.new(@ctx).run }
       when "gh" then session("agent gh") { GitHub::Agent.new(@ctx).run }
+      when "matrix" then session("agent matrix") { Matrix::Agent.new(@ctx).run }
       else
         $stderr.puts "unknown agent subcommand #{args[0].inspect}"
         @ui.agent_usage
@@ -165,12 +166,8 @@ module OPilot
       session("pd", args.first(1)) { PD::Runner.new(@ctx).run(args) }
     end
 
-    # Ids pasted from OpenProject often carry the "#" prefix ("#59942",
-    # "#PROJ-123") — accept it, and upcase semantic ids typed in lowercase
-    # ("proj-123"); the WP_ID_PATTERN validation downstream rejects garbage.
     def wp_id_arg(arg)
-      id = arg.to_s.strip.delete_prefix("#")
-      id.match?(/\A[A-Za-z][A-Za-z0-9_]*-\d+\z/) ? id.upcase : id
+      Helpers.wp_id_arg(arg)
     end
   end
 end

@@ -14,10 +14,11 @@ _save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
 # True when CMD is one of the listed words, e.g. `_is agent op-agent`.
 _is() { [[ " $* " == *" $CMD "* ]]; }
 # Which loops a command starts: `agent` alone runs both, `agent op`/`agent gh`
-# (and the pre-group op-agent/gh-agent names) run one. The wizard then prompts for
-# exactly the allowlists the loops it is about to start will read.
-_runs_op() { _is op-agent || { _is agent && [ "$SUB" != gh ]; }; }
-_runs_gh() { _is gh-agent || { _is agent && [ "$SUB" != op ]; }; }
+# (and the pre-group op-agent/gh-agent names) run one, and `agent matrix` runs
+# neither. The wizard then prompts for exactly the allowlists the loops it is
+# about to start will read.
+_runs_op() { _is op-agent || { _is agent && { [ -z "$SUB" ] || [ "$SUB" = op ]; }; }; }
+_runs_gh() { _is gh-agent || { _is agent && { [ -z "$SUB" ] || [ "$SUB" = gh ]; }; }; }
 # docker compose bound to opilot's compose file.
 dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 

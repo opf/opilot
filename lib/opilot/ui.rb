@@ -20,13 +20,19 @@ module OPilot
         ./opilot agent gh
             GitHub only: opilot's own PRs (reply, write code when asked, fix
             failing CI) and upstream PRs that @-mention it (reply-only).
+
+        ./opilot agent matrix
+            Matrix only: chat in the configured room, and the @opilot words
+            with the work package first: `build #1323` (needs
+            OPILOT_ALLOWED_MATRIX_USERS). `agent` runs it too, when MATRIX_*
+            is set in .env.
       AGENT
     end
 
     # `./opilot agent --help`, or a bad subcommand.
     def agent_usage_text
       <<~USAGE.strip
-        Usage: ./opilot agent [op | gh]
+        Usage: ./opilot agent [op | gh | matrix]
 
         #{indent(agent_commands, 2)}
 
