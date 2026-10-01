@@ -44,16 +44,18 @@ const WRITE_GIT = new Set(["rm", "clean"]);
 // subcommand: output redirection to a file, pager/exec hijacks, alt git-dir.
 const DANGEROUS_OPTION = /^(--output|-o$|--exec-path|--git-dir|--work-tree|-c$|--upload-pack|--receive-pack)/;
 
-// op_query (pi-mcp.ts) is listed here too, but this file does nothing
-// further to guard it — mcp-gw.js's request-body allowlist is the real control
-// on what it can reach. An unknown tool name still terminates the run.
-const KNOWN_TOOLS = new Set([
-  "read", "grep", "find", "ls", "bash", "write", "edit",
-  // The MCP tools pi-mcp.ts registers. Both must be named here or the guard
-  // refuses them and TERMINATES the run, which is the allowlist working as
-  // designed — a new tool is a deliberate addition in two files, not one.
-  "op_query", "gh_query",
-]);
+// An unknown tool name terminates the run.
+const KNOWN_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "write", "edit"]);
+
+// The MCP servers whose tools may run: only those on mcp-gw, and only a tool
+// this run's --tools grant names (server.js expands op_query/gh_query into the
+// exact names). mcp-gw's allowlist is the real control on what a call reaches.
+const MCP_TOOL = /^mcp__(openproject|github)__[a-z_]+$/;
+
+export function knownTool(name, argv) {
+  if (KNOWN_TOOLS.has(name)) return true;
+  return MCP_TOOL.test(name) && grantedTools(argv).includes(name);
+}
 
 function resolvePath(p) {
   // Node's path.resolve, inlined: extensions run in whatever module system pi
@@ -113,11 +115,15 @@ export function touchesGitDir(p) {
 // server.js starts pi with `--tools <grant>`. No --tools means pi enabled every
 // tool, write included, so an absent flag reads as granted.
 export function writesGranted(argv) {
+  if (!(argv || []).includes("--tools")) return true;
+  const granted = grantedTools(argv);
+  return granted.includes("write") || granted.includes("edit");
+}
+
+function grantedTools(argv) {
   const args = argv || [];
   const i = args.indexOf("--tools");
-  if (i === -1) return true;
-  const granted = String(args[i + 1] || "").split(",").map((s) => s.trim());
-  return granted.includes("write") || granted.includes("edit");
+  return i === -1 ? [] : String(args[i + 1] || "").split(",").map((s) => s.trim());
 }
 
 // Flags refused on `git clean`, checked letter by letter so a cluster like -fdx
@@ -190,7 +196,7 @@ export default function (pi) {
     const toolName = event.toolName;
     const input = event.input || {};
 
-    if (!KNOWN_TOOLS.has(toolName)) {
+    if (!knownTool(toolName, process.argv)) {
       return { block: true, terminate: true, reason: `pi-guards: unknown tool "${toolName}" is not allowed` };
     }
 

@@ -35,7 +35,7 @@ module OPilot
     # OpenProject::Pull#ensure_bot_identity!, which raise on purpose because a run without a
     # model or an identity cannot work — this one has a working fallback (the
     # mirrors), so a 404, an unreachable gateway, or a malformed answer just
-    # leaves op_query unused for the run.
+    # leaves the OpenProject tools absent for the run.
     def report_mcp_status
       return unless @ctx.op_mcp?
       return unless Helpers.first_mcp_report?
@@ -46,12 +46,11 @@ module OPilot
       log_script "OpenProject MCP: #{Clients::OpMcp.new(@ctx.mcp_gw_url, @ctx.gw_token).summary}"
     rescue Clients::OpMcp::Unavailable
       # The common case now that OPILOT_OP_MCP defaults on: most instances have
-      # no Enterprise MCP server enabled. Quiet by design — op_query itself
-      # reports the same thing per call, so this is not new information, only
-      # confirmation the run isn't silently broken.
-      log_script "OpenProject MCP: not available on this instance — op_query will report that per call."
+      # no Enterprise MCP server enabled. Quiet by design: pi's connection
+      # fails the same way and the tools are simply absent.
+      log_script "OpenProject MCP: not available on this instance — the OpenProject tools will be absent."
     rescue StandardError => e
-      log_script "OpenProject MCP: startup check failed (#{e.message}) — op_query will report unavailable at call time."
+      log_script "OpenProject MCP: startup check failed (#{e.message}) — the OpenProject tools may be absent."
     end
 
     # True once per process — `./opilot agent` sets up both loops.

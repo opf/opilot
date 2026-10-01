@@ -7,8 +7,8 @@ module OPilot
     # Reads mcp-gw's runner-only `GET /tools` route — the
     # UNFILTERED tools/list the instance actually offers. Used once at startup
     # by Helpers#report_mcp_status, purely to report what an administrator
-    # has enabled; it is never on the path of a real op_query call, which is
-    # entirely the harness/extension's job through `POST /mcp`.
+    # has enabled; it is never on the path of a real tool call, which pi's MCP
+    # client makes through `POST /mcp`.
     class OpMcp
       Error = Class.new(StandardError)
       # The instance has no Enterprise MCP server enabled — a NORMAL state
@@ -18,14 +18,11 @@ module OPilot
       # the generic warning #summary's caller prints for a real Error.
       Unavailable = Class.new(Error)
 
-      # Mirrors mcp-gw.js's READ_ONLY_OPS. This copy is diagnostic only — it
-      # never decides what a call can do, only how the startup summary counts
-      # and labels what the instance returned. The two run in different
-      # processes, so the duplication is unavoidable; mcp-gw.js is the authority.
-      READ_ONLY_OPS = %w[
-        search_work_packages list_work_package_comments list_work_package_relations
-        search_projects search_versions list_types list_statuses search_custom_fields
-      ].freeze
+      # The operations mcp-gw allows, from the list it reads itself. Diagnostic
+      # here: it only decides how the startup summary counts what the instance offers.
+      READ_ONLY_OPS = JSON.parse(
+        File.read(File.expand_path("../../../gateways/mcp-ops.json", __dir__))
+      ).fetch("openproject").freeze
 
       def initialize(mcp_gw_url, gw_token)
         @uri      = URI(mcp_gw_url)

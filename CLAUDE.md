@@ -401,9 +401,11 @@ starts only when `OPILOT_OP_MCP` is set):
   `core.fsmonitor` run programs on allowlisted read-only subcommands, and
   `.git/hooks/pre-commit` would execute in the *runner*, which holds the
   GitHub token. Writes are checked on the resolved path by exact segment
-  match, so `.gitignore`/`.github/` stay editable. `pi-mcp.ts` registers
-  the `op_query` tool (see the MCP gateway entry below); it is always loaded, but
-  registers nothing when `OPILOT_MCP_GW_URL` is unset.
+  match, so `.gitignore`/`.github/` stay editable. MCP tools pass the guard only
+  when the run's `--tools` names them. `pi-mcp.ts` registers the granted MCP
+  servers with **pi's built-in MCP client** (`-e builtin:mcp`); `server.js`
+  loads both only for a grant that holds `op_query`/`gh_query`, so every other
+  run opens no MCP connection (see the MCP gateway entry below).
 
   pi always talks to inference-gw at `http://inference-gw:47292/v1`, resolving its
   `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a secret) — the
@@ -451,8 +453,11 @@ starts only when `OPILOT_OP_MCP` is set):
   address pinned at boot, and a swap of the handshake token for
   `OPENPROJECT_TOKEN` (basic auth, `apikey:<token>`) — but the allowlist is on
   the **JSON-RPC request body**, not the path: every call is the same `POST
-  /mcp`, so mcp-gw parses it and allows only `initialize`/`tools/list`, and for
-  `tools/call` only eight read-only operation names. The instance's own
+  /mcp`, so mcp-gw parses it and allows only the handshake (`initialize`,
+  `notifications/initialized`, `notifications/cancelled`, `ping`),
+  `tools/list`, and for `tools/call` only eight read-only operation names —
+  listed once in `gateways/mcp-ops.json`, which mcp-gw, `server.js` and
+  `Clients::OpMcp` all read. The instance's own
   `tools/list` answer is also trimmed to those eight before it reaches pi, so
   the model is never shown a tool it cannot call. A second route, `GET
   /tools`, answers the runner with the **unfiltered** list — logged once per
@@ -462,12 +467,31 @@ starts only when `OPILOT_OP_MCP` is set):
   the instance has enabled. Counts, not names — opilot cannot disable those
   anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
   tools do — so this allowlist is the actual control, not a refinement one.
-  The pi extension side (`pi-mcp.ts`/`op-mcp-client.js`, loaded via a
-  second `-e`) trims a `search_work_packages` answer to a fixed subset of
-  fields (full records run ~8 KB each) and registers nothing at all when
-  `OPILOT_MCP_GW_URL` is empty — the harness-side half of the same feature flag.
-  A 404 ("MCP server is not available") is a normal per-instance state, not an
-  error: the MCP server is an Enterprise add-on an administrator must enable.
+
+  **pi's native MCP client talks to mcp-gw, so mcp-gw speaks enough of
+  streamable HTTP for it.** It forwards `Mcp-Session-Id` and
+  `MCP-Protocol-Version` (by name and shape, nothing else from the request),
+  answers `GET`/`DELETE` with 405 (the spec's answer for no notification
+  stream), and narrows the `initialize` capabilities to `tools` — the instance
+  also offers prompts, resources and logging, and a client told so would ask
+  for methods mcp-gw refuses. It also **shapes every `tools/call`**
+  (`gateways/mcp-shape.js`): numeric ids sent as strings are coerced, and the
+  answer is trimmed — a work-package search to the fields a plan reads (full
+  records run ~8 KB each), a GitHub record to its useful keys — capped at 25 KB,
+  with `structuredContent` dropped so no untrimmed copy rides along. This used to
+  be the harness's own client; the gateway is now the one place that sees
+  every call.
+
+  **The grant names every MCP tool.** `op_query`/`gh_query` stay grant
+  *tokens*; `server.js` (`expandGrant`) turns each into its server's exact
+  `mcp__openproject__<op>`/`mcp__github__<op>` names before `--tools`, and
+  pi's `--tools` filters MCP tools like built-in ones — an unnamed tool is
+  never registered, which also keeps `codemode`, `tool_search` and pi's
+  resource tools out. Tools are `direct` exposure: declared like built-ins,
+  about 2,000 tokens of schema per call for OpenProject. A 404 ("MCP server is
+  not available") is a normal per-instance state: the connection fails and the
+  tools are absent, which the prompt line tells the model is fine — the MCP
+  server is an Enterprise add-on an administrator must enable.
 **There is no egress proxy.** A tinyproxy sidecar used to sit beside inference-gw,
 allowlisting a couple of documentation hosts for Claude Code's WebFetch. pi
 ships no fetch tool — its built-ins are `bash, edit, find, grep, ls, read,
@@ -995,6 +1019,8 @@ Runner POSTs to `http://harness:47291` with headers:
   — the other roles keep the plain grant regardless. `server.js` rejects any other
   grant, so its allowlist (`ALLOWED_TOOL_GRANTS`, four strings) must stay in
   sync with `TOOLS_READ`/`TOOLS_IMPL`/`TOOLS_READ_OP`/`TOOLS_IMPL_OP`.
+  `op_query`/`gh_query` are grant tokens, not pi tools: `server.js` expands each
+  into its MCP server's tool names (`expandGrant`) before it starts pi.
 - **Every call names a role** (`Helpers#llm`). A role is a YAML file,
   `lib/opilot/prompts/<name>.yml`: `tools` (`read`/`write`), `mcp` (whether the
   MCP tools join the grant), `model` (`heavy`/`light`) and `memory`
@@ -1071,10 +1097,10 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_ALLOWED_OP_USER_IDS` | Comma-separated OpenProject user ids allowed to trigger agent mode (the number in `/users/<id>` — not emails, which a non-admin token can't read). Empty = unrestricted, which needs explicit confirmation — and **switches `@opilot create wp` off entirely**, since a work package can never be deleted |
 | `OPILOT_ALLOWED_GH_USERS` | Comma-separated GitHub logins allowed to trigger `gh-agent`. Empty means anyone can trigger on opilot's own PRs — i.e. push code to the bot's branch — so the wizard demands confirmation |
 | `OPILOT_TRACK_UPSTREAM_PRS` | Optional (`1`/`true`); also track registry upstreams' PRs for `@opilot` mentions (read-only answers). **Off by default** — the only source reaching outside opilot's own PRs. Also needs `OPILOT_ALLOWED_GH_USERS` |
-| `OPILOT_OP_MCP` | Optional; grants `op_query` (live OpenProject lookups via the instance's MCP server) to the plan/chat/gh-reply phases and starts the `mcp-gw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. An instance with no Enterprise MCP server enabled just answers "unavailable", which is a normal, quiet state |
-| `OPILOT_GH_MCP` | Optional; the switch for the **GitHub route** on `mcp-gw` and the `gh_query` tool, read on all three sides (the gateway builds the route, the runner grants the tool via `Context#gh_mcp?`, `pi-mcp.ts` registers it). **Off by default** — the opposite of `OPILOT_OP_MCP`, because GitHub is a **third party**: the same reasoning that keeps `OPILOT_TRACK_UPSTREAM_PRS` off while the operator's own instance is on. The route reaches **any public repository**, not only the registry's: a question about an external library is a normal use, the credential is the same one the runner already reads public GitHub with, and the read-only guarantee comes from the pinned `/readonly` path rather than from confinement |
+| `OPILOT_OP_MCP` | Optional; grants the OpenProject MCP tools (the `op_query` token — live lookups via the instance's MCP server) to the plan/chat/gh-reply phases and starts the `mcp-gw` sidecar alongside the harness. **On by default** — set to `0`/`false`/`no`/`off` to disable. On an instance with no Enterprise MCP server the tools are simply absent, which is a normal, quiet state |
+| `OPILOT_GH_MCP` | Optional; the switch for the **GitHub route** on `mcp-gw` and the GitHub MCP tools (the `gh_query` token), read on all three sides (the gateway builds the route, the runner grants the tools via `Context#gh_mcp?`, `pi-mcp.ts` registers the server). **Off by default** — the opposite of `OPILOT_OP_MCP`, because GitHub is a **third party**: the same reasoning that keeps `OPILOT_TRACK_UPSTREAM_PRS` off while the operator's own instance is on. The route reaches **any public repository**, not only the registry's: a question about an external library is a normal use, the credential is the same one the runner already reads public GitHub with, and the read-only guarantee comes from the pinned `/readonly` path rather than from confinement |
 | `OPILOT_GH_MCP_URL` | Optional; the GitHub MCP upstream (default `https://api.githubcopilot.com/mcp/readonly`). **`readonly` is in the PATH, not a header** — a live probe showed the path beats a hostile `X-MCP-Readonly: false`, while the same call without it exposes 38 tools of which 16 write. Point it at a locally run `github-mcp-server http` to pin the version |
-| `OPILOT_MCP_GW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://mcp-gw:47293`) for both the runner and the harness only when `mcp-gw` is actually running. Read by the runner for the startup tool-list check and by `pi-mcp.ts` as its own gate: empty means the tool registers at all |
+| `OPILOT_MCP_GW_URL` | Optional; not meant to be hand-set — `./opilot` exports it (to `http://mcp-gw:47293`) for both the runner and the harness only when `mcp-gw` is actually running. Read by the runner for the startup tool-list check and by `pi-mcp.ts` as its own gate: empty means no MCP server is registered at all |
 | `OPILOT_INFERENCE_URL` | Optional; the upstream inference-gw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via inference-gw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
 | `OPILOT_INFERENCE_KEY` | The key inference-gw presents upstream, if the upstream wants one. Lives only in inference-gw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). inference-gw always deletes the inbound `Authorization` first, whatever this names |

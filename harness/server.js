@@ -55,10 +55,10 @@ const PROC_KILL_GRACE_MS = 10 * 1000;
 // inventory of every grant the system can issue, and the size assertion in
 // test/js/models_json_test.js is the tripwire that makes adding one deliberate.
 //
-// The optional tools are appended in a fixed order — op_query then gh_query —
+// The optional tokens are appended in a fixed order — op_query then gh_query —
 // and each is sent only when its own flag is on (OPILOT_OP_MCP,
-// OPILOT_GH_MCP). pi-mcp.ts registers each tool at all only when the gateway
-// URL is set too.
+// OPILOT_GH_MCP). They are grant tokens, not pi tools: expandGrant below turns
+// each into its server's MCP tool names.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
@@ -69,6 +69,27 @@ const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash,op_query,gh_query',
   'read,grep,find,ls,bash,write,edit,op_query,gh_query',
 ]);
+
+// The allowed operations, shared with mcp-gw and the runner. Each MCP grant
+// token stands for one server on mcp-gw; pi names that server's tools
+// `mcp__<server>__<tool>`.
+const MCP_OPS = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gateways', 'mcp-ops.json'), 'utf8'));
+const MCP_GRANTS = { op_query: 'openproject', gh_query: 'github' };
+
+// A grant as pi's --tools list, and the MCP servers it names. --tools filters
+// every registered tool, MCP ones included, so a tool not listed here is never
+// registered — the same exact-name control the built-in tools get.
+function expandGrant(grant) {
+  const tools = [];
+  const servers = [];
+  for (const name of grant.split(',')) {
+    const server = MCP_GRANTS[name];
+    if (!server) { tools.push(name); continue; }
+    servers.push(server);
+    tools.push(...MCP_OPS[server].map(op => `mcp__${server}__${op}`));
+  }
+  return { tools: tools.join(','), servers };
+}
 
 // Role files (lib/opilot/prompts/<name>.yml) — the same files the runner loads,
 // at the same path relative to this file in the repo and in the image, so a role's
@@ -413,7 +434,7 @@ function translate(parsed, state) {
 function runPi(body, tools, model, sessionId, system, res, done) {
   const args = [
     '--mode', 'json',
-    '--no-extensions', '-e', path.join(__dirname, 'pi-guards.ts'), '-e', path.join(__dirname, 'pi-mcp.ts'),
+    '--no-extensions', '-e', path.join(__dirname, 'pi-guards.ts'),
     '--no-skills', '--no-prompt-templates',
     // pi loads a project's CLAUDE.md/AGENTS.md at startup even when it does
     // not trust the project (untrusted, prompt-injectable work-package text
@@ -426,13 +447,19 @@ function runPi(body, tools, model, sessionId, system, res, done) {
     '--offline',
     '--session-dir', PI_SESSION_DIR,
   ];
-  if (tools) args.push('--tools', tools);
+  const grant = expandGrant(tools);
+  args.push('--tools', grant.tools);
+  // pi's own MCP client, and the extension that registers this grant's
+  // servers — loaded only when there is one, so other runs open no connection.
+  if (grant.servers.length) {
+    args.push('-e', 'builtin:mcp', '-e', path.join(__dirname, 'pi-mcp.ts'));
+  }
   if (model) args.push('--model', model);
   // Opens the session, or creates it when absent; the runner owns the id.
   if (sessionId) args.push('--session-id', sessionId);
   args.push('--append-system-prompt', system);
 
-  const proc = spawn('pi', args, { env: process.env });
+  const proc = spawn('pi', args, { env: { ...process.env, OPILOT_MCP_SERVERS: grant.servers.join(',') } });
 
   // Non-null once a bound has fired, and which one ("idle"/"max") — one
   // variable, because "did it time out" is just "is this set".
@@ -605,6 +632,6 @@ if (require.main === module) startServer();
 
 module.exports = {
   translate, settleResult, extractText, lastAssistantOf,
-  buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
+  buildModelsJson, buildOpenRouterModels, expandGrant, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
   parseRole, loadRoles, grantsFor, checkRole,
 };

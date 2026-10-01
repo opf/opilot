@@ -10,6 +10,7 @@ const {
   parseConfig, parseGhConfig, parseRoutes, mapPath, checkMcpCall,
   filterToolsList, unwrapSse, READ_ONLY_OPS, GH_READ_ONLY_OPS, createHandler,
 } = require('../../gateways/mcp-gw.js');
+const { MAX_ANSWER_BYTES } = require('../../gateways/mcp-shape.js');
 
 const ghCall = (name, args) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
 const ghEnv = (extra = {}) => env({ OPILOT_GH_MCP: '1', GITHUB_CONTRIBUTOR_TOKEN: 'ghp_contrib', ...extra });
@@ -48,11 +49,11 @@ function fakeRes() {
 // `upstreamBody` fake the upstream's answer for response-filtering tests.
 function run(cfg, req, body, { address = '10.0.0.9', upstreamStatus = 200, upstreamBody = '{}' } = {}) {
   let sent = null;
+  const sentBody = [];
   const table = cfg.routes ? cfg : { gwToken: GW, routes: { '/mcp': cfg } };
   const handler = createHandler(table, {
     request(_route, options, cb) {
       sent = options;
-      const chunks = [];
       const up = {
         statusCode: upstreamStatus,
         headers: { 'content-type': 'application/json' },
@@ -62,7 +63,7 @@ function run(cfg, req, body, { address = '10.0.0.9', upstreamStatus = 200, upstr
         },
       };
       cb(up);
-      return { on() {}, end(b) { if (b) chunks.push(b); } };
+      return { on() {}, end(b) { if (b) sentBody.push(String(b)); } };
     },
     address: () => address,
     invalidate: () => {},
@@ -75,7 +76,7 @@ function run(cfg, req, body, { address = '10.0.0.9', upstreamStatus = 200, upstr
     listeners.data && listeners.data(Buffer.from(body));
     listeners.end && listeners.end();
   }
-  return { sent, res };
+  return { sent, res, sentBody: sentBody.join('') };
 }
 
 let failures = 0;
@@ -150,9 +151,13 @@ test('a write tool is refused — this is the control, not a refinement', () => 
   }
 });
 
-test('a method outside the three allowed is refused', () => {
-  assert.ok(checkMcpCall({ jsonrpc: '2.0', id: 1, method: 'resources/list' }).refuse);
-  assert.ok(checkMcpCall({ jsonrpc: '2.0', id: 1, method: 'notifications/initialized' }).refuse);
+test('the handshake methods pass; resources, prompts and logging do not', () => {
+  for (const method of ['initialize', 'notifications/initialized', 'notifications/cancelled', 'ping', 'tools/list']) {
+    assert.deepStrictEqual(checkMcpCall({ jsonrpc: '2.0', method }), {}, method);
+  }
+  for (const method of ['resources/list', 'resources/read', 'prompts/list', 'logging/setLevel']) {
+    assert.ok(checkMcpCall({ jsonrpc: '2.0', id: 1, method }).refuse, method);
+  }
 });
 
 test('a batch (array) body is refused outright', () => {
@@ -195,9 +200,18 @@ test('/health needs no token', () => {
   assert.strictEqual(res.statusCode, 200);
 });
 
-test('a GET to anywhere but /tools is refused', () => {
-  const cfg = parseConfig(env());
-  const { sent, res } = run(cfg, fakeReq({ method: 'GET', url: '/mcp' }));
+test('a GET or DELETE on an MCP path is 405, and nothing reaches the upstream', () => {
+  // The spec's answer for a server with no notification stream and no
+  // session teardown; a 403 would read to the client as a broken server.
+  for (const method of ['GET', 'DELETE']) {
+    const { sent, res } = run(parseConfig(env()), fakeReq({ method, url: '/mcp' }));
+    assert.strictEqual(res.statusCode, 405, method);
+    assert.strictEqual(sent, null, method);
+  }
+});
+
+test('a GET to an unknown path is still refused', () => {
+  const { sent, res } = run(parseConfig(env()), fakeReq({ method: 'GET', url: '/elsewhere' }));
   assert.strictEqual(res.statusCode, 403);
   assert.strictEqual(sent, null);
 });
@@ -388,6 +402,91 @@ test('an OpenProject call still goes to OpenProject with both routes live', () =
   const { sent } = run(cfg, fakeReq(), body);
   assert.strictEqual(sent.path, '/mcp');
   assert.strictEqual(sent.headers.authorization, parseConfig(env()).authValue);
+});
+
+
+// ── what pi's native MCP client needs ─────────────────────────────────────
+
+const answerText = res => JSON.parse(res.body).result.content[0].text;
+
+test('the session headers are forwarded; nothing else from the request is', () => {
+  const req = fakeReq({ headers: {
+    authorization: `Bearer ${GW}`, 'mcp-session-id': 'sess-1', 'mcp-protocol-version': '2025-06-18',
+    'x-mcp-readonly': 'false', cookie: 'c=1',
+  } });
+  const { sent } = run(parseConfig(env()), req, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+  assert.strictEqual(sent.headers['mcp-session-id'], 'sess-1');
+  assert.strictEqual(sent.headers['mcp-protocol-version'], '2025-06-18');
+  assert.strictEqual(sent.headers['x-mcp-readonly'], undefined);
+  assert.strictEqual(sent.headers.cookie, undefined);
+});
+
+test('a malformed session header is dropped, not forwarded', () => {
+  const req = fakeReq({ headers: { authorization: `Bearer ${GW}`, 'mcp-session-id': 'a b\r\nx: y',
+                                   'mcp-protocol-version': 'latest' } });
+  const { sent } = run(parseConfig(env()), req, JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }));
+  assert.strictEqual(sent.headers['mcp-session-id'], undefined);
+  assert.strictEqual(sent.headers['mcp-protocol-version'], undefined);
+});
+
+test('initialize is narrowed to the tools capability', () => {
+  // Told about resources, a client would ask for methods this gateway refuses.
+  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
+    protocolVersion: '2025-06-18', serverInfo: { name: 'openproject_mcp' },
+    capabilities: { tools: { listChanged: true }, prompts: {}, resources: {}, logging: {} } } });
+  const { res } = run(parseConfig(env()), fakeReq(),
+    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }), { upstreamBody });
+  const result = JSON.parse(res.body).result;
+  assert.deepStrictEqual(result.capabilities, { tools: { listChanged: true } });
+  assert.strictEqual(result.serverInfo.name, 'openproject_mcp');
+});
+
+test('a numeric id sent as a string is coerced; an identifier is not', () => {
+  const body = JSON.stringify(ghCall('search_work_packages', { project_id: '12', subject: '42', id: ['3', 'TTP2'] }));
+  const { sentBody } = run(parseConfig(env()), fakeReq(), body);
+  assert.deepStrictEqual(JSON.parse(sentBody).params.arguments, { project_id: 12, subject: '42', id: [3, 'TTP2'] });
+});
+
+test('a work-package search is trimmed to what a plan reads', () => {
+  const item = { id: 7, displayId: 'TTP2-7', subject: 'Login fails', description: { raw: 'x'.repeat(400) },
+                 _links: { status: { title: 'New' }, type: { title: 'Bug' }, project: { title: 'TTP2' } },
+                 startDate: '2026-01-01', costs: { spent: 1 } };
+  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
+    content: [{ type: 'text', text: JSON.stringify({ total: 1, items: [item] }) }],
+    structuredContent: { total: 1, items: [item] } } });
+  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('search_work_packages', { subject: 'x' })),
+                      { upstreamBody });
+  const result = JSON.parse(res.body).result;
+  assert.strictEqual(result.structuredContent, undefined, 'the untrimmed copy must not ride along');
+  const [w] = JSON.parse(answerText(res)).items;
+  assert.deepStrictEqual(Object.keys(w).sort(),
+    ['description', 'displayId', 'id', 'project', 'status', 'subject', 'type', 'updatedAt']);
+  assert.strictEqual(w.status, 'New');
+  assert.strictEqual(w.description.length, 301);
+});
+
+test('a GitHub answer keeps the fields a question reads, and a user is its login', () => {
+  const pr = { number: 5, title: 'Fix', node_id: 'N', user: { login: 'octo', avatar_url: 'a' }, url: 'u' };
+  const upstreamBody = `data: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
+    content: [{ type: 'text', text: JSON.stringify(pr) }] } })}\n\n`;
+  const { res } = run(parseRoutes(ghEnv()), fakeReq({ url: '/gh/mcp' }),
+                      JSON.stringify(ghCall('pull_request_read', { pullNumber: '5' })), { upstreamBody });
+  assert.deepStrictEqual(JSON.parse(answerText(res)), { number: 5, title: 'Fix', user: 'octo' });
+});
+
+test('an error answer stays an error, and an oversized one is capped and says so', () => {
+  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
+    isError: true, content: [{ type: 'text', text: 'y'.repeat(MAX_ANSWER_BYTES + 10) }] } });
+  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('list_types', {})), { upstreamBody });
+  const result = JSON.parse(res.body).result;
+  assert.strictEqual(result.isError, true);
+  assert.match(result.content[0].text, /truncated — answer exceeded/);
+});
+
+test('a JSON-RPC error passes through untouched', () => {
+  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } });
+  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('list_types', {})), { upstreamBody });
+  assert.deepStrictEqual(JSON.parse(res.body).error, { code: -32602, message: 'bad' });
 });
 
 console.log(failures === 0 ? '\nall passed' : `\n${failures} failed`);

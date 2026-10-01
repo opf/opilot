@@ -142,22 +142,20 @@ module OPilot
       %w[1 true yes on].include?(ENV["OPILOT_TRACK_UPSTREAM_PRS"].to_s.strip.downcase)
     end
 
-    # Whether the plan/chat/gh-reply phases get the op_query tool.
-    # ON by default — opt OUT with OPILOT_OP_MCP=0 (or false/no/off). An
-    # instance without the (Enterprise-only) MCP server enabled just answers
-    # every op_query call with "unavailable", which #report_mcp_status and
-    # the tool itself both treat as a normal, quiet state, never an error — so
-    # defaulting this on costs an idle mcp-gw container on such an instance, not
-    # a broken run. This flag is only the tool GRANT; the harness-side
-    # extension has its own independent gate on OPILOT_MCP_GW_URL (empty →
-    # registers nothing).
+    # Whether the plan/chat/gh-reply phases get the OpenProject MCP tools (the
+    # op_query grant token). ON by default — opt OUT with OPILOT_OP_MCP=0 (or
+    # false/no/off). On an instance without the (Enterprise-only) MCP server
+    # pi's connection fails and the tools are simply absent — a normal, quiet
+    # state, so defaulting this on costs an idle mcp-gw container, not a broken
+    # run. This flag is only the GRANT; pi-mcp.ts has its own gate on
+    # OPILOT_MCP_GW_URL (empty → registers nothing).
     def op_mcp?
       !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)
     end
 
-    # Whether the plan/chat phases get the gh_query tool. OFF by default, which
-    # is the opposite of op_mcp? and deliberate: that one degrades to a quiet
-    # "unavailable" on an instance without the add-on, while this one needs a
+    # Whether the plan/chat phases get the GitHub MCP tools (the gh_query grant
+    # token). OFF by default, which is the opposite of op_mcp? and deliberate:
+    # that one degrades quietly on an instance without the add-on, while this one needs a
     # GitHub read token an operator has to create. `./opilot` exports it only
     # when that token is present, so unset means off rather than blank.
     def gh_mcp?

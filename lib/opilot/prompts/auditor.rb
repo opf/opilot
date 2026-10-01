@@ -47,7 +47,7 @@ module OPilot
              "\n5. The description against the descendants. A requirement in the description that\n" \
              "   no descendant covers, a descendant outside the scope of the description, or two\n" \
              "   descendants that do the same work. Use the subjects; open a descendant with\n" \
-             "   op_query only when its subject is not enough to decide."]
+             "   mcp__openproject__search_work_packages only when its subject is not enough to decide."]
           end
         tagged(<<~PROMPT)
           Check the health of OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}

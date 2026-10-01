@@ -139,8 +139,8 @@ import('../../harness/pi-guards.ts').then(mod => {
   test('the grant is read off pi\'s own --tools argument', () => {
     assert.strictEqual(writesGranted(IMPL), true);
     assert.strictEqual(writesGranted(READ), false);
-    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,op_query']), false);
-    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,write,edit,op_query']), true);
+    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,mcp__openproject__list_types']), false);
+    assert.strictEqual(writesGranted(['pi', '--tools', 'read,grep,find,ls,bash,write,edit,mcp__openproject__list_types']), true);
     // No --tools at all means pi enabled everything, write included.
     assert.strictEqual(writesGranted(['pi', '--mode', 'json']), true);
   });
@@ -169,12 +169,26 @@ import('../../harness/pi-guards.ts').then(mod => {
     }
   });
 
-  test('both MCP tools are known to the guard by name', () => {
-    // The guard is a name allowlist, so a tool pi-mcp.ts registers but the
-    // guard does not know is blocked AND terminates the run — which is how
-    // gh_query failed the first time it was called.
-    for (const tool of ['op_query', 'gh_query']) {
-      assert.strictEqual(call(tool, {}).block, false, `${tool} must be allowed`);
+  test('an MCP tool runs only when the grant names it, and only from mcp-gw servers', () => {
+    // server.js expands op_query/gh_query into these exact names in --tools.
+    const argv = ['pi', '--tools', 'read,grep,find,ls,bash,mcp__openproject__search_work_packages'];
+    assert.strictEqual(mod.knownTool('mcp__openproject__search_work_packages', argv), true);
+    assert.strictEqual(mod.knownTool('mcp__openproject__create_work_package', argv), false, 'not granted');
+    assert.strictEqual(mod.knownTool('mcp__openproject__search_work_packages', READ), false, 'no MCP grant');
+    const other = ['pi', '--tools', 'read,mcp__evil__search_work_packages'];
+    assert.strictEqual(mod.knownTool('mcp__evil__search_work_packages', other), false, 'not an mcp-gw server');
+  });
+
+  test('the hook refuses an ungranted MCP tool and terminates the run', () => {
+    const saved = process.argv;
+    process.argv = ['pi', '--tools', 'read,mcp__github__get_commit'];
+    try {
+      assert.strictEqual(call('mcp__github__get_commit', {}).block, false);
+      const r = call('mcp__github__search_code', {});
+      assert.strictEqual(r.block, true);
+      assert.strictEqual(r.terminate, true);
+    } finally {
+      process.argv = saved;
     }
   });
 

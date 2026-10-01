@@ -26,6 +26,11 @@
 const http  = require('http');
 const https = require('https');
 const dns   = require('dns');
+const { coerceArgs, shapeResult } = require('./mcp-shape.js');
+
+// One list of the allowed operations, read by this file, the harness
+// (server.js builds pi's tool grant from it) and the runner (Clients::OpMcp).
+const MCP_OPS = require('./mcp-ops.json');
 
 const PORT = 47293;
 
@@ -60,16 +65,8 @@ const GH_TOOLSETS = 'repos,pull_requests,issues';
 // update_work_package, create_work_package_comment,
 // create_work_package_relation, update_work_package_relation,
 // delete_work_package_relation) and are never in this set: they skip every guard
-// that `@opilot create wp` has.
-//
-// The extension (pi-mcp.ts) carries its own copy for the tool schema it
-// shows the model; the two run in different containers, so the duplication is
-// unavoidable. This file is the authority — the extension's copy only shapes
-// what the model sees, never what actually executes.
-const OP_READ_ONLY_OPS = new Set([
-  'search_work_packages', 'list_work_package_comments', 'list_work_package_relations',
-  'search_projects', 'search_versions', 'list_types', 'list_statuses', 'search_custom_fields',
-]);
+// that `@opilot create wp` has. This file is the authority on what executes.
+const OP_READ_ONLY_OPS = new Set(MCP_OPS.openproject);
 
 // Kept as the old name because Clients::OpMcp mirrors it and the /tools route
 // below is still OpenProject's alone.
@@ -80,22 +77,62 @@ const READ_ONLY_OPS = OP_READ_ONLY_OPS;
 // than a hand-picked subset — a subset needs a judgement per operation and
 // drifts, and the read-only guarantee is already carried by the pinned path
 // (probed: 22 tools here, 0 write-capable; without /readonly it is 38 of which
-// 16 write). This list only shapes what the model is offered.
+// 16 write).
 //
 // There is NO repository confinement. Questions about an external library are
 // a normal use — you cannot grep a repository you have not cloned — and the
 // runner already reads public GitHub without restriction through Octokit, so
 // confining only the harness would not have been a coherent boundary.
-const GH_READ_ONLY_OPS = new Set([
-  'get_commit', 'get_file_contents', 'get_label', 'get_latest_release',
-  'get_release_by_tag', 'get_tag', 'issue_read', 'list_branches',
-  'list_commits', 'list_issue_fields', 'list_issue_types', 'list_issues',
-  'list_pull_requests', 'list_releases', 'list_repository_collaborators',
-  'list_tags', 'pull_request_read', 'search_code', 'search_commits',
-  'search_issues', 'search_pull_requests', 'search_repositories',
+const GH_READ_ONLY_OPS = new Set(MCP_OPS.github);
+
+// What pi's MCP client sends besides the calls themselves: the handshake's
+// notification, cancellation, and keep-alive. None of them reaches a tool.
+const ALLOWED_METHODS = new Set([
+  'initialize', 'notifications/initialized', 'notifications/cancelled', 'ping',
+  'tools/list', 'tools/call',
 ]);
 
-const ALLOWED_METHODS = new Set(['initialize', 'tools/list', 'tools/call']);
+// The streamable-HTTP headers a client must echo back to keep its session.
+// Copied by name and shape only; nothing else from the inbound request is.
+const SESSION_HEADERS = {
+  'mcp-session-id': /^[\x21-\x7e]{1,256}$/,
+  'mcp-protocol-version': /^\d{4}-\d{2}-\d{2}$/,
+};
+
+function sessionHeaders(inbound) {
+  const out = {};
+  for (const [name, shape] of Object.entries(SESSION_HEADERS)) {
+    const value = inbound[name];
+    if (typeof value === 'string' && shape.test(value)) out[name] = value;
+  }
+  return out;
+}
+
+// Narrows `initialize` to tools: the instance also offers prompts, resources and
+// logging, and a client told so would ask for methods this gateway refuses.
+function filterInitialize(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.toString());
+  } catch {
+    return raw;
+  }
+  const caps = parsed && parsed.result && parsed.result.capabilities;
+  if (!caps) return raw;
+  parsed.result.capabilities = caps.tools ? { tools: caps.tools } : {};
+  return Buffer.from(JSON.stringify(parsed));
+}
+
+// Trims a tools/call answer (mcp-shape.js); an unreadable one passes untouched.
+function filterToolCall(raw, server, tool) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.toString());
+  } catch {
+    return raw;
+  }
+  return Buffer.from(JSON.stringify(shapeResult(server, tool, parsed)));
+}
 
 // A call this large has no legitimate read-only shape; refuse before it's
 // even parsed.
@@ -296,8 +333,9 @@ function createHandler(cfg, deps) {
   // other status pipes through unfiltered. The response is always buffered
   // here (never piped) because a filtered body needs its own content-length —
   // piping first and rewriting later isn't possible once headers are sent.
-  function forwardUpstream(route, body, res, filter) {
+  function forwardUpstream(route, body, res, filter, session = {}) {
     const headers = {
+      ...session,
       authorization: route.authValue,
       'content-type': 'application/json',
       'content-length': Buffer.byteLength(body),
@@ -308,8 +346,8 @@ function createHandler(cfg, deps) {
       // the bytes it gets, and decompression is one more thing to get wrong.
       'accept-encoding': 'identity',
       host: route.host, // the NAME, not the pinned address
-      // Last, so a route's own headers cannot be shadowed by the defaults —
-      // and note nothing from the inbound request is copied here at all.
+      // Last, so a route's own headers cannot be shadowed by the defaults.
+      // Nothing from the inbound request is copied but the session headers.
       ...route.extraHeaders,
     };
 
@@ -387,6 +425,14 @@ function createHandler(cfg, deps) {
     // refused before anything else looks at it.
     const clientPath = (req.url || '').split('?')[0];
     const route = cfg.routes[clientPath];
+    // A client may open a GET stream for server notifications and DELETE its
+    // session; 405 is the spec's answer for a server that offers neither.
+    if (route && (req.method === 'GET' || req.method === 'DELETE')) {
+      res.writeHead(405, { Allow: 'POST', 'Content-Type': 'text/plain' });
+      res.end('method not allowed\n');
+      req.resume();
+      return;
+    }
     if (req.method !== 'POST' || !route) {
       process.stderr.write(`mcp-gw: refused ${req.method} ${req.url} — path not allowed\n`);
       res.writeHead(403, { 'Content-Type': 'text/plain' });
@@ -447,10 +493,18 @@ function createHandler(cfg, deps) {
       const label = parsed.params && parsed.params.name ? `${parsed.method} ${parsed.params.name}` : parsed.method;
       process.stderr.write(`mcp-gw: ${route.name} allowed ${label}\n`);
 
-      const filter = parsed.method === 'tools/list'
-        ? buf => filterToolsList(buf, route.allowedOps)
-        : identity;
-      forwardUpstream(route, raw, res, filter);
+      let body = raw;
+      let filter = identity;
+      if (parsed.method === 'tools/list') {
+        filter = buf => filterToolsList(buf, route.allowedOps);
+      } else if (parsed.method === 'initialize') {
+        filter = filterInitialize;
+      } else if (parsed.method === 'tools/call') {
+        const { name, arguments: args } = parsed.params;
+        body = JSON.stringify({ ...parsed, params: { ...parsed.params, arguments: coerceArgs(route.name, args) } });
+        filter = buf => filterToolCall(buf, route.name, name);
+      }
+      forwardUpstream(route, body, res, filter, sessionHeaders(req.headers));
     });
   };
 }
@@ -523,7 +577,7 @@ if (require.main === module) {
 
 module.exports = {
   parseConfig, parseGhConfig, parseRoutes,
-  mapPath, checkMcpCall, filterToolsList, unwrapSse,
+  mapPath, checkMcpCall, filterToolsList, filterInitialize, filterToolCall, sessionHeaders, unwrapSse,
   READ_ONLY_OPS, OP_READ_ONLY_OPS, GH_READ_ONLY_OPS, MCP_PATH, GH_PATH,
   createHandler, createResolver, startServer,
 };

@@ -6,7 +6,8 @@
 // checks it — a wrong provider name or a missing compat flag surfaces as an
 // opaque pi start-up error three layers away.
 const assert = require('assert');
-const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
+const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS, expandGrant } = require('../../harness/server.js');
+const MCP_OPS = require('../../gateways/mcp-ops.json');
 
 let failures = 0;
 function test(name, fn) {
@@ -73,6 +74,24 @@ test('the tool-grant allowlist still matches harness.rb', () => {
     assert.ok(ALLOWED_TOOL_GRANTS.has(`${prefix},op_query,gh_query`));
   }
   assert.strictEqual(ALLOWED_TOOL_GRANTS.size, 8);
+});
+
+test('a grant token expands to exactly the allowed MCP tools of its server', () => {
+  // --tools filters MCP tools too, so these names are the whole of what pi
+  // registers from mcp-gw; a tool the gateway would refuse is never offered.
+  const { tools, servers } = expandGrant('read,grep,find,ls,bash,op_query,gh_query');
+  const names = tools.split(',');
+  assert.deepStrictEqual(servers, ['openproject', 'github']);
+  assert.deepStrictEqual(names.slice(0, 5), ['read', 'grep', 'find', 'ls', 'bash']);
+  assert.ok(names.includes('mcp__openproject__search_work_packages'));
+  assert.ok(names.includes('mcp__github__pull_request_read'));
+  assert.strictEqual(names.length, 5 + MCP_OPS.openproject.length + MCP_OPS.github.length);
+  assert.ok(!names.some(n => /create|update|delete/.test(n)), 'no write tool');
+});
+
+test('a grant without an MCP token names no server', () => {
+  assert.deepStrictEqual(expandGrant('read,grep,find,ls,bash,write,edit'),
+    { tools: 'read,grep,find,ls,bash,write,edit', servers: [] });
 });
 
 // ── copy versus generate ──────────────────────────────────────────────────
