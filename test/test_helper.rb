@@ -30,6 +30,7 @@ module WebMockAlwaysReset
     WebMock.reset!
     OPilot::RequestLog.file = nil # a CLI test's session sets it to a temp dir
     OPilot::Helpers.reset_mcp_check! # memoised per process
+    FileUtils.rm_rf(@tmpdir) if @tmpdir # always a Dir.mktmpdir
   end
 end
 Minitest::Test.prepend(WebMockAlwaysReset)

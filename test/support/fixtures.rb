@@ -113,4 +113,23 @@ module OPilot
       def patch; PATCH; end
     end
   end
+
+  # The pd tests' common start: a tmpdir context, its default clone (a git repo
+  # unless `git: false`) and an initialised spec store.
+  module PDStoreSetup
+    def seed_store(git: true)
+      @tmpdir = Pathname(Dir.mktmpdir)
+      @ctx    = Context.build(@tmpdir)
+      @repo   = @ctx.default_repo
+      if git
+        @repo.worktree_host.mkpath
+        Git.init(@repo.worktree_host.to_s)
+      else
+        (@repo.worktree_host / ".git" / "info").mkpath
+      end
+      @store = PD::ChangeStore.new(@ctx, @repo)
+      (@store.tree / "changes").mkpath
+      (@store.tree / "config.yaml").write("schema: spec-driven\n")
+    end
+  end
 end

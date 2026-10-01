@@ -13,10 +13,6 @@ module OPilot
           super(message)
         end
 
-        # Worth asking again later: a bad minute, not an answer. The transport
-        # has already retried by the time this is raised.
-        def transient? = false
-
         def self.for(code, body, message)
           klass = STATUS_ERRORS[code] ||
                   case code
@@ -29,9 +25,7 @@ module OPilot
       end
 
       # No answer at all, after the transport's retries.
-      class NetworkError < Error
-        def transient? = true
-      end
+      class NetworkError < Error; end
 
       # Any 4xx without a class of its own.
       class ClientError < Error; end
@@ -44,13 +38,8 @@ module OPilot
       # this never fires there: read `_embedded.validationErrors` instead.
       class ValidationFailed < ClientError; end
 
-      class RateLimited < ClientError
-        def transient? = true
-      end
-
-      class ServerError < Error
-        def transient? = true
-      end
+      class RateLimited < ClientError; end
+      class ServerError < Error; end
 
       # A 2xx whose body is not JSON — a proxy's HTML page, say.
       class InvalidResponse < Error; end

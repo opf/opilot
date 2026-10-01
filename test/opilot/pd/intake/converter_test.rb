@@ -11,10 +11,6 @@ module OPilot
         @dest   = @tmpdir / "out"
       end
 
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
-      end
-
       def convert(path, name = path.basename.to_s, content_type: nil)
         Intake::Converter.convert(path, name, @dest, content_type: content_type)
       end

@@ -7,10 +7,6 @@ module OPilot
       @ctx = Context.build(@tmpdir)
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     # ── the local-model guard ───────────────────────────────────────────────
     #
     # `./opilot appsignal` sends production error data to the model, so this

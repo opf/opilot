@@ -17,10 +17,6 @@ module OPilot
         @calls  = []
       end
 
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
-      end
-
       # Swap Open3.capture3 for the duration of the block. Hand-rolled rather than
       # Minitest's #stub, which moved out of the core gem in Minitest 6.
       def swap_capture3(replacement)

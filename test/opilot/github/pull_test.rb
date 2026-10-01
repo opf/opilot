@@ -52,10 +52,6 @@ module OPilot
       (@dir / "item.json").write(JSON.generate("subject" => "Fix the bug", "type" => "bug"))
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def pr(state: "open", updated_at: "2026-06-18T18:00:00Z", title: "PR title",
            ref: "bug/42-fix-the-bug", head_repo: "fork/r")
       PR.new(state: state, updated_at: Time.parse(updated_at),

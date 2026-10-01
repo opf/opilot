@@ -289,7 +289,18 @@ module OPilot
     end
   end
 
+  # A work package with no comments and no reactions.
+  module NoActivitiesStub
+    def stub_no_activities(id)
+      %w[activities activities_emoji_reactions].each do |route|
+        stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/#{route}")
+          .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      end
+    end
+  end
+
   class OpPullCacheTest < Minitest::Test
+    include NoActivitiesStub
     WP = {
       "id"        => 42,
       "subject"   => "Fix login bug",
@@ -314,10 +325,6 @@ module OPilot
       # the fresh path always asks for the attachment collection.
       stub_request(:get, %r{/work_packages/[\w-]+/attachments\z})
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-    end
-
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
     end
 
     def test_skips_api_calls_when_item_json_is_current
@@ -349,10 +356,7 @@ module OPilot
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-01T00:00:00Z" }))
 
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       cached, comments = @pull.send(:fetch_work_package_item, WP)
       refute cached
@@ -363,10 +367,7 @@ module OPilot
 
     # pi's read tool pages by line; a one-line mirror is cut at 50 KB.
     def test_item_json_is_written_one_field_per_line
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       @pull.send(:fetch_work_package_item, WP)
       text = (Pathname(@tmpdir) / "work_packages" / "example.com" / "42" / "item.json").read
@@ -387,10 +388,7 @@ module OPilot
         "refusal_noted_at"           => "2024-01-01T11:00:00Z",
         "create_wp_refusal_noted_at" => "2024-01-01T12:00:00Z"
       ))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       @pull.send(:fetch_work_package_item, WP)
 
@@ -410,10 +408,7 @@ module OPilot
       item_dir.mkpath
       (item_dir / "item.json").write(JSON.generate({ "updated_at" => "2024-01-02T00:00:00Z" }))
 
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       cached, = @pull.send(:fetch_work_package_item, WP)
 
@@ -432,10 +427,7 @@ module OPilot
         { "updated_at" => "2024-01-02T00:00:00Z", "item_version" => OpenProject::Pull::ITEM_VERSION,
           "pictures" => [], "pictures_pending" => true }))
 
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       cached, = @pull.send(:fetch_work_package_item, WP)
 
@@ -454,10 +446,7 @@ module OPilot
         { "updated_at" => "2024-01-01T00:00:00Z", "item_version" => OpenProject::Pull::ITEM_VERSION,
           "pictures" => known }))
 
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
       stub_request(:get, "https://example.com/api/v3/work_packages/42/attachments")
         .to_return(status: 503, body: "{}")
 
@@ -494,10 +483,7 @@ module OPilot
     end
 
     def test_fetches_and_writes_when_no_item_json_exists
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/42/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(42)
 
       cached, comments = @pull.send(:fetch_work_package_item, WP)
       assert (Pathname(@tmpdir) / "work_packages" / "example.com" / "42" / "item.json").exist?
@@ -560,10 +546,6 @@ module OPilot
       stub_request(:get, "https://example.com/api/v3/users/me")
         .to_return(status: 200, body: JSON.generate(
           { "_links" => { "self" => { "href" => "/api/v3/users/1" } }, "name" => "OPilot" }))
-    end
-
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
     end
 
     def test_fetch_single_item_returns_item_data
@@ -819,6 +801,8 @@ module OPilot
   end
 
   class OpPullRelatedTest < Minitest::Test
+    include NoActivitiesStub
+
     def setup
       @tmpdir = Dir.mktmpdir
       ctx = Struct.new(:op_url, :state_dir, :state_container, :token, :allowed_op_user_ids) { def op_host; "example.com"; end }
@@ -828,10 +812,6 @@ module OPilot
       # the fresh path always asks for the attachment collection.
       stub_request(:get, %r{/work_packages/[\w-]+/attachments\z})
         .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-    end
-
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
     end
 
     def wp_body(id, status: "New", links: {})
@@ -848,10 +828,7 @@ module OPilot
       stub_request(:get, "https://example.com/api/v3/work_packages/#{id}")
         .to_return(status: code, body: code == 200 ? JSON.generate(wp_body(id, status: status)) : "{}")
       return unless code == 200
-      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
-      stub_request(:get, "https://example.com/api/v3/work_packages/#{id}/activities_emoji_reactions")
-        .to_return(status: 200, body: JSON.generate({ "_embedded" => { "elements" => [] } }))
+      stub_no_activities(id)
     end
 
     def rel(from:, to:, type:, reverse:)

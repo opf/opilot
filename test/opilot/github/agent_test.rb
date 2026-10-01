@@ -102,10 +102,6 @@ module OPilot
       inject_worktree(@agent, @worktree)
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     # Make worktree(repo) return one fake handle for any repo, so tests drive and
     # inspect a single worktree.
     def inject_worktree(agent, wt)

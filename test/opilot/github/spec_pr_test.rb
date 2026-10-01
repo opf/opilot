@@ -41,10 +41,6 @@ module OPilot
       (@change / "pr_url.txt").write("https://github.com/op-opilot/openproject/pull/14\n")
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def pr(state: "open", title: "[add-recurring-meetings] Change proposal")
       PR.new(state: state, updated_at: Time.parse("2026-08-03T10:00:00Z"),
              html_url: "https://github.com/op-opilot/openproject/pull/14", title: title,

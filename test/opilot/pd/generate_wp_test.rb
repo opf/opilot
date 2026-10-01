@@ -7,6 +7,8 @@ module OPilot
     # packages. Everything worth testing here is about not writing twice: a work
     # package cannot be deleted, so every path has to be re-runnable.
     class GenerateWpTest < Minitest::Test
+      include PDStoreSetup
+
       # Hands out increasing ids, and can be told which POST to fail.
       class FakeOP
         attr_reader :created, :comments
@@ -42,15 +44,7 @@ module OPilot
       MD
 
       def setup
-        @tmpdir = Pathname(Dir.mktmpdir)
-        @ctx    = Context.build(@tmpdir)
-        @repo   = @ctx.default_repo
-        @repo.worktree_host.mkpath
-        Git.init(@repo.worktree_host.to_s)
-
-        @store = ChangeStore.new(@ctx, @repo)
-        (@store.tree / "changes").mkpath
-        (@store.tree / "config.yaml").write("schema: spec-driven\n")
+        seed_store
         # The same state_dir the runner derives, so pr_url.txt is the one it reads.
         @state = ChangeState.new(change_id: "add-x", store: @store,
                                  state_dir: Helpers.change_dir(@ctx, "add-x").tap(&:mkpath))
@@ -63,10 +57,6 @@ module OPilot
         @state.merge_tracker("project_id" => "42")
         @state.pr_url_file.write("https://github.com/bot/openproject/pull/14")
         seed_resolved_ids!
-      end
-
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
       end
 
       def seed_resolved_ids!(parent: { "id" => 7, "name" => "FEATURE" },

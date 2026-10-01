@@ -11,11 +11,6 @@ module OPilot
       @session_file = Pathname(@tmpdir) / "session_id"
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-      super
-    end
-
     def ndjson(*messages)
       messages.map { |m| JSON.generate(m) }.join("\n") + "\n"
     end

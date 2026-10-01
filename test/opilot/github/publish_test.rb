@@ -55,10 +55,6 @@ module OPilot
       publish
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def pr_url_file
       @dir / "repos" / @repo.name / "pr_url.txt"
     end

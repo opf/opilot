@@ -2,22 +2,9 @@ require "json"
 
 module OPilot
   module Runners
-    # `./opilot appsignal` — turn a production error into a work package and a
-    # draft PR.
-    #
-    # This is the one command that sends PRODUCTION INCIDENT DATA to the model, and
-    # that is why it exists: TODO.md listed an AppSignal integration for a long
-    # time and blocked it on exactly that, because opilot must not hand user data
-    # to a third-party model. It is unblocked by the model being local, not by the
-    # objection having gone away — so #require_local_inference! is a hard gate, not
-    # a warning, and it fails closed.
-    #
-    # `fix` does almost nothing itself. Once the work package exists,
-    # Runners::Fix#ship_ids is already the whole plan → approve → implement → publish
-    # pipeline, with its own approval prompts. What is new here is only: read the
-    # incident, write one work package, create it.
-    #
-    # It owns its own subcommand dispatch, like Runners::Op and PD::Runner.
+    # `./opilot appsignal`: a production error becomes a work package and a draft PR.
+    # It sends incident data to the model, so #require_local_inference! fails closed.
+    # See CLAUDE.md, appsignal.
     class AppSignal
       Resource = Clients::OpenProject::Resource
 
@@ -33,9 +20,7 @@ module OPilot
         @fix_runner = fix_runner
       end
 
-      # `fix` is the only verb, so a bare incident number is accepted too:
-      # `./opilot appsignal 2025` reads the same as `appsignal fix 2025`, and
-      # there is nothing else it could have meant.
+      # `fix` is the only verb, so a bare incident number is accepted too.
       def run(args)
         sub, *rest = args
         return fix(rest) if sub == "fix"
@@ -45,9 +30,7 @@ module OPilot
         UI.new(@ctx).appsignal_usage
         raise OPilot::FatalError
       rescue Clients::AppSignal::Error => e
-        # An API failure is a fact about the run, not a bug in opilot, so it reads
-        # as one line rather than as a Ruby backtrace. The client has already
-        # scrubbed the token out of the message.
+        # One line, not a backtrace. The client has already scrubbed the token.
         raise OPilot::FatalError, "AppSignal: #{e.message}"
       end
 
@@ -60,10 +43,8 @@ module OPilot
         number  = rest.first.to_s.strip.delete_prefix("#")
         Helpers.usage!("appsignal fix", "<incident-number>", "e.g. 4711") unless number.match?(/\A\d+\z/)
 
-        # Preflighted BEFORE the LLM call, because a work package can never be
-        # deleted: the guard, the harness, and the token that publishing needs.
-        # These four hold for BOTH paths below — a re-run still plans, implements
-        # and publishes, so it still needs a local model and somewhere to push.
+        # Preflighted before the LLM call, because a work package cannot be deleted.
+        # A re-run below still needs all four.
         require_local_inference!
         resolve_app!(opts["app"])
         ensure_harness!
@@ -72,31 +53,21 @@ module OPilot
         dir = Helpers.incident_dir(@ctx, @app, number)
         dir.mkpath
 
-        # Created from this incident already? Then that work package IS the
-        # answer, and asking again must not mint a second one for the same error.
-        # Asked BEFORE the project is resolved, because nothing below this line
-        # runs on a re-run: demanding --project to resume a build would refuse the
-        # one path that creates nothing.
+        # An existing work package is the answer; never create a second one.
+        # Checked before the project, so a re-run does not need --project.
         if Helpers.file_has_content?(dir / "wp_id.txt")
           existing = (dir / "wp_id.txt").read.strip
           puts "  Incident ##{number} is already work package #{wp_label(existing)}."
           return build(existing)
         end
 
-        # Held on the instance because the type list is resolved against it in two
-        # places — the draft's TYPE menu and the payload's type link — and reading
-        # the flag in one and the env var in the other is exactly how those two
-        # drift apart.
+        # One value for both the TYPE menu and the payload's type link, so they cannot drift.
         @project = opts["project"] || @ctx.appsignal_project
         raise OPilot::FatalError, "No project — pass --project <id> or set OPILOT_APPSIGNAL_PROJECT in .env." \
           unless @project
-        # An operator naming the type OVERRIDES the writer's TYPE: line. They can
-        # see the project's own type list and the writer is guessing from a
-        # backtrace, so the flag has to win — otherwise a wrong type costs a whole
-        # re-run of a command that will not create anything the second time.
+        # --type overrides the writer's TYPE: line: the operator sees the real type list.
         @type_override = opts["type"]
 
-        # The permission the create needs, checked before the draft is written.
         @project_json = require_create_permission!(@project)
 
         draft = drafted_work_package(dir, number)
@@ -111,21 +82,12 @@ module OPilot
         build(wp_id)
       end
 
-      # The whole existing pipeline, unchanged: plan, approve, implement, publish,
-      # with its own prompts. Nothing about a fix that started at an incident makes
-      # it different from one that started at a work package — by this point it IS
-      # a work package.
+      # The normal plan → implement → publish pipeline, with the validated harness.
       def build(wp_id)
-        # The harness is handed on rather than rebuilt: it holds the connection
-        # settings this run already validated with #ensure_harness!.
         (@fix_runner || Runners::Fix.new(@ctx, harness: @harness)).ship_ids(wp_id)
       end
 
-      # The gate this command exists behind.
-      #
-      # inference-gw answers it, not a lookup here — see Context#inference_privacy. The
-      # message names the endpoint, because "refused" without it sends the reader
-      # to the wrong file.
+      # inference-gw answers this, not a lookup here (Context#inference_privacy).
       def require_local_inference!
         allowed, why = @ctx.inference_privacy
         return if allowed
@@ -145,8 +107,7 @@ module OPilot
         MSG
       end
 
-      # `fix` ends in a push and a PR, so a missing token must fail here rather
-      # than after a fetch, an LLM call and a work package that cannot be deleted.
+      # Fail before the work package exists, not at the push.
       def require_publish_token!
         publish = GitHub::Publish.new(@ctx)
         return if publish.author_token
@@ -154,9 +115,7 @@ module OPilot
               "No GitHub token — set #{publish.token_env_var} in .env. `appsignal fix` ends at a draft PR."
       end
 
-      # OpenProject renders the createWorkPackage links only for a user who holds
-      # :add_work_packages, so their absence is an answer rather than a guess —
-      # and asking now costs one request instead of a whole draft.
+      # The createWorkPackage links exist only for a user with :add_work_packages.
       def require_create_permission!(project)
         res = @api.project(project)
         raise OPilot::FatalError, "Could not read project #{project} (HTTP #{res.code})." unless res.code == 200 && res.body
@@ -168,11 +127,8 @@ module OPilot
         res.body
       end
 
-      # The draft to show at #confirm_create — cached on disk so a re-run (the
-      # form rejected it, the operator aborted, the process died) never re-spends
-      # the LLM call that wrote it. Written the instant a usable draft exists,
-      # BEFORE the confirm prompt: an abort must not lose it, or the next run pays
-      # for the same draft twice.
+      # Cached in draft.json before the confirm prompt, so a re-run or an abort
+      # never pays for the same LLM call twice.
       def drafted_work_package(dir, number)
         draft_file = dir / "draft.json"
         if Helpers.file_has_content?(draft_file)
@@ -193,11 +149,7 @@ module OPilot
         draft
       end
 
-      # One LLM call. Returns the parsed block, or nil having said why.
-      #
-      # One retry, and it is safe for the same reason OpenProject::CreateWp#write_work_packages'
-      # is: nothing has been created yet, so the failure it covers is a lost
-      # request rather than a duplicate work package.
+      # One LLM call, one retry (safe: nothing is created yet). Returns the block or nil.
       def write_work_package(number, incident_file, retry_bad: true, format_note: nil)
         log_script "Drafting a work package from AppSignal incident ##{number}…"
         prompt = Prompts::Triager.appsignal_wp(
@@ -225,8 +177,7 @@ module OPilot
         nil
       end
 
-      # Show the draft and ask. A work package cannot be deleted, so a person sees
-      # it before the POST even though `fix` is otherwise a one-command flow.
+      # A work package cannot be deleted, so a person sees it before the POST.
       def confirm_create(draft)
         puts ""
         puts "  #{Rainbow(draft["subject"]).bold}"
@@ -239,10 +190,7 @@ module OPilot
                       { create: %w[y yes], abort: %w[a abort] }, default: :create) == :create
       end
 
-      # Preflight, then create. The form runs the same SetAttributesService the
-      # create runs and does not save, so a payload it accepts is one the create
-      # accepts — and it answers 200 even for a payload it rejects, which is why
-      # `_embedded.validationErrors` decides and the status code does not.
+      # Preflight through the create form, then create. See CLAUDE.md, `:create_wp`.
       def create_work_package(draft)
         payload = payload_for(draft)
         return nil unless payload_accepted?(payload)
@@ -272,8 +220,7 @@ module OPilot
 
       def payload_accepted?(payload)
         form = @api.create_work_package_form(payload)
-        # A form that did not run (403, an HTML error from a proxy) gives no verdict:
-        # let the create speak for itself rather than block on a missing preflight.
+        # A form that did not run gives no verdict; let the create report itself.
         log_script "The create form answered HTTP #{form.code}; creating without it." \
           unless form.form_answered?
         errors = form.validation_errors
@@ -282,9 +229,7 @@ module OPilot
         errors = hack_required_custom_fields!(payload, form.body, errors)
         return true unless errors
 
-        # Named in the instance's own wording. opilot must not fill a required
-        # custom field itself: the value carries business meaning only a person
-        # has, and the work package would be permanent.
+        # opilot must not fill a required custom field: only a person knows the value.
         puts ""
         puts "  ⚠ #{@project_json["name"]} needs values I must not invent:"
         errors.each { |field, error| puts "    - #{error["message"]} (`#{field}`)" }
@@ -293,16 +238,10 @@ module OPilot
         false
       end
 
-      # ── an explicit, narrow exception to "opilot must not invent a required
-      # custom field's value" ────────────────────────────────────────────────
-      #
-      # These are opilot's OWN manufactured test fields — no ticket has ever
-      # depended on one meaning something — kept around to exercise the
-      # create-form path end to end. Matched by name, not by project or field id,
-      # so the allowlist means what it says: everything else still refuses,
-      # unchanged, however #fix is invoked. Keyed lower-case/stripped because the
-      # instance's own field names carry stray casing and a trailing space
-      # ("...Required CF ").
+      # A narrow exception to "never invent a required custom field": opilot's own
+      # test fields, kept to exercise the create-form path. Matched by name only,
+      # so every other field still refuses. Keys are lower-case and stripped,
+      # because the instance's names carry stray casing and a trailing space.
       CF_VALUE_HACKS = {
         "bug found in version"                                  => :highest,
         "cécile list type multi select custom field"            => :random,
@@ -310,11 +249,8 @@ module OPilot
         "cécile's 1st scored list"                               => :random
       }.freeze
 
-      # Fill every errored field this run recognizes, then re-check the form —
-      # a wrong link shape here would otherwise become a work package that can
-      # never be deleted, so the one extra round trip is worth it. Returns the
-      # remaining errors (nil if none are left), the same shape
-      # Response#validation_errors already returns.
+      # Fill the recognized fields, then re-check the form: a wrong link shape would
+      # be permanent. Returns the remaining errors, or nil.
       def hack_required_custom_fields!(payload, form, errors)
         schema = form.dig("_embedded", "schema") || {}
         filled = []
@@ -336,11 +272,8 @@ module OPilot
         @api.create_work_package_form(payload).validation_errors
       end
 
-      # One candidate href for a hacked field. A schema field's `allowedValues`
-      # is either the values themselves (list/version fields render them inline)
-      # or a link to fetch them (hierarchy/user fields render only a link) — see
-      # API::V3::Utilities::CustomFieldInjector in the openproject source for
-      # which shape goes with which field format.
+      # `allowedValues` is inline (list/version) or a link (hierarchy/user); see
+      # API::V3::Utilities::CustomFieldInjector in openproject.
       def hacked_custom_field_href(node, strategy)
         allowed = node.dig("_links", "allowedValues")
         candidates =
@@ -351,17 +284,13 @@ module OPilot
         return nil if candidates.to_a.empty?
 
         case strategy
-        # The titles on this test project are noise ("adsf", "backlog", …), not
-        # version numbers, so "highest" is the highest id among the candidates —
-        # the one thing that IS a number here.
+        # The titles are noise, not version numbers, so "highest" means the highest id.
         when :highest then candidates.max_by { |c| c["href"].to_s[/\d+\z/].to_i }["href"]
         when :random  then candidates.sample["href"]
         end
       end
 
-      # A hierarchy custom field's selectable items, as candidate hrefs. The tree
-      # has one synthetic root with no label of its own (custom_field_items
-      # returns it as element zero); every other node is a real, selectable item.
+      # Selectable hierarchy items. The synthetic root has no label, so it drops out.
       def hierarchy_item_candidates(items_href)
         id = items_href.to_s[%r{/custom_fields/(\d+)/items\z}, 1]
         return [] unless id
@@ -387,19 +316,11 @@ module OPilot
         end
       end
 
-      # AppSignal's own id for an app: 24 hex characters. Nobody types one from
-      # memory, which is why a NAME is accepted here too.
+      # AppSignal's app id. A name is accepted too.
       APP_ID = /\A[0-9a-f]{24}\z/
 
-      # Which app this reads. The token is the only thing that MUST be set.
-      #
-      # A name is resolved to an id, because "edge-aws-de-trials2" is what a person
-      # reads off the AppSignal URL bar and an id is not. The API only takes the
-      # id, and its answer to a name is `Object not found`, which names neither the
-      # problem nor the fix.
-      #
-      # A name matching several apps is NOT chosen between: the usual reason is one
-      # name in two environments, and staging and production are the two that must
+      # Resolves a name to an id; the API answers a name with `Object not found`.
+      # A name that matches several apps is refused: staging and production must
       # never be confused.
       def resolve_app!(flag)
         given = flag || @ctx.appsignal_app_id
@@ -429,8 +350,7 @@ module OPilot
         @applications ||= appsignal.applications
       end
 
-      # Best-effort: a token that cannot list apps is no reason to turn "name your
-      # app" into an API error.
+      # Best-effort: a failed list must not hide the "name your app" message.
       def applications_list
         return "(This token can see no applications.)" if applications.empty?
         applications.map { |a| "#{a["id"]}  #{a["name"]} (#{a["environment"]})" }.join("\n")
@@ -442,9 +362,7 @@ module OPilot
 
       # --- argument plumbing, mirroring Runners::Op's ------------------------------
 
-      # Runners::Op#flags' shape, minus the repeatable values it needs: none of
-      # --project/--type/--app can be given twice, so the last one simply wins and
-      # the caller reads a string rather than an array.
+      # Like Runners::Op#flags, but no flag repeats: the last one wins.
       def flags(command, args, allowed)
         opts = {}
         rest = []
@@ -456,9 +374,7 @@ module OPilot
             next
           end
           name = arg.delete_prefix("--")
-          # A complaint about a well-shaped call, not a wrong SHAPE of call — an
-          # arg spec would answer the wrong question, so this names the flags the
-          # command does take (Runners::Op#reject!'s split, for its reason).
+          # Names the flags the command takes (see Runners::Op#reject!).
           reject!(command, "unknown flag --#{name}. It takes: #{allowed.map { |f| "--#{f}" }.join(", ")}.") \
             unless allowed.include?(name)
           value = args.shift

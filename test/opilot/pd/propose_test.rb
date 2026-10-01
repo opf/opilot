@@ -7,6 +7,8 @@ module OPilot
     # proposal. The pieces exercised here are the ones that gate the run: the
     # validator re-prompt loop, the write scope, and work-package idempotency.
     class ProposeTest < Minitest::Test
+      include PDStoreSetup
+
       # Plays back one scripted verdict per validate call.
       class FakeOpenSpec
         attr_reader :calls
@@ -70,11 +72,7 @@ module OPilot
       end
 
       def setup
-        @tmpdir = Pathname(Dir.mktmpdir)
-        @ctx    = Context.build(@tmpdir)
-        @repo   = @ctx.default_repo
-        @repo.worktree_host.mkpath
-        Git.init(@repo.worktree_host.to_s)
+        seed_store
         @git = Git.open(@repo.worktree_host.to_s)
         @git.config_set("user.name", "test")
         @git.config_set("user.email", "test@localhost")
@@ -82,16 +80,9 @@ module OPilot
         @git.add(all: true)
         @git.commit("initial")
 
-        @store = ChangeStore.new(@ctx, @repo)
-        (@store.tree / "changes").mkpath
-        (@store.tree / "config.yaml").write("schema: spec-driven\n")
         @state = ChangeState.new(change_id: "add-x", store: @store, state_dir: (@tmpdir / "s").tap(&:mkpath))
         seed_intake!
         @store.materialise!
-      end
-
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
       end
 
       def seed_intake!

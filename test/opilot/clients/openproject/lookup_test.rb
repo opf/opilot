@@ -67,21 +67,6 @@ module OPilot
       assert_raises(Lookup::AmbiguousName) { @lookup.principal("Sam") }
     end
 
-    def test_field_key_maps_a_display_name_to_its_payload_key
-      stub_request(:get, "#{BASE}/api/v3/work_packages/schemas/7-5").to_return(
-        status: 200,
-        body: JSON.generate({ "_type" => "Schema", "_links" => {},
-                              "priority" => { "name" => "Priority" },
-                              "customField12" => { "name" => "Customer" } })
-      )
-
-      assert_equal "customField12", @lookup.field_key(7, 5, "customer")
-      assert_equal "priority", @lookup.field_key(7, 5, "Priority")
-      assert_equal "customField12", @lookup.field_key(7, 5, "customField12"), "a key resolves as itself"
-      assert_nil @lookup.field_key(7, 5, "_links"), "schema metadata is not a field"
-      assert_nil @lookup.field_key(7, 5, "Budget")
-    end
-
     def test_ids_pass_a_numeric_id_through_without_a_request
       assert_equal "42", @lookup.project_id("42")
       assert_equal "7", @lookup.work_package_id(7)

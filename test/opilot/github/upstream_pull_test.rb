@@ -44,10 +44,6 @@ module OPilot
       @registry = @ctx.repos
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def issue_c(id:, body:, login:, at:)
       IssueC.new(id: id, body: body, user: User.new(login), created_at: Time.parse(at))
     end

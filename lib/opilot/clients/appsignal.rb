@@ -4,48 +4,16 @@ require "json"
 
 module OPilot
   module Clients
-    # Reads one AppSignal exception incident — metadata, the request payload that
-    # triggered it, and the full backtrace — as structured JSON.
-    #
-    # It takes FOUR calls across two of AppSignal's APIs, because no single one
-    # of them carries a whole bug report. This was established by probing a live
-    # account, not from the documentation, which is wrong or silent on most of
-    # it:
-    #
-    #   1. GraphQL  incident(incidentNumber:)   → the digest, and the metadata
-    #   2. V2       tracing/traces/errors       → a trace_id for that digest
-    #   3. V2       tracing/trace/error         → THE REQUEST PAYLOAD, plus
-    #                                             headers, tags, and a
-    #                                             stacktrace_id
-    #   4. GraphQL  backtrace(id:, revision:)   → the full frame list
-    #
-    # Two of those are load-bearing and non-obvious:
-    #
-    # THE PAYLOAD IS ONLY IN V2 TRACING. GraphQL's documented
-    # `sample { params }` returns null for every incident tried, even with
-    # `hasSamplesInRetention: true` and every documented argument. AppSignal's
-    # MCP server does not expose params at all. The payload is what turns
-    # "Invalid params" into a diagnosis, so this is why the class is shaped this
-    # way rather than being one query.
-    #
-    # THE BACKTRACE IS BEHIND A SEPARATE QUERY. `ExceptionIncident` itself
-    # carries only `firstBacktraceLine`; the frames live under
-    # `app.backtrace(id:, revision:)`, keyed by the `stacktrace_id` that only the
-    # V2 span reports. So step 4 depends on step 3 — the order is not incidental.
-    #
-    # ONE credential does all of it (a personal API token), which is the reason
-    # this replaced a scoped-MCP-token client: the moment the payload is needed,
-    # a personal token is required anyway, and holding a narrow token beside a
-    # broad one buys nothing.
+    # Reads one AppSignal exception incident: metadata, request payload, backtrace.
+    # Four calls over GraphQL and V2 tracing, in a fixed order; the payload is only
+    # in V2. See CLAUDE.md, appsignal.
     class AppSignal
       Error = Class.new(StandardError)
 
       GRAPHQL_URL = "https://appsignal.com/graphql".freeze
       V2_URL      = "https://appsignal.com/api/v2".freeze
 
-      # How far back to look for a trace carrying the payload. A trace is only
-      # needed for its request data, so the most recent one for this digest is
-      # the right one; the window just has to reach it.
+      # How far back to look for the most recent trace of this digest.
       TRACE_WINDOW_DAYS = 30
 
       def initialize(token)
@@ -60,12 +28,8 @@ module OPilot
         (data.dig("viewer", "organizations") || []).flat_map { |org| org["apps"] || [] }
       end
 
-      # One incident, assembled. Returns a Hash written straight to incident.json
-      # — the model reads that file, so the shape here IS the prompt's input.
-      #
-      # The request data is best-effort: an incident whose traces have aged out
-      # still produces a usable report, just without the payload. The backtrace
-      # is best-effort for the same reason, since it hangs off the trace.
+      # One incident, written to incident.json, so this shape is the prompt's input.
+      # Request and backtrace are best-effort: traces age out.
       def incident(app_id, number)
         incident = fetch_incident(app_id, number)
         raise Error, "AppSignal has no exception incident ##{number} on app #{app_id}" unless incident
@@ -79,9 +43,7 @@ module OPilot
 
       private
 
-      # Step 1. `... on ExceptionIncident` because `incident` is a union — a
-      # number that names an anomaly incident returns a node with none of these
-      # fields rather than an error.
+      # Step 1. `incident` is a union: an anomaly number returns an empty node, not an error.
       def fetch_incident(app_id, number)
         data = graphql(<<~GQL, "appId" => app_id, "number" => Integer(number))
           query I($appId: String!, $number: Int!) {
@@ -101,9 +63,8 @@ module OPilot
         found && found["number"] ? found : nil
       end
 
-      # Step 2. The digest is what links an incident to its traces. `cursor` is
-      # required even for a first page, and takes the far end of the window —
-      # ordering DESC then means "the most recent trace before now".
+      # Step 2. `cursor` is required even on a first page; with DESC it gives the
+      # most recent trace.
       def fetch_trace(app_id, digests)
         return nil if Array(digests).empty?
 
@@ -122,12 +83,7 @@ module OPilot
         spans.first
       end
 
-      # Step 3's payload. The attribute names are AppSignal's own; only the ones
-      # that describe the REQUEST are lifted, so an incident file does not carry
-      # every span attribute the agent happened to record.
-      #
-      # `appsignal.request.payload` is a JSON string, parsed here so the model
-      # reads a structure rather than an escaped blob.
+      # Step 3. Keeps only the request attributes; JSON strings are parsed for the model.
       def request_details(span)
         attrs = span["span_attributes"] || {}
         tags  = attrs.select { |k, _| k.start_with?("appsignal.tag.") }
@@ -144,8 +100,7 @@ module OPilot
         }.compact
       end
 
-      # Step 4. The frames hang off the stacktrace_id the exception event
-      # carries, not off the incident — see the class comment.
+      # Step 4. Keyed by the span's stacktrace_id, not by the incident.
       def fetch_backtrace(app_id, span)
         event = Array(span["events.attributes"]).find { |a| a.is_a?(Hash) && a["appsignal.stacktrace_id"] }
         id    = event && event["appsignal.stacktrace_id"]
@@ -214,11 +169,8 @@ module OPilot
         raise Error, "could not reach AppSignal at #{scrub(uri)}: #{scrub(e.message)}"
       end
 
-      # The GraphQL token lives in the URL, so every error string built from a
-      # URL — or from an exception whose message quotes one — has to be scrubbed
-      # before it reaches chomp.log. This is the one real cost of GraphQL over a
-      # header-authenticated API, and it is paid here, once, rather than trusted
-      # to every call site.
+      # The GraphQL token is in the URL, so scrub every error string before it
+      # reaches chomp.log.
       def scrub(text) = text.to_s.gsub(/token=[^&\s"]+/, "token=[redacted]")
     end
   end

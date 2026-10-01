@@ -81,21 +81,6 @@ module OPilot
           memo([:project_id, id.to_s]) { read("project #{id}") { @api.project(id) }["id"].to_s }
         end
 
-        # The schema of a (project, type) pair. Both ids NUMERIC, as the route needs.
-        def schema(project_id, type_id)
-          memo([:schema, project_id.to_s, type_id.to_s]) do
-            read("the schema of #{project_id}-#{type_id}") { @api.work_package_schema(project_id, type_id) }
-          end
-        end
-
-        # The payload key for a field's display name ("Customer" → "customField12",
-        # "Priority" → "priority"), or nil. A key given as-is also resolves.
-        def field_key(project_id, type_id, name)
-          fields = schema(project_id, type_id).select { |key, node| node.is_a?(Hash) && !key.start_with?("_") }
-          return name.to_s if fields.key?(name.to_s)
-          fields.find { |_key, node| node["name"].to_s.casecmp?(name.to_s) }&.first
-        end
-
         private
 
         def memo(key)

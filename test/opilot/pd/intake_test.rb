@@ -4,6 +4,8 @@ require "tmpdir"
 module OPilot
   module PD
     class IntakeTest < Minitest::Test
+      include PDStoreSetup
+
       # Stands in for Clients::OpenProject. Documents are keyed by id; each may
       # carry attachments as [{name:, content_type:, body:}].
       class FakeOP
@@ -58,19 +60,9 @@ module OPilot
       end
 
       def setup
-        @tmpdir = Pathname(Dir.mktmpdir)
-        @ctx    = Context.build(@tmpdir)
-        @repo   = @ctx.default_repo
-        (@repo.worktree_host / ".git" / "info").mkpath
-        @store  = ChangeStore.new(@ctx, @repo)
-        (@store.tree / "changes").mkpath
-        (@store.tree / "config.yaml").write("schema: spec-driven\n")
+        seed_store(git: false)
         @state  = ChangeState.new(change_id: "add-recurring-meetings",
                                   store: @store, state_dir: @tmpdir / "s")
-      end
-
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
       end
 
       def doc(id, title:, project: "42", updated: "2026-07-28T09:12:00Z", body: "Body text", attachments: [])

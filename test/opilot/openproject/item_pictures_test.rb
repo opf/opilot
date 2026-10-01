@@ -47,10 +47,6 @@ module OPilot
       @dir.mkpath
     end
 
-    def teardown
-      FileUtils.remove_entry(@tmpdir)
-    end
-
     def attachment(id, name: "shot.png", type: "image/png", bytes: "\x89PNG-data",
                    href: nil, size: nil)
       { "id" => id, "fileName" => name, "contentType" => type,

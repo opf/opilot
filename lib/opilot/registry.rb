@@ -13,7 +13,7 @@ module OPilot
 
     DEFAULT_BASE = "main".freeze
 
-    attr_reader :summary, :repos
+    attr_reader :summary
 
     def self.build(script_dir:, state_dir:, op_repo_path: nil, config_path: nil)
       script_dir = Pathname(script_dir)

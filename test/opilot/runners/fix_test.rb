@@ -75,11 +75,6 @@ module OPilot
       @ctx = build_ctx(@tmpdir, contributor_token: "contributor-tok")
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-      super
-    end
-
     def item(id, subject)
       { "id" => id.to_s, "subject" => subject,
         "url" => "https://op.example.com/wp/#{id}", "description" => "" }

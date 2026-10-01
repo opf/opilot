@@ -3,31 +3,22 @@ module OPilot
     class Publish
       include Helpers
 
-      # opilot has one publishing identity: the CONTRIBUTOR bot. It forks the
-      # upstream, pushes the branch to its own fork, and opens a cross-repo draft
-      # PR — nothing opilot produces is ever pushed to a canonical repo, so a
-      # maintainer's review and merge is always the gate.
+      # Publishes as the contributor bot, to its fork only. See CLAUDE.md, step 4 "Publish".
       def initialize(ctx)
         @ctx    = ctx
         @github = Clients::GitHub.new(author_token)
       end
 
-      # The bot's token — also the author identity adopted for commits, so a PR's
-      # commits match its opener.
+      # Also the commit author, so a PR's commits match its opener.
       def author_token
         @ctx.contributor_token
       end
 
-      # The env var that supplies it, so a caller that has to tell the operator
-      # what to set names it in one place.
       def token_env_var
         "GITHUB_CONTRIBUTOR_TOKEN"
       end
 
-      # Push the WP's fix branch in `repo` and open a draft PR there, returning the
-      # PR URL (or nil on failure). Idempotent: an already-open PR is recorded and
-      # returned. Upstream, base branch, and worktree all come from `repo`, so a WP
-      # that spans several repos opens an independent PR in each.
+      # Returns the PR URL, or nil on failure. Idempotent: an open PR is returned.
       def open_pr(item_id, subject, branch, repo)
         unless author_token
           puts "  Error: #{token_env_var} is not set — cannot open PRs."
@@ -49,9 +40,6 @@ module OPilot
           return nil
         end
 
-        # The branch goes to the bot's fork and the PR is opened against upstream
-        # with a cross-repo head ("fork_owner:branch"), keeping the token off the
-        # canonical repo.
         target_repo = @github.ensure_fork(upstream)
         head        = "#{target_repo.split('/').first}:#{branch}"
 
@@ -63,28 +51,18 @@ module OPilot
 
         log_script "Publishing #{wp_label(item_id)} → #{repo.name} (base #{base}, via #{target_repo}) — #{subject}"
 
-        # Keep the PR body compact; the full plan is attached as a secret gist and
-        # linked below the banner. The bot-specific preamble (disclaimer + adopt
-        # note) is fenced in HTML comments so `opilot-adopt` can lift exactly that block
-        # out — a maintainer's own PR is not AI-generated and cannot be adopted
-        # twice. The markers are a contract; matching on the prose would break the
-        # moment its wording changed. The plan link sits OUTSIDE the fence, so it
-        # survives adoption. The adopt note lands as a second bullet
-        # (#add_adopt_note, post-create, once the PR number exists).
+        # `opilot-adopt` deletes the fenced banner; the plan link stays outside it
+        # so it survives adoption. See CLAUDE.md, step 4 "Publish".
         banner    = "🤖 This is an AI-generated prototype.\n\n" \
                     "* To ask for a change, write a comment to @#{@github.login} on this PR."
         gist_url  = plan_gist_url(st)
         plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
         pr_body   = "#{BANNER_OPEN}\n#{banner}\n#{BANNER_CLOSE}\n\n#{plan_line}#{pr_desc_file.read}"
 
-        # The PR lives on upstream but isn't a maintainer's PR yet — defang its WP
-        # link (http→hxxp) so the OpenProject GitHub integration doesn't
-        # auto-reference the WP and clutter its activity tab (`opilot-adopt` re-fangs
-        # it when a maintainer promotes it).
+        # Defanged (http→hxxp) to keep the PR off the WP's activity tab.
         pr_body = neutralize_wp_links(pr_body)
 
-        # Backstop: the target is the bot's fork, so this never fires — unless
-        # ensure_fork resolved to the upstream itself, which must not be pushed to.
+        # Backstop for an ensure_fork that resolved to the upstream itself.
         if refuse_canonical_push?(target_repo, branch)
           puts "  #{branch} was not pushed and no PR was opened."
           return nil
@@ -100,11 +78,7 @@ module OPilot
         url
       end
 
-      # Publish one chat answer's artifacts as a single secret gist, returning its
-      # URL (or nil when there is no token, or the call failed).
-      #
-      # Unlike the plan gist there is no cache file: every answer produces its own
-      # artifacts, so there is nothing to reuse. `files` is {name => content}.
+      # One secret gist per chat answer, uncached. `files` is {name => content}.
       def artifact_gist(item_id, subject, files)
         return nil if files.empty?
         unless author_token
@@ -118,7 +92,6 @@ module OPilot
         )
       end
 
-      # The login of the identity publishing, for PR bodies that invite a reply.
       def login
         @github.login
       end
@@ -129,13 +102,8 @@ module OPilot
         @github.token_scopes
       end
 
-      # Push a `pd` change's spec branch and open its proposal PR **inside the bot's
-      # own fork** — head and base both `<bot>/<repo>`.
-      #
-      # Deliberately not against upstream: the diff is planning artifacts, so it
-      # would be noise on a public repo, and the bot owning both sides can merge or
-      # close freely. Nothing downstream needs the merge — `generate-wp` reads the
-      # local store. Idempotent: an already-open PR for this head is returned.
+      # Opens the `pd` proposal PR inside the bot's fork, not upstream: the diff is
+      # planning artifacts. Idempotent: an open PR for this head is returned.
       def open_spec_pr(state, repo, body:)
         unless author_token
           puts "  Error: GITHUB_CONTRIBUTOR_TOKEN is not set — cannot open the proposal PR."
@@ -155,15 +123,12 @@ module OPilot
         base = state.base_for(repo)
         log_script "Publishing proposal #{state.change_id} → #{fork} (base #{base})"
 
-        # Level the fork's base with upstream FIRST. The spec branch is cut from
-        # the clone, which tracks upstream; the PR's base is the fork's copy of the
-        # same branch. Left stale, the diff shows every upstream commit since the
-        # fork was created alongside the spec files, and the PR is unreviewable.
+        # Sync the fork's base first, or the diff shows every upstream commit
+        # since the fork was made.
         @github.sync_fork_branch(fork, branch: base)
 
         if refuse_canonical_push?(fork, branch)
-          # Say why: without this the caller reports "couldn't open the PR — is
-          # GITHUB_CONTRIBUTOR_TOKEN set?", naming the wrong cause entirely.
+          # Without this the caller blames a missing token.
           puts "  #{branch} was not pushed and no PR was opened."
           return nil
         end
@@ -182,27 +147,16 @@ module OPilot
 
       private
 
-      # Where `opilot-adopt` (how to get it, how to run it) is documented. The
-      # anchor must match the README heading's slug, or the link lands at the top
-      # of the page.
+      # The anchor must match the README heading's slug.
       ADOPT_DOC_URL = "https://github.com/opf/opilot#adopting-an-opilot-pr"
 
-      # Fence around the bot-only preamble of a PR body. `opilot-adopt` deletes
-      # this range verbatim, so these two lines are a published interface: changing
-      # either string orphans every PR opened before the change (an old PR's fence
-      # no longer matches the new script, and vice versa), and adoption then
-      # silently keeps the AI disclaimer on a maintainer's PR.
+      # A published interface: `opilot-adopt` deletes this range verbatim, so a
+      # changed marker orphans every earlier PR. See CLAUDE.md, step 4 "Publish".
       BANNER_OPEN  = "<!-- opilot:banner -->"
       BANNER_CLOSE = "<!-- /opilot:banner -->"
 
-      # Every opilot PR is opened cross-repo against upstream from the bot's fork,
-      # which can't run secret-gated CI, so tell maintainers up front how to
-      # re-publish it under their own account. The PR lives in the upstream repo, so
-      # a bare number resolves against the maintainer's canonical checkout. The
-      # number only exists after creation — hence the follow-up body edit.
-      # Appended as the banner's second bullet, so it stays inside the fence
-      # `opilot-adopt` deletes (an adopted PR must not tell its owner to adopt it).
-      # Best-effort: a failed update just leaves the note off.
+      # A follow-up edit, because the number exists only after creation. It goes
+      # inside the fence, so an adopted PR drops it. Best-effort.
       def add_adopt_note(upstream, url, pr_body, banner)
         number = Clients::GitHub.pr_number_from_url(url)
         return unless number
@@ -213,9 +167,7 @@ module OPilot
         log_script "Could not add the adopt note to #{url}: #{e.message}"
       end
 
-      # The secret gist URL for this WP's plan, created once and cached in
-      # gist_url.txt so every repo's PR links the same gist. nil when there is no
-      # plan to upload or the gist call fails (the PR then opens with no plan link).
+      # Cached in gist_url.txt so every repo's PR links the same gist.
       def plan_gist_url(st)
         cache = st.gist_url_file
         return cache.read.strip if Helpers.file_has_content?(cache)

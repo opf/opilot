@@ -12,10 +12,6 @@ module OPilot
         @runner = Runner.new(@ctx, op: Object.new, intake: Object.new)
       end
 
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
-      end
-
       def options(*args)
         @runner.send(:parse_options, args)
       end

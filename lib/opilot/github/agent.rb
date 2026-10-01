@@ -2,22 +2,11 @@ require "json"
 
 module OPilot
   module GitHub
-    # The GitHub counterpart of OpenProject::Agent. Two sources, polled together every tick:
-    # 1. opilot's own PRs (GitHub::Pull) — "always reply, code if asked": the LLM edits
-    #    the worktree when a comment asks, and the change is committed and pushed to
-    #    the bot's fork to update the draft PR.
-    # 2. upstream PRs that @-mention opilot (GitHub::UpstreamPull) — opilot has no write
-    #    access to these branches, so those intents are `reply_only`: it reviews and
-    #    answers in text but never pushes code.
-    # Either way merging stays gated on a maintainer, so a person is always in the
-    # loop on anything that lands. opilot never merges; on its own PRs it may
-    # *close* one when asked ("@opilot close"), which merges nothing and only
-    # retires a prototype it opened itself.
+    # Polls opilot's own PRs (reply and push) and upstream PRs that mention opilot
+    # (`reply_only`). It never merges. See CLAUDE.md, gh-agent.
     class Agent
       include Helpers
 
-      # gh-agent acts exclusively as the CONTRIBUTOR bot: it watches the bot's
-      # own PRs and pushes only to the bot's fork.
       def initialize(ctx, pull: GitHub::Pull.new(ctx), upstream_pull: GitHub::UpstreamPull.new(ctx),
                      harness: Harness.new(ctx), github: Clients::GitHub.new(ctx.contributor_token),
                      pr_runner: nil)
@@ -44,8 +33,7 @@ module OPilot
         end
       end
 
-      # Prompt for the scan window and print the allowlist banner. Returned value
-      # is passed to #tick. Split out from #run so CombinedAgent can drive the loop.
+      # Split out from #run so CombinedAgent can drive the loop.
       def setup
         scan_from_at = prompt_scan_from
         report_mcp_status
@@ -54,8 +42,7 @@ module OPilot
         else
           puts "  No allowlist set (OPILOT_ALLOWED_GH_USERS) — any GitHub user can trigger @opilot on opilot's own PRs."
         end
-        # Say which state we are in either way: "it scanned nothing" and "it isn't
-        # scanning" look identical in the log otherwise.
+        # Name the state: "scanned nothing" and "not scanning" look alike in the log.
         if @upstream_pull.enabled?
           puts "  Tracking upstream PRs for @opilot mentions — #{@ctx.repos.all.map(&:upstream).join(", ")}."
         elsif @ctx.track_upstream_prs?
@@ -66,12 +53,10 @@ module OPilot
         scan_from_at
       end
 
-      # Which PR sources this run watches — upstream is opt-in, so don't claim it.
       def sources
         @upstream_pull.enabled? ? "opilot + upstream PRs" : "opilot's own PRs"
       end
 
-      # One poll-and-handle pass over the active PR sources (no sleep).
       def tick(scan_from_at)
         intents = @pull.poll_intents(scan_from_at) + @upstream_pull.poll_intents(scan_from_at)
         ci      = intents.count { |i| i.kind == :ci }
@@ -84,11 +69,8 @@ module OPilot
         intents.each { |intent| handle_and_ack(intent) }
       end
 
-      # Handle one comment, then mark it acted. As in OpenProject::Agent#handle_and_ack, a
-      # *handled* error is reported on the PR and still acked (no replay); only an
-      # uncaught crash or a Ctrl-C (SystemExit passes this rescue) leaves the
-      # comment for the next poll — an interrupt must not leak an error onto a
-      # public PR or ack the comment unhandled.
+      # A handled error is reported and acked. A Ctrl-C (SystemExit) passes the
+      # rescue, so it posts nothing and leaves the comment for the next poll.
       def handle_and_ack(intent)
         handle(intent)
         mark_acted(intent)
@@ -103,14 +85,8 @@ module OPilot
           log_script "#{intent.repo}##{intent.pr_number} — CI failed on #{intent.head_sha.to_s[0, 7]}"
           return handle_ci(intent)
         end
-        # Both command words are gated on `!reply_only`: an upstream PR is somebody
-        # else's, so a "refresh"/"close" there is read as prose and answered in text
-        # (GitHub::Pull leaves `command` nil for one). `close` is checked ahead of the spec
-        # branch on purpose: a `pd` proposal PR is opilot's own, so retiring it is
-        # the same need as retiring a code prototype, and falling through to
-        # #handle_spec would spend a revision call and push a spec edit in answer to
-        # "close this". `refresh` never reaches a spec intent at all
-        # (GitHub::Pull#command_for), so the spec branch may sit above it.
+        # `close` comes before the spec branch, or "close this" on a spec PR would
+        # push a spec edit. See CLAUDE.md, gh-agent.
         if intent.command == :close && !intent.reply_only
           log_script "#{intent.repo}##{intent.pr_number} — @#{intent.user_login} asked to close it"
           return handle_close(intent)
@@ -128,8 +104,7 @@ module OPilot
         intent.reply_only ? handle_review(intent) : handle_own(intent)
       end
 
-      # An upstream PR opilot did not open: fetch its head read-only so the LLM can
-      # read the diff, then review/answer in text. Never commits or pushes.
+      # An upstream PR: read-only fetch, answered in text. Never commits or pushes.
       def handle_review(intent)
         repo         = @ctx.repos.by_upstream(intent.repo)
         dir          = @upstream_pull.pr_dir(intent.repo, intent.pr_number)
@@ -152,11 +127,8 @@ module OPilot
         post_reply(intent, reply)
       end
 
-      # Post any GitHub suggestions the review proposed as an applicable inline
-      # review, so the author can commit opilot's edits with one click — opilot
-      # can't push to a PR it doesn't own. Best-effort: a bad line range 422s the
-      # whole review, so a failure just logs and the prose reply still carries the
-      # details. Needs the head SHA to anchor the comments to the diff opilot read.
+      # Best-effort: a bad line range 422s the whole review, and the prose reply
+      # still carries the details.
       def post_suggestions(intent, reply)
         comments = parse_suggestions(reply)
         return if comments.empty? || intent.head_sha.to_s.empty?
@@ -170,9 +142,7 @@ module OPilot
         log_script "Suggestions failed on #{intent.repo}##{intent.pr_number} (posting reply only): #{e.message}"
       end
 
-      # Parse the optional SUGGESTIONS block (before the REPLY line) into GitHub
-      # review-comment hashes carrying ```suggestion bodies. Best-effort: malformed
-      # or absent JSON yields none and only the prose reply is posted.
+      # The SUGGESTIONS block before the REPLY line. Bad JSON yields none.
       def parse_suggestions(text)
         seg = text.to_s.split(/^\s*REPLY:/m, 2).first.to_s
         raw = seg[/SUGGESTIONS:\s*(.+)/m, 1] or return []
@@ -194,10 +164,7 @@ module OPilot
         []
       end
 
-      # The container path to the upstream PR's cached CI-failure detail, or nil.
-      # GitHub::UpstreamPull writes ci.json only when CI is failing; guard on the head
-      # SHA so a stale failure cached against an earlier commit isn't shown as
-      # current after a new push.
+      # Checks the head SHA, so a failure cached for an earlier commit is not shown.
       def review_ci_ref(ci_file, head_sha)
         return nil if head_sha.to_s.empty?
         data = Helpers.safe_json_read(ci_file)
@@ -205,9 +172,7 @@ module OPilot
         container_path(ci_file)
       end
 
-      # Everything a pass over one of opilot's own PRs needs, resolved once.
-      # `item_ref`/`plan_ref` are already reduced to the placeholder the prompts
-      # take when the file is missing, so no caller repeats that test.
+      # `item_ref`/`plan_ref` already hold the placeholder for a missing file.
       OwnPrPaths = Struct.new(:repo, :pr_file, :ci_file, :session_file, :item_ref, :plan_ref,
                               keyword_init: true)
 
@@ -224,15 +189,8 @@ module OPilot
         )
       end
 
-      # Sync the worktree to the PR's current head, run one LLM pass over it with
-      # the write tools, reply, and push whatever it committed.
-      #
-      # #handle_own and #handle_ci differ only in the prompt — the block builds it
-      # from the resolved paths. Both fetch the head over HTTPS (never the
-      # worktree's possibly-SSH origin) and reset onto it before the LLM touches
-      # anything; the branch lives in the PR's head repo, the bot's fork, not the
-      # base repo. The LLM may make no change at all (a flaky or infra CI failure
-      # it should not "fix"), in which case it just replies and nothing is pushed.
+      # Shared by #handle_own and #handle_ci; the block builds the prompt. The head
+      # is fetched over HTTPS from the fork. No change means nothing is pushed.
       def run_on_pr_head(intent)
         paths = own_pr_paths(intent)
         @github.fetch_branch(head_repo(intent), branch: intent.branch,
@@ -257,9 +215,6 @@ module OPilot
         end
       end
 
-      # CI failed on one of opilot's own PRs: let the LLM read the cached failure
-      # detail (ci.json — failed checks, annotations, failed-job log tails) and fix
-      # it in the worktree, then commit and push to update the draft PR.
       def handle_ci(intent)
         run_on_pr_head(intent) do |p|
           Prompts::PrAuthor.fix_ci(
@@ -271,29 +226,14 @@ module OPilot
         end
       end
 
-      # "@opilot refresh" on one of opilot's own PRs: hand it to Runners::Pr for
-      # the full `pr`-command treatment — a forced base-branch merge (the trigger
-      # comment just bumped updated_at, so the quiet-day heuristic would always
-      # skip it), a CI fix regardless of act-state/attempt cap, and
-      # a sweep of fresh feedback (the trigger comment included, so the commenter
-      # gets a reply). Runners::Pr posts its own summary and advances the comment
-      # cutoff; handle_and_ack then acks the trigger comment as usual.
+      # The base merge is forced: the trigger comment just bumped updated_at, so
+      # the quiet-day rule would always skip it. Runners::Pr posts its own summary.
       def handle_refresh(intent)
         pr_runner.refresh_one(intent.item_id, intent.repo_name)
       end
 
-      # "@opilot close" on one of opilot's own PRs: close it unmerged and say so.
-      # opilot is the PR's author, so the bot token can close it with no access to
-      # the canonical repo.
-      #
-      # The close comes first and the reply second, so the reply only ever states
-      # something that already happened: #post_reply swallows its own errors, and a
-      # close that raises is reported by #handle_and_ack's rescue instead.
-      #
-      # Nothing is written to gh_pr.json here. The next poll reads the PR as
-      # `closed` and marks `pr_done` itself (#intents_for_dir) — the same path a
-      # human closing it takes, which keeps the flag set in one place so `dev refresh`
-      # can still clear it on a reopen.
+      # Close first, reply second, so the reply states a done fact. The next poll
+      # sets `pr_done`, as for a human close. See CLAUDE.md, gh-agent.
       def handle_close(intent)
         @github.close_pr(intent.repo, intent.pr_number)
         log_script "Closed #{intent.repo}##{intent.pr_number}"
@@ -301,13 +241,8 @@ module OPilot
                            "Reopen it if you need the work again.")
       end
 
-      # A comment on a `pd` change proposal's PR. `pd propose` is first-shot only,
-      # so this is where a proposal actually gets iterated: the LLM revises the spec
-      # artifacts, the runner re-validates and re-checks the write scope, and the
-      # revision is pushed to update the PR.
-      #
-      # The branch lives on the bot's own fork (head and base both there), so the
-      # push needs no confirmation and reaches no canonical repo.
+      # A comment on a `pd` proposal PR revises the spec. The branch is on the
+      # bot's fork, so the push needs no confirmation.
       def handle_spec(intent)
         repo    = @ctx.repos[intent.repo_name] || @ctx.default_repo
         dir     = @pull.pr_dir(intent.item_id, intent.repo_name, spec: true)
@@ -331,9 +266,7 @@ module OPilot
         push_followup(intent, repo) if spec_commit_pending?(repo, intent.branch)
       end
 
-      # Did revise_proposal leave a commit to push? It commits internally (the spec
-      # tree is git-excluded, so it needs a deliberate force-add), unlike the
-      # code path where commit_followup does it here.
+      # revise_proposal commits itself, because the spec tree needs a force-add.
       def spec_commit_pending?(repo, branch)
         worktree(repo).log.between("FETCH_HEAD", branch).execute.any?
       rescue StandardError
@@ -348,8 +281,7 @@ module OPilot
         @product_runner ||= PD::Runner.new(@ctx, harness: @harness)
       end
 
-      # Built lazily: Runners::Pr's default OpenProject client (for the WP mirror)
-      # is only needed once a refresh is actually triggered.
+      # Built lazily: only a refresh needs it.
       def pr_runner
         @pr_runner ||= Runners::Pr.new(@ctx, harness: @harness, github: @github,
                                     gh_pull: @pull, interactive: false)
@@ -357,8 +289,6 @@ module OPilot
 
       def prompt_scan_from
         previous = saved_scan_from_at
-        # One line for the question, one for the answer — the same shape as
-        # op-agent's prompt (OpenProject::Pull#prompt_scan_from).
         print %(  How far back should the PR comment scanner look? (e.g. "2h", "3 days", "1 week", "1 month")\n  Scan from [#{previous || "now"}]: )
         reply = $stdin.gets.to_s.chomp
         scan_from_at = (previous && reply.strip.empty?) ? previous : Helpers.parse_scan_from(reply)
@@ -366,8 +296,7 @@ module OPilot
         scan_from_at
       end
 
-      # Persist the chosen scan floor so the next run can offer it as the default,
-      # letting gh-agent resume from where it left off instead of skipping to now.
+      # Saved so the next run offers it as the default.
       def scan_from_path
         @ctx.state_dir / "gh_agent_scan_from.json"
       end
@@ -382,13 +311,10 @@ module OPilot
         log_script "Warning: could not save scan-from window: #{e.message}"
       end
 
-      # Post the LLM's reply: in-thread for an inline review comment, otherwise on
-      # the PR's conversation. Records our comment id so it isn't re-triggered.
+      # Records our comment id so it does not trigger again.
       def post_reply(intent, body)
         text = Helpers.extract_reply(body)
         return if text.empty?
-        # Label every reply as automated so readers don't mistake it for a human
-        # comment posted under the token owner's identity.
         text = "🤖 #{text}"
         comment =
           if intent.kind == :review
@@ -402,8 +328,6 @@ module OPilot
         log_script "Reply failed on #{intent.repo}##{intent.pr_number}: #{e.message}"
       end
 
-      # Route act-state to the source the intent came from: opilot's own PRs are
-      # keyed by WP item + repo name; upstream PRs by repo + number.
       def mark_acted(intent)
         if intent.kind == :ci
           # CI dedup is per-SHA, not by comment timestamp.
@@ -423,8 +347,7 @@ module OPilot
         end
       end
 
-      # Commit whatever the LLM changed in the worktree. Returns true when a commit
-      # was made, false when the comment was answered without touching any file.
+      # Returns false when the LLM changed no file.
       def commit_followup(intent, repo)
         Helpers.adopt_github_author!(@ctx.contributor_token)
         wt   = worktree(repo)
@@ -435,22 +358,14 @@ module OPilot
         true
       end
 
-      # The subject for a follow-up commit: the WP label (matching the PR title's
-      # "[label] …" form) plus a concise description of the change the LLM just made
-      # (Helpers#generate_commit_subject). Falls back to a generic subject when
-      # subject generation yields nothing.
       def feedback_commit_message(intent, diff)
         label   = wp_label(intent.item_id)
         subject = generate_commit_subject(diff)
         subject.empty? ? "[#{label}] address PR feedback" : "[#{label}] #{subject}"
       end
 
-      # Push the new commit to the PR's head repo with the bot token, updating the
-      # draft PR. For the bot's own PRs there is no confirmation: the branch lives
-      # on the bot's fork and a maintainer still gates the merge, so nothing
-      # reaches the canonical repo without human review. A head that IS a
-      # canonical repo (e.g. a PR a maintainer adopted and re-published) is
-      # refused — and the bot token couldn't push there anyway.
+      # No confirmation: the head is the bot's fork. A canonical head (an adopted
+      # PR) is refused.
       def push_followup(intent, repo)
         target = head_repo(intent)
         if refuse_canonical_push?(target, intent.branch)
@@ -461,8 +376,7 @@ module OPilot
         log_script "Pushed to #{target} — PR ##{intent.pr_number} updated."
       end
 
-      # The repo holding the PR's branch — the fork. Falls back to the base repo
-      # for a same-repo PR or a cached intent from before head_repo was tracked.
+      # Falls back to the base repo for a same-repo PR or an old cached intent.
       def head_repo(intent)
         intent.head_repo || intent.repo
       end

@@ -39,11 +39,7 @@ module OPilot
       end
     end
 
-    def test_only_a_bad_minute_is_transient
-      assert OP::Error.for(429, nil, "x").transient?
-      assert OP::Error.for(502, nil, "x").transient?
-      assert OP::NetworkError.new("x").transient?
-      refute OP::Error.for(404, nil, "x").transient?
+    def test_a_network_error_has_no_code
       assert_nil OP::NetworkError.new("x").code
     end
 

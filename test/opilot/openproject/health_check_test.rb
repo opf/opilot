@@ -67,11 +67,6 @@ module OPilot
       @check = OpenProject::HealthCheck.new(@ctx, pull: nil, harness: nil, api: Object.new)
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-      super
-    end
-
     def item(**over)
       { "id" => "42", "status" => "New", "created_at" => "2026-09-01T00:00:00Z",
         "description_changed_at" => "2026-09-01T00:00:00Z", "comments" => [], "history" => [] }

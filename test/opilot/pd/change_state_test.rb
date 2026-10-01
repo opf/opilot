@@ -14,10 +14,6 @@ module OPilot
         @store  = ChangeStore.new(@ctx, @repo)
       end
 
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
-      end
-
       # Seed the store without shelling out to the openspec CLI, which is not on
       # PATH outside the runner image.
       def seed_store!(change_id = "add-recurring-meetings", tasks: "## RRule parsing (#59943)\n")

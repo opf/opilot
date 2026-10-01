@@ -8,6 +8,8 @@ module OPilot
     # section reaches the prompt, the spec tree stays the harness's, and the
     # checkboxes are ticked only once there is a commit to tick them for.
     class ImplementTest < Minitest::Test
+      include PDStoreSetup
+
       # Git and GitHub are the parts a unit test can't drive; everything above them
       # is the real runner.
       class TestRunner < Runner
@@ -126,15 +128,7 @@ module OPilot
       MD
 
       def setup
-        @tmpdir = Pathname(Dir.mktmpdir)
-        @ctx    = Context.build(@tmpdir)
-        @repo   = @ctx.default_repo
-        @repo.worktree_host.mkpath
-        Git.init(@repo.worktree_host.to_s)
-
-        @store = ChangeStore.new(@ctx, @repo)
-        (@store.tree / "changes").mkpath
-        (@store.tree / "config.yaml").write("schema: spec-driven\n")
+        seed_store
         dir = @store.change_dir("add-x")
         dir.mkpath
         (dir / "proposal.md").write("# Recurring meetings\nWhy this exists.\n")
@@ -156,10 +150,6 @@ module OPilot
         path = ResolvedIds.new(@ctx, op: Object.new).path
         path.dirname.mkpath
         path.write(JSON.generate("project_id" => "42", "statuses" => statuses))
-      end
-
-      def teardown
-        FileUtils.rm_rf(@tmpdir)
       end
 
       def runner(harness: nil, items: nil, produces_commit: true)

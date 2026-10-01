@@ -10,70 +10,32 @@ module OPilot
   class Harness
     include Helpers
 
-    # The pi run ended with an error result (e.g. it requested a tool that
-    # isn't granted, or the run was truncated or aborted). Whatever text was
-    # streamed before the failure is partial and must not be treated as a
-    # finished answer.
+    # The pi run ended with an error. Text streamed before it is partial, not an answer.
     Error = Class.new(StandardError)
 
-    # Must stay in sync with ALLOWED_TOOL_GRANTS in server.js, which refuses
-    # any other grant. pi's tool names are lowercase; there's no glob tool, so
-    # `find` covers that job. Grep/find/ls are granted everywhere: without them
-    # the model has no way to search the repo and reaches for Bash find/grep
-    # instead, which is denied and kills the run. Bash is granted so pi can
-    # browse git history (log/show/blame/diff) across the repos for context;
-    # the pi-guards.ts tool_call hook confines it to read-only git — no commit,
-    # push, remote, or non-git command (and no writes into any .git/, which
-    # would turn those read-only subcommands into code execution). The harness
-    # has no network egress but inference-gw, so there is nowhere to exfiltrate to.
-    # The ONE exception is `git rm` / `git clean`, which pi-guards.ts unlocks
-    # when the grant carries write/edit — pi ships no delete tool, so bash is
-    # the only place one can live, and keying it to this grant is what keeps
-    # TOOLS_READ genuinely read-only.
+    # Must match ALLOWED_TOOL_GRANTS in server.js. grep/find/ls are always granted:
+    # without them the model tries Bash find/grep, which is denied and kills the run.
+    # pi-guards.ts limits bash to read-only git. See CLAUDE.md, Architecture: Harness.
     TOOLS_READ = "read,grep,find,ls,bash"
     TOOLS_IMPL = "read,grep,find,ls,bash,write,edit"
 
-    # The op_query variants, granted only to the roles marked
-    # `mcp` (roles.rb). Must stay in sync with ALLOWED_TOOL_GRANTS in server.js.
+    # Only for roles marked `mcp` (roles.rb). Must match ALLOWED_TOOL_GRANTS in server.js.
     TOOLS_READ_OP = "#{TOOLS_READ},op_query"
     TOOLS_IMPL_OP = "#{TOOLS_IMPL},op_query"
 
-    # Builds one grant from the base plus whichever MCP tools are switched on.
-    # The array literal IS the canonical order — server.js's ALLOWED_TOOL_GRANTS
-    # holds the same eight strings as exact literals, and an order that differed
-    # between the two would be a 403 the model cannot explain. One place to look,
-    # rather than eight named constants here and eight there.
+    # This order must match server.js's ALLOWED_TOOL_GRANTS exactly, or the call 403s.
     def self.tools_for(base, op_mcp:, gh_mcp:)
       [base, ("op_query" if op_mcp), ("gh_query" if gh_mcp)].compact.join(",")
     end
 
-    # Models, pinned so behaviour doesn't drift when the catalog's default
-    # changes. Values carry pi's provider prefix — openrouter/<vendor>/<model>,
-    # or <provider>/<model-id> for a self-hosted one ("local/qwen2.5-coder:32b").
-    # A bare id ("claude-opus-4-8") is not a valid slug.
-    #
-    # THE PREFIX IS LOAD-BEARING beyond naming: server.js reads it to decide
-    # whether to hand pi the provider config committed in pi-models.json or to
-    # generate one for the configured upstream. It is the only signal for that,
-    # deliberately — a second "mode" variable could disagree with the slug.
-    #
-    # MODEL_HEAVY is shared by every session-bound phase (chat, plan, review,
-    # implement): they resume one per-WP session, and switching models mid-session
-    # would discard the cache and resumed context. MODEL_LIGHT is for stateless
-    # one-shot passes. server.js validates the value by format, not an allowlist —
-    # model choice grants no privilege (unlike the tool grants above).
+    # Always <provider>/<model-id>; server.js picks the provider config from the prefix.
+    # MODEL_HEAVY serves every session-bound phase, because a model switch mid-session
+    # discards its context. MODEL_LIGHT is for stateless one-shots.
     MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5.5")
     MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
 
-    # How long to wait on a silent socket. This must be the OUTER of the two
-    # bounds — server.js kills the run and reports an `exit` frame naming the
-    # real cause; giving up first turns that into a bare Net::ReadTimeout.
-    #
-    # The harness writes NOTHING until a run starts, and it runs one call at a
-    # time, so a queued request sees a silent socket for the whole run ahead of
-    # it. The bound must therefore cover the server's ceiling plus one full idle
-    # window. Both knobs read the same env vars server.js reads, so raising the
-    # ceiling cannot leave this behind.
+    # Must stay the outer bound (ceiling + one idle window), or server.js's named
+    # timeout becomes a bare Net::ReadTimeout. See CLAUDE.md, Harness container communication.
     def self.env_minutes(name, fallback)
       value = ENV.fetch(name, "").to_f
       value.positive? ? value : fallback
@@ -92,8 +54,7 @@ module OPilot
       @uri = URI(@ctx.harness_url)
     end
 
-    # Is the harness container up and serving? Cheap GET against server.js's
-    # health endpoint — the same one compose's healthcheck uses.
+    # Cheap GET against server.js's health endpoint.
     def available?
       Net::HTTP.start(@uri.host, @uri.port, open_timeout: 2, read_timeout: 2) do |http|
         http.get("/health").is_a?(Net::HTTPSuccess)
@@ -102,10 +63,7 @@ module OPilot
       false
     end
 
-    # Fail fast, before a command does any real work, when the container isn't
-    # there. Without this the first prompt spends ~30s in http_stream's
-    # reconnect backoff and then surfaces a bare SocketError — long after the
-    # branch has been checked out and the spec tree materialised.
+    # Fail before any real work, not after ~30s of reconnect backoff and a bare SocketError.
     def ensure_available!
       return if available?
       raise OPilot::FatalError, <<~MSG.strip
@@ -115,10 +73,8 @@ module OPilot
       MSG
     end
 
-    # Runs the LLM with the given prompt. Streams tool-use lines to tty, returns text output.
-    # Pass session_file: (a Pathname) to enable per-WP session continuity. The runner
-    # owns the id: it reuses the file's, or mints one, and pi's --session-id opens
-    # that session or creates it when absent — so a lost session simply starts fresh.
+    # Runs the LLM and returns its text. With session_file:, the runner owns the
+    # session id: it reuses the file's or mints one, so a lost session starts fresh.
     def run(prompt, role:, tools: nil, model: MODEL_HEAVY, session_file: nil)
       known_id   = session_file&.exist? ? session_file.read.strip : ""
       session_id = known_id.empty? ? (SecureRandom.uuid if session_file) : known_id
@@ -193,8 +149,7 @@ module OPilot
         Net::HTTP.start(@uri.host, @uri.port, read_timeout: READ_TIMEOUT) do |http|
           http.request(req) do |res|
             unless res.is_a?(Net::HTTPSuccess)
-              # e.g. 403 "unknown tool grant" when the harness image predates a
-              # grant change — surface the body instead of streaming nothing.
+              # e.g. 403 "unknown tool grant" from an old harness image.
               error = "harness server HTTP #{res.code}: #{res.body.to_s.strip}"
               $stdout.puts Rainbow("  ✗ #{error}").red
               next
@@ -210,9 +165,7 @@ module OPilot
                   # server.js's final diagnostic: exit code/signal + stderr tail.
                   exit_info = parsed
                 when "result"
-                  # The CLI's final verdict on the run. An error here (denied
-                  # tool, max turns, …) means the run died mid-way; surface it
-                  # instead of passing the partial text off as the answer.
+                  # An error here means the run died mid-way; the text is partial.
                   if parsed["is_error"] || parsed["subtype"].to_s.start_with?("error")
                     error_subtype = parsed["subtype"].to_s
                     error = parsed["result"].to_s.strip
@@ -221,10 +174,7 @@ module OPilot
                     $stdout.puts Rainbow("  ✗ #{error}").red
                     at_line_start = true
                   else
-                    # The CLI's final answer — just the last message, not the
-                    # per-turn reasoning streamed along the way. Prefer it as the
-                    # return value so callers (PR comments, plan.md, …) get the
-                    # conclusion, not the narration.
+                    # The last message only, so callers get the conclusion, not the narration.
                     final_result = parsed["result"]
                   end
                 when "assistant"
@@ -237,12 +187,8 @@ module OPilot
                       at_line_start = true
                       after_tool    = true
                     when "text_delta", "thinking_delta"
-                      # Printed raw (no Markdown rendering) as it streams in, so a
-                      # long-running block — e.g. a reasoning model's "thinking"
-                      # text — is visible instead of leaving the terminal silent
-                      # until text_end/thinking_end or a length-cap error. Not
-                      # accumulated into text_parts: "text" below carries the
-                      # block's full, authoritative content once it completes.
+                      # Printed raw as it streams, so long thinking is visible. Not kept:
+                      # "text" below carries the full block.
                       chunk = part["text"].to_s
                       next if chunk.empty?
                       print(part["type"] == "thinking_delta" ? Rainbow(chunk).gray : chunk)
@@ -252,8 +198,7 @@ module OPilot
                         text_parts << "\n\n"
                       end
                       after_tool = false
-                      # Already shown live via text_delta above; keep the raw text
-                      # for the return value, the log, and capture's outfile.
+                      # Already shown via text_delta; kept for the return value and log.
                       text_parts << part["text"]
                     end
                   end
@@ -272,18 +217,11 @@ module OPilot
         raise
       end
 
-      # Fall back to the streamed parts only if the run somehow ended without a
-      # final result (e.g. a transport cut-off before the result event).
       text = final_result.to_s.strip.empty? ? text_parts.join : final_result
 
-      # The CLI may end with a non-zero exit and no result event at all (a hard
-      # crash) — treat that as an error too, so the caller doesn't pass empty
-      # text off as a finished answer.
+      # A non-zero exit with no result event is a crash, not an empty answer.
       if !error && exit_info && exit_info["timed_out"]
-        # server.js bounds a run twice (see its PROC_IDLE_TIMEOUT_MS comment):
-        # "idle" is a wedged run, "max" a run that stayed busy past the ceiling.
-        # They call for different answers — retry vs. a smaller ask — so name
-        # which one fired. A harness image predating timeout_kind sends none.
+        # "idle" (wedged: retry) and "max" (too big: ask for less) need different answers.
         error = case exit_info["timeout_kind"]
                 when "idle" then "pi run stalled with no output and was killed"
                 when "max"  then "pi run hit the maximum run time and was killed"
@@ -293,23 +231,15 @@ module OPilot
         error = "pi exited #{exit_signal_desc(exit_info)} with no result"
       end
 
-      # Enrich an error with the real cause from the CLI's stderr tail. For the
-      # `error_during_execution` subtype the result text is empty (we fell back to
-      # the bare subtype), so stderr is the only place the actual reason — an API
-      # overload, internal crash, hook failure — is written.
+      # For `error_during_execution`, stderr holds the only real cause.
       error = decorate_error(error, error_subtype, exit_info) if error
 
       [text, started, error]
     end
 
-    # Combine the CLI's error message with the diagnostic detail server.js
-    # forwards: the result subtype (so a bare "error_during_execution" is at least
-    # labelled), the exit code/signal, and a tail of the CLI's stderr (the only
-    # place the underlying cause is written for an execution error). Kept compact
-    # so it still reads as a single comment/log line.
+    # Adds the subtype, exit code/signal and stderr tail to the error message.
     def decorate_error(error, subtype, exit_info)
       parts = [error]
-      # Add the error subtype when it carries info the message doesn't already.
       parts << "(#{subtype})" if subtype.to_s.start_with?("error") && error != subtype
       if exit_info
         parts << "[exit #{exit_signal_desc(exit_info)}]" if exit_info["code"].to_i != 0 || exit_info["signal"]
@@ -324,15 +254,8 @@ module OPilot
       exit_info["signal"] ? "via #{exit_info["signal"]}" : exit_info["code"].to_s
     end
 
-    # A one-line summary of a tool call for the streamed progress display —
-    # this only affects what's printed/logged, never what pi actually does.
-    # pi's tool schemas (verified against 0.84.2) all declare "path" (read,
-    # write, edit, ls, find, grep), "pattern" (grep, find) or "command" (bash)
-    # among their args, but the model's JSON key order doesn't reliably follow
-    # the schema's declared order — a continuation read re-emits offset before
-    # path, an edit re-emits its edits[] array before path. Picking a named key
-    # instead of "whichever key came first" avoids showing a bare offset
-    # number, or a raw array-of-hashes dump, in place of the file path.
+    # One display line per tool call. Picks a named key, because the model's key
+    # order varies and the first key can be an offset or an edits[] array.
     def tool_call_summary(name, input)
       return "" unless input
       value = input.values_at("path", "pattern", "command").compact.first || input.values.first

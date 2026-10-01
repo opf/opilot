@@ -28,11 +28,6 @@ module OPilot
       @ctx    = build_ctx(@tmpdir, host: "test.host")
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-      super
-    end
-
     def with_stdin(text)
       old = $stdin
       $stdin = StringIO.new(text)

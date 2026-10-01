@@ -75,10 +75,6 @@ module OPilot
       stub_types
     end
 
-    def teardown
-      FileUtils.remove_entry(@tmpdir)
-    end
-
     def stub_project(create_allowed: true)
       links = { "self" => { "href" => "/api/v3/projects/COMMS" } }
       links["createWorkPackage"] = { "href" => "/api/v3/projects/COMMS/work_packages/form" } if create_allowed

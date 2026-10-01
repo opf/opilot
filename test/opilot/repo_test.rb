@@ -8,10 +8,6 @@ module OPilot
       @state_dir.mkpath
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def write_repos(doc)
       (@tmpdir / "repos.json").write(JSON.generate(doc))
     end

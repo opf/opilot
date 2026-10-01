@@ -174,10 +174,6 @@ module OPilot
       end
     end
 
-    def teardown
-      FileUtils.rm_rf(@tmpdir)
-    end
-
     def intent(command, item_id: "42", subject: "Fix the bug", type: "bug", text: nil, user: nil,
                user_href: nil, internal: nil, comment_at: "2024-02-01T00:00:00Z")
       OpenProject::Intent.new(item_id: item_id, subject: subject, type: type, command: command, text: text,
