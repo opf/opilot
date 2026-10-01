@@ -298,7 +298,7 @@ module OPilot
         (dir / "item.json").write(JSON.generate(@item))
         @item
       end
-      def related_work_packages(_id); []; end
+      def related_work_packages(_id, mirror: true); []; end
     end
 
     class ScriptedHarness

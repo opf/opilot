@@ -57,7 +57,7 @@ module OPilot
                       pending
                     else
                       Prompts::Advisor.free_chat(state: @ctx.state_container, wp_root: wp_root, repos: repos,
-                                        message: pending, op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+                                        message: pending, op_mcp: op_mcp_live?, gh_mcp: @ctx.gh_mcp?)
                     end
           llm(:advisor, prompt, session_file: session_file)
           # Set only after the run returns: a failed turn never reached the model,

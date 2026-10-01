@@ -3,6 +3,9 @@ module OPilot
     module PrAuthor
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # Reply to a comment on a opilot-opened GitHub PR (tools: read/write/edit).
       # "Always reply, code if asked": the LLM answers every comment, and edits the
       # worktree only when the comment requests a concrete change. It must not run

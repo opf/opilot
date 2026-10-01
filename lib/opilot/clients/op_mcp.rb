@@ -57,8 +57,7 @@ module OPilot
       # One short line for the startup log. Counts rather than names, since it
       # prints every run; the signal is that write tools are enabled, which only
       # an administrator can change.
-      def summary
-        names   = tool_names
+      def summary(names = tool_names)
         allowed = names & READ_ONLY_OPS
         writes  = (names - READ_ONLY_OPS).grep(/\A(create|update|delete)_/)
         line = "#{allowed.length}/#{names.length} tools allowed by mcp-gw"

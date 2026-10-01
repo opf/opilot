@@ -132,9 +132,14 @@ module OPilot
       # never break the ping it's enriching. Unreachable WPs are naturally excluded
       # — the relations endpoint omits relations to invisible WPs, and a parent/
       # child we can't fetch returns nil from fetch_single_item and is skipped.
+      #
+      # `mirror: false` is the light index for a model that has the MCP tools: no
+      # read per related WP, only the two reads below. Each ref is then
+      # { "numeric_id", "relation", "subject" }, the subject from the link title
+      # (absent when the link has none), and no status.
       MAX_RELATED = 15
 
-      def related_work_packages(wp_id)
+      def related_work_packages(wp_id, mirror: true)
         res = @api.work_package(wp_id)
         return [] unless res.code == 200 && res.body
         numeric_id = res.body["id"].to_s
@@ -146,7 +151,11 @@ module OPilot
           pairs = pairs.first(MAX_RELATED)
         end
 
-        pairs.filter_map do |id, label|
+        unless mirror
+          return pairs.map { |id, label, title| { "numeric_id" => id, "relation" => label, "subject" => title }.compact }
+        end
+
+        pairs.filter_map do |id, label, _title|
           data = fetch_single_item(id)
           next unless data
           { "id" => data["id"], "relation" => label, "subject" => data["subject"], "status" => data["status"] }
@@ -156,9 +165,9 @@ module OPilot
         []
       end
 
-      # [related_numeric_id, relation_label] for each explicit relation involving
-      # the WP. The label is taken from the WP's own perspective: `type` when it is
-      # the relation's `from`, `reverseType` when it is the `to`.
+      # [related_numeric_id, relation_label, title] for each explicit relation
+      # involving the WP. The label is taken from the WP's own perspective: `type`
+      # when it is the relation's `from`, `reverseType` when it is the `to`.
       private def relation_pairs(numeric_id)
         res = @api.work_package_relations(numeric_id)
         return [] unless res.code == 200 && res.body
@@ -166,23 +175,23 @@ module OPilot
           from = Resource.href_id(rel.dig("_links", "from", "href"))
           to   = Resource.href_id(rel.dig("_links", "to", "href"))
           if from == numeric_id
-            [to, rel["type"]]
+            [to, rel["type"], rel.dig("_links", "to", "title")]
           else
-            [from, rel["reverseType"]]
+            [from, rel["reverseType"], rel.dig("_links", "from", "title")]
           end
         end
       end
 
-      # [related_numeric_id, label] for the WP's parent and direct children, read
-      # straight from the WP resource's _links (no extra request).
+      # [related_numeric_id, label, title] for the WP's parent and direct
+      # children, read straight from the WP resource's _links (no extra request).
       private def hierarchy_pairs(wp)
         pairs = []
         if (parent = Resource.href_id(wp.dig("_links", "parent", "href")))
-          pairs << [parent, "parent"]
+          pairs << [parent, "parent", wp.dig("_links", "parent", "title")]
         end
         Array(wp.dig("_links", "children")).each do |child|
           id = Resource.href_id(child["href"])
-          pairs << [id, "child"] if id
+          pairs << [id, "child", child["title"]] if id
         end
         pairs
       end

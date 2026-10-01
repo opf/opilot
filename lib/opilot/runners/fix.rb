@@ -124,7 +124,7 @@ module OPilot
                                item: container_path(st.item_file),
                                plan: container_path(st.plan_file), feedback: replan_feedback,
                                item_id: id, title: subject, resumed: session_resumable?(st),
-                               related: related_ref(st), op_mcp: @ctx.op_mcp?),
+                               related: related_ref(st, mirror: !op_mcp_live?), op_mcp: op_mcp_live?),
                 outfile: st.plan_file, session_file: st.session_file
               )
               record_chosen_repos(st)
@@ -143,7 +143,7 @@ module OPilot
                 Prompts::Planner.plan(repos_summary: @ctx.repos.summary, repos: repos_for_prompt(@ctx.repos.all),
                              item: container_path(st.item_file),
                              item_id: id, title: subject, hint: option_focus.to_s,
-                             related: related_ref(st), allow_options: option_focus.nil?, op_mcp: @ctx.op_mcp?),
+                             related: related_ref(st, mirror: !op_mcp_live?), allow_options: option_focus.nil?, op_mcp: op_mcp_live?),
                 outfile: st.plan_file, session_file: st.session_file
               )
               record_chosen_repos(st) if plan_present?(st)

@@ -3,6 +3,9 @@ module OPilot
     module Auditor
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # The health check's answer shape (Helpers.parse_health). The END marker
       # detects a cut-off answer; the evidence field is what keeps a finding from
       # being an opinion, so the parser drops a finding without it.
@@ -92,8 +95,6 @@ module OPilot
           This report is posted as #{audience}.
 
           #{HEALTH_CONTRACT}
-
-          #{PLAIN_ENGLISH}
         PROMPT
       end
     end

@@ -6,6 +6,7 @@ module OPilot
   class FixRunnerTest < Minitest::Test
     class FakePull
       attr_accessor :related
+      attr_reader :related_mirror
       def initialize(single: nil, singles: nil)
         @single = single; @singles = singles; @related = []
       end
@@ -14,7 +15,7 @@ module OPilot
       # id-agnostic fallback used by the single-WP tests.
       def fetch_single_item(wp_id); @singles ? @singles[wp_id] : @single; end
 
-      def related_work_packages(_id); @related; end
+      def related_work_packages(_id, mirror: true); (@related_mirror ||= []) << mirror; @related; end
     end
 
     # Records every capture prompt and writes a fixed plan to the outfile,

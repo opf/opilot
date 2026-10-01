@@ -147,7 +147,7 @@ module OPilot
                    Prompts::Advisor.room_chat(state: @ctx.state_container, wp_root: container_path(Helpers.items_dir(@ctx)),
                                               repos: repos_for_prompt(@ctx.repos.all), message: intent.message,
                                               sender: intent.sender, fetched: fetched,
-                                              op_mcp: @ctx.op_mcp?, gh_mcp: @ctx.gh_mcp?)
+                                              op_mcp: op_mcp_live?, gh_mcp: @ctx.gh_mcp?)
                  end
         answer = llm(:advisor, prompt, session_file: session).to_s.strip
         answer.empty? ? "I have no answer to this. Ask again in other words." : answer

@@ -3,6 +3,9 @@ module OPilot
     module SpecWriter
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # The write scope every propose/revise run is held to. Enforced afterwards by
       # the runner (which resets anything outside it), but stated here too so a run
       # normally never trips the gate.
@@ -65,8 +68,6 @@ module OPilot
           - Ground every claim in the intake or the code. Where the intake is silent
             on something you had to decide, say so in design.md rather than
             inventing a requirement.
-
-          #{PLAIN_ENGLISH}
         PROMPT
       end
 
@@ -105,8 +106,6 @@ module OPilot
           Apply what the comment asks for. Preserve everything still valid — revise,
           don't rewrite. If the comment is a question rather than a change request,
           make no edits and answer it in your reply.
-
-          #{PLAIN_ENGLISH}
         PROMPT
       end
     end

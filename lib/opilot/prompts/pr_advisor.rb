@@ -3,6 +3,9 @@ module OPilot
     module PrAdvisor
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # How a read-only review proposes an *applicable* code change on a PR opilot
       # can't push to: a GitHub suggestion the author commits with one click. The
       # block is machine-parsed (GitHub::Agent#parse_suggestions) into inline review

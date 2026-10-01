@@ -5,6 +5,9 @@ module OPilot
     module Triager
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # Write ONE work package from ONE AppSignal exception incident
       # (`./opilot appsignal fix`; read-only tools, the runner does the POST).
       #
@@ -97,8 +100,6 @@ module OPilot
             the likely direction is enough.
           - Write no headings above `##`, and add no title line — the subject is the title.
           - Do not write "@opilot" anywhere.
-
-          #{PLAIN_ENGLISH}
         PROMPT
       end
     end

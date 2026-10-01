@@ -1,5 +1,6 @@
 require "json"
 require "time"
+require "digest"
 
 module OPilot
   module OpenProject
@@ -128,19 +129,40 @@ module OPilot
         # Pass the plan's path, not its text: a resumed session already holds the
         # plan, so re-embedding it every turn just burns tokens.
         plan_ref = st.plan_file.exist? ? container_path(st.plan_file) : "(no plan yet)"
-        prompt = Prompts::Advisor.chat(item_id: st.item_id, subject: st.subject,
-                              item: container_path(st.item_file),
-                              plan: plan_ref, message: intent.text.to_s,
-                              related: related_ref(st), can_create_wp: CreateWp.enabled?(@ctx),
-                              can_make_artifact: artifacts_enabled?, max_artifacts: MAX_ARTIFACTS,
-                              op_mcp: @ctx.op_mcp?)
+        args = { item_id: st.item_id, subject: st.subject, item: container_path(st.item_file),
+                 plan: plan_ref, related: related_ref(st, mirror: !op_mcp_live?), can_create_wp: CreateWp.enabled?(@ctx),
+                 can_make_artifact: artifacts_enabled?, max_artifacts: MAX_ARTIFACTS, op_mcp: op_mcp_live? }
+        prompt, rules = chat_prompt(st, args, intent.text.to_s)
         reply = llm(:advisor, prompt, session_file: st.session_file)
+        mark_chat_rules(st, rules)
         # Only when artifacts are on: with the instructions never given, a BEGIN
         # ARTIFACT line is text the writer invented or quoted, and stripping it
         # would delete content from someone's reply.
         reply = publish_artifacts(st, intent, reply) if artifacts_enabled?
         post_note(st.item_id, addressed(reply.strip)) unless reply.strip.empty?
       end
+
+      # The chat prompt and a digest of its rules (the full prompt without the
+      # question). The full prompt goes once per session: a later turn gets the
+      # short follow-up, but only when this session's last chat turn had the same
+      # rules. A session the planner opened holds none of them, and a changed
+      # flag or a new plan changes the rules.
+      def chat_prompt(st, args, message)
+        rules = Digest::SHA256.hexdigest(Prompts::Advisor.chat(**args, message: ""))
+        if session_resumable?(st) && chat_rules_file(st).exist? &&
+           chat_rules_file(st).read == "#{st.session_file.read.strip} #{rules}"
+          [Prompts::Advisor.chat_follow_up(item: args[:item], message: message), rules]
+        else
+          [Prompts::Advisor.chat(**args, message: message), rules]
+        end
+      end
+
+      def mark_chat_rules(st, rules)
+        return unless session_resumable?(st)
+        chat_rules_file(st).write("#{st.session_file.read.strip} #{rules}")
+      end
+
+      def chat_rules_file(st) = st.item_dir / "chat_rules"
 
       # Answers its own failure, like create wp: the reader waits for a report.
       def handle_health(intent)
@@ -301,14 +323,14 @@ module OPilot
         sync_bases_for_reading(@ctx.repos.all)
         item_c  = container_path(st.item_file)
         plan_c  = container_path(st.plan_file)
-        related = related_ref(st)
+        related = related_ref(st, mirror: !op_mcp_live?)
         menu    = repos_for_prompt(@ctx.repos.all)
 
         if feedback && !feedback.empty? && st.plan_file.exist?
           log_script "Writer: revising plan for #{wp_label(st.item_id)} from feedback"
           prompt = Prompts::Planner.replan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c, plan: plan_c,
                                   feedback: feedback, item_id: st.item_id, title: st.subject,
-                                  resumed: session_resumable?(st), related: related, op_mcp: @ctx.op_mcp?)
+                                  resumed: session_resumable?(st), related: related, op_mcp: op_mcp_live?)
           llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
           record_chosen_repos(st)
           return :ok
@@ -317,7 +339,7 @@ module OPilot
         log_script "Writer: generating plan for #{wp_label(st.item_id)} — #{st.subject}"
         prompt = Prompts::Planner.plan(repos_summary: @ctx.repos.summary, repos: menu, item: item_c,
                               item_id: st.item_id, title: st.subject, hint: feedback.to_s,
-                              related: related, allow_options: allow_options, op_mcp: @ctx.op_mcp?)
+                              related: related, allow_options: allow_options, op_mcp: op_mcp_live?)
         llm(:planner, prompt, outfile: st.plan_file, session_file: st.session_file)
 
         if (questions = Helpers.needs_info(st.plan_file.read))

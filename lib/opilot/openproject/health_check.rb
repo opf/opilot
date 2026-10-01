@@ -64,7 +64,7 @@ module OPilot
         prompt = Prompts::Auditor.health(item_id: st.item_id, subject: st.subject,
                                 item: container_path(st.item_file), facts: container_path(facts_file),
                                 related: related_path, descendants: tree_ref, focus: focus, internal: internal,
-                                op_mcp: @ctx.op_mcp?)
+                                op_mcp: op_mcp_live?)
         answer = ask(prompt)
         return failed_note unless answer
 

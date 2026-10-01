@@ -252,7 +252,7 @@ module OPilot
             title: intent.subject, item: p.item_ref, plan: p.plan_ref,
             pr_thread: container_path(p.pr_file), comment: intent.text.to_s,
             author: intent.user_login.to_s, comment_id: intent.comment_id, in_reply_to: intent.in_reply_to,
-            op_mcp: @ctx.op_mcp?
+            op_mcp: op_mcp_live?
           )
         end
       end
@@ -263,7 +263,7 @@ module OPilot
       def handle_ci(intent)
         run_on_pr_head(intent) do |p|
           Prompts::PrAuthor.fix_ci(
-            op_mcp: @ctx.op_mcp?,
+            op_mcp: op_mcp_live?,
             worktree: p.repo.worktree_container, repo: intent.repo, pr_number: intent.pr_number,
             title: intent.subject, item: p.item_ref, plan: p.plan_ref,
             pr_thread: container_path(p.pr_file), ci: container_path(p.ci_file)

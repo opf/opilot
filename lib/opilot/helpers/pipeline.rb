@@ -39,18 +39,7 @@ module OPilot
     def report_mcp_status
       return unless @ctx.op_mcp?
       return unless Helpers.first_mcp_report?
-      unless @ctx.mcp_gw_url
-        log_script "OpenProject MCP: OPILOT_OP_MCP is set but OPILOT_MCP_GW_URL is not — is this running through ./opilot?"
-        return
-      end
-      log_script "OpenProject MCP: #{Clients::OpMcp.new(@ctx.mcp_gw_url, @ctx.gw_token).summary}"
-    rescue Clients::OpMcp::Unavailable
-      # The common case now that OPILOT_OP_MCP defaults on: most instances have
-      # no Enterprise MCP server enabled. Quiet by design: pi's connection
-      # fails the same way and the tools are simply absent.
-      log_script "OpenProject MCP: not available on this instance — the OpenProject tools will be absent."
-    rescue StandardError => e
-      log_script "OpenProject MCP: startup check failed (#{e.message}) — the OpenProject tools may be absent."
+      log_script "OpenProject MCP: #{Helpers.op_mcp_check(@ctx)[:note]}"
     end
 
     # True once per process — `./opilot agent` sets up every loop.
@@ -59,16 +48,54 @@ module OPilot
       @op_mcp_reported = true
     end
 
+    # Whether the OpenProject MCP tools are really there: the flag is on and the
+    # instance lists every tool the prompts name. The prompts and the related
+    # prefetch read this. The grant follows the flag alone, so a tool that is
+    # missing costs nothing.
+    def op_mcp_live? = @ctx.op_mcp? && Helpers.op_mcp_check(@ctx)[:live]
+
+    # The tools Prompts::Sections#op_query_line tells the model to call.
+    OP_MCP_NAMED = %w[search_work_packages list_work_package_relations list_work_package_comments
+                      search_projects].freeze
+
+    # One check per process, because availability is per instance.
+    def self.op_mcp_check(ctx)
+      @op_mcp_check ||= begin
+        if ctx.mcp_gw_url
+          client = Clients::OpMcp.new(ctx.mcp_gw_url, ctx.gw_token)
+          names = client.tool_names
+          { live: (OP_MCP_NAMED - names).empty?, note: client.summary(names) }
+        else
+          { live: false, note: "OPILOT_OP_MCP is set but OPILOT_MCP_GW_URL is not — is this running through ./opilot?" }
+        end
+      rescue Clients::OpMcp::Unavailable
+        # The common case: most instances have no Enterprise MCP server enabled.
+        { live: false, note: "not available on this instance — the OpenProject tools will be absent." }
+      rescue StandardError => e
+        { live: false, note: "startup check failed (#{e.message}) — the OpenProject tools may be absent." }
+      end
+    end
+
+    # For tests, which build a new context per case.
+    def self.reset_mcp_check!
+      @op_mcp_check = nil
+      @op_mcp_reported = nil
+    end
+
     # Fetch a WP's related work packages (relations + parent/children) via the
     # injected @pull, write the index to related.json, and return its container
     # path — or nil when there are none, so the prompt omits the RELATED section.
     # Each related WP is also cached to its own item.json (by @pull) so the LLM can
     # read the full detail on demand via the item_path in the index. Shared by the
     # op-agent (OpenProject::Agent) and the terminal fix/plan flow (Runners::Fix).
-    def related_ref(st)
-      related = @pull.related_work_packages(st.item_id)
+    #
+    # `mirror: false` writes the light index (Pull#related_work_packages): no
+    # related WP is fetched, and the model reads one with the MCP tools.
+    def related_ref(st, mirror: true)
+      related = @pull.related_work_packages(st.item_id, mirror: mirror)
       return nil if related.empty?
       indexed = related.map do |r|
+        next r unless mirror
         r.merge("item_path" => container_path(Helpers.item_dir(@ctx, r["id"]) / "item.json"))
       end
       st.related_file.write(JSON.generate(indexed))

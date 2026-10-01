@@ -794,5 +794,37 @@ module OPilot
     assert_includes out, "**Files**"
     assert_includes out, "- app/models/foo.rb", "list items are untouched"
   end
+
+    # ── OpenProject MCP availability ─────────────────────────────────────────
+
+    def mcp_ctx = TestFixtures::Ctx.new(op_mcp: true, mcp_gw_url: "http://mcp-gw:47293", gw_token: "gw")
+
+    def stub_tools(names)
+      stub_request(:get, "http://mcp-gw:47293/tools")
+        .to_return(status: 200, body: JSON.generate({ result: { tools: names.map { |n| { name: n } } } }))
+    end
+
+    def test_op_mcp_is_live_when_every_named_tool_is_listed
+      stub_tools(Helpers::OP_MCP_NAMED + ["create_work_package"])
+      assert Helpers.op_mcp_check(mcp_ctx)[:live]
+    end
+
+    def test_op_mcp_is_not_live_when_a_named_tool_is_missing
+      stub_tools(Helpers::OP_MCP_NAMED - ["list_work_package_relations"])
+      refute Helpers.op_mcp_check(mcp_ctx)[:live], "the prompt would name a tool that is not there"
+    end
+
+    def test_op_mcp_is_not_live_on_an_instance_without_the_server
+      stub_request(:get, "http://mcp-gw:47293/tools").to_return(status: 404, body: "MCP server is not available.")
+      check = Helpers.op_mcp_check(mcp_ctx)
+      refute check[:live]
+      assert_includes check[:note], "not available"
+    end
+
+    def test_op_mcp_is_asked_once_per_process
+      tools = stub_tools(Helpers::OP_MCP_NAMED)
+      2.times { Helpers.op_mcp_check(mcp_ctx) }
+      assert_requested tools, times: 1
+    end
   end
 end

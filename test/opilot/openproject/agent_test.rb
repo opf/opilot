@@ -108,9 +108,10 @@ module OPilot
     class FakePull
       attr_reader :acted
       attr_accessor :related
+      attr_reader :related_mirror
       def initialize; @acted = []; @related = []; end
       def mark_acted(id, at); @acted << [id, at]; end
-      def related_work_packages(_id); @related; end
+      def related_work_packages(_id, mirror: true); (@related_mirror ||= []) << mirror; @related; end
     end
 
     # A publisher whose push always fails, to exercise the error path.
@@ -639,6 +640,97 @@ module OPilot
       refute plan_path.exist?
       refute pr_url_path.exist?
       assert_includes @notes, "Here's my take."
+    end
+
+    # ── chat follow-ups ──────────────────────────────────────────────────────
+
+    # Writes the session id the way Harness#run does, so a second call resumes.
+    class SessionHarness < FakeHarness
+      def run(prompt, session_file: nil, **)
+        session_file.write("sess-1") if session_file && !Helpers.file_has_content?(session_file)
+        super
+      end
+    end
+
+    def session_agent
+      @harness = SessionHarness.new
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(agent, FakeWorktree.new)
+      agent
+    end
+
+    def chat_prompts = @harness.runs.select { |p| p.respond_to?(:role) && p.role == :advisor }
+
+    def test_a_second_chat_turn_in_the_session_sends_only_the_question
+      agent = session_agent
+      agent.handle(intent(:chat, text: "first?"))
+      agent.handle(intent(:chat, text: "second?"))
+
+      first, second = chat_prompts
+      assert_includes first, "AVAILABLE COMMANDS"
+      refute_includes second, "AVAILABLE COMMANDS", "the session already holds the rules"
+      assert_includes second, "USER: second?"
+    end
+
+    def test_a_session_the_planner_opened_still_gets_the_full_chat_rules
+      agent = session_agent
+      @harness.run("plan", session_file: Helpers.item_dir(@ctx, "42").tap(&:mkpath) / "session_id")
+      agent.handle(intent(:chat, text: "first?"))
+      assert_includes chat_prompts.last, "AVAILABLE COMMANDS"
+    end
+
+    def test_changed_chat_rules_are_sent_again
+      agent = session_agent
+      agent.handle(intent(:chat, text: "first?"))
+      plan_path.dirname.mkpath
+      plan_path.write("## Plan\nDo it.\n")   # the CURRENT PLAN line changes
+      agent.handle(intent(:chat, text: "second?"))
+      assert_includes chat_prompts.last, "AVAILABLE COMMANDS"
+    end
+
+    # ── MCP first ────────────────────────────────────────────────────────────
+
+    # An agent whose OpenProject MCP tools are live: the flag is on and the
+    # instance lists every tool the prompts name.
+    def live_mcp_agent
+      stub_request(:get, "http://mcp-gw:47293/tools")
+        .to_return(status: 200, body: JSON.generate({ result: { tools: Helpers::OP_MCP_NAMED.map { |n| { name: n } } } }))
+      @ctx = build_ctx(@tmpdir, op_mcp: true, mcp_gw_url: "http://mcp-gw:47293", gw_token: "gw")
+      agent = OpenProject::Agent.new(@ctx, pull: @pull, harness: @harness, publish: @publish)
+      inject_worktree(agent, FakeWorktree.new)
+      agent
+    end
+
+    def test_live_mcp_chat_reads_related_work_packages_with_the_tools
+      @pull.related = [{ "numeric_id" => "50", "relation" => "parent", "subject" => "Epic" }]
+      live_mcp_agent.handle(intent(:chat, text: "how does this relate to the epic?"))
+
+      assert_equal [false], @pull.related_mirror, "no related work package is mirrored"
+      prompt = @harness.runs.find { |p| p.respond_to?(:role) && p.role == :advisor }
+      assert_includes prompt, "numeric_id"
+      assert_includes prompt, "Use them FIRST"
+      refute_includes prompt, "item_path"
+    end
+
+    def test_live_mcp_plan_reads_related_work_packages_with_the_tools
+      live_mcp_agent.handle(intent(:ship))
+      assert_equal [false], @pull.related_mirror
+    end
+
+    def test_without_live_mcp_related_work_packages_are_mirrored
+      @agent.handle(intent(:chat, text: "hi"))
+      assert_equal [true], @pull.related_mirror
+      prompt = @harness.runs.find { |p| p.respond_to?(:role) && p.role == :advisor }
+      refute_includes prompt, "OPENPROJECT LOOKUP", "the tools are not there, so the prompt does not name them"
+    end
+
+    # create wp's writer has no MCP tools, so it keeps the full mirror.
+    def test_create_wp_mirrors_related_work_packages_even_with_live_mcp
+      agent = live_mcp_agent
+      allow_users(2)
+      stub_create_wp
+      agent.handle(intent(:create_wp, text: "for Rosanna's suggestion"))
+      assert_equal [true], @pull.related_mirror
     end
 
     # ── related work packages ─────────────────────────────────────────────────

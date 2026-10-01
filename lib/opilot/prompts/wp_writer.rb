@@ -3,6 +3,9 @@ module OPilot
     module WpWriter
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # Write the NEW work packages a thread asks for — `@opilot create wp for
       # Rosanna's suggestion` (read-only tools; the runner does the POSTs).
       #
@@ -121,8 +124,6 @@ module OPilot
           - Keep anything the thread does not answer as an open question, named as one.
           - Write no headings above `##`, and add no title line — the subject is the title.
           - Do not write "@opilot" anywhere.
-
-          #{PLAIN_ENGLISH}
         PROMPT
       end
     end

@@ -34,7 +34,8 @@ module OPilot
     }.freeze
 
     # Sent inside a session the role's first prompt already opened.
-    FOLLOW_UPS = [[Prompts::SpecWriter, :propose_revise], [Prompts::Advisor, :room_follow_up]].freeze
+    FOLLOW_UPS = [[Prompts::SpecWriter, :propose_revise], [Prompts::Advisor, :room_follow_up],
+                  [Prompts::Advisor, :chat_follow_up]].freeze
 
     def render(mod, name) = mod.public_send(name, **BUILDERS.fetch([mod, name]))
 
@@ -77,9 +78,50 @@ module OPilot
       end
     end
 
+    # The OpenProject tools come first, except in a Matrix room: its audience
+    # rule reads the internal flag of a mirrored comment.
+    def test_the_lookup_line_puts_the_tools_first_except_in_the_room
+      wp = Prompts::Advisor.chat(**BUILDERS.fetch([Prompts::Advisor, :chat]), op_mcp: true)
+      assert_includes wp, "Use them FIRST for anything outside this work package"
+      free = Prompts::Advisor.free_chat(**BUILDERS.fetch([Prompts::Advisor, :free_chat]), op_mcp: true)
+      assert_includes free, "Use them FIRST to read a work package"
+      assert_includes free, "read work packages with the OpenProject tools"
+      room = Prompts::Advisor.room_chat(**BUILDERS.fetch([Prompts::Advisor, :room_chat]), op_mcp: true)
+      assert_includes room, "Read the mirror first"
+      refute_includes room, "Use them FIRST"
+    end
+
+    def test_the_light_related_index_names_no_mirror
+      plan = Prompts::Planner.plan(**BUILDERS.fetch([Prompts::Planner, :plan]), related: "/r.json", op_mcp: true)
+      assert_includes plan, "numeric_id"
+      refute_includes plan, "item_path"
+      plan = Prompts::Planner.plan(**BUILDERS.fetch([Prompts::Planner, :plan]), related: "/r.json")
+      assert_includes plan, "item_path"
+    end
+
     def test_blocks_load_from_files
       assert_equal (Prompts::BLOCKS_DIR / "plain_english.md").read.strip, Prompts::PLAIN_ENGLISH
-      assert Prompts::REPLY_CONTRACT.end_with?(Prompts::PLAIN_ENGLISH)
+    end
+
+    # The language rule is in the system prompt of every role that publishes
+    # prose, so a builder never repeats it. Scribe keeps it inline: its commit
+    # subject is out of scope, and the implementer writes code.
+    def test_the_language_rule_is_in_the_system_prompt_of_the_publishing_roles
+      inline = %i[scribe implementer]
+      Harness::ROLES.each_key do |name|
+        check = inline.include?(name) ? :refute_includes : :assert_includes
+        send(check, Prompts.charter(name), Prompts::PLAIN_ENGLISH, name)
+      end
+      BUILDERS.each_key do |mod, name|
+        next if inline.include?(mod.role)
+        refute_includes render(mod, name), Prompts::PLAIN_ENGLISH, "#{mod}.#{name}"
+      end
+    end
+
+    def test_the_search_stop_rule_is_in_the_system_prompt_of_the_roles_that_read_the_tree
+      %i[planner advisor].each { |name| assert_includes Prompts.charter(name), Prompts::SEARCH_STOP_RULE, name }
+      refute_includes Prompts.charter(:auditor), Prompts::SEARCH_STOP_RULE
+      BUILDERS.each_key { |mod, name| refute_includes render(mod, name), Prompts::SEARCH_STOP_RULE, "#{mod}.#{name}" }
     end
   end
 end

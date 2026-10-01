@@ -120,6 +120,19 @@ Planning or chatting also pulls in the WP's **related** WPs (relations plus
 parent/children), each cached as its own `item.json` with a `related.json` index the
 prompts reference. `dev build`/`commit`/`plan` share this.
 
+**When the OpenProject MCP tools are live, they come first** (`Helpers#op_mcp_live?`).
+"Live" means the flag is on AND the instance lists every tool the prompts name
+(`Helpers::OP_MCP_NAMED`), asked once per process (`Helpers.op_mcp_check`). Then plan
+and chat write a **light** `related.json` — ids, relations and link titles from the two
+reads already made, with no mirror per related WP — and `op_query_line` tells the model
+to read anything outside the trigger work package with the tools. The trigger work
+package's own `item.json` stays the source: the tools return no pictures, no field
+history and no internal flag. Three callers keep the full mirror: `create wp` (its
+role has no MCP), `health` (its Ruby facts read the statuses) and **Matrix room chat**
+(`ROOM_AUDIENCE` reads the internal flag of a mirrored comment, and nobody has checked
+that the comment tool returns it). The grant still follows the flag alone, so a tool
+that is missing costs nothing. Not live, the prompts do not name the tools at all.
+
 ### gh-agent
 
 Polls two sources each tick. Both watch the thread and inline review comments, are
@@ -538,7 +551,8 @@ starts only when `OPILOT_OP_MCP` is set):
   the model is never shown a tool it cannot call. A second route, `GET
   /tools`, answers the runner with the **unfiltered** list — logged once per
   **process** (`Helpers#report_mcp_status`, guarded by
-  `Helpers.first_mcp_report?` since `./opilot agent` sets up as many as three loops) as
+  `Helpers.first_mcp_report?` since `./opilot agent` sets up as many as three loops;
+  the same check decides `Helpers#op_mcp_live?`) as
   one short line: how many tools the allowlist passes, and how many write tools
   the instance has enabled. Counts, not names — opilot cannot disable those
   anyway, only an administrator can. `OPENPROJECT_TOKEN` can write — six of the instance's MCP
@@ -608,7 +622,7 @@ in CI.
 | `repo.rb`, `registry.rb` | `Repo`, and `Registry` — loads `repos.json`, resolves clone paths, `by_upstream` |
 | `harness.rb` | HTTP client to the harness container; per-WP session IDs |
 | `roles.rb` | Loads `prompts/*.yml`, the roles the model plays (grant, model, memory) — every LLM call names one via `Helpers#llm` |
-| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and pulled into the shared blocks (`OP_COMMENT_FORMAT`, `REPLY_CONTRACT`, `TERMINAL_REPLY`, `Planner.plan_skeleton`), never re-worded per prompt. Code and commit messages are out of scope |
+| `prompts.rb`, `prompts/` | All LLM prompts. Each role is a pair in `prompts/`: `<role>.yml` (grant, model, memory and charter) and `<role>.rb`, the module holding that role's builders and whatever only that role uses (`Prompts::Planner.plan`, `Planner::OPTIONS_CONTRACT`, `Auditor::HEALTH_CONTRACT`, `Advisor::LENSES`). What several roles share is in `prompts/_shared.rb`: the text blocks (from `prompts/_blocks/`), `Prompt`, `Prompts.charter`, and the `Sections` helpers; `prompts.rb` only loads them. A builder returns a `Prompts::Prompt` tagged with its role, and `Helpers#llm` refuses one sent under another role. Everything opilot publishes (WP comments, PR replies and descriptions, plans, spec proposals) is written in ASD-STE100 Simplified Technical English — stated once in `Prompts::PLAIN_ENGLISH` and sent in the system prompt of every role that publishes prose (each role module's `SYSTEM_RULES`, read by `Prompts.charter`), never re-worded per prompt. `Scribe` alone keeps it inline, because its commit subject is out of scope. Code and commit messages are out of scope |
 | `openproject/agent.rb` | Main event loop — dispatches the three intents, `:chat`, `:ship` and `:create_wp` |
 | `openproject/create_wp.rb` | `@opilot create wp` — the allowlist gate, the one LLM draft, the form preflight, the creates, the links and the reply; see "`:create_wp`" below |
 | `openproject/pull.rb`, `openproject/intent.rb` | Polls OpenProject; parses `@opilot` comments into `OpenProject::Intent`s |
@@ -1030,7 +1044,8 @@ globally unique, so `pr_reviews/` is flat.
 │       │                        #     suppresses the cache until a run finishes)
 │       ├── pictures/            # every picture the WP shows, mirrored so the LLM can `read`
 │       │                        #   one; <attachment-id>-<slug>.<ext>, pruned to match the WP
-│       ├── related.json         # related WPs pulled in at plan time
+│       ├── related.json         # related WPs pulled in at plan time (light, with no
+│       │                        #   mirror per WP, when the MCP tools are live)
 │       ├── health.json          # the last health check's facts (OpenProject::HealthCheck#facts_for)
 │       ├── descendants.json     # the subtree the last health check read (OpenProject::HealthCheck#descendants)
 │       ├── plan.md              # implementation plan (shared across target repos)
@@ -1045,6 +1060,8 @@ globally unique, so `pr_reviews/` is flat.
 │       ├── target_base.json     # optional per-repo base overrides ({repo: base})
 │       ├── gist_url.txt         # secret gist of plan.md, linked from every repo's PR
 │       ├── session_id           # LLM session (plan + implement)
+│       ├── chat_rules           # session id + digest of the chat rules it already holds;
+│       │                        #   a match sends the short follow-up prompt instead
 │       └── repos/<repo_name>/
 │           ├── pr.md            # PR description (per-repo diff)
 │           ├── pr_url.txt       # published PR URL
@@ -1103,7 +1120,10 @@ Runner POSTs to `http://harness:47291` with headers:
   `session_file` raises, so health's independence from chat is structural.
 
   **The charter is the system prompt** (`Prompts.charter`, sent by `Harness#run` as
-  `X-Harness-System` on every call), followed by the rules the **grant** carries:
+  `X-Harness-System` on every call), followed by the role module's `SYSTEM_RULES`
+  (`PLAIN_ENGLISH`, and `SEARCH_STOP_RULE` for the planner and the advisor) and
+  then the rules the **grant** carries. A rule in the system prompt is sent once
+  per call and never piles up in the session history:
   `READ_ONLY` for a read role, `WRITE_GRANT` (no commit, no command, and the
   `git rm`/`git clean` exception) for a write role. Derived, never pasted, so a
   prompt cannot state a grant its role does not hold — and no builder carries it.

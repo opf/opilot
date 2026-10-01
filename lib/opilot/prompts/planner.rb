@@ -3,6 +3,9 @@ module OPilot
     module Planner
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [SEARCH_STOP_RULE, PLAIN_ENGLISH].freeze
+
       # First line of an answer that names the approach before (or instead of) a
       # plan. Shared by every reader of that answer (OpenProject::Agent, Runners::Fix) so the
       # word is written once.
@@ -68,10 +71,8 @@ module OPilot
         tagged(<<~PROMPT)
           #{repos_section(repos_summary, repos)}
 
-          ISSUE:        #{item}  #{item_fields("type", "status", "version", "assignee")}#{related_line(related)}#{focus}#{op_query_line(op_mcp)}
+          ISSUE:        #{item}  #{item_fields("type", "status", "version", "assignee")}#{related_line(related, light: op_mcp)}#{focus}#{op_query_line(op_mcp)}
           Produce a plan only.
-
-          #{SEARCH_STOP_RULE}
 
           FIRST, judge whether this issue gives you enough to plan a concrete fix.
           #{THIN_REPORT_GATE}
@@ -94,14 +95,12 @@ module OPilot
         PROMPT
       end
 
-      # The shape of plan.md, plus the language it is written in. A plan is read by
-      # the reporter and the reviewer, not only by the implementer, so it obeys
-      # PLAIN_ENGLISH like every other published text. Shared by plan and replan,
-      # which must produce the same document.
+      # The shape of plan.md. A plan is read by the reporter and the reviewer, not
+      # only by the implementer, so it obeys PLAIN_ENGLISH (SYSTEM_RULES) like every
+      # other published text. Shared by plan and replan, which must produce the
+      # same document.
       def self.plan_skeleton(item_id, title)
         <<~TEXT.strip
-          #{PLAIN_ENGLISH}
-
           ## Plan: #{Helpers.wp_label(item_id)} — #{title}
           ### Files to change
           ### Approach
@@ -128,13 +127,11 @@ module OPilot
 
           ISSUE:         #{item}
           EXISTING PLAN: #{plan}
-          FEEDBACK:      #{feedback}#{related_line(related)}#{op_query_line(op_mcp)}
+          FEEDBACK:      #{feedback}#{related_line(related, light: op_mcp)}#{op_query_line(op_mcp)}
 
           #{context_line} Revise the plan to incorporate the feedback above.
           Preserve structure and content that is still valid; only change what the feedback requires.
           Produce a plan only.
-
-          #{SEARCH_STOP_RULE}
 
           #{plan_skeleton(item_id, title)}
         PROMPT

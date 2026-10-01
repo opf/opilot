@@ -3,6 +3,9 @@ module OPilot
     module PrRefresher
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [PLAIN_ENGLISH].freeze
+
       # Refresh a stale opilot-opened PR on demand (tools: read/write/edit).
       # Unlike gh_reply/fix_ci (comment- and CI-triggered), the trigger is the
       # operator's terminal `pr` command, and the work is whichever of the three

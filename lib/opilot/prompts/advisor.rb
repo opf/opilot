@@ -3,10 +3,13 @@ module OPilot
     module Advisor
       extend Sections
 
+      # In the system prompt (Prompts.charter), not in each builder.
+      SYSTEM_RULES = [SEARCH_STOP_RULE, PLAIN_ENGLISH].freeze
+
       # How the terminal chats (plan_chat, free_chat) close. The reader is the
       # operator at a console rather than a work-package thread, so there is no
       # formatting rule — only the same language.
-      TERMINAL_REPLY = "#{Prompts.block("terminal_reply")}\n\n#{PLAIN_ENGLISH}"
+      TERMINAL_REPLY = Prompts.block("terminal_reply")
 
       # Chat lenses — named presets over the free-form :chat path. A lens word in
       # an @opilot comment (`@opilot grill …`) maps to the ordinary chat intent
@@ -89,28 +92,25 @@ module OPilot
           This is a conversation: answer the user's question. Do not implement the plan
           here — if they want it built, tell them to comment `@opilot build`.
 
-          ISSUE: #{item}  #{item_fields}#{related_line(related)}#{op_query_line(op_mcp)}
+          ISSUE: #{item}  #{item_fields}#{related_line(related, light: op_mcp)}#{op_query_line(op_mcp)}
           CURRENT PLAN: #{plan}
           (both are likely already in your session context — read a file only if it
           isn't; on a fresh session read the issue, including its comments, first)
 
           #{THIN_REPORT_GATE}
 
-          #{SEARCH_STOP_RULE}
-
-          AVAILABLE COMMANDS (mention these when relevant) — `build` is the only
-          working command. A comment that names some other word is answered as chat,
-          so name the real command:
+          AVAILABLE COMMANDS (mention these when relevant). A comment that names any
+          other word is answered as chat, so name the real command:
           - @opilot build [feedback] — build it (`fix` is the one alias). When the fix has
                                         more than one shape, build offers numbered options
                                         first and waits. Feedback is direction
           - @opilot build <number>   — build the option with that number, once options were
                                         offered (words after the number change that option)
-          Once the pull request exists, changes to the code are asked for **on the pull
-          request**, not here — say so instead of promising a change on this work package.
           - @opilot grill [focus]    — stress-test the ticket/plan: gaps, edge cases, risks, open questions
           - @opilot summarize [focus] — recap the thread: state, decisions, open questions
           - @opilot health [focus]   — check the ticket for drift: description vs comments, designs, related WPs, status, PRs#{create_wp_line(can_create_wp)}
+          Once the pull request exists, changes to the code are asked for **on the pull
+          request**, not here — say so instead of promising a change on this work package.
 
           USER: #{message}
 
@@ -121,6 +121,20 @@ module OPilot
 
           #{OP_COMMENT_FORMAT}
           #{artifact_block(can_make_artifact, max_artifacts)}
+        PROMPT
+      end
+
+      # A later chat turn in a session whose earlier chat turn already got #chat's
+      # full rules (OpenProject::Agent#chat_prompt checks that), so they are not
+      # sent again.
+      def self.chat_follow_up(item:, message:)
+        tagged(<<~PROMPT)
+          A new comment on the same work package. Keep every rule from your first
+          chat turn in this session: the commands, the audience, and the format.
+
+          ISSUE: #{item}  (read it again when the question needs newer comments)
+
+          USER: #{message}
         PROMPT
       end
 
@@ -163,7 +177,7 @@ module OPilot
           This is a free chat about your own local mirrors of OpenProject work
           packages and GitHub PRs.
 
-          #{mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp)}
+          #{mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp, :mirrors)}
 
           USER: #{message}
 
@@ -172,7 +186,7 @@ module OPilot
       end
 
       # How a Matrix room chat closes: plain text, because the body is not rendered.
-      ROOM_REPLY = <<~TEXT.strip + "\n\n#{PLAIN_ENGLISH}"
+      ROOM_REPLY = <<~TEXT.strip
         Reply helpfully and concisely. Your answer is posted as plain text in a chat
         room, and markdown is not rendered: no headings, no bold, no tables. Use short
         paragraphs, `-` lists and `code` only.
@@ -192,7 +206,7 @@ module OPilot
           This is a chat in a Matrix room about your own local mirrors of OpenProject
           work packages and GitHub PRs. It is not tied to one work package. #{sender} asks.
 
-          #{mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp)}
+          #{mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp, :room)}
           #{fetched_line(fetched)}
           #{ROOM_AUDIENCE}
 
@@ -225,8 +239,15 @@ module OPilot
       end
 
       # Where the mirrors are and how to read them, shared by every free chat.
-      def self.mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp)
+      def self.mirror_orientation(state, wp_root, repos, op_mcp, gh_mcp, scope)
         repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
+        find = if op_mcp && scope == :mirrors
+                 "read work packages with the OpenProject tools, and opilot's own files\n" \
+                   "from the mirror"
+               else
+                 "grep/find/read the relevant mirror files to\n" \
+                   "answer — list #{wp_root} first if you need to find an id"
+               end
         <<~TEXT.chomp
           Everything you have cached is mounted read-only under #{state}. Work
           packages for the current OpenProject instance live under #{wp_root}:
@@ -240,10 +261,9 @@ module OPilot
             #{state}/progress.txt              — an audit log of what opilot has done
           The product repositories are checked out at:
           #{repo_list}
-          #{op_query_line(op_mcp)}#{gh_query_line(gh_mcp)}
+          #{op_query_line(op_mcp, scope)}#{gh_query_line(gh_mcp)}
 
-          Based on the user's message, grep/find/read the relevant mirror files to
-          answer — list #{wp_root} first if you need to find an id. You MAY run
+          Based on the user's message, #{find}. You MAY run
           read-only git (log, show, blame, diff, for-each-ref) in the repos above to
           inspect PR branches and history. To answer whether a commit has shipped,
           use `git for-each-ref --contains <sha> refs/tags` and the same against
