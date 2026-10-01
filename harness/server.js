@@ -57,8 +57,7 @@ const PROC_KILL_GRACE_MS = 10 * 1000;
 //
 // The optional tokens are appended in a fixed order — op_query then gh_query —
 // and each is sent only when its own flag is on (OPILOT_OP_MCP,
-// OPILOT_GH_MCP). They are grant tokens, not pi tools: expandGrant below turns
-// each into its server's MCP tool names.
+// OPILOT_GH_MCP). expandGrant below turns each into its server's tool names.
 const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash',
   'read,grep,find,ls,bash,write,edit',
@@ -70,25 +69,39 @@ const ALLOWED_TOOL_GRANTS = new Set([
   'read,grep,find,ls,bash,write,edit,op_query,gh_query',
 ]);
 
-// The allowed operations, shared with mcp-gw and the runner. Each MCP grant
-// token stands for one server on mcp-gw; pi names that server's tools
-// `mcp__<server>__<tool>`.
-const MCP_OPS = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gateways', 'mcp-ops.json'), 'utf8'));
-const MCP_GRANTS = { op_query: 'openproject', gh_query: 'github' };
+// The MCP server registry, shared with mcp-gw and the runner. Each grant token
+// (op_query, gh_query) stands for one server on mcp-gw.
+const MCP_SERVERS = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'gateways', 'mcp-ops.json'), 'utf8'));
 
 // A grant as pi's --tools list, and the MCP servers it names. --tools filters
 // every registered tool, MCP ones included, so a tool not listed here is never
-// registered — the same exact-name control the built-in tools get.
+// registered — the same exact-name control the built-in tools get. pi names a
+// server's tools `mcp__<server>__<tool>`.
 function expandGrant(grant) {
   const tools = [];
   const servers = [];
   for (const name of grant.split(',')) {
-    const server = MCP_GRANTS[name];
+    const server = Object.keys(MCP_SERVERS).find(s => MCP_SERVERS[s].grant === name);
     if (!server) { tools.push(name); continue; }
     servers.push(server);
-    tools.push(...MCP_OPS[server].map(op => `mcp__${server}__${op}`));
+    tools.push(...MCP_SERVERS[server].ops.map(op => `mcp__${server}__${op}`));
   }
   return { tools: tools.join(','), servers };
+}
+
+// pi.registerMcpServer configs for those servers, all on mcp-gw; none without
+// a gateway (OPILOT_MCP_GW_URL is set only while mcp-gw runs). `direct`
+// exposure declares the tools like built-ins.
+function mcpServerConfigs(servers, env = process.env) {
+  if (!env.OPILOT_MCP_GW_URL) return [];
+  return servers.map(name => ({
+    name,
+    config: {
+      url: `${env.OPILOT_MCP_GW_URL}${MCP_SERVERS[name].path}`,
+      headers: { Authorization: `Bearer ${env.OPILOT_GW_TOKEN}` },
+      exposure: 'direct', timeout: 30, description: MCP_SERVERS[name].description,
+    },
+  }));
 }
 
 // Role files (lib/opilot/prompts/<name>.yml) — the same files the runner loads,
@@ -451,7 +464,8 @@ function runPi(body, tools, model, sessionId, system, res, done) {
   args.push('--tools', grant.tools);
   // pi's own MCP client, and the extension that registers this grant's
   // servers — loaded only when there is one, so other runs open no connection.
-  if (grant.servers.length) {
+  const servers = mcpServerConfigs(grant.servers);
+  if (servers.length) {
     args.push('-e', 'builtin:mcp', '-e', path.join(__dirname, 'pi-mcp.ts'));
   }
   if (model) args.push('--model', model);
@@ -459,7 +473,7 @@ function runPi(body, tools, model, sessionId, system, res, done) {
   if (sessionId) args.push('--session-id', sessionId);
   args.push('--append-system-prompt', system);
 
-  const proc = spawn('pi', args, { env: { ...process.env, OPILOT_MCP_SERVERS: grant.servers.join(',') } });
+  const proc = spawn('pi', args, { env: { ...process.env, OPILOT_MCP_SERVERS: JSON.stringify(servers) } });
 
   // Non-null once a bound has fired, and which one ("idle"/"max") — one
   // variable, because "did it time out" is just "is this set".
@@ -632,6 +646,6 @@ if (require.main === module) startServer();
 
 module.exports = {
   translate, settleResult, extractText, lastAssistantOf,
-  buildModelsJson, buildOpenRouterModels, expandGrant, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
+  buildModelsJson, buildOpenRouterModels, expandGrant, mcpServerConfigs, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
   parseRole, loadRoles, grantsFor, checkRole,
 };

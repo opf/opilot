@@ -287,10 +287,10 @@ _falsy() {
 # The OpenProject MCP gateway — needed whenever a harness-using
 # command runs, unless the operator opted OUT with OPILOT_OP_MCP=0. On by
 # default: an instance with no (Enterprise-only) MCP server enabled just
-# answers every op_query call "unavailable", which is a normal, quiet state —
-# not a reason to withhold the tool from every instance that does have it.
-# The GitHub route. OPILOT_GH_MCP is the switch on all three sides — mcp-gw
-# builds the route, the runner grants gh_query, pi-mcp.ts registers it — and it
+# leaves the tools absent, which is a normal, quiet state — not a reason to
+# withhold them from every instance that does have it.
+# The GitHub route. OPILOT_GH_MCP is the switch on both sides — mcp-gw builds
+# the route and the runner grants the tools — and it
 # is OFF unless set, because GitHub is a third party. The credential falls back
 # to GITHUB_CONTRIBUTOR_TOKEN, so no second token is needed.
 _gh_mcp_on() { [ -n "$(_env_get OPILOT_GH_MCP)" ] && ! _falsy "$(_env_get OPILOT_GH_MCP)"; }
@@ -353,15 +353,14 @@ if _needs_inference_gw; then
     if _needs_mcp_gw; then
       # Exported only here: an absent OPILOT_MCP_GW_URL is what tells both the
       # runner (which call sites grant op_query — Context#op_mcp?'s callers)
-      # and the harness extension (pi-mcp.ts) that mcp-gw isn't running,
+      # and the harness (server.js) that mcp-gw isn't running,
       # without either having to re-derive this condition itself.
       export OPILOT_MCP_GW_URL="http://mcp-gw:47293"
-      # Same two-half shape as the URL above: the runner uses it to decide the
-      # tool grant (Context#gh_mcp?) and pi-mcp.ts to decide whether to
-      # register gh_query at all.
+      # The runner reads it for the tool grant (Context#gh_mcp?), mcp-gw for
+      # the route.
       if _gh_mcp_on; then export OPILOT_GH_MCP=1; fi
-      # --build on every start. server.js, pi-guards.ts, pi-mcp.ts and the two
-      # MCP clients are BAKED INTO the harness image, and the gateways' .js the
+      # --build on every start. server.js, pi-guards.ts, pi-mcp.ts, mcp-shape.js
+      # and mcp-ops.json are BAKED INTO the harness image, and the gateways' .js the
       # same way, so an edit without a rebuild silently runs the old code — the
       # symptom is a stale behaviour that names nothing (a removed hostname, a
       # tool the guard has not heard of, an extension that failed to load and

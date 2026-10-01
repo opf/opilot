@@ -44,17 +44,14 @@ const WRITE_GIT = new Set(["rm", "clean"]);
 // subcommand: output redirection to a file, pager/exec hijacks, alt git-dir.
 const DANGEROUS_OPTION = /^(--output|-o$|--exec-path|--git-dir|--work-tree|-c$|--upload-pack|--receive-pack)/;
 
-// An unknown tool name terminates the run.
+// An unknown tool name terminates the run. Beyond the built-ins, a tool is
+// known only when this run's --tools grant names it: server.js expands
+// op_query/gh_query into the exact MCP tool names, and mcp-gw's allowlist is
+// the real control on what such a call reaches.
 const KNOWN_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "write", "edit"]);
 
-// The MCP servers whose tools may run: only those on mcp-gw, and only a tool
-// this run's --tools grant names (server.js expands op_query/gh_query into the
-// exact names). mcp-gw's allowlist is the real control on what a call reaches.
-const MCP_TOOL = /^mcp__(openproject|github)__[a-z_]+$/;
-
 export function knownTool(name, argv) {
-  if (KNOWN_TOOLS.has(name)) return true;
-  return MCP_TOOL.test(name) && grantedTools(argv).includes(name);
+  return KNOWN_TOOLS.has(name) || (grantedTools(argv) || []).includes(name);
 }
 
 function resolvePath(p) {
@@ -115,15 +112,15 @@ export function touchesGitDir(p) {
 // server.js starts pi with `--tools <grant>`. No --tools means pi enabled every
 // tool, write included, so an absent flag reads as granted.
 export function writesGranted(argv) {
-  if (!(argv || []).includes("--tools")) return true;
   const granted = grantedTools(argv);
-  return granted.includes("write") || granted.includes("edit");
+  return granted === null || granted.includes("write") || granted.includes("edit");
 }
 
+// The --tools list, or null when the flag is absent.
 function grantedTools(argv) {
   const args = argv || [];
   const i = args.indexOf("--tools");
-  return i === -1 ? [] : String(args[i + 1] || "").split(",").map((s) => s.trim());
+  return i === -1 ? null : String(args[i + 1] || "").split(",").map((s) => s.trim());
 }
 
 // Flags refused on `git clean`, checked letter by letter so a cluster like -fdx

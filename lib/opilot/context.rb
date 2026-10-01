@@ -147,7 +147,7 @@ module OPilot
     # false/no/off). On an instance without the (Enterprise-only) MCP server
     # pi's connection fails and the tools are simply absent — a normal, quiet
     # state, so defaulting this on costs an idle mcp-gw container, not a broken
-    # run. This flag is only the GRANT; pi-mcp.ts has its own gate on
+    # run. This flag is only the GRANT; server.js has its own gate on
     # OPILOT_MCP_GW_URL (empty → registers nothing).
     def op_mcp?
       !%w[0 false no off].include?(ENV["OPILOT_OP_MCP"].to_s.strip.downcase)

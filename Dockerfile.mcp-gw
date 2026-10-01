@@ -1,6 +1,6 @@
 FROM node:24-slim
 
-COPY --chown=node:node gateways/mcp-gw.js gateways/mcp-shape.js gateways/mcp-ops.json /app/
+COPY --chown=node:node gateways/mcp-gw.js gateways/mcp-ops.json /app/
 
 USER node
 

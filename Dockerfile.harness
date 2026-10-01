@@ -12,9 +12,9 @@ RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.99.2
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true
 
-COPY --chown=node:node harness/server.js harness/pi-guards.ts harness/pi-mcp.ts \
+COPY --chown=node:node harness/server.js harness/pi-guards.ts harness/pi-mcp.ts harness/mcp-shape.js \
      harness/pi-settings.json harness/pi-models.json /app/harness/
-# The MCP operations server.js grants, shared with mcp-gw and the runner.
+# The MCP server registry server.js grants from, shared with mcp-gw and the runner.
 COPY --chown=node:node gateways/mcp-ops.json /app/gateways/
 # The role files: server.js checks each request's grant against its role. They
 # sit at the same path relative to server.js as in the repo.

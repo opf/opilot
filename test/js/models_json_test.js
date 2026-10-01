@@ -6,8 +6,8 @@
 // checks it — a wrong provider name or a missing compat flag surfaces as an
 // opaque pi start-up error three layers away.
 const assert = require('assert');
-const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS, expandGrant } = require('../../harness/server.js');
-const MCP_OPS = require('../../gateways/mcp-ops.json');
+const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS, expandGrant, mcpServerConfigs } = require('../../harness/server.js');
+const MCP_SERVERS = require('../../gateways/mcp-ops.json');
 
 let failures = 0;
 function test(name, fn) {
@@ -85,8 +85,26 @@ test('a grant token expands to exactly the allowed MCP tools of its server', () 
   assert.deepStrictEqual(names.slice(0, 5), ['read', 'grep', 'find', 'ls', 'bash']);
   assert.ok(names.includes('mcp__openproject__search_work_packages'));
   assert.ok(names.includes('mcp__github__pull_request_read'));
-  assert.strictEqual(names.length, 5 + MCP_OPS.openproject.length + MCP_OPS.github.length);
+  assert.strictEqual(names.length, 5 + MCP_SERVERS.openproject.ops.length + MCP_SERVERS.github.ops.length);
   assert.ok(!names.some(n => /create|update|delete/.test(n)), 'no write tool');
+});
+
+test('every expanded MCP name is one pi keeps as is', () => {
+  // pi replaces anything outside [A-Za-z0-9_] and hash-suffixes a name over 64
+  // characters; a name it changed would never match the --tools grant.
+  for (const name of expandGrant('read,op_query,gh_query').tools.split(',')) {
+    assert.ok(/^[A-Za-z0-9_]{1,64}$/.test(name), name);
+  }
+});
+
+test('the server configs point at mcp-gw, and there are none without it', () => {
+  const env = { OPILOT_MCP_GW_URL: 'http://mcp-gw:47293', OPILOT_GW_TOKEN: 't' };
+  const [op, gh] = mcpServerConfigs(['openproject', 'github'], env);
+  assert.strictEqual(op.config.url, 'http://mcp-gw:47293/mcp');
+  assert.strictEqual(gh.config.url, 'http://mcp-gw:47293/gh/mcp');
+  assert.deepStrictEqual(op.config.headers, { Authorization: 'Bearer t' });
+  assert.strictEqual(op.config.exposure, 'direct');
+  assert.deepStrictEqual(mcpServerConfigs(['openproject'], {}), []);
 });
 
 test('a grant without an MCP token names no server', () => {

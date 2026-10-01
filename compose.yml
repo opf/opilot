@@ -154,16 +154,12 @@ services:
       # The real OpenRouter key never reaches this container: pi-models.json
       # routes the openrouter provider through inference-gw (which holds the real
       # key) and authenticates with this non-secret handshake token. The same
-      # token authenticates pi-mcp.ts to mcp-gw.
+      # token authenticates pi's MCP client to mcp-gw.
       - OPILOT_GW_TOKEN=${OPILOT_GW_TOKEN:-}
-      # Bare form, deliberately: pi-mcp.ts registers the op_query tool only
-      # when this is present, so an unset value here is the second half of the
-      # feature flag alongside the runner's op_query grant (OPILOT_OP_MCP).
+      # Bare form, deliberately: server.js registers no MCP server when this is
+      # unset, the second half of the feature flag beside the runner's grant.
       # ./opilot exports it only when both the harness and the flag are needed.
       - OPILOT_MCP_GW_URL
-      # The harness half of the gh_query flag: pi-mcp.ts registers that tool
-      # only when this is truthy AND the gateway URL above is set.
-      - OPILOT_GH_MCP
       - PI_OFFLINE=1
       # server.js reads the model slugs to decide whether to copy the
       # openrouter provider config from git or generate one for a self-hosted
@@ -254,7 +250,7 @@ services:
       # The GitHub route. OPILOT_GH_MCP is the switch (off by default — GitHub
       # is a third party, so reaching it is an explicit opt-in). The credential
       # is opilot's one GitHub identity: it can write, but no write is reachable
-      # through the pinned /readonly path and the six-operation allowlist, and
+      # through the pinned /readonly path and the operation allowlist, and
       # this container already holds a write-capable OPENPROJECT_TOKEN on the
       # same footing.
       - OPILOT_GH_MCP

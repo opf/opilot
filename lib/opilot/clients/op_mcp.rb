@@ -22,7 +22,7 @@ module OPilot
       # here: it only decides how the startup summary counts what the instance offers.
       READ_ONLY_OPS = JSON.parse(
         File.read(File.expand_path("../../../gateways/mcp-ops.json", __dir__))
-      ).fetch("openproject").freeze
+      ).dig("openproject", "ops").freeze
 
       def initialize(mcp_gw_url, gw_token)
         @uri      = URI(mcp_gw_url)

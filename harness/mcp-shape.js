@@ -1,31 +1,7 @@
-// What mcp-gw does to a tools/call besides allowing it: coerce numeric ids in
-// the request, and trim the answer before it reaches the model. Both used to
-// live in the harness's own MCP client; with pi's native client the gateway is
-// the one place that sees every call.
-
-// The fields each upstream types as `number`. A model routinely stringifies a
-// number whatever the schema says, and the server's "value at `/project_id` is
-// not a number" names no fix, so the model retries the same call.
-const NUMERIC_ARGS = {
-  openproject: ['work_package_id', 'project_id', 'status_id', 'type_id', 'id', 'page'],
-  github: ['issue_number', 'page', 'perPage', 'pullNumber'],
-};
-
-// A non-integer string (a `TTP2` identifier) is left for the server to reject.
-function coerce(value) {
-  if (Array.isArray(value)) return value.map(coerce);
-  if (typeof value === 'string' && /^-?\d+$/.test(value.trim())) return Number(value.trim());
-  return value;
-}
-
-function coerceArgs(server, args) {
-  if (!args || typeof args !== 'object') return args;
-  const out = { ...args };
-  for (const key of NUMERIC_ARGS[server] || []) {
-    if (key in out) out[key] = coerce(out[key]);
-  }
-  return out;
-}
+// Trims an MCP answer before the model sees it (pi-mcp.ts's tool_result
+// handler). pi already coerces arguments from each tool's schema and cuts text
+// over 20 KB; what it cannot know is which fields of an answer a plan reads.
+// Plain CommonJS, so test/js/mcp_shape_test.js loads it under plain Node.
 
 // An administrator picks OpenProject's answer format instance-wide (full,
 // structured-only, content-only), so prefer structuredContent, else the JSON in
@@ -102,40 +78,33 @@ function trimGitHub(value, depth = 0) {
   return value;
 }
 
-// One careless call must not fill the context window; truncation is said.
-const MAX_ANSWER_BYTES = 25_000;
-
-function cap(text) {
-  if (Buffer.byteLength(text, 'utf8') <= MAX_ANSWER_BYTES) return text;
-  return `${text.slice(0, MAX_ANSWER_BYTES)}\n…[truncated — answer exceeded ${MAX_ANSWER_BYTES} bytes]`;
-}
-
 function summarize(server, tool, payload) {
-  if (typeof payload === 'string') return cap(payload);
+  if (typeof payload === 'string') return payload;
   if (server === 'openproject') {
     if (tool === 'search_work_packages' && payload && Array.isArray(payload.items)) {
       const items = payload.items.map(trimWorkPackage);
-      return cap(JSON.stringify({ total: payload.total, returned: items.length, items }));
+      return JSON.stringify({ total: payload.total, returned: items.length, items });
     }
-    return cap(JSON.stringify(payload));
+    return JSON.stringify(payload);
   }
   // A payload that trims to nothing is a shape this trimmer has not seen.
   const trimmed = trimGitHub(payload);
   const empty = trimmed === undefined || (typeof trimmed === 'object' && !Object.keys(trimmed).length);
-  return cap(JSON.stringify(empty ? payload : trimmed));
+  return JSON.stringify(empty ? payload : trimmed);
 }
 
-// Rewrites a tools/call JSON-RPC answer to one trimmed text block.
-// structuredContent is dropped: pi hands the model `content`, and keeping the
-// untrimmed copy beside it would undo the trim for any consumer that reads it.
-function shapeResult(server, tool, rpc) {
-  if (!rpc || !rpc.result) return rpc;
-  const payload = payloadOf(rpc.result);
-  if (payload === undefined) return rpc;
+// pi's MCP_OUTPUT_MAX_BYTES. A trimmed answer still above it keeps pi's own
+// content instead, which pi has already cut and saved in full to a temp file.
+const PI_LIMIT_BYTES = 20 * 1024;
+
+// The model-facing content for one MCP CallToolResult, or null to keep pi's own.
+function shapeCallResult(server, tool, result) {
+  if (!result) return null;
+  const payload = payloadOf(result);
+  if (payload === undefined) return null;
   const text = summarize(server, tool, payload);
-  const result = { content: [{ type: 'text', text }] };
-  if (rpc.result.isError) result.isError = true;
-  return { ...rpc, result };
+  if (Buffer.byteLength(text, 'utf8') > PI_LIMIT_BYTES) return null;
+  return [{ type: 'text', text }];
 }
 
-module.exports = { NUMERIC_ARGS, MAX_ANSWER_BYTES, coerceArgs, shapeResult, trimGitHub };
+module.exports = { shapeCallResult, PI_LIMIT_BYTES };

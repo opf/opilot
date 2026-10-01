@@ -8,9 +8,8 @@
 const assert = require('assert');
 const {
   parseConfig, parseGhConfig, parseRoutes, mapPath, checkMcpCall,
-  filterToolsList, unwrapSse, READ_ONLY_OPS, GH_READ_ONLY_OPS, createHandler,
+  filterToolsList, unwrapSse, OP_READ_ONLY_OPS, GH_READ_ONLY_OPS, createHandler,
 } = require('../../gateways/mcp-gw.js');
-const { MAX_ANSWER_BYTES } = require('../../gateways/mcp-shape.js');
 
 const ghCall = (name, args) => ({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
 const ghEnv = (extra = {}) => env({ OPILOT_GH_MCP: '1', GITHUB_CONTRIBUTOR_TOKEN: 'ghp_contrib', ...extra });
@@ -136,7 +135,7 @@ test('initialize and tools/list are allowed with no further check', () => {
 });
 
 test('every read-only op is an allowed tools/call', () => {
-  for (const name of READ_ONLY_OPS) {
+  for (const name of OP_READ_ONLY_OPS) {
     const result = checkMcpCall({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name } });
     assert.deepStrictEqual(result, {}, `${name} should be allowed`);
   }
@@ -407,8 +406,6 @@ test('an OpenProject call still goes to OpenProject with both routes live', () =
 
 // ── what pi's native MCP client needs ─────────────────────────────────────
 
-const answerText = res => JSON.parse(res.body).result.content[0].text;
-
 test('the session headers are forwarded; nothing else from the request is', () => {
   const req = fakeReq({ headers: {
     authorization: `Bearer ${GW}`, 'mcp-session-id': 'sess-1', 'mcp-protocol-version': '2025-06-18',
@@ -439,54 +436,6 @@ test('initialize is narrowed to the tools capability', () => {
   const result = JSON.parse(res.body).result;
   assert.deepStrictEqual(result.capabilities, { tools: { listChanged: true } });
   assert.strictEqual(result.serverInfo.name, 'openproject_mcp');
-});
-
-test('a numeric id sent as a string is coerced; an identifier is not', () => {
-  const body = JSON.stringify(ghCall('search_work_packages', { project_id: '12', subject: '42', id: ['3', 'TTP2'] }));
-  const { sentBody } = run(parseConfig(env()), fakeReq(), body);
-  assert.deepStrictEqual(JSON.parse(sentBody).params.arguments, { project_id: 12, subject: '42', id: [3, 'TTP2'] });
-});
-
-test('a work-package search is trimmed to what a plan reads', () => {
-  const item = { id: 7, displayId: 'TTP2-7', subject: 'Login fails', description: { raw: 'x'.repeat(400) },
-                 _links: { status: { title: 'New' }, type: { title: 'Bug' }, project: { title: 'TTP2' } },
-                 startDate: '2026-01-01', costs: { spent: 1 } };
-  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
-    content: [{ type: 'text', text: JSON.stringify({ total: 1, items: [item] }) }],
-    structuredContent: { total: 1, items: [item] } } });
-  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('search_work_packages', { subject: 'x' })),
-                      { upstreamBody });
-  const result = JSON.parse(res.body).result;
-  assert.strictEqual(result.structuredContent, undefined, 'the untrimmed copy must not ride along');
-  const [w] = JSON.parse(answerText(res)).items;
-  assert.deepStrictEqual(Object.keys(w).sort(),
-    ['description', 'displayId', 'id', 'project', 'status', 'subject', 'type', 'updatedAt']);
-  assert.strictEqual(w.status, 'New');
-  assert.strictEqual(w.description.length, 301);
-});
-
-test('a GitHub answer keeps the fields a question reads, and a user is its login', () => {
-  const pr = { number: 5, title: 'Fix', node_id: 'N', user: { login: 'octo', avatar_url: 'a' }, url: 'u' };
-  const upstreamBody = `data: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
-    content: [{ type: 'text', text: JSON.stringify(pr) }] } })}\n\n`;
-  const { res } = run(parseRoutes(ghEnv()), fakeReq({ url: '/gh/mcp' }),
-                      JSON.stringify(ghCall('pull_request_read', { pullNumber: '5' })), { upstreamBody });
-  assert.deepStrictEqual(JSON.parse(answerText(res)), { number: 5, title: 'Fix', user: 'octo' });
-});
-
-test('an error answer stays an error, and an oversized one is capped and says so', () => {
-  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, result: {
-    isError: true, content: [{ type: 'text', text: 'y'.repeat(MAX_ANSWER_BYTES + 10) }] } });
-  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('list_types', {})), { upstreamBody });
-  const result = JSON.parse(res.body).result;
-  assert.strictEqual(result.isError, true);
-  assert.match(result.content[0].text, /truncated — answer exceeded/);
-});
-
-test('a JSON-RPC error passes through untouched', () => {
-  const upstreamBody = JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'bad' } });
-  const { res } = run(parseConfig(env()), fakeReq(), JSON.stringify(ghCall('list_types', {})), { upstreamBody });
-  assert.deepStrictEqual(JSON.parse(res.body).error, { code: -32602, message: 'bad' });
 });
 
 console.log(failures === 0 ? '\nall passed' : `\n${failures} failed`);

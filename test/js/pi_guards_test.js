@@ -169,14 +169,12 @@ import('../../harness/pi-guards.ts').then(mod => {
     }
   });
 
-  test('an MCP tool runs only when the grant names it, and only from mcp-gw servers', () => {
+  test('an MCP tool runs only when the grant names it', () => {
     // server.js expands op_query/gh_query into these exact names in --tools.
     const argv = ['pi', '--tools', 'read,grep,find,ls,bash,mcp__openproject__search_work_packages'];
     assert.strictEqual(mod.knownTool('mcp__openproject__search_work_packages', argv), true);
     assert.strictEqual(mod.knownTool('mcp__openproject__create_work_package', argv), false, 'not granted');
     assert.strictEqual(mod.knownTool('mcp__openproject__search_work_packages', READ), false, 'no MCP grant');
-    const other = ['pi', '--tools', 'read,mcp__evil__search_work_packages'];
-    assert.strictEqual(mod.knownTool('mcp__evil__search_work_packages', other), false, 'not an mcp-gw server');
   });
 
   test('the hook refuses an ungranted MCP tool and terminates the run', () => {
