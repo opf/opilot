@@ -20,7 +20,6 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Set up token limits & cleanly handle threshold breaches
 * Centralize our skill and agent definitions into another OP repo, so that OPilot may leverage them
   * Good candidate: https://github.com/opf/openproject-agent-skills
-* Use more clear split between agent "personas" -- reviewer, developer etc.
 * Try to compact token usage
   * Inspiration: https://andrewpatterson.dev/posts/token-savings-rtk-headroom/
 
