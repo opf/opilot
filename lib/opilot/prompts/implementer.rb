@@ -15,8 +15,6 @@ module OPilot
           end
         repo_list = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})" }.join("\n")
         tagged(<<~PROMPT)
-          #{charter}
-
           TARGET REPO(S) — edit files ONLY within these worktrees, per the plan:
           #{repo_list}
           Read each target repo's CLAUDE.md and AGENTS.md (at its root, if present)
@@ -44,8 +42,6 @@ module OPilot
       # helpfully implements two of them makes both unreviewable.
       def self.implement_task(repo:, repo_path:, change_id:, change_dir:, wp_label:, section:, tasks:, item:)
         tagged(<<~PROMPT)
-          #{charter}
-
           Build work package #{wp_label} of the OpenSpec
           change `#{change_id}`.
 

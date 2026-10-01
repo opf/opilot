@@ -295,12 +295,12 @@ let busy = false;
 function drain() {
   if (queue.length === 0) { busy = false; return; }
   busy = true;
-  const { body, tools, model, sessionId, res } = queue.shift();
-  runPi(body, tools, model, sessionId, res, drain);
+  const { body, tools, model, sessionId, system, res } = queue.shift();
+  runPi(body, tools, model, sessionId, system, res, drain);
 }
 
-function enqueue(body, tools, model, sessionId, res) {
-  queue.push({ body, tools, model, sessionId, res });
+function enqueue(body, tools, model, sessionId, system, res) {
+  queue.push({ body, tools, model, sessionId, system, res });
   if (!busy) drain();
 }
 
@@ -410,7 +410,7 @@ function translate(parsed, state) {
   return frames;
 }
 
-function runPi(body, tools, model, sessionId, res, done) {
+function runPi(body, tools, model, sessionId, system, res, done) {
   const args = [
     '--mode', 'json',
     '--no-extensions', '-e', path.join(__dirname, 'pi-guards.ts'), '-e', path.join(__dirname, 'pi-mcp.ts'),
@@ -430,6 +430,7 @@ function runPi(body, tools, model, sessionId, res, done) {
   if (model) args.push('--model', model);
   // Opens the session, or creates it when absent; the runner owns the id.
   if (sessionId) args.push('--session-id', sessionId);
+  args.push('--append-system-prompt', system);
 
   const proc = spawn('pi', args, { env: process.env });
 
@@ -559,6 +560,9 @@ function startServer() {
     const tools     = req.headers['x-harness-tools'];
     const model     = req.headers['x-harness-model'] || null;
     const sessionId = req.headers['x-harness-session'] || null;
+    // The role's charter, base64 because it spans lines. Required: without it
+    // the model would run under pi's bare system prompt, unaware of its grant.
+    const system    = Buffer.from(req.headers['x-harness-system'] || '', 'base64').toString('utf8').trim();
 
     if (tools && !ALLOWED_TOOL_GRANTS.has(tools)) {
       res.writeHead(403, { 'Content-Type': 'text/plain' });
@@ -581,10 +585,15 @@ function startServer() {
       res.end('malformed session id\n');
       return;
     }
+    if (!system) {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('missing system prompt\n');
+      return;
+    }
 
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, res));
+    req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, system, res));
   });
 
   server.listen(PORT, '0.0.0.0', () => {

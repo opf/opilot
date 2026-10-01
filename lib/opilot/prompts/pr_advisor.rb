@@ -15,8 +15,6 @@ module OPilot
       def self.pr_review(repo:, pr_number:, title:, worktree:, base:, pr_thread:,
                          comment:, author:, comment_id:, in_reply_to: nil, ci: nil)
         tagged(<<~PROMPT)
-          #{charter}
-
           You are asked about GitHub pull request ##{pr_number} ("#{title}") in #{repo} —
           a repo you do NOT own. The PR's branch is checked out at #{worktree}; its
           changes are `git diff origin/#{base}...HEAD`.

@@ -4,7 +4,7 @@ require "pathname"
 module OPilot
   class Harness
     # One role the model plays, loaded from prompts/<name>.yml: its grant, model
-    # and memory, and the charter that opens its prompts (Prompts.charter).
+    # and memory, and the charter that becomes its system prompt (Prompts.charter).
     # Every LLM call names one (Helpers#llm). The MCP tools resolve per call,
     # from the Context flags.
     Role = Data.define(:name, :base, :mcp, :model, :memory, :charter) do

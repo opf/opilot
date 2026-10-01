@@ -1,9 +1,9 @@
 require_relative "../test_helper"
 
 module OPilot
-  # Every builder that opens a conversation carries its role's charter, and the
-  # charter's grant rules appear exactly once. The likely mistake is a builder
-  # that still pastes a grant block the charter now adds.
+  # The charter and its grant rules are the system prompt (Harness#run sends
+  # them), so no builder may carry them: a pasted copy would state the grant twice,
+  # and a resumed session would keep an earlier role's.
   class PromptsTest < Minitest::Test
     REPOS = [{ name: "openproject", path: "/repos/openproject", description: "core" }].freeze
     PR = { worktree: "/w", repo: "o/r", pr_number: 5, title: "T", item: "/i", plan: "/p", pr_thread: "/t" }.freeze
@@ -45,17 +45,24 @@ module OPilot
       assert_equal (BUILDERS.keys + FOLLOW_UPS).sort_by(&:inspect), builders.sort_by(&:inspect)
     end
 
-    def test_each_builder_opens_with_its_charter_and_its_grant_once
+    def test_no_builder_carries_a_charter_or_a_grant_block
       BUILDERS.each_key do |mod, name|
         text = render(mod, name)
-        role = Harness.role(mod.role)
-        own, other = role.write? ? [Prompts::WRITE_GRANT, Prompts::READ_ONLY] : [Prompts::READ_ONLY, Prompts::WRITE_GRANT]
         label = "#{mod}.#{name}"
-        assert text.start_with?(role.charter), label
-        assert_equal 1, text.scan(own).size, "#{label}: its grant block once"
-        refute_includes text, other, "#{label}: the other grant's block"
-        refute_match(/You are (the WRITER|the IMPLEMENTER|opilot,)/, text, label)
+        refute_includes text, Harness.role(mod.role).charter, label
+        refute_includes text, Prompts::READ_ONLY, label
+        refute_includes text, Prompts::WRITE_GRANT, label
         assert_equal mod.role, text.role, label
+      end
+    end
+
+    def test_the_system_prompt_holds_the_charter_and_only_its_own_grant
+      Harness::ROLES.each_value do |role|
+        own, other = role.write? ? [Prompts::WRITE_GRANT, Prompts::READ_ONLY] : [Prompts::READ_ONLY, Prompts::WRITE_GRANT]
+        text = Prompts.charter(role.name)
+        assert text.start_with?(role.charter), role.name
+        assert_includes text, own, role.name
+        refute_includes text, other, role.name
       end
     end
 
@@ -67,11 +74,6 @@ module OPilot
       (BUILDERS.keys + FOLLOW_UPS).each do |mod, name|
         assert_equal dir / "#{mod.role}.rb", Pathname(mod.method(name).source_location.first), "#{mod}.#{name}"
       end
-    end
-
-    def test_a_follow_up_carries_no_charter
-      text = Prompts::SpecWriter.propose_revise(change_id: "c", change_dir: "/c", failures: "f", attempt: 1, max_attempts: 2)
-      refute_includes text, Harness.role(:spec_writer).charter
     end
 
     def test_blocks_load_from_files

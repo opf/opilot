@@ -8,14 +8,14 @@ module OPilot
     # block stays on the constant that loads it.
     def self.block(name) = BLOCKS_DIR.join("#{name}.md").read.strip
 
-    # Added to every read role's charter (Prompts.charter). Only a write role may
+    # Added to every read role's system prompt (Prompts.charter). Only a write role may
     # change anything; a read role must not edit, create, or delete files, run
     # commands, or otherwise act on the plan. The harness also withholds the
     # write tools, but saying so stops the LLM from wasting turns trying (and
     # from posting "I need write permission" replies).
     READ_ONLY = block("read_only")
 
-    # The rules a write grant carries, added to every write role's charter
+    # The rules a write grant carries, added to every write role's system prompt
     # (Prompts.charter). pi ships no delete tool, so git is the only way to
     # remove a file and pi-guards.ts unlocks `git rm`/`git clean` for a write
     # grant. Saying so is not optional: untold, the model assumes it cannot
@@ -112,10 +112,9 @@ module OPilot
       end
     end
 
-    # What a role's first prompt opens with: the role's own charter from
+    # A role's system prompt (Harness#run sends it on every call): the charter from
     # prompts/<name>.yml, then the rules its grant carries. Derived from the grant,
-    # so a prompt cannot state a grant its role does not hold. Only prompts that
-    # orient the model include it; a follow-up turn in the same session does not.
+    # so a prompt cannot state a grant its role does not hold.
     def self.charter(name)
       role = Harness.role(name)
       grant = role.write? ? WRITE_GRANT : READ_ONLY
@@ -128,8 +127,6 @@ module OPilot
       # A builder's result: the prompt text, tagged with the role it is for,
       # so Helpers#llm can refuse a prompt sent under the wrong role.
       def tagged(text) = Prompt.new(text, role)
-
-      def charter = Prompts.charter(role)
 
       # The role a module's prompts are for, from its name: PrAdvisor is
       # :pr_advisor, which pairs it with pr_advisor.yml beside it.

@@ -38,10 +38,8 @@ module OPilot
       def run(prompt, role: nil, tools: nil, model: nil, session_file: nil)
         @runs << prompt
         @run_sessions << session_file
-        # Checked before the chat prompt: the create-wp draft prompt also opens
-        # with "You are opilot".
-        return draft_answer if prompt.include?("NEW work packages out of something")
-        return @chat if prompt.include?("You are opilot")
+        return draft_answer if role == :wp_writer
+        return @chat if role == :advisor
         return @pr   if prompt.include?("PR description")
         @impl
       end
@@ -642,7 +640,7 @@ module OPilot
       @pull.related = [{ "id" => "50", "relation" => "parent", "subject" => "Epic", "status" => "New" }]
       @agent.handle(intent(:chat, text: "how does this relate to the epic?"))
 
-      chat_prompt = @harness.runs.find { |p| p.include?("You are opilot") }
+      chat_prompt = @harness.runs.find { |p| p.role == :advisor }
       assert_includes chat_prompt, "RELATED:"
     end
 

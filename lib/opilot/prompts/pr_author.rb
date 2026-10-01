@@ -11,8 +11,6 @@ module OPilot
       def self.gh_reply(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:,
                         comment:, author:, comment_id:, in_reply_to: nil, op_mcp: false)
         tagged(<<~PROMPT)
-          #{charter}
-
           A comment arrived on GitHub pull request ##{pr_number} ("#{title}") in #{repo}.
           The PR's branch is checked out in the product worktree at #{worktree}.
 
@@ -40,8 +38,6 @@ module OPilot
       # commits and pushes to update the draft PR; the LLM must not run git itself.
       def self.fix_ci(worktree:, repo:, pr_number:, title:, item:, plan:, pr_thread:, ci:, op_mcp: false)
         tagged(<<~PROMPT)
-          #{charter}
-
           CI failed on GitHub pull request ##{pr_number} ("#{title}") in #{repo} — a PR
           you opened. Its branch is checked out in the product worktree at
           #{worktree}. Fix what CI is complaining about.

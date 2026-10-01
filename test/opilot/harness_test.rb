@@ -189,6 +189,20 @@ module OPilot
                        headers: { "X-Harness-Role" => "planner", "X-Harness-Tools" => Harness::TOOLS_READ })
     end
 
+    def test_run_sends_the_role_charter_as_the_system_prompt
+      stub_harness(ndjson({ type: "result", subtype: "success", is_error: false, result: "ok" }))
+
+      out, = capture_io { @harness.run("prompt", role: :planner) }
+
+      charter = Prompts.charter(:planner)
+      assert_includes out, "PI SYSTEM (role: planner)"
+      assert_includes out, charter.lines.first.strip, "shown in the terminal"
+      assert_includes (Pathname(@tmpdir) / "chomp.log").read, charter.lines.last.strip, "and in the log"
+      assert_requested(:post, "http://harness.test:47291") do |req|
+        req.headers["X-Harness-System"].unpack1("m0").force_encoding(Encoding::UTF_8) == Prompts.charter(:planner)
+      end
+    end
+
     def test_run_resumes_a_known_session_and_keeps_its_id
       # pi's --session-id opens the session or creates it when it is gone, so a
       # lost session needs no retry: the same id simply starts fresh.

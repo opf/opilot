@@ -66,8 +66,6 @@ module OPilot
         focus = hint.empty? ? "" : "\nFOCUS:        #{hint}"
         options_gate = allow_options ? "\nSECOND, name the approach.\n#{OPTIONS_CONTRACT}\n" : ""
         tagged(<<~PROMPT)
-          #{charter}
-
           #{repos_section(repos_summary, repos)}
 
           ISSUE:        #{item}  #{item_fields("type", "status", "version", "assignee")}#{related_line(related)}#{focus}#{op_query_line(op_mcp)}
@@ -126,8 +124,6 @@ module OPilot
             "Read the existing plan and the issue from the paths above first."
           end
         tagged(<<~PROMPT)
-          #{charter}
-
           #{repos_section(repos_summary, repos)}
 
           ISSUE:         #{item}

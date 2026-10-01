@@ -1002,21 +1002,22 @@ Runner POSTs to `http://harness:47291` with headers:
   an unknown key or value fails at boot — and a `memory: none` role given a
   `session_file` raises, so health's independence from chat is structural.
 
-  **The charter opens every prompt that orients the model** (`Prompts.charter`,
-  called by each builder in `lib/opilot/prompts/<role>.rb`, beside it), followed by the rules
-  the **grant** carries: `READ_ONLY` for a read role, `WRITE_GRANT` (no commit, no
-  command, and the `git rm`/`git clean` exception) for a write role. Derived, never
-  pasted, so a prompt cannot state a grant its role does not hold. A follow-up turn
-  in the same session (`propose_revise`, a chat's second message) carries no
-  charter. Shared prompt text lives in `prompts/_blocks/*.md`; the reason for each
+  **The charter is the system prompt** (`Prompts.charter`, sent by `Harness#run` as
+  `X-Harness-System` on every call), followed by the rules the **grant** carries:
+  `READ_ONLY` for a read role, `WRITE_GRANT` (no commit, no command, and the
+  `git rm`/`git clean` exception) for a write role. Derived, never pasted, so a
+  prompt cannot state a grant its role does not hold — and no builder carries it.
+  Every turn has it, a follow-up included, and a resumed session never keeps an
+  earlier role's: plan → implement runs in one session, and its history used to
+  hold `READ_ONLY` while the implementer worked. Shared prompt text lives in `prompts/_blocks/*.md`; the reason for each
   block stays on the Ruby constant that loads it, and compositions
   (`REPLY_CONTRACT` + `PLAIN_ENGLISH`) stay in Ruby.
 
   Tests: `roles_test.rb` pins every role's tuple, checks each against
   `ALLOWED_TOOL_GRANTS`, and fails if anything outside `helpers/pipeline.rb`/`harness.rb`
   calls `@harness.run` or names `Harness::TOOLS_*`; `prompts_test.rb` renders every
-  builder and checks its charter and its grant block (once, and never the other
-  one). Roles that look alike but differ in grant (`pr_author` vs `pr_refresher`)
+  builder and checks it carries no charter and no grant block, and that each role's
+  system prompt holds its own grant block and never the other one. Roles that look alike but differ in grant (`pr_author` vs `pr_refresher`)
   stay two roles until someone decides to merge them.
 - `X-Harness-Model` — one model per WP for every session-bound phase (`MODEL_HEAVY`),
   plus `MODEL_LIGHT` for stateless one-shots (a commit subject, a PR description) —
@@ -1031,6 +1032,9 @@ Runner POSTs to `http://harness:47291` with headers:
   starts fresh under the same id. The file is written only once pi has started,
   because `session_resumable?` reads it as "the session already holds the plan".
   Omitted for a stateless call.
+- `X-Harness-System` — **required**. The role's charter and grant rules
+  (`Prompts.charter`), base64 because they span lines; `server.js` passes them as
+  pi's `--append-system-prompt` and answers 400 without them.
 
 `server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/harness/pi-guards.ts`,
 `--no-context-files`, `--no-approve`, `--offline`, and the tools/model/session

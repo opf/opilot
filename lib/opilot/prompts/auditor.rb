@@ -50,8 +50,6 @@ module OPilot
              "   op_query only when its subject is not enough to decide."]
           end
         tagged(<<~PROMPT)
-          #{charter}
-
           Check the health of OpenProject work package #{Helpers.wp_label(item_id)}: #{subject}
 
           ISSUE: #{item}  #{item_fields("type", "status", "history[]", "description_changed_at")}#{related_text}#{tree_text}#{op_query_line(op_mcp)}

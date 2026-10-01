@@ -123,6 +123,13 @@ module OPilot
       known_id   = session_file&.exist? ? session_file.read.strip : ""
       session_id = known_id.empty? ? (SecureRandom.uuid if session_file) : known_id
 
+      system = Prompts.charter(role)
+      sys_header = Rainbow("#{log_prefix} PI SYSTEM (role: #{role})").bold
+      puts sys_header
+      log_append(sys_header)
+      puts Rainbow(system).gray
+      log_append(Rainbow(system).gray)
+
       header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{known_id.empty? ? "fresh" : known_id})").bold
       puts header
       log_append(header)
@@ -133,7 +140,7 @@ module OPilot
       puts resp_header
       log_append(resp_header)
 
-      text, started, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id)
+      text, started, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id, system: system)
 
       # Saved once pi has started, even on error, so a retry resumes with context.
       # Not before: session_resumable? reads the file as "the session holds the plan".
@@ -159,7 +166,7 @@ module OPilot
 
     private
 
-    def http_stream(prompt, role:, tools:, model:, session_id: nil)
+    def http_stream(prompt, role:, tools:, model:, system:, session_id: nil)
       attempts = 0
       begin
         attempts += 1
@@ -178,6 +185,9 @@ module OPilot
         req["X-Harness-Tools"]   = tools      if tools
         req["X-Harness-Model"]   = model      if model
         req["X-Harness-Session"] = session_id if session_id
+        # The role's charter and grant rules, as pi's system prompt: every turn
+        # carries them, and a resumed session never keeps an earlier role's.
+        req["X-Harness-System"]  = [system].pack("m0")
         req.body = prompt
 
         Net::HTTP.start(@uri.host, @uri.port, read_timeout: READ_TIMEOUT) do |http|

@@ -27,8 +27,6 @@ module OPilot
       def self.appsignal_wp(incident:, number:, app:, repos:, types:, format_note: nil)
         listing = repos.map { |r| "  - #{r[:name]}  (#{r[:path]})  — #{r[:description]}" }.join("\n")
         tagged(<<~PROMPT)
-          #{charter}
-
           This is AppSignal incident ##{number} on "#{app}".
           Turn this production error into ONE work package a developer can pick up.
           The runner creates it in OpenProject and then plans the fix from it.
