@@ -75,11 +75,10 @@ module OPilot
       assert_includes out, "Usage: ./opilot agent [op | gh | matrix]"
     end
 
-    def test_the_pre_group_agent_names_still_run
-      # Unlike the renamed dev verbs, breaking these means a stopped agent — a
-      # service unit or a shell history calls them. They must reach the runner
-      # path (which fails here only because ctx_double has no config).
-      ["op-agent", "gh-agent", %w[agent op], %w[agent gh]].each do |argv|
+    def test_the_agent_subcommands_reach_the_runner
+      # They must reach the runner path (which fails here only because
+      # ctx_double has no config).
+      [%w[agent op], %w[agent gh]].each do |argv|
         cli = CLI.new(ctx_double)
         out, err = capture_io do
           error = assert_raises(OPilot::FatalError) { cli.run(Array(argv)) }

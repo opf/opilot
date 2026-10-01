@@ -183,9 +183,9 @@ module OPilot
       # `_embedded.schema` carries `required` and the allowed values per field.
       def emit_form(payload, required_only: false)
         emit("wp form") do
-          code, body = api.create_work_package_form(payload)
-          body = required_summary(body) if required_only && code == 200 && body.is_a?(Hash)
-          [code, body]
+          res = api.create_work_package_form(payload)
+          next res unless required_only && res.code == 200 && res.body.is_a?(Hash)
+          Clients::OpenProject::Response.new(res.code, required_summary(res.body), res.request)
         end
       end
 
@@ -272,11 +272,11 @@ module OPilot
       # numeric (#numeric_wp_id!, resolved before the create). The new work package
       # is the relation's `from`, since the route work package becomes `from`.
       def relate_created(created, to_id)
-        code, body = api.create_relation(created["id"], to_id)
-        return if [200, 201].include?(code)
+        res = api.create_relation(created["id"], to_id)
+        return if [200, 201].include?(res.code)
 
-        $stdout.puts JSON.pretty_generate(body) if body
-        $stderr.puts "HTTP #{code} — wp create --relates #{to_id}: " \
+        $stdout.puts JSON.pretty_generate(res.body) if res.body
+        $stderr.puts "HTTP #{res.code} — wp create --relates #{to_id}: " \
                      "work package #{created["id"]} is created but not linked"
         raise OPilot::FatalError
       end
@@ -389,12 +389,12 @@ module OPilot
       def type_id!(project, given, command = "op wp create")
         return given if given.match?(/\A\d+\z/)
 
-        code, body = api.project_types(project)
-        unless code == 200 && body
-          $stderr.puts "HTTP #{code} — #{command.delete_prefix("op ")}: could not list the types of project #{project}"
+        res = api.project_types(project)
+        unless res.code == 200 && res.body
+          $stderr.puts "HTTP #{res.code} — #{command.delete_prefix("op ")}: could not list the types of project #{project}"
           raise OPilot::FatalError
         end
-        types = Resource.type_list(body)
+        types = Resource.type_list(res.body)
         found = Resource.find_named(types, given)
         unless found
           reject!(command, "project #{project} has no type named #{given.inspect} " \
@@ -502,13 +502,13 @@ module OPilot
                        "fetching without the API token."
         end
 
-        code, bytes = api.download_attachment(url)
-        if code >= 400 || bytes.nil?
-          $stderr.puts "HTTP #{code} — doc download #{url}"
+        res = api.download_attachment(url)
+        if res.code >= 400 || res.body.nil?
+          $stderr.puts "HTTP #{res.code} — doc download #{url}"
           raise OPilot::FatalError
         end
-        File.binwrite(out, bytes)
-        $stderr.puts "Wrote #{bytes.bytesize} bytes to #{out}"
+        File.binwrite(out, res.body)
+        $stderr.puts "Wrote #{res.body.bytesize} bytes to #{out}"
       end
 
       # ── output ───────────────────────────────────────────────────────────────
@@ -516,7 +516,8 @@ module OPilot
       # The single funnel every action's response passes through, so the stdout
       # contract is stated once. `label` names the operation for stderr only.
       def emit(label)
-        code, body = yield
+        res = yield
+        code, body = res.code, res.body
 
         if code >= 400
           # The body first, and on stdout: a 422's validation payload is the most

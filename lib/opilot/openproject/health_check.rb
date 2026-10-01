@@ -88,13 +88,13 @@ module OPilot
       # { "nodes" => [...] | nil (not read), "truncated", "code" }. Each node is
       # { id, parent, depth, subject, type, status, updated_at }, ids as displayed.
       def descendants(item_id)
-        code, wp = @api.work_package(item_id)
-        return { "nodes" => nil, "truncated" => false, "code" => code } unless code == 200 && wp
-        root = wp["id"].to_s
+        res = @api.work_package(item_id)
+        return { "nodes" => nil, "truncated" => false, "code" => res.code } unless res.code == 200 && res.body
+        root = res.body["id"].to_s
         filter = Clients::OpenProject::Query.filter("ancestor", "=", root)
         code, raw, total = Lookup.new(@api).all_work_packages(filter, max: MAX_DESCENDANTS)
         return { "nodes" => nil, "truncated" => false, "code" => code } unless raw
-        { "nodes" => tree_nodes(raw, root, Resource.display_id(wp)),
+        { "nodes" => tree_nodes(raw, root, Resource.display_id(res.body)),
           "truncated" => total > MAX_DESCENDANTS, "code" => 200 }
       end
 
@@ -123,14 +123,14 @@ module OPilot
 
       # [prs, code]. The GitHub integration answers 403/404 when it is off.
       def linked_prs(item_id)
-        code, body = @api.work_package_github_pull_requests(item_id)
-        return [nil, code] unless code == 200
-        prs = Resource.elements(body).map do |pr|
+        res = @api.work_package_github_pull_requests(item_id)
+        return [nil, res.code] unless res.code == 200
+        prs = Resource.elements(res.body).map do |pr|
           { "url" => pr["htmlUrl"], "repository" => pr["repository"], "number" => pr["number"],
             "title" => pr["title"], "state" => pr["state"], "merged" => pr["merged"] == true,
             "merged_at" => pr["mergedAt"], "draft" => pr["draft"] == true }
         end
-        [prs, code]
+        [prs, res.code]
       end
 
       # PR numbers share the `#N` form with work package ids ("Merge pull request

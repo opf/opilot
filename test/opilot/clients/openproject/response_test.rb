@@ -7,13 +7,6 @@ module OPilot
 
     def response(code, body) = OP::Response.new(code, body, "GET work_packages/42")
 
-    def test_it_destructures_and_compares_like_the_old_tuple
-      code, body = response(200, { "id" => 42 })
-      assert_equal [200, { "id" => 42 }], [code, body]
-      assert_equal [404, nil], response(404, nil), "an Array compares equal to it"
-      assert_equal response(404, nil), [404, nil]
-    end
-
     def test_value_returns_the_body_of_a_success
       assert_equal({ "id" => 42 }, response(200, { "id" => 42 }).value!)
       assert_nil response(204, nil).value!, "204 carries no body by design"

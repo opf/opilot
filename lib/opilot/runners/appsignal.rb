@@ -158,14 +158,14 @@ module OPilot
       # :add_work_packages, so their absence is an answer rather than a guess —
       # and asking now costs one request instead of a whole draft.
       def require_create_permission!(project)
-        code, json = @api.project(project)
-        raise OPilot::FatalError, "Could not read project #{project} (HTTP #{code})." unless code == 200 && json
-        unless Resource.create_wp_allowed?(json)
+        res = @api.project(project)
+        raise OPilot::FatalError, "Could not read project #{project} (HTTP #{res.code})." unless res.code == 200 && res.body
+        unless Resource.create_wp_allowed?(res.body)
           raise OPilot::FatalError,
-                "My OpenProject token cannot create work packages in #{json["name"]} — it has no " \
+                "My OpenProject token cannot create work packages in #{res.body["name"]} — it has no " \
                 "`add_work_packages` permission there. Ask an administrator for it."
         end
-        json
+        res.body
       end
 
       # The draft to show at #confirm_create — cached on disk so a re-run (the
@@ -247,13 +247,13 @@ module OPilot
         payload = payload_for(draft)
         return nil unless payload_accepted?(payload)
 
-        code, body = @api.create_work_package(payload)
-        unless code == 201 && body
-          puts "  ⚠ Could not create the work package (HTTP #{code}). The response is in my log."
-          log_script "appsignal create failed — HTTP #{code} on #{payload["subject"].inspect}"
+        res = @api.create_work_package(payload)
+        unless res.code == 201 && res.body
+          puts "  ⚠ Could not create the work package (HTTP #{res.code}). The response is in my log."
+          log_script "appsignal create failed — HTTP #{res.code} on #{payload["subject"].inspect}"
           return nil
         end
-        id = (body["id"] || body["_meta"]&.dig("id")).to_s
+        id = (res.body["id"] || res.body["_meta"]&.dig("id")).to_s
         puts "  ✓ Created #{wp_label(id)} — #{Helpers.wp_url(@ctx, id)}"
         id
       end
@@ -365,17 +365,17 @@ module OPilot
       def hierarchy_item_candidates(items_href)
         id = items_href.to_s[%r{/custom_fields/(\d+)/items\z}, 1]
         return [] unless id
-        code, body = @api.custom_field_items(id)
-        return [] unless code == 200 && body
-        ((body["_embedded"] || {})["elements"] || [])
+        res = @api.custom_field_items(id)
+        return [] unless res.code == 200 && res.body
+        ((res.body["_embedded"] || {})["elements"] || [])
           .select { |item| item["label"] }
           .map { |item| { "href" => item.dig("_links", "self", "href") } }
       end
 
       def project_types
         @project_types ||= begin
-          code, body = @api.project_types(@project)
-          code == 200 && body ? Resource.type_list(body) : []
+          res = @api.project_types(@project)
+          res.code == 200 && res.body ? Resource.type_list(res.body) : []
         end
       end
 

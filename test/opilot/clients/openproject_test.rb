@@ -25,9 +25,9 @@ module OPilot
           .with { |req| posted = JSON.parse(req.body); true }
           .to_return(status: 201, body: '{"id":9}')
 
-        code, = @op.add_comment(42, comment: "## Approach\n\nDo the thing.", internal: false)
+        res = @op.add_comment(42, comment: "## Approach\n\nDo the thing.", internal: false)
 
-        assert_equal 201, code
+        assert_equal 201, res.code
         assert_equal "**Approach**\n\nDo the thing.", posted.dig("comment", "raw"),
                      "every comment goes through here, so the demotion belongs here"
         assert_equal false, posted["internal"], "visibility is untouched"
@@ -35,9 +35,9 @@ module OPilot
 
       def test_documents_filters_on_a_numeric_id_directly
         listing = stub_documents(42)
-        code, = @op.documents("42")
+        res = @op.documents("42")
 
-        assert_equal 200, code
+        assert_equal 200, res.code
         assert_requested listing
       end
 
@@ -104,9 +104,9 @@ module OPilot
         listing = stub_request(:get, "#{BASE}/api/v3/work_packages/PROJ-42/attachments")
                   .to_return(status: 200, body: '{"_embedded":{"elements":[]}}')
 
-        code, = @op.work_package_attachments("PROJ-42")
+        res = @op.work_package_attachments("PROJ-42")
 
-        assert_equal 200, code
+        assert_equal 200, res.code
         assert_requested listing
       end
 
@@ -116,10 +116,10 @@ module OPilot
         one = stub_request(:get, "#{BASE}/api/v3/attachments/30381")
               .to_return(status: 200, body: '{"id":30381,"fileName":"shot.png"}')
 
-        code, body = @op.attachment(30381)
+        res = @op.attachment(30381)
 
-        assert_equal 200, code
-        assert_equal "shot.png", body["fileName"]
+        assert_equal 200, res.code
+        assert_equal "shot.png", res.body["fileName"]
         assert_requested one
       end
 
@@ -132,10 +132,10 @@ module OPilot
                   .with(basic_auth: ["apikey", "tok"])
                   .to_return(status: 200, body: "bytes")
 
-        code, body = @op.download_attachment("/api/v3/attachments/5/content")
+        res = @op.download_attachment("/api/v3/attachments/5/content")
 
-        assert_equal 200, code
-        assert_equal "bytes", body
+        assert_equal 200, res.code
+        assert_equal "bytes", res.body
         assert_requested content
       end
 
@@ -144,10 +144,10 @@ module OPilot
                   .with(basic_auth: ["apikey", "tok"])
                   .to_return(status: 200, body: "bytes")
 
-        code, body = @op.download_attachment("#{BASE}/api/v3/attachments/5/content")
+        res = @op.download_attachment("#{BASE}/api/v3/attachments/5/content")
 
-        assert_equal 200, code
-        assert_equal "bytes", body
+        assert_equal 200, res.code
+        assert_equal "bytes", res.body
         assert_requested content
       end
 
@@ -172,10 +172,10 @@ module OPilot
         presigned = stub_request(:get, "https://s3.example/bucket/f?X-Amz-Signature=abc")
                     .to_return(status: 200, body: "png")
 
-        code, body = @op.download_attachment("https://s3.example/bucket/f?X-Amz-Signature=abc")
+        res = @op.download_attachment("https://s3.example/bucket/f?X-Amz-Signature=abc")
 
-        assert_equal 200, code
-        assert_equal "png", body
+        assert_equal 200, res.code
+        assert_equal "png", res.body
         assert_requested presigned
       end
 
@@ -202,9 +202,9 @@ module OPilot
           .with { |req| sent << JSON.parse(req.body)["lockVersion"]; true }
           .to_return({ status: 409, body: "{}" }, { status: 200, body: '{"id":42}' })
 
-        code, = @op.update_work_package(42, { "subject" => "New" })
+        res = @op.update_work_package(42, { "subject" => "New" })
 
-        assert_equal 200, code
+        assert_equal 200, res.code
         assert_equal [1, 2], sent
       end
 
@@ -275,9 +275,9 @@ module OPilot
                .to_return(status: 200, body: '{"_embedded":{"validationErrors":{}}}')
         patch = stub_request(:patch, %r{/api/v3/work_packages/42})
 
-        code, = @op.update_work_package_form(42, { "subject" => "New" })
+        res = @op.update_work_package_form(42, { "subject" => "New" })
 
-        assert_equal 200, code
+        assert_equal 200, res.code
         assert_requested form
         assert_equal({ "subject" => "New", "lockVersion" => 3 }, posted,
                      "the update contract rejects a stale or missing lockVersion, so the form needs it too")

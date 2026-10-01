@@ -172,15 +172,6 @@ module OPilot
       assert_equal [:ship, "be careful"], @pull.send(:parse_command, "@opilot fix be careful")
     end
 
-    # The words the build command replaced are no longer commands. They are
-    # answered as chat, where the reply names the real one.
-    def test_parse_command_retired_words_are_chat
-      %w[ship prototype pr implement plan approve].each do |word|
-        command, = @pull.send(:parse_command, "@opilot #{word} be careful")
-        assert_equal :chat, command, "expected `@opilot #{word}` to be chat, not a command"
-      end
-    end
-
     # A word that merely starts with a command word is not the command (\b, not a
     # prefix match) — "building" is a sentence.
     def test_parse_command_build_needs_a_word_boundary

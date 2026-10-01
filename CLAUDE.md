@@ -24,8 +24,8 @@ a fresh clone).
 ## Modes
 
 Agent loops: `./opilot agent` (both, plus Matrix when configured), `agent op`,
-`agent gh`, `agent matrix` — the older
-`op-agent`/`gh-agent` names still work and are used below.
+`agent gh`, `agent matrix`. The loops are called op-agent and gh-agent below;
+those are no longer command names.
 
 **Only one agent runs at a time**, whichever loops it starts. A second one is
 refused by name and pid (`.opilot/agent.lock/pid`). Two agents on one `.opilot`
@@ -48,9 +48,7 @@ every documented path goes through the script.
 Polls work packages, driven by `@opilot` comments. There are three command words —
 **`@opilot build`** (alias `fix`), **`@opilot create wp`** (long form
 `create work package`) and **`@opilot health`** (see "Health check" below); every
-other word is chat. The words `build` replaced —
-`ship`, `plan`, `approve`, `prototype`, `pr`, `implement` — are chat too, so an old
-habit gets an answer that names the real command rather than silence. `create`
+other word is chat, and the answer names the real command. `create`
 without the noun is chat as well: alone it could mean a branch, a PR or a comment,
 and the noun is what makes it one operation.
 
@@ -79,9 +77,8 @@ pull request, where gh-agent reads comments and pushes changes, and two tracks f
 one fix would split the record of it. Planning again would also rewrite `plan.md`
 while the PR keeps linking the gist of the plan as it was.
 
-**A plan on file with no new direction is built, not rewritten.** That is what the
-retired `approve` did, and the only way to get a prototype of the exact plan a human
-has read.
+**A plan on file with no new direction is built, not rewritten.** That is the only
+way to get a prototype of the exact plan a human has read.
 
 **`ship` always names the approach before it writes code.** The writer opens
 every invited plan call with a third first-line sentinel beside `NEEDS_INFO`
@@ -396,7 +393,7 @@ before touching anything under `lib/opilot/pd/`.
 
 ```bash
 # Run both agent loops (polls every 20s) — the normal way to run opilot.
-# `agent op` / `agent gh` run one; the old op-agent / gh-agent names still work.
+# `agent op` / `agent gh` run one.
 ./opilot agent
 ./opilot agent matrix   # only the Matrix room: chat, and the @opilot words with the WP id first
 
@@ -634,7 +631,7 @@ in CI.
 | `command_words.rb` | The `@opilot` command words (`build`/`fix`, `create wp`, `health`, the lenses), shared by the OpenProject and Matrix parsers |
 | `clients/inference_gw.rb` | inference-gw's `GET /upstream` — the pinned inference address, which is what `Context#inference_privacy` judges |
 | `clients/openproject.rb` | The OpenProject SDK namespace, `Clients::OpenProject`; it only requires the parts below |
-| `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). It destructures as `code, body = …`, so older callers read it as a tuple; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
+| `clients/openproject/base.rb`, `client.rb` | `Client < Base` is the REST client. `Base` holds the transport (`#url`, `#get`/`#post`/`#patch`, `#collection` for a filtered, paginated list); `Client` mixes in one endpoint module per area — `work_packages` (the reads and every write), `projects`, `instance`, `attachments`, `documents`. `#add_comment` is the funnel every WP comment passes through, so it demotes markdown headings to bold — the activity tab is a narrow column. Every endpoint returns a `Response` (`errors.rb`, `response.rb`). Callers read `#code` and `#body`; `#value!` returns the body or raises a typed `Clients::OpenProject::Error` — `NotFound`, `Forbidden`, `Conflict`, `ValidationFailed`, `RateLimited`, `ServerError`, `InvalidResponse`, or `NetworkError` for no answer at all (`#transient?` is true for the last three kinds). The error keeps `code` and `body`, and the body never goes into the message. An update whose `lockVersion` read fails returns that read, not a 409. Every request sends `User-Agent: opilot (+https://github.com/opf/opilot)` (`HTTP::USER_AGENT`) |
 | `clients/openproject/{query,href,payload,resource,lookup}.rb` | Logic over the endpoints. `Query` builds `filters`/`sortBy` values; `Href` the path of every payload link; `Payload` the shared request bodies (the work-package create body); `Resource` reads a v3 body (type list, `display_id`, `create_wp_allowed?`, link titles and ids). `Lookup` resolves names and ids: status, type, priority, version, principal, a field's payload key, a semantic work-package id or project identifier to its numeric id, and `#all_work_packages` pagination. A `Lookup` resolver returns `nil` for "read, not there" and raises the typed `Error` for "could not read" (`AmbiguousName`, with no code, for a name that matches twice) — callers word those differently. It caches, so build one per run |
 | `clients/github.rb` | GitHub API (Octokit) |
 | `clients/http.rb` | Shared HTTP transport with Retriable exponential backoff |

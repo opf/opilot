@@ -64,8 +64,8 @@ module OPilot
         body = "#{who} I do not act on this comment. On this instance only the users in " \
                "opilot's allowlist can trigger me. Ask one of them to comment, or ask an " \
                "administrator to add you.".strip
-        code, _body = @api.add_comment(wp_id, comment: body, internal: trigger["internal"] == true)
-        return unless code == 201
+        res = @api.add_comment(wp_id, comment: body, internal: trigger["internal"] == true)
+        return unless res.code == 201
 
         data["refusal_noted_at"] = Time.now.utc.iso8601
         Helpers.write_item(item_path, data)
@@ -114,11 +114,11 @@ module OPilot
       # Fetch one work package by id (ignoring filters), refresh its item.json,
       # and return the item data — or nil when the WP can't be fetched.
       def fetch_single_item(wp_id)
-        code, wp = @api.work_package(wp_id)
-        return nil unless code == 200 && wp
+        res = @api.work_package(wp_id)
+        return nil unless res.code == 200 && res.body
 
-        fetch_work_package_item(wp)
-        path = Helpers.item_dir(@ctx, wp_display_id(wp)) / "item.json"
+        fetch_work_package_item(res.body)
+        path = Helpers.item_dir(@ctx, wp_display_id(res.body)) / "item.json"
         Helpers.safe_json_read(path)
       end
 
@@ -135,11 +135,11 @@ module OPilot
       MAX_RELATED = 15
 
       def related_work_packages(wp_id)
-        code, wp = @api.work_package(wp_id)
-        return [] unless code == 200 && wp
-        numeric_id = wp["id"].to_s
+        res = @api.work_package(wp_id)
+        return [] unless res.code == 200 && res.body
+        numeric_id = res.body["id"].to_s
 
-        pairs = relation_pairs(numeric_id) + hierarchy_pairs(wp)
+        pairs = relation_pairs(numeric_id) + hierarchy_pairs(res.body)
         pairs.uniq! { |id, _label| id }
         if pairs.length > MAX_RELATED
           puts "  #{Helpers.wp_label(wp_id)}: #{pairs.length} related WPs found — using the first #{MAX_RELATED}."
@@ -160,9 +160,9 @@ module OPilot
       # the WP. The label is taken from the WP's own perspective: `type` when it is
       # the relation's `from`, `reverseType` when it is the `to`.
       private def relation_pairs(numeric_id)
-        code, resp = @api.work_package_relations(numeric_id)
-        return [] unless code == 200 && resp
-        Resource.elements(resp).filter_map do |rel|
+        res = @api.work_package_relations(numeric_id)
+        return [] unless res.code == 200 && res.body
+        Resource.elements(res.body).filter_map do |rel|
           from = Resource.href_id(rel.dig("_links", "from", "href"))
           to   = Resource.href_id(rel.dig("_links", "to", "href"))
           if from == numeric_id
@@ -211,15 +211,15 @@ module OPilot
         processed = 0; progressed = false; reached_floor = false
         page = 1; page_size = 50; total_written = 0; total = 0
         loop do
-          code, resp = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
-          raise OPilot::FatalError, "API returned HTTP #{code} fetching work packages" if code != 200
-          raise OPilot::FatalError, "API returned unparseable response fetching work packages" if resp.nil?
+          res = @api.work_packages(filters_json: fj, page: page, page_size: page_size)
+          raise OPilot::FatalError, "API returned HTTP #{res.code} fetching work packages" if res.code != 200
+          raise OPilot::FatalError, "API returned unparseable response fetching work packages" if res.body.nil?
 
-          count = resp["count"].to_i
-          total = resp["total"].to_i
+          count = res.body["count"].to_i
+          total = res.body["total"].to_i
           break if count == 0
 
-          Resource.elements(resp).each do |wp|
+          Resource.elements(res.body).each do |wp|
             # Results are sorted updatedAt desc, and posting a @opilot comment bumps
             # the WP's updatedAt — so a WP last touched before the scan floor can't
             # carry a trigger newer than the floor, and neither can any WP after it.
@@ -382,11 +382,11 @@ module OPilot
         cached = Helpers.safe_json_read(item_path) if item_path.exist?
         return [true, cached["comments"] || []] if cached && item_current?(cached, wp)
 
-        acts_code, acts = @api.work_package_activities(wp_id)
-        acts = { "_embedded" => { "elements" => [] } } unless acts_code == 200
+        acts_res = @api.work_package_activities(wp_id)
+        acts = acts_res.code == 200 ? acts_res.body : { "_embedded" => { "elements" => [] } }
 
-        rxns_code, rxns = @api.work_package_emoji_reactions(wp_id)
-        rxns = { "_embedded" => { "elements" => [] } } unless rxns_code == 200
+        rxns_res = @api.work_package_emoji_reactions(wp_id)
+        rxns = rxns_res.code == 200 ? rxns_res.body : { "_embedded" => { "elements" => [] } }
 
         activities = Resource.elements(acts)
         comments = build_comments(activities, Resource.elements(rxns))
@@ -394,8 +394,8 @@ module OPilot
         full = build_full_item(wp, comments)
         full["custom_fields"] = custom_fields(wp)
         # nil, not empty, when the read failed: "no changes" would be a false fact.
-        full["history"] = acts_code == 200 ? build_history(activities) : nil
-        full["description_changed_at"] = acts_code == 200 ? description_changed_at(activities, wp) : nil
+        full["history"] = acts_res.code == 200 ? build_history(activities) : nil
+        full["description_changed_at"] = acts_res.code == 200 ? description_changed_at(activities, wp) : nil
         if item_path.exist?
           prev = cached || {}
           (CARRIED_KEYS + PICTURE_KEYS).each { |key| full[key] = prev[key] if prev.key?(key) }
@@ -462,8 +462,8 @@ module OPilot
       end
 
       def read_user_name(id)
-        code, body = @api.user(id)
-        code == 200 ? body["name"] : nil
+        res = @api.user(id)
+        res.code == 200 ? res.body["name"] : nil
       rescue Clients::OpenProject::NetworkError
         :failed
       end
@@ -543,8 +543,8 @@ module OPilot
         return @schemas[href] if @schemas.key?(href)
         project_id, type_id = href.to_s[%r{/schemas/(\d+-\d+)\z}, 1]&.split("-")
         return nil unless project_id
-        code, body = @api.work_package_schema(project_id, type_id)
-        code == 200 ? @schemas[href] = body : nil
+        res = @api.work_package_schema(project_id, type_id)
+        res.code == 200 ? @schemas[href] = res.body : nil
       end
 
       def parse_scan_from_input(input)
@@ -632,7 +632,7 @@ module OPilot
       def own_user
         return @own_user if defined?(@own_user)
         @own_user = begin
-          _, me = @api.me
+          me = @api.me.body
           { "id" => (me && Resource.link_id(me, "self")).to_s,
             "name" => me&.dig("name").to_s }
         rescue => e

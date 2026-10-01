@@ -106,10 +106,10 @@ module OPilot
       # collection and a collection this run could not read are different answers,
       # and only the caller can tell them apart.
       def collection(api, wp_id)
-        code, body = api.work_package_attachments(wp_id)
-        return [code, {}] unless code == 200
-        elements = Clients::OpenProject::Resource.elements(body)
-        [code, elements.to_h { |a| [a["id"].to_s, a] }]
+        res = api.work_package_attachments(wp_id)
+        return [res.code, {}] unless res.code == 200
+        elements = Clients::OpenProject::Resource.elements(res.body)
+        [res.code, elements.to_h { |a| [a["id"].to_s, a] }]
       end
 
       # Whether a status could answer differently next time. 429 and 5xx have
@@ -194,8 +194,8 @@ module OPilot
       # Skipped when the collection already carried it, which is the common case:
       # a picture pasted into the description belongs to the work package.
       def attachment_meta(api, id)
-        code, body = api.attachment(id)
-        [code == 200 ? body : nil, code]
+        res = api.attachment(id)
+        [res.code == 200 ? res.body : nil, res.code]
       end
 
       # [bytes, nil, code] or [nil, reason, code].
@@ -205,9 +205,9 @@ module OPilot
         # There is nothing here for a later poll to find, so this must not retry.
         return [nil, "no download location", 200] if url.to_s.empty?
 
-        code, bytes = api.download_attachment(url)
-        return [nil, "download failed with HTTP #{code}", code] unless code == 200 && bytes
-        [bytes, nil, code]
+        res = api.download_attachment(url)
+        return [nil, "download failed with HTTP #{res.code}", res.code] unless res.code == 200 && res.body
+        [res.body, nil, res.code]
       end
 
       # Already on disk at the size the API reports, so the bytes are not fetched

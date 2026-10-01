@@ -62,9 +62,9 @@ module OPilot
         numeric = numeric_project_id(project_id)
         return fetch_named(project_id, numeric, doc_ids) if doc_ids.any?
 
-        code, body = @op.documents(numeric)
-        raise OPilot::FatalError, document_error(code, project_id) unless code == 200
-        ids = Clients::OpenProject::Resource.elements(body).map { |d| d["id"] }
+        res = @op.documents(numeric)
+        raise OPilot::FatalError, document_error(res.code, project_id) unless res.code == 200
+        ids = Clients::OpenProject::Resource.elements(res.body).map { |d| d["id"] }
         ids.filter_map { |id| fetch_one(id) }
       end
 
@@ -96,8 +96,8 @@ module OPilot
       end
 
       def fetch_one(id)
-        code, body = @op.document(id)
-        code == 200 ? body : nil
+        res = @op.document(id)
+        res.code == 200 ? res.body : nil
       end
 
       def document_error(code, project_id)
@@ -190,9 +190,9 @@ module OPilot
       end
 
       def write_attachments(doc, dir, ordinal)
-        code, body = @op.document_attachments(doc["id"])
-        return [] unless code == 200
-        elements = Clients::OpenProject::Resource.elements(body)
+        res = @op.document_attachments(doc["id"])
+        return [] unless res.code == 200
+        elements = Clients::OpenProject::Resource.elements(res.body)
         return [] if elements.empty?
 
         Dir.mktmpdir do |tmp|
@@ -212,11 +212,11 @@ module OPilot
         size = attachment["fileSize"].to_i
         return Converter.unconvertible(name, Converter.oversize_reason(size), dir: dest) if size > Converter::MAX_BYTES
 
-        code, bytes = @op.download_attachment(url)
-        return Converter.unconvertible(name, "download failed with HTTP #{code}", dir: dest) unless code == 200
+        res = @op.download_attachment(url)
+        return Converter.unconvertible(name, "download failed with HTTP #{res.code}", dir: dest) unless res.code == 200
 
         source = File.join(tmp, "attachment-#{attachment["id"]}")
-        File.binwrite(source, bytes.to_s)
+        File.binwrite(source, res.body.to_s)
         Converter.convert(source, name, dest, content_type: attachment["contentType"])
       rescue StandardError => e
         # An attachment that cannot even be fetched is still just one attachment.

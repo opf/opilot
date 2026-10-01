@@ -23,19 +23,19 @@ module OPilot
 
         def project(project_id)
           id = @identifiers[project_id.to_s]
-          id ? [200, { "id" => id }] : [404, nil]
+          id ? TestFixtures.response(200, { "id" => id }) : TestFixtures.response(404, nil)
         end
 
         def documents(project_id, page: 1, page_size: 100)
           @filtered_by = project_id
-          return [@list_code, nil] unless @list_code == 200
+          return TestFixtures.response(@list_code, nil) unless @list_code == 200
           ids = (@list || @docs.keys).map { |id| { "id" => id } }
-          [200, { "_embedded" => { "elements" => ids } }]
+          TestFixtures.response(200, { "_embedded" => { "elements" => ids } })
         end
 
         def document(id)
           doc = @docs[id.to_i] || @docs[id.to_s]
-          doc ? [200, doc] : [404, nil]
+          doc ? TestFixtures.response(200, doc) : TestFixtures.response(404, nil)
         end
 
         def document_attachments(id)
@@ -45,7 +45,7 @@ module OPilot
               "fileSize" => @oversize ? OPilot::PD::Intake::Converter::MAX_BYTES + 1 : a[:body].bytesize,
               "_links" => { "downloadLocation" => { "href" => "https://op.test/dl/#{id}-#{i}" } } }
           end
-          [200, { "_embedded" => { "elements" => elements } }]
+          TestFixtures.response(200, { "_embedded" => { "elements" => elements } })
         end
 
         def download_attachment(url)
@@ -53,7 +53,7 @@ module OPilot
           id = url.split("/").last
           doc_id, idx = id.split("-")
           doc = @docs[doc_id.to_i]
-          [200, doc["__attachments"][idx.to_i][:body]]
+          TestFixtures.response(200, doc["__attachments"][idx.to_i][:body])
         end
       end
 

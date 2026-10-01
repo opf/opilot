@@ -99,8 +99,8 @@ module OPilot
           #{SEARCH_STOP_RULE}
 
           AVAILABLE COMMANDS (mention these when relevant) — `build` is the only
-          working command; there is no separate plan, approve, or ship step. A comment
-          that names some other word is answered as chat, so name the real command:
+          working command. A comment that names some other word is answered as chat,
+          so name the real command:
           - @opilot build [feedback] — build it (`fix` is the one alias). When the fix has
                                         more than one shape, build offers numbered options
                                         first and waits. Feedback is direction

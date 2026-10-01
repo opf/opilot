@@ -10,6 +10,9 @@ module OPilot
   # git surfaces — merge conflicts, a dirty tree, branch creation — and one
   # double configurable enough to cover all of them would read worse than three.
   module TestFixtures
+    # What a fake OpenProject client answers: a Response, as the real one does.
+    def self.response(code, body) = Clients::OpenProject::Response.new(code, body, "fake request")
+
     # The context readers the runners call. `host` backs #op_host — the
     # per-instance namespace under work_packages/ — and op_url is derived from
     # it so the two can never disagree.

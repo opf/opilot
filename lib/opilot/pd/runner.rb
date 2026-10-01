@@ -598,14 +598,14 @@ module OPilot
           return nil
         end
 
-        code, body = @op.create_work_package(feature_payload(state, project_id, type_id))
-        unless code == 201 && body
-          puts "  ⚠ Could not create the FEATURE work package (HTTP #{code})."
+        res = @op.create_work_package(feature_payload(state, project_id, type_id))
+        unless res.code == 201 && res.body
+          puts "  ⚠ Could not create the FEATURE work package (HTTP #{res.code})."
           return nil
         end
-        state.merge_tracker("parent_wp" => body["id"])
-        comment_pr_link(body["id"], state, pr_url)
-        body["id"]
+        state.merge_tracker("parent_wp" => res.body["id"])
+        comment_pr_link(res.body["id"], state, pr_url)
+        res.body["id"]
       end
 
       def feature_payload(state, project_id, type_id)
@@ -634,14 +634,14 @@ module OPilot
         sections.each do |section|
           next if section.wp_id
 
-          code, body = @op.create_work_package(child_payload(state, section, ids, parent_wp))
-          if code == 201 && body
-            tasks.write(TasksFile.bind_id(tasks.read, section.title, body["id"]))
-            created << { "id" => body["id"], "title" => section.title }
-            puts "  ✓ #{Helpers.wp_label(body["id"])}  #{section.title}"
+          res = @op.create_work_package(child_payload(state, section, ids, parent_wp))
+          if res.code == 201 && res.body
+            tasks.write(TasksFile.bind_id(tasks.read, section.title, res.body["id"]))
+            created << { "id" => res.body["id"], "title" => section.title }
+            puts "  ✓ #{Helpers.wp_label(res.body["id"])}  #{section.title}"
           else
             failed << section.title
-            puts "  ✗ #{section.title} — HTTP #{code}"
+            puts "  ✗ #{section.title} — HTTP #{res.code}"
           end
         end
         [created, failed]
@@ -774,14 +774,14 @@ module OPilot
           return
         end
 
-        code, = @op.update_work_package(
+        res = @op.update_work_package(
           wp_id, { "_links" => { "status" => { "href" => "/api/v3/statuses/#{status["id"]}" } } }
         )
-        if (200..299).cover?(code)
+        if (200..299).cover?(res.code)
           item["status"] = status["name"]   # so a later transition in the same run compares correctly
           puts "  → status: #{status["name"]}"
         else
-          puts "  ⚠ Could not set #{wp_label(wp_id)} to #{status["name"].inspect} (HTTP #{code}) — " \
+          puts "  ⚠ Could not set #{wp_label(wp_id)} to #{status["name"].inspect} (HTTP #{res.code}) — " \
                "the workflow may not allow that transition from #{item["status"].inspect}."
         end
       rescue StandardError => e

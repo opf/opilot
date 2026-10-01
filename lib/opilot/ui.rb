@@ -12,7 +12,9 @@ module OPilot
     def agent_commands
       <<~AGENT.strip
         ./opilot agent
-            Run both loops together: PRs first, then work packages.
+            Run every loop in one process, in this order on each tick: PRs,
+            work packages, then Matrix. PRs need GITHUB_CONTRIBUTOR_TOKEN;
+            Matrix needs MATRIX_* in .env. A loop without its config is skipped.
 
         ./opilot agent op
             OpenProject only: act on @opilot comments.
@@ -24,8 +26,7 @@ module OPilot
         ./opilot agent matrix
             Matrix only: chat in the configured room, and the @opilot words
             with the work package first: `build #1323` (needs
-            OPILOT_ALLOWED_MATRIX_USERS). `agent` runs it too, when MATRIX_*
-            is set in .env.
+            OPILOT_ALLOWED_MATRIX_USERS).
       AGENT
     end
 
@@ -38,8 +39,7 @@ module OPilot
 
         #{indent(triggers, 2)}
 
-        Both loops poll every 20s and are gated by the allowlists in .env.
-        `op-agent` and `gh-agent` still work as aliases.
+        Every loop polls every 20s and is gated by the allowlists in .env.
       USAGE
     end
 

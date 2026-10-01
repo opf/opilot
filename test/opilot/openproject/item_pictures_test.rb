@@ -21,14 +21,14 @@ module OPilot
       end
 
       def work_package_attachments(_wp_id)
-        return [@collection_code, nil] unless @collection_code == 200
-        [200, { "_embedded" => { "elements" => @attached } }]
+        return TestFixtures.response(@collection_code, nil) unless @collection_code == 200
+        TestFixtures.response(200, { "_embedded" => { "elements" => @attached } })
       end
 
       def attachment(id)
         @by_id_reads << id.to_s
         meta = @standalone[id.to_s]
-        meta ? [200, meta] : [@by_id_code, nil]
+        meta ? TestFixtures.response(200, meta) : TestFixtures.response(@by_id_code, nil)
       end
 
       def download_attachment(url)
@@ -36,7 +36,7 @@ module OPilot
         bytes = (@attached + @standalone.values)
                 .find { |a| a.dig("_links", "downloadLocation", "href") == url }
                 &.fetch("__bytes", nil)
-        bytes ? [200, bytes] : [@download_code, nil]
+        bytes ? TestFixtures.response(200, bytes) : TestFixtures.response(@download_code, nil)
       end
     end
 

@@ -489,13 +489,13 @@ module OPilot
         internal = @reply_internal.nil? ? true : @reply_internal
         # The reply's id is not recorded anywhere: OpenProject::Pull#own_comment? recognises
         # opilot's own comments by their author, so there is nothing to bookkeep.
-        code, = @api.add_comment(item_id, comment: raw, internal: internal)
-        if code == 201
+        res = @api.add_comment(item_id, comment: raw, internal: internal)
+        if res.code == 201
           log_script "Note posted to WP #{wp_label(item_id)}"
         else
-          log_script "Note failed for WP #{wp_label(item_id)} (HTTP #{code})"
+          log_script "Note failed for WP #{wp_label(item_id)} (HTTP #{res.code})"
         end
-        code
+        res.code
       end
     end
   end

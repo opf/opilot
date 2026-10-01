@@ -116,19 +116,19 @@ module OPilot
       # cached id may be semantic ("PROJ-123") while the relation endpoint takes
       # only numeric ids. Returns nil (having answered) when it cannot be read.
       def fetch_source_wp(st)
-        code, wp = @api.work_package(st.item_id)
-        unless code == 200 && wp
-          @reply.(st.item_id, "I could not read this work package from the API (HTTP #{code}), " \
+        res = @api.work_package(st.item_id)
+        unless res.code == 200 && res.body
+          @reply.(st.item_id, "I could not read this work package from the API (HTTP #{res.code}), " \
                               "so I created nothing.")
           return nil
         end
-        project_id = Resource.link_id(wp, "project")
+        project_id = Resource.link_id(res.body, "project")
         if project_id.to_s.empty?
           @reply.(st.item_id, "I could not tell which project this work package belongs to, " \
                               "so I created nothing.")
           return nil
         end
-        { "numeric_id" => wp["id"].to_s, "project_id" => project_id }
+        { "numeric_id" => res.body["id"].to_s, "project_id" => project_id }
       end
 
       # The project resource, and the permission check on it. A SECOND GET on
@@ -137,29 +137,29 @@ module OPilot
       # Asked before the LLM call, so a token without :add_work_packages costs a
       # request rather than a whole draft.
       def fetch_project_for_create(st, project_id)
-        code, project = @api.project(project_id)
-        unless code == 200 && project
-          @reply.(st.item_id, "I could not read project #{project_id} (HTTP #{code}), " \
+        res = @api.project(project_id)
+        unless res.code == 200 && res.body
+          @reply.(st.item_id, "I could not read project #{project_id} (HTTP #{res.code}), " \
                               "so I created nothing.")
           return nil
         end
-        unless Resource.create_wp_allowed?(project)
+        unless Resource.create_wp_allowed?(res.body)
           @reply.(st.item_id,
-            "I cannot create work packages in #{project["name"]}. My OpenProject token has no " \
+            "I cannot create work packages in #{res.body["name"]}. My OpenProject token has no " \
             "`add_work_packages` permission there. Ask an administrator for it."
           )
           return nil
         end
-        project
+        res.body
       end
 
       # The types this project really offers, so the draft cannot name one that does
       # not exist. Best-effort: an empty list only means the runner lets OpenProject
       # pick the project's default type.
       def project_type_names(project_id)
-        code, body = @api.project_types(project_id)
-        return [] unless code == 200 && body
-        Resource.type_list(body)
+        res = @api.project_types(project_id)
+        return [] unless res.code == 200 && res.body
+        Resource.type_list(res.body)
       rescue StandardError => e
         log_script "Warning: could not list types for project #{project_id} (#{e.message})."
         []
@@ -250,14 +250,14 @@ module OPilot
         failed    = []
         last_code = nil
         payloads.each do |draft, payload|
-          code, body = @api.create_work_package(payload)
-          last_code = code
-          unless code == 201 && body
-            log_script "create wp failed for #{wp_label(st.item_id)} — HTTP #{code} on #{payload["subject"].inspect}"
+          res = @api.create_work_package(payload)
+          last_code = res.code
+          unless res.code == 201 && res.body
+            log_script "create wp failed for #{wp_label(st.item_id)} — HTTP #{res.code} on #{payload["subject"].inspect}"
             failed << draft
             next
           end
-          record = record_created_wp(st, intent, wp, body, draft: draft)
+          record = record_created_wp(st, intent, wp, res.body, draft: draft)
           created << record
           log_script "Created #{wp_label(record["id"])} from #{wp_label(st.item_id)}"
           record_progress(st.item_id, "-", "created-wp:#{record["id"]}")
@@ -482,10 +482,10 @@ module OPilot
       # becomes `from`), so it reads "the new one relates to the source".
       def set_link(record, shape)
         source = record["source_numeric_id"]
-        code, = @api.link_work_package(record["numeric_id"], source, as: shape.to_sym)
-        log_script "#{wp_label(record["id"])} — #{shape} link to #{wp_label(source)} answered HTTP #{code}." \
-          unless [200, 201].include?(code)
-        code
+        res = @api.link_work_package(record["numeric_id"], source, as: shape.to_sym)
+        log_script "#{wp_label(record["id"])} — #{shape} link to #{wp_label(source)} answered HTTP #{res.code}." \
+          unless [200, 201].include?(res.code)
+        res.code
       rescue StandardError => e
         log_script "#{wp_label(record["id"])} — could not set the #{shape} link to #{wp_label(source)} " \
                    "(#{e.message})."

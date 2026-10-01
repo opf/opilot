@@ -70,13 +70,13 @@ module OPilot
       private
 
       def fetch_project(project_id, problems)
-        code, body = @op.project(project_id)
-        unless code == 200
-          problems << "project #{project_id} is not readable (HTTP #{code})"
+        res = @op.project(project_id)
+        unless res.code == 200
+          problems << "project #{project_id} is not readable (HTTP #{res.code})"
           return {}
         end
-        check_write_permission(project_id, body, problems)
-        body
+        check_write_permission(project_id, res.body, problems)
+        res.body
       end
 
       # `pd generate-wp` POSTs work packages into this project, and a token that can
@@ -91,23 +91,23 @@ module OPilot
       end
 
       def fetch_types(project_id, problems)
-        code, body = @op.project_types(project_id)
-        unless code == 200
-          problems << "could not list types for project #{project_id} (HTTP #{code})"
+        res = @op.project_types(project_id)
+        unless res.code == 200
+          problems << "could not list types for project #{project_id} (HTTP #{res.code})"
           return []
         end
-        Resource.type_list(body)
+        Resource.type_list(res.body)
       end
 
       def fetch_statuses(problems)
         # The rescue covers a network failure; a non-200 is reported here, or an
         # empty list would read as "this instance has none of those statuses".
-        code, body = @op.statuses
-        unless code == 200 && body
-          problems << "could not list statuses (HTTP #{code})"
+        res = @op.statuses
+        unless res.code == 200 && res.body
+          problems << "could not list statuses (HTTP #{res.code})"
           return []
         end
-        Resource.elements(body).map do |s|
+        Resource.elements(res.body).map do |s|
           { "id" => s["id"], "name" => s["name"].to_s, "closed" => !!s["isClosed"] }
         end
       rescue StandardError => e

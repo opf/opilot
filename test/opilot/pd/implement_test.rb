@@ -87,12 +87,12 @@ module OPilot
 
         def add_comment(wp_id, comment:, internal: true)
           @comments << [wp_id, comment]
-          [201, {}]
+          TestFixtures.response(201, {})
         end
 
         def update_work_package(wp_id, payload, notify: false)
           @patches << [wp_id, payload.dig("_links", "status", "href")]
-          [@patch_code, @patch_code == 200 ? { "id" => wp_id } : nil]
+          TestFixtures.response(@patch_code, @patch_code == 200 ? { "id" => wp_id } : nil)
         end
 
         # The status ids this fake's hrefs resolve back to, for readable assertions.

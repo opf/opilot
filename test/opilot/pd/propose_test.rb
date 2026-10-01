@@ -60,12 +60,12 @@ module OPilot
 
         def create_work_package(payload, notify: false)
           @created << payload
-          @create_code == 201 ? [201, { "id" => @create_id }] : [@create_code, nil]
+          @create_code == 201 ? TestFixtures.response(201, { "id" => @create_id }) : TestFixtures.response(@create_code, nil)
         end
 
         def add_comment(wp_id, comment:, internal: true)
           @comments << [wp_id, comment]
-          [201, {}]
+          TestFixtures.response(201, {})
         end
       end
 

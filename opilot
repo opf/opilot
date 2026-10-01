@@ -11,14 +11,13 @@ SUB="${2:-}"
 # failure), so a bare `VAR="$(_env_get KEY)"` is safe under `set -euo pipefail`.
 _env_get() { grep "^$1=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true; }
 _save()    { printf '%s=%s\n' "$1" "$2" >> "$ENV_FILE"; }
-# True when CMD is one of the listed words, e.g. `_is agent op-agent`.
+# True when CMD is one of the listed words, e.g. `_is agent chat`.
 _is() { [[ " $* " == *" $CMD "* ]]; }
 # Which loops a command starts: `agent` alone runs both, `agent op`/`agent gh`
-# (and the pre-group op-agent/gh-agent names) run one, and `agent matrix` runs
-# neither. The wizard then prompts for exactly the allowlists the loops it is
+# run one, and `agent matrix` runs neither. The wizard then prompts for exactly the allowlists the loops it is
 # about to start will read.
-_runs_op() { _is op-agent || { _is agent && { [ -z "$SUB" ] || [ "$SUB" = op ]; }; }; }
-_runs_gh() { _is gh-agent || { _is agent && { [ -z "$SUB" ] || [ "$SUB" = gh ]; }; }; }
+_runs_op() { _is agent && { [ -z "$SUB" ] || [ "$SUB" = op ]; }; }
+_runs_gh() { _is agent && { [ -z "$SUB" ] || [ "$SUB" = gh ]; }; }
 # docker compose bound to opilot's compose file.
 dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 
@@ -56,7 +55,7 @@ trap _cleanup EXIT INT TERM
 # `mkdir` is the atomic test-and-set. A lock whose owner is gone is taken over
 # rather than reported, so a killed agent needs no manual cleanup.
 _locks_agent() {
-  _is agent op-agent gh-agent || return 1
+  _is agent || return 1
   for _a in "$@"; do
     case "$_a" in --help | -h) return 1 ;; esac
   done
@@ -256,7 +255,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # `op` needs nothing at all.
 
 _needs_harness() {
-  _is agent op-agent gh-agent chat && return 0
+  _is agent chat && return 0
   case "$CMD" in
     dev) case "$SUB" in build|fix|commit|plan|health|refresh) return 0 ;; esac ;;
     pd)  case "$SUB" in propose|implement) return 0 ;; esac ;;

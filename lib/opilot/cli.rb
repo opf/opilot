@@ -23,11 +23,6 @@ module OPilot
       when "usage"  then Runners::Usage.new(@ctx).run
       # The agent loops — opilot's main mode. No arguments: they poll.
       when "agent"    then agent(rest)
-      # Pre-group names for `agent op` / `agent gh`, kept because these are what
-      # a service unit or a shell history calls, and the cost of breaking them is
-      # a stopped agent.
-      when "op-agent" then session("agent op") { OpenProject::Agent.new(@ctx).run }
-      when "gh-agent" then session("agent gh") { GitHub::Agent.new(@ctx).run }
       when "chat"     then session(cmd) { Runners::Chat.new(@ctx).run(rest.join(" ")) }
       # The command groups. `dev` and `pd` are the two specializations — the kind
       # of work opilot does; `op` is an integration — the system it reads.
@@ -52,7 +47,7 @@ module OPilot
     # whole screen to show five commands.
     def help_for(cmd)
       case cmd
-      when "agent", "op-agent", "gh-agent" then @ui.agent_usage
+      when "agent" then @ui.agent_usage
       when "dev" then @ui.dev_usage
       when "pd" then @ui.pd_usage
       when "op" then @ui.op_usage

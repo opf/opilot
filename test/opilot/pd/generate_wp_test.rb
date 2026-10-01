@@ -20,15 +20,15 @@ module OPilot
 
         def create_work_package(payload, notify: false)
           @created << payload
-          return [422, nil] if @fail_at == @created.length
+          return TestFixtures.response(422, nil) if @fail_at == @created.length
           id = @next_id
           @next_id += 1
-          [201, { "id" => id }]
+          TestFixtures.response(201, { "id" => id })
         end
 
         def add_comment(wp_id, comment:, internal: true)
           @comments << [wp_id, comment]
-          [201, {}]
+          TestFixtures.response(201, {})
         end
       end
 

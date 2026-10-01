@@ -22,10 +22,10 @@ module OPilot
           elements = []
           total = 0
           (1..).each do |page|
-            code, resp = @api.work_packages(filters_json: filters_json, page: page, page_size: page_size, sort_by: sort_by)
-            return [code, nil, 0] unless code == 200 && resp
-            total = resp["total"].to_i
-            batch = resp.dig("_embedded", "elements") || []
+            res = @api.work_packages(filters_json: filters_json, page: page, page_size: page_size, sort_by: sort_by)
+            return [res.code, nil, 0] unless res.code == 200 && res.body
+            total = res.body["total"].to_i
+            batch = res.body.dig("_embedded", "elements") || []
             elements.concat(batch)
             break if batch.empty? || elements.length >= total || (max && elements.length >= max)
           end
@@ -104,16 +104,15 @@ module OPilot
         end
 
         # The body of a 200, or the typed Error for what the read answered. A
-        # NetworkError is re-raised with `what` in its message. Destructuring
-        # rather than #value!, so a test fake may return a plain tuple.
+        # NetworkError is re-raised with `what` in its message.
         def read(what)
-          code, body = begin
+          res = begin
             yield
           rescue NetworkError => e
             raise NetworkError, "could not read #{what} (#{e.message})"
           end
-          return body if code == 200 && body
-          raise Error.for(code, body, "could not read #{what} (HTTP #{code})")
+          return res.body if res.code == 200 && res.body
+          raise Error.for(res.code, res.body, "could not read #{what} (HTTP #{res.code})")
         end
 
         def elements(what, &block) = read(what, &block).dig("_embedded", "elements") || []

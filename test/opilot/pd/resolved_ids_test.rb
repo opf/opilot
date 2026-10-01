@@ -20,9 +20,9 @@ module OPilot
                                        { "id" => 12, "name" => "Closed", "isClosed" => true }]
         end
 
-        def project(_id)      = [@project_code, @project]
-        def project_types(_id) = [200, { "_embedded" => { "elements" => @types } }]
-        def statuses           = [200, { "_embedded" => { "elements" => @statuses } }]
+        def project(_id)       = TestFixtures.response(@project_code, @project)
+        def project_types(_id) = TestFixtures.response(200, { "_embedded" => { "elements" => @types } })
+        def statuses           = TestFixtures.response(200, { "_embedded" => { "elements" => @statuses } })
       end
 
       def setup
