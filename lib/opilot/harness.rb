@@ -4,6 +4,7 @@ require "json"
 require "rainbow"
 require "tty-markdown"
 require "pathname"
+require "securerandom"
 
 module OPilot
   class Harness
@@ -115,12 +116,14 @@ module OPilot
     end
 
     # Runs the LLM with the given prompt. Streams tool-use lines to tty, returns text output.
-    # Pass session_file: (a Pathname) to enable per-WP session continuity — the file is
-    # read for the session ID before the call and updated with the new ID after.
+    # Pass session_file: (a Pathname) to enable per-WP session continuity. The runner
+    # owns the id: it reuses the file's, or mints one, and pi's --session-id opens
+    # that session or creates it when absent — so a lost session simply starts fresh.
     def run(prompt, role:, tools: nil, model: MODEL_HEAVY, session_file: nil)
-      session_id = session_file&.exist? ? session_file.read.strip : nil
+      known_id   = session_file&.exist? ? session_file.read.strip : ""
+      session_id = known_id.empty? ? (SecureRandom.uuid if session_file) : known_id
 
-      header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{session_id || "fresh"})").bold
+      header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{known_id.empty? ? "fresh" : known_id})").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
@@ -130,24 +133,13 @@ module OPilot
       puts resp_header
       log_append(resp_header)
 
-      text, new_session_id, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id)
+      text, started, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id)
 
-      # A resumed session the CLI no longer has (e.g. the harness container was
-      # recreated/killed before the transcript was durably written) makes
-      # --resume fail immediately, and the dead id would poison this WP forever —
-      # every later call reads the same id and fails identically. Recover once by
-      # retrying as a fresh session: we lose the prior conversation context, but
-      # the prompts reference the item/plan files on disk, so it can re-orient.
-      if error && session_id && lost_session?(error)
-        log_append("session #{session_id} is gone — retrying fresh")
-        $stdout.puts Rainbow("  ⚠ session #{session_id} not found — starting fresh").yellow
-        text, new_session_id, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: nil)
-      end
-
-      # Save the session even on error, so a retry can resume with context.
-      if session_file && new_session_id
-        log_append("session: captured #{new_session_id} → #{session_file}")
-        session_file.write(new_session_id)
+      # Saved once pi has started, even on error, so a retry resumes with context.
+      # Not before: session_resumable? reads the file as "the session holds the plan".
+      if session_file && started && known_id.empty?
+        log_append("session: #{session_id} → #{session_file}")
+        session_file.write(session_id)
       end
       if error
         log_append("run failed: #{error}")
@@ -175,7 +167,7 @@ module OPilot
         buffer              = "".dup
         at_line_start       = true
         after_tool          = false
-        captured_session_id = nil
+        started             = false
         final_result        = nil
         error               = nil
         error_subtype       = nil
@@ -203,7 +195,7 @@ module OPilot
                 parsed = JSON.parse(line.chomp) rescue next
                 case parsed["type"]
                 when "session_id"
-                  captured_session_id = parsed["session_id"]
+                  started = true
                 when "exit"
                   # server.js's final diagnostic: exit code/signal + stderr tail.
                   exit_info = parsed
@@ -297,7 +289,7 @@ module OPilot
       # overload, internal crash, hook failure — is written.
       error = decorate_error(error, error_subtype, exit_info) if error
 
-      [text, captured_session_id, error]
+      [text, started, error]
     end
 
     # Combine the CLI's error message with the diagnostic detail server.js
@@ -315,14 +307,6 @@ module OPilot
         parts << "\n\npi stderr:\n#{stderr}" unless stderr.empty?
       end
       parts.join(" ").gsub(/ +\n/, "\n")
-    end
-
-    # pi's message when --session points at a session it can't find (verified
-    # against pi 0.84.2: "No session found matching '<id>'", printed to stderr
-    # with no JSON output at all and exit 1). Detected via the stderr tail
-    # server.js forwards on the exit event.
-    def lost_session?(error)
-      error.to_s.match?(/No session found matching/i)
     end
 
     # "1" for a normal non-zero exit, "via SIGTERM" when killed by a signal.

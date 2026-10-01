@@ -60,7 +60,9 @@ module OPilot
       capture_io { text = @harness.run("prompt", role: :advisor, session_file: @session_file) }
 
       assert_equal "the plan", text
-      assert_equal "abc-123", @session_file.read
+      id = @session_file.read
+      assert_match(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/, id, "the runner mints the session id")
+      assert_requested(:post, "http://harness.test:47291", headers: { "X-Harness-Session" => id })
     end
 
     def test_run_raises_on_error_result
@@ -90,7 +92,7 @@ module OPilot
         assert_equal "error_max_turns", err.message
       end
 
-      assert_equal "def-456", @session_file.read, "a retry must be able to resume the session"
+      refute_empty @session_file.read, "a retry must be able to resume the session"
     end
 
     def test_run_raises_on_http_error_with_body
@@ -187,44 +189,31 @@ module OPilot
                        headers: { "X-Harness-Role" => "planner", "X-Harness-Tools" => Harness::TOOLS_READ })
     end
 
-    def test_run_retries_fresh_when_resumed_session_is_gone
-      @session_file.write("dead-session-id")
-      # First call (with --resume) fails: pi can't find the session. This is a
-      # pre-flight CLI failure — verified against pi 0.84.2 to print a plain
-      # stderr line and exit 1 with NO JSON output at all (no session/result
-      # event), so server.js's translate() emits no result frame either; only
-      # the exit event (code, stderr) reaches harness.rb here. Second call
-      # (fresh, no session) succeeds. WebMock replays responses in order.
-      stub_request(:post, "http://harness.test:47291").to_return(
-        { status: 200, body: ndjson(
-          { type: "exit", code: 1, signal: nil, timed_out: false,
-            stderr: "No session found matching 'dead-session-id'" }) },
-        { status: 200, body: ndjson(
-          assistant_text("fresh answer"),
-          { type: "result", subtype: "success", is_error: false, result: "fresh answer" },
-          { type: "session_id", session_id: "new-session" }) }
-      )
-
-      text = nil
-      out, = capture_io { text = @harness.run("prompt", role: :advisor, session_file: @session_file) }
-
-      assert_equal "fresh answer", text
-      assert_equal "new-session", @session_file.read, "the recovered session id is saved"
-      assert_match(/starting fresh/, out)
-    end
-
-    def test_run_does_not_retry_fresh_on_unrelated_error
+    def test_run_resumes_a_known_session_and_keeps_its_id
+      # pi's --session-id opens the session or creates it when it is gone, so a
+      # lost session needs no retry: the same id simply starts fresh.
       @session_file.write("live-session")
       stub_harness(ndjson(
-        { type: "result", subtype: "error_during_execution", is_error: true, result: "" },
-        { type: "exit", code: 1, signal: nil, timed_out: false, stderr: "API Error: 529 Overloaded" }
+        { type: "result", subtype: "success", is_error: false, result: "ok" },
+        { type: "session_id", session_id: "live-session" }
       ))
 
+      capture_io { @harness.run("prompt", role: :advisor, session_file: @session_file) }
+
+      assert_requested(:post, "http://harness.test:47291", headers: { "X-Harness-Session" => "live-session" })
+      assert_equal "live-session", @session_file.read
+    end
+
+    def test_run_saves_no_session_when_pi_never_started
+      # session_resumable? reads the file as "the session holds the plan", so a
+      # call the harness refused must not create it.
+      stub_request(:post, "http://harness.test:47291").to_return(status: 403, body: "nope\n")
+
       capture_io do
-        err = assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor, session_file: @session_file) }
-        assert_match(/Overloaded/, err.message)
+        assert_raises(Harness::Error) { @harness.run("prompt", role: :advisor, session_file: @session_file) }
       end
-      # Stubbed exactly one response; a spurious retry would raise a WebMock error.
+
+      refute @session_file.exist?
     end
 
     def test_capture_does_not_write_outfile_on_error

@@ -6,7 +6,7 @@
 // checks it — a wrong provider name or a missing compat flag surfaces as an
 // opaque pi start-up error three layers away.
 const assert = require('assert');
-const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
+const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
 
 let failures = 0;
 function test(name, fn) {
@@ -44,6 +44,15 @@ test('the existing OpenRouter slugs still pass', () => {
 test('the regex still refuses anything that could smuggle a CLI arg', () => {
   for (const bad of ['-rf /tmp', 'a b', '--model', '', 'a;b', 'a|b', 'a$b']) {
     assert.ok(!MODEL_RE.test(bad), `${JSON.stringify(bad)} must be refused`);
+  }
+});
+
+test('session ids follow pi --session-id: UUIDs pass, flags and edge punctuation do not', () => {
+  for (const id of ['01a0f6fa-d39e-7158-8f6c-05b64050ed2c', 'a', 'wp.42_x']) {
+    assert.ok(SESSION_ID_RE.test(id), `${id} should be accepted`);
+  }
+  for (const bad of ['-x', '--fork', 'a-', '_a', 'a b', '', 'x'.repeat(129)]) {
+    assert.ok(!SESSION_ID_RE.test(bad), `${JSON.stringify(bad)} must be refused`);
   }
 });
 

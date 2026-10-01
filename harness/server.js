@@ -151,7 +151,9 @@ function checkRole(roles, name, tools) {
   return null;
 }
 
-const SESSION_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+// pi's --session-id rule: letters, digits, `.`, `_`, `-`, starting and ending
+// with a letter or digit (so it can never read as a flag).
+const SESSION_ID_RE = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?$/;
 // A model id carries a vendor slug behind a provider prefix, e.g.
 // "openrouter/anthropic/claude-opus-4.8" or "local/qwen2.5-coder:7b"
 // (harness.rb supplies the full string; server.js does no prefixing of its
@@ -426,7 +428,8 @@ function runPi(body, tools, model, sessionId, res, done) {
   ];
   if (tools) args.push('--tools', tools);
   if (model) args.push('--model', model);
-  if (sessionId) args.push('--session', sessionId);
+  // Opens the session, or creates it when absent; the runner owns the id.
+  if (sessionId) args.push('--session-id', sessionId);
 
   const proc = spawn('pi', args, { env: process.env });
 
@@ -593,6 +596,6 @@ if (require.main === module) startServer();
 
 module.exports = {
   translate, settleResult, extractText, lastAssistantOf,
-  buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS,
+  buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
   parseRole, loadRoles, grantsFor, checkRole,
 };

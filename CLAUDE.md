@@ -1025,7 +1025,12 @@ Runner POSTs to `http://harness:47291` with headers:
   selects which pi provider config `seedAgentDir()` writes.** Validated by
   format, not an allowlist — model choice grants no privilege. The format
   permits `:` because every Ollama tag carries one.
-- `X-Harness-Session` — session ID (omit on first call; save from the response).
+- `X-Harness-Session` — session ID, **chosen by the runner** (`Harness#run` mints a
+  UUID when the session file is empty) and passed as pi's `--session-id`, which
+  opens the session or creates it when absent. A lost session therefore just
+  starts fresh under the same id. The file is written only once pi has started,
+  because `session_resumable?` reads it as "the session already holds the plan".
+  Omitted for a stateless call.
 
 `server.js` spawns `pi --mode json` (plus `--no-extensions -e /app/harness/pi-guards.ts`,
 `--no-context-files`, `--no-approve`, `--offline`, and the tools/model/session
