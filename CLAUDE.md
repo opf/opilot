@@ -409,9 +409,17 @@ starts only when `OPILOT_OP_MCP` is set):
   `apiKey` to `OPILOT_GW_TOKEN` (a fixed handshake value, not a secret) — the
   real key never reaches this container. `server.js` decides which provider
   config pi gets from **the provider prefix on `OPILOT_MODEL_HEAVY`**:
-  `openrouter/…` copies `pi-models.json` from git, anything else generates one
+  `openrouter/…` starts from `pi-models.json` in git, anything else generates one
   (`buildModelsJson`). That prefix is the only signal, deliberately — a second
   "mode" variable could disagree with the slug.
+
+  **OpenRouter's Claude models are pinned to `openai-completions`**
+  (`buildOpenRouterModels`). Since pi-ai 0.86 pi's catalog lists them as
+  `anthropic-messages`, which sends the key as `x-api-key` — inference-gw takes
+  only `Authorization: Bearer`, so every call 401'd. The pin copies each
+  entry's catalog metadata at boot, because a `models` entry inherits none of
+  it (without `input`, pi silently drops pictures). Native Anthropic would also
+  need inference-gw to delete an inbound `x-api-key`.
 - **Inference gateway** (Node 24, `gateways/inference-gw.js`) — the harness's **only** route to a model,
   and **containment is its load-bearing job, not authentication**. It was once
   called `authgw`, after the only optional thing it does. It does four things,
@@ -1061,7 +1069,7 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_INFERENCE_URL` | Optional; the upstream inference-gw forwards to (default `https://openrouter.ai/api/v1`). Point it at any OpenAI-compatible server. Resolved, pinned and path-allowlisted once at boot. **`./opilot appsignal fix` reads the pinned address back via inference-gw's `GET /upstream` and refuses unless it is loopback, private or link-local** |
 | `OPILOT_INFERENCE_KEY` | The key inference-gw presents upstream, if the upstream wants one. Lives only in inference-gw — never reaches the harness container. Required for OpenRouter; leave empty for a keyless self-hosted server |
 | `OPILOT_INFERENCE_AUTH` | Optional; how the key is presented, as a `Header: value with {key}` template (default `Authorization: Bearer {key}`; Azure OpenAI needs `api-key: {key}`). inference-gw always deletes the inbound `Authorization` first, whatever this names |
-| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5.5`). **Its provider prefix decides whether pi gets `pi-models.json` or a generated config** |
+| `OPILOT_MODEL_HEAVY` | Optional; overrides the heavy model used for every session-bound phase — plan, chat, implement (default `openrouter/anthropic/claude-sonnet-5.5`). **Its provider prefix decides whether pi gets `pi-models.json` (plus the pinned OpenRouter models) or a generated config** |
 | `OPILOT_MODEL_LIGHT` | Optional; overrides the light model used for stateless one-shot passes — commit subject, PR description (default `openrouter/anthropic/claude-haiku-4.5`) |
 | `OPILOT_MODEL_API` | Optional; the wire protocol for a generated provider — `openai-completions` (default), `openai-responses`, `anthropic-messages`, `google-generative-ai`. A different axis from the auth header: a native Anthropic or Google upstream needs both |
 | `OPILOT_MODEL_CONTEXT_WINDOW` | Optional; context window for a self-hosted model. Omitted leaves pi's default |

@@ -173,12 +173,29 @@ const PI_APIS = new Set([
 ]);
 
 // The provider prefix on the configured model slug decides which provider
-// config pi gets: "openrouter/..." uses the file in git, anything else is
-// generated below. One signal, stated once — no separate mode variable that
+// config pi gets: "openrouter/..." starts from the file in git, anything else
+// is generated below. One signal, stated once — no separate mode variable that
 // could disagree with the slug.
 function providerPrefix(slug) {
   const i = (slug || '').indexOf('/');
   return i === -1 ? '' : slug.slice(0, i);
+}
+
+// pi's own OpenRouter catalog, inside the pinned global install.
+const OPENROUTER_CATALOG = '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/' +
+  'node_modules/@earendil-works/pi-ai/dist/providers/data/openrouter.json';
+
+// Since pi-ai 0.86 the catalog lists OpenRouter's Claude models as
+// anthropic-messages, which sends the key as x-api-key; inference-gw takes
+// only a Bearer token. Pin them to openai-completions, keeping the catalog's
+// metadata (a `models` entry inherits none) and the compat of the catalog's
+// own openai-completions Claude entries.
+function buildOpenRouterModels(catalog) {
+  const compat = Object.values(catalog['openai-completions'] || {})
+    .find(m => m.id.startsWith('anthropic/'))?.compat;
+  if (!compat) throw new Error("pi's OpenRouter catalog has no openai-completions Claude entry to copy compat from");
+  return Object.values(catalog['anthropic-messages'] || {})
+    .map(({ type, provider, baseUrl, compat: _, ...m }) => ({ ...m, api: 'openai-completions', compat }));
 }
 
 // Builds a models.json for a self-hosted upstream, from the two slugs already
@@ -253,13 +270,17 @@ function buildModelsJson(env = process.env) {
 // models.json is GENERATED instead of copied when the configured model is not
 // an openrouter/… slug, and generated with exactly the same unconditional
 // rule — a file written before a config change must never mask it either.
+// For openrouter, pi-models.json gains the pinned models (buildOpenRouterModels).
 function seedAgentDir(env = process.env) {
   fs.mkdirSync(PI_AGENT_DIR, { recursive: true });
   fs.copyFileSync(path.join(__dirname, 'pi-settings.json'), path.join(PI_AGENT_DIR, 'settings.json'));
 
   const modelsPath = path.join(PI_AGENT_DIR, 'models.json');
   if (providerPrefix(env.OPILOT_MODEL_HEAVY || 'openrouter/') === 'openrouter') {
-    fs.copyFileSync(path.join(__dirname, 'pi-models.json'), modelsPath);
+    const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'pi-models.json'), 'utf8'));
+    const catalog = JSON.parse(fs.readFileSync(OPENROUTER_CATALOG, 'utf8'));
+    config.providers.openrouter.models = buildOpenRouterModels(catalog);
+    fs.writeFileSync(modelsPath, JSON.stringify(config, null, 2) + '\n');
   } else {
     fs.writeFileSync(modelsPath, JSON.stringify(buildModelsJson(env), null, 2) + '\n');
   }
@@ -572,6 +593,6 @@ if (require.main === module) startServer();
 
 module.exports = {
   translate, settleResult, extractText, lastAssistantOf,
-  buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS,
+  buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS,
   parseRole, loadRoles, grantsFor, checkRole,
 };

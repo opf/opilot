@@ -6,7 +6,7 @@
 // checks it — a wrong provider name or a missing compat flag surfaces as an
 // opaque pi start-up error three layers away.
 const assert = require('assert');
-const { buildModelsJson, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
+const { buildModelsJson, buildOpenRouterModels, providerPrefix, MODEL_RE, ALLOWED_TOOL_GRANTS } = require('../../harness/server.js');
 
 let failures = 0;
 function test(name, fn) {
@@ -175,6 +175,39 @@ test('a light model on another provider is ignored rather than mixed in', () => 
     OPILOT_MODEL_LIGHT: 'openrouter/anthropic/claude-haiku-4.5',
   }));
   assert.deepStrictEqual(config.models, [{ id: 'big' }]);
+});
+
+// ── pinning OpenRouter's catalog to openai-completions ───────────────────
+
+// The shape of pi-ai's providers/data/openrouter.json: keyed by api, then id.
+const OPENAI_COMPAT = { thinkingFormat: 'openrouter', cacheControlFormat: 'anthropic' };
+const CATALOG = {
+  'anthropic-messages': {
+    'chat:anthropic/claude-haiku-4.5': {
+      type: 'chat', id: 'anthropic/claude-haiku-4.5', api: 'anthropic-messages', provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api', input: ['text', 'image'], contextWindow: 200000,
+      inputLimits: { images: { resize: { maxWidth: 2000 } } }, compat: { forceAdaptiveThinking: true },
+    },
+  },
+  'openai-completions': {
+    'chat:anthropic/claude-haiku-4.5:batch': {
+      type: 'chat', id: 'anthropic/claude-haiku-4.5:batch', api: 'openai-completions', compat: OPENAI_COMPAT,
+    },
+  },
+};
+
+test('an anthropic-messages model is pinned to openai-completions with its metadata', () => {
+  // anthropic-messages sends x-api-key, which inference-gw 401s. A models entry
+  // inherits nothing, so dropped metadata (`input`) would silently drop pictures;
+  // baseUrl must go so the provider's (inference-gw) applies.
+  assert.deepStrictEqual(buildOpenRouterModels(CATALOG), [{
+    id: 'anthropic/claude-haiku-4.5', api: 'openai-completions', input: ['text', 'image'],
+    contextWindow: 200000, inputLimits: { images: { resize: { maxWidth: 2000 } } }, compat: OPENAI_COMPAT,
+  }]);
+});
+
+test('a catalog with no openai-completions Claude entry fails the boot', () => {
+  assert.throws(() => buildOpenRouterModels({ 'anthropic-messages': {} }), /compat/);
 });
 
 // ── failing loudly ────────────────────────────────────────────────────────

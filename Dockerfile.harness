@@ -5,8 +5,9 @@ RUN apt-get update && apt-get install -y bash git ripgrep && rm -rf /var/lib/apt
 
 # Pinned: unpinned installs let each machine's image bake a different CLI
 # version. Bump deliberately after verifying the gateway path still works
-# headless.
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.87.1
+# headless. server.js reads pi-ai's OpenRouter catalog from inside this install
+# (OPENROUTER_CATALOG), so a bump must keep that path.
+RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.99.2
 
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true
