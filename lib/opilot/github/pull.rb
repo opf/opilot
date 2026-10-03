@@ -66,6 +66,13 @@ module OPilot
         intents
       end
 
+      # A PR dir's URLs, downcased: pr_url.txt, then pr.json's URL. A renamed bot
+      # account leaves the old name in pr_url.txt, and GitHub lists the new one.
+      def pr_urls(dir)
+        cached = Helpers.safe_json_read(dir / "pr.json") || {}
+        [(dir / "pr_url.txt").read.strip, cached["url"]].compact.map(&:downcase).uniq
+      end
+
       # Where an intent's cache and act-state live: <id>/repos/<name>/ for a
       # shipped PR, changes/<change-id>/ for a spec PR.
       def pr_dir(item_id, repo_name, spec: false)
@@ -124,11 +131,10 @@ module OPilot
         number = Clients::GitHub.pr_number_from_url(pr_url)
         return [] unless repo && number
 
-        cached  = Helpers.safe_json_read(dir / "pr.json")
-        listed  = listed_pr(pr_url, cached)
-        content = cached if unchanged?(cached, listed)
-        # Changed: the list carries everything fetch_pr_content reads from a GET.
-        content ||= fetch_pr_content(dir, repo, number, listed_pr_object(listed)) if listed
+        listed  = @open_prs && pr_urls(dir).filter_map { |u| @open_prs[u] }.first
+        # The list carries everything fetch_pr_content reads from a GET, and an
+        # unchanged PR is served from pr.json without a call.
+        content = fetch_pr_content(dir, repo, number, listed_pr_object(listed)) if listed
         unless content
           # Missing from the list: only a GET may decide it is closed.
           pr = @github.pull_request(repo, number)
@@ -275,13 +281,6 @@ module OPilot
         prs&.to_h { |p| [p["url"].to_s.downcase, p] }
       end
 
-      # This PR's list entry. The cached URL is the second key: a renamed bot
-      # account leaves the old name in pr_url.txt, and GitHub lists the new one.
-      def listed_pr(pr_url, cached)
-        return nil unless @open_prs
-        @open_prs[pr_url.downcase] || @open_prs[cached&.[]("url").to_s.downcase]
-      end
-
       # A list entry in the shape of Octokit's PR, for fetch_pr_content.
       ListedPr   = Struct.new(:state, :updated_at, :html_url, :title, :body, :head, keyword_init: true)
       ListedHead = Struct.new(:ref, :sha, :repo)
@@ -294,12 +293,6 @@ module OPilot
           head: ListedHead.new(listed["head_ref"], listed["head_sha"],
                                (ListedRepo.new(listed["head_repo"]) if listed["head_repo"]))
         )
-      end
-
-      # Whether the list shows the PR as it was when pr.json was written.
-      def unchanged?(cached, listed)
-        return false unless cached && listed
-        cached["updated_at"] == to_iso(listed["updated_at"]) && cached["head_sha"] == listed["head_sha"]
       end
 
       # [change_id, repo_name] for a spec PR dir. The repo is whichever one the

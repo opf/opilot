@@ -44,13 +44,11 @@ module OPilot
         $stdout.puts JSON.pretty_generate(out)
       end
 
-      # PR URL → state dir, by pr_url.txt and by pr.json's URL (a renamed bot
-      # account leaves the old name in pr_url.txt).
+      # PR URL → state dir, by the URLs gh-agent matches on (GitHub::Pull#pr_urls).
       def tracked_dirs
         pull = GitHub::Pull.new(@ctx, github: github)
         (pull.shipped_pr_dirs + pull.spec_pr_dirs).each_with_object({}) do |dir, map|
-          cached = Helpers.safe_json_read(dir / "pr.json") || {}
-          [(dir / "pr_url.txt").read.strip, cached["url"]].compact.each { |u| map[u.downcase] = dir }
+          pull.pr_urls(dir).each { |u| map[u] = dir }
         end
       end
 

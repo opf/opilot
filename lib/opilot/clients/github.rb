@@ -23,6 +23,9 @@ module OPilot
         Octokit::ServerError, Octokit::TooManyRequests
       ].freeze
 
+      # A GraphQL answer with no data, or not in the shape asked for.
+      class GraphQLError < StandardError; end
+
       # Retry tuning, overridable so the test suite can disable real sleeps
       # (see test/test_helper.rb), exactly as Clients::HTTP does.
       @max_tries     = 3
@@ -257,24 +260,22 @@ module OPilot
 
       # [{"url", "updated_at", "head_sha", "head_ref", "head_repo", "title",
       # "body", "ci"}], or nil when the query failed. `head_repo` is nil when the
-      # head fork was deleted.
-      # `ci` is :failed, :running, :done, or nil (no checks seen).
+      # head fork was deleted; `ci` is :failed, :running, :done, or nil (no checks).
       def open_prs
         prs = []
         cursor = nil
         OPEN_PRS_MAX_PAGES.times do
-          page = graphql(OPEN_PRS_QUERY, "cursor" => cursor).dig(:viewer, :pullRequests)
-          prs.concat(page[:nodes].map { |n| open_pr_entry(n) })
+          page = graphql(OPEN_PRS_QUERY, "cursor" => cursor).dig(:viewer, :pullRequests) or
+            raise GraphQLError, "the answer has no viewer.pullRequests"
+          prs.concat(Array(page[:nodes]).map { |n| open_pr_entry(n) })
           break unless page.dig(:pageInfo, :hasNextPage)
           cursor = page.dig(:pageInfo, :endCursor)
         end
         prs
-      rescue Octokit::Error, Faraday::Error, GraphQLError, NoMethodError => e
+      rescue Octokit::Error, Faraday::Error, GraphQLError => e
         warn "  ⚠ GitHub open-PR query failed (#{e.class}: #{e.message})"
         nil
       end
-
-      class GraphQLError < StandardError; end
 
       # A query is a read, so a retried POST is safe. String keys on purpose:
       # Octokit takes a symbol `:query` as URL parameters, not as body.

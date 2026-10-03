@@ -92,6 +92,9 @@ Some examples:
 ./opilot op doc list
 ./opilot op wp create --project "COMMS" --subject "Hi"
 
+# List the bot's open GitHub PRs, and which ones opilot tracks
+./opilot gh pr list
+
 # Use the software development commands
 ./opilot dev build COMMS-123
 

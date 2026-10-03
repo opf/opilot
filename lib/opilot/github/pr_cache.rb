@@ -32,7 +32,7 @@ module OPilot
       end
 
       # Cache the PR's content the way OpenProject::Pull caches a WP: reuse the saved pr.json
-      # while updated_at is unchanged, otherwise re-fetch every comment + review
+      # while updated_at and the head SHA are unchanged, otherwise re-fetch every comment + review
       # stream and rewrite it. The cache is what the agent hands the LLM for full PR
       # context (Copilot's review included).
       def fetch_pr_content(dir, repo, number, pr)
