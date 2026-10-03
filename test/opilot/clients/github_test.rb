@@ -124,6 +124,7 @@ module OPilot
 
       def gql_node(url, runs: [], statuses: [])
         { "url" => url, "updatedAt" => "2026-06-18T18:00:00Z", "headRefOid" => "abc",
+          "headRefName" => "bug/1-x", "title" => "T", "body" => "B", "headRepository" => { "nameWithOwner" => "me/r" },
           "commits" => { "nodes" => [{ "commit" => { "statusCheckRollup" => { "contexts" => {
             "checkRunCountsByState" => runs, "statusContextCountsByState" => statuses } } } }] } }
       end
@@ -135,7 +136,7 @@ module OPilot
                .then.to_return(gql_page([gql_node("https://github.com/me/r/pull/2")]))
         prs = GitHub.new("token").open_prs
         assert_equal %w[https://github.com/o/r/pull/1 https://github.com/me/r/pull/2], prs.map { |p| p["url"] }
-        assert_equal "abc", prs.first["head_sha"]
+        assert_equal %w[abc bug/1-x me/r T B], prs.first.values_at("head_sha", "head_ref", "head_repo", "title", "body")
         assert_requested(stub, times: 2)
       end
 

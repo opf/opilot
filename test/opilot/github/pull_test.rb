@@ -276,7 +276,8 @@ module OPilot
     end
 
     def listed(updated_at: "2026-06-18T18:00:00Z", head_sha: "sha123", ci: nil)
-      [{ "url" => "https://github.com/O/R/pull/7", "updated_at" => updated_at, "head_sha" => head_sha, "ci" => ci }]
+      [{ "url" => "https://github.com/O/R/pull/7", "updated_at" => updated_at, "head_sha" => head_sha, "ci" => ci,
+         "head_ref" => "bug/42-listed", "head_repo" => "fork/r", "title" => "Listed title", "body" => "Listed body" }]
     end
 
     def test_an_unchanged_listed_pr_costs_no_rest_call
@@ -299,15 +300,21 @@ module OPilot
       gh = pull(listed: listed(updated_at: "2026-06-18T18:30:00Z"),
                 issue: [issue_c(id: 2, body: "@opilot again", login: "thykel", at: "2026-06-18T18:30:00Z")],
                 pr_obj: pr(updated_at: "2026-06-18T18:30:00Z"))
-      assert_equal [2], gh.poll_intents("2000-01-01T00:00:00Z").map(&:comment_id)
-      assert_equal 1, @github.pr_fetches
+      intents = gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal [2], intents.map(&:comment_id)
+      assert_equal 0, @github.pr_fetches, "the list replaces the PR GET"
+      assert_equal 1, @github.comment_fetches
+      assert_equal ["bug/42-listed", "fork/r"], [intents.first.branch, intents.first.head_repo]
+      cache = JSON.parse((@pr_dir / "pr.json").read)
+      assert_equal ["Listed title", "Listed body", "2026-06-18T18:30:00Z"], cache.values_at("title", "body", "updated_at")
     end
 
     def test_a_new_head_sha_is_fetched_even_at_the_same_updated_at
       pull.poll_intents("2000-01-01T00:00:00Z")
       gh = pull(listed: listed(head_sha: "sha999"))
       gh.poll_intents("2000-01-01T00:00:00Z")
-      assert_equal 1, @github.pr_fetches
+      assert_equal 1, @github.comment_fetches
+      assert_equal "sha999", JSON.parse((@pr_dir / "pr.json").read)["head_sha"]
     end
 
     def test_a_pr_missing_from_the_list_is_confirmed_closed_by_a_get

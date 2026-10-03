@@ -238,7 +238,8 @@ module OPilot
             pullRequests(states: OPEN, first: 100, after: $cursor) {
               pageInfo { hasNextPage endCursor }
               nodes {
-                url updatedAt headRefOid
+                url updatedAt headRefOid headRefName title body
+                headRepository { nameWithOwner }
                 commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) {
                   checkRunCountsByState { state count }
                   statusContextCountsByState { state count }
@@ -254,7 +255,9 @@ module OPilot
       CI_FAILED_STATES  = %w[FAILURE TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE ERROR].freeze
       CI_RUNNING_STATES = %w[IN_PROGRESS QUEUED PENDING WAITING REQUESTED EXPECTED].freeze
 
-      # [{"url", "updated_at", "head_sha", "ci"}], or nil when the query failed.
+      # [{"url", "updated_at", "head_sha", "head_ref", "head_repo", "title",
+      # "body", "ci"}], or nil when the query failed. `head_repo` is nil when the
+      # head fork was deleted.
       # `ci` is :failed, :running, :done, or nil (no checks seen).
       def open_prs
         prs = []
@@ -290,7 +293,9 @@ module OPilot
              elsif states.intersect?(CI_RUNNING_STATES) then :running
              else :done
              end
-        { "url" => node[:url], "updated_at" => node[:updatedAt], "head_sha" => node[:headRefOid], "ci" => ci }
+        { "url" => node[:url], "updated_at" => node[:updatedAt], "head_sha" => node[:headRefOid],
+          "head_ref" => node[:headRefName], "head_repo" => node.dig(:headRepository, :nameWithOwner),
+          "title" => node[:title], "body" => node[:body], "ci" => ci }
       end
 
       # Replace a PR's description (used to slot in content that needs the PR

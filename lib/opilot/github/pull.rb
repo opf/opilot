@@ -127,8 +127,10 @@ module OPilot
         cached  = Helpers.safe_json_read(dir / "pr.json")
         listed  = listed_pr(pr_url, cached)
         content = cached if unchanged?(cached, listed)
+        # Changed: the list carries everything fetch_pr_content reads from a GET.
+        content ||= fetch_pr_content(dir, repo, number, listed_pr_object(listed)) if listed
         unless content
-          # Changed, or missing from the list: only a GET may decide it is closed.
+          # Missing from the list: only a GET may decide it is closed.
           pr = @github.pull_request(repo, number)
           # Don't touch PRs that are merged or closed — and remember the closure so
           # this dir never costs another poll (see poll_intents).
@@ -278,6 +280,20 @@ module OPilot
       def listed_pr(pr_url, cached)
         return nil unless @open_prs
         @open_prs[pr_url.downcase] || @open_prs[cached&.[]("url").to_s.downcase]
+      end
+
+      # A list entry in the shape of Octokit's PR, for fetch_pr_content.
+      ListedPr   = Struct.new(:state, :updated_at, :html_url, :title, :body, :head, keyword_init: true)
+      ListedHead = Struct.new(:ref, :sha, :repo)
+      ListedRepo = Struct.new(:full_name)
+
+      def listed_pr_object(listed)
+        ListedPr.new(
+          state: "open", updated_at: listed["updated_at"], html_url: listed["url"],
+          title: listed["title"], body: listed["body"],
+          head: ListedHead.new(listed["head_ref"], listed["head_sha"],
+                               (ListedRepo.new(listed["head_repo"]) if listed["head_repo"]))
+        )
       end
 
       # Whether the list shows the PR as it was when pr.json was written.

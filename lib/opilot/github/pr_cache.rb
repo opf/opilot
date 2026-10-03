@@ -39,7 +39,7 @@ module OPilot
         cache_path = dir / "pr.json"
         updated_at = to_iso(pr.updated_at)
         cached = Helpers.safe_json_read(cache_path)
-        return cached if cached && cached["updated_at"] == updated_at
+        return cached if cached && cached["updated_at"] == updated_at && cached["head_sha"] == pr.head.sha
 
         comments = @github.issue_comments(repo, number).map { |c| issue_comment(c) } +
                    @github.review_comments(repo, number).map { |c| review_comment(c) }

@@ -143,7 +143,9 @@ mention-matching live in `GitHub::PrCache`.
 reply, code if asked, pushing to the fork. **One GraphQL query a tick lists every open PR
 the bot authored** (`Clients::GitHub#open_prs`, `viewer.pullRequests`): a PR whose
 `updatedAt` and head SHA match its `pr.json` costs no REST call, so a quiet tick
-costs one request however many PRs are open. Not the search API, which lags and
+costs one request however many PRs are open. A changed PR costs only its three
+comment lists: the query also carries the title, body and head that
+`fetch_pr_content` used to read from a PR `GET`. Not the search API, which lags and
 may not index a PR inside a fork. A PR missing from the list is confirmed closed
 by a `GET` before `pr_done` is set, and a failed query falls back to one `GET` per
 PR. The list also matches the cached `pr.json` URL, because a renamed bot account
