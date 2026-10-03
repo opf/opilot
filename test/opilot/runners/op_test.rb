@@ -89,7 +89,7 @@ module OPilot
         %w[project types 7]        => "#{BASE}/api/v3/projects/7/types",
         %w[status list]            => "#{BASE}/api/v3/statuses",
         %w[doc get 3]              => "#{BASE}/api/v3/documents/3",
-        %w[doc attachments 3]      => "#{BASE}/api/v3/documents/3/attachments?pageSize=100",
+        %w[doc attachments 3]      => "#{BASE}/api/v3/documents/3/attachments",
         %w[wp assignees 42]        => "#{BASE}/api/v3/work_packages/42/available_assignees",
         %w[project versions 7]     => "#{BASE}/api/v3/projects/7/versions",
         %w[priority list]          => "#{BASE}/api/v3/priorities",
@@ -117,6 +117,20 @@ module OPilot
       assert_requested lookup
       assert_requested relations
       assert_equal({ "total" => 0 }, JSON.parse(out))
+    end
+
+    def test_wp_relations_and_doc_list_take_a_page
+      filters = Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter("involved", "=", 42))
+      relations = stub_request(:get, "#{BASE}/api/v3/relations?pageSize=10&offset=2&filters=#{filters}")
+                  .to_return(status: 200, body: "{}")
+      run_op("wp", "relations", "42", "--page", "2", "--page-size", "10")
+      assert_requested relations
+
+      filters = Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter("project", "=", 7))
+      docs = stub_request(:get, "#{BASE}/api/v3/documents?pageSize=100&offset=3&filters=#{filters}")
+             .to_return(status: 200, body: "{}")
+      run_op("doc", "list", "7", "--page", "3")
+      assert_requested docs
     end
 
     def test_wp_relations_reports_an_unreadable_work_package_rather_than_filtering_on_nothing

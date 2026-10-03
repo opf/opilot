@@ -102,7 +102,7 @@ module OPilot
           id = one!("op wp reactions", rest, "<work-package-id>")
           emit("wp reactions #{id}") { api.work_package_emoji_reactions(id) }
         when "relations"
-          wp_relations(one!("op wp relations", rest, "<work-package-id>"))
+          wp_relations(*paged_one!("op wp relations", rest, "<work-package-id>", page_size: 100))
         when "assignees"
           id = one!("op wp assignees", rest, "<work-package-id>")
           emit("wp assignees #{id}") { api.work_package_available_assignees(id) }
@@ -117,9 +117,9 @@ module OPilot
       # The `involved` filter coerces to Integer, so a semantic id ("STC-162")
       # matches nothing rather than failing — an empty result reading as "no
       # relations". Resolve it first, as OpenProject::Pull#related_work_packages does.
-      def wp_relations(id)
+      def wp_relations(id, page, page_size)
         numeric = resolve!("wp relations #{id}") { lookup.work_package_id(id) }
-        emit("wp relations #{id}") { api.work_package_relations(numeric) }
+        emit("wp relations #{id}") { api.work_package_relations(numeric, page: page, page_size: page_size) }
       end
 
       CREATE_FLAGS = %w[project subject type description description-file parent relates
@@ -420,6 +420,15 @@ module OPilot
         end
       end
 
+      # One id plus --page/--page-size, for a paginated collection that takes no
+      # filter. The body's `total` says whether there are more pages.
+      def paged_one!(command, args, spec, page_size:)
+        opts, rest = flags(command, args, %w[page page-size])
+        [one!(command, rest, "#{spec} [--page <n>] [--page-size <n>]"),
+         positive_int!(command, "--page", opts["page"]&.last, 1),
+         positive_int!(command, "--page-size", opts["page-size"]&.last, page_size)]
+      end
+
       def project(args)
         action, *rest = args
         case action
@@ -473,9 +482,9 @@ module OPilot
         action, *rest = args
         case action
         when "list"
-          id = one!("op doc list", rest, "<project-id-or-identifier>")
+          id, page, size = paged_one!("op doc list", rest, "<project-id-or-identifier>", page_size: 100)
           numeric = resolve!("doc list #{id}") { lookup.project_id(id) }
-          emit("doc list #{id}") { api.documents(numeric) }
+          emit("doc list #{id}") { api.documents(numeric, page: page, page_size: size) }
         when "get", "inspect"
           id = one!("op doc get", rest, "<document-id>")
           emit("doc get #{id}") { api.document(id) }

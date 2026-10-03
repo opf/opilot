@@ -108,7 +108,8 @@ module OPilot
         ./opilot op wp list [flags]           search — see the flags below
         ./opilot op wp activities <id>        its comments and history
         ./opilot op wp reactions <id>         emoji reactions on its activities
-        ./opilot op wp relations <id>         relations it takes part in
+        ./opilot op wp relations <id> [--page <n>] [--page-size <n>]
+                                              relations it takes part in
         ./opilot op wp assignees <id>         who may be assigned to it
         ./opilot op wp schema --project <id> --type <name|id>
                                               every field of that pair, with the
@@ -133,7 +134,8 @@ module OPilot
         ./opilot op cf items <id>             the values a hierarchy custom
                                               field allows
 
-        ./opilot op doc list <project-id>     documents in a project
+        ./opilot op doc list <project-id> [--page <n>] [--page-size <n>]
+                                              documents in a project
         ./opilot op doc get <id>              one document (alias: inspect)
         ./opilot op doc attachments <id>      its attachments
         ./opilot op doc download <url> --out <path>

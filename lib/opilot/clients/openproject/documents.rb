@@ -28,9 +28,10 @@ module OPilot
 
         # Attachment metadata for a document: fileName, contentType, fileSize and
         # _links.downloadLocation for each. The content itself is fetched with
-        # #download_attachment, since it is binary and behind a redirect.
+        # #download_attachment, since it is binary and behind a redirect. Not
+        # paginated, as for a work package: the route renders every attachment.
         def document_attachments(document_id)
-          get("documents/#{document_id}/attachments", pageSize: 100)
+          get("documents/#{document_id}/attachments")
         end
       end
     end
