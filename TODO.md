@@ -10,6 +10,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
   * AI chat noise deflected from the main activity comments
   * LLM working/typing indicator using HocusPocus
 * Make the agent work off webhooks instead of constant polling
+* Source configuration from OpenProject's admin and project settings instead of `.env` and `repos.json`
 
 ## Security & Hosting
 * Switch from Docker to Podman for root-less process model
@@ -19,6 +20,7 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Abandon the auth-less "god mode" and switch to granular authorization
   * OpenProject OAuth or Keycloak
 * Respect multi-tenant isolation in SaaS environments
+  * Per-tenant data lifecycle: retention, deletion requests, offboarding
 * Switch to a proper event loop so that agent work doesn't block polling
 * Set up token limits & cleanly handle threshold breaches
 * Centralize our skill and agent definitions into another OP repo, so that OPilot may leverage them
