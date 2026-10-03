@@ -109,7 +109,7 @@ module OPilot
       lookup = stub_request(:get, "#{BASE}/api/v3/work_packages/STC-162")
                .to_return(status: 200, body: '{"id":9182,"displayId":"STC-162"}')
       filters = Clients::HTTP.encode_filters(Clients::OpenProject::Query.filter("involved", "=", 9182))
-      relations = stub_request(:get, "#{BASE}/api/v3/relations?filters=#{filters}&pageSize=100")
+      relations = stub_request(:get, "#{BASE}/api/v3/relations?pageSize=100&offset=1&filters=#{filters}")
                   .to_return(status: 200, body: '{"total":0}')
 
       out, = run_op("wp", "relations", "STC-162")

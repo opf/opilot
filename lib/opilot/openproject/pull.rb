@@ -5,6 +5,7 @@ module OPilot
   module OpenProject
     class Pull
       Resource = Clients::OpenProject::Resource
+      Lookup   = Clients::OpenProject::Lookup
 
       # Last poll's stats: scanned, and re-fetched rather than cached.
       attr_reader :scanned_count, :changed_count
@@ -116,9 +117,10 @@ module OPilot
 
       # [id, label, title]; the label is from this WP's side of the relation.
       private def relation_pairs(numeric_id)
-        res = @api.work_package_relations(numeric_id)
-        return [] unless res.code == 200 && res.body
-        Resource.elements(res.body).filter_map do |rel|
+        _code, relations, _total = Lookup.new(@api).all_pages do |page, size|
+          @api.work_package_relations(numeric_id, page: page, page_size: size)
+        end
+        Array(relations).filter_map do |rel|
           from = Resource.href_id(rel.dig("_links", "from", "href"))
           to   = Resource.href_id(rel.dig("_links", "to", "href"))
           if from == numeric_id

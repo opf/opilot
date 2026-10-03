@@ -62,9 +62,11 @@ module OPilot
         numeric = numeric_project_id(project_id)
         return fetch_named(project_id, numeric, doc_ids) if doc_ids.any?
 
-        res = @op.documents(numeric)
-        raise OPilot::FatalError, document_error(res.code, project_id) unless res.code == 200
-        ids = Clients::OpenProject::Resource.elements(res.body).map { |d| d["id"] }
+        code, docs, _total = Clients::OpenProject::Lookup.new(@op).all_pages do |page, size|
+          @op.documents(numeric, page: page, page_size: size)
+        end
+        raise OPilot::FatalError, document_error(code, project_id) unless docs
+        ids = docs.map { |d| d["id"] }
         ids.filter_map { |id| fetch_one(id) }
       end
 

@@ -867,6 +867,19 @@ module OPilot
       assert_equal "New", refs.find { |r| r["id"] == "200" }["status"]
     end
 
+    def test_relations_are_read_across_every_page
+      stub_pinged({})
+      page = ->(n, rels) do
+        stub_request(:get, %r{/api/v3/relations\?.*offset=#{n}})
+          .to_return(status: 200, body: JSON.generate({ "total" => 2, "_embedded" => { "elements" => rels } }))
+      end
+      page.(1, [rel(from: 100, to: 200, type: "relates", reverse: "relates")])
+      page.(2, [rel(from: 100, to: 300, type: "blocks", reverse: "blocked")])
+      [200, 300].each { |id| stub_full_wp(id) }
+
+      assert_equal %w[200 300], @pull.related_work_packages("100").map { |r| r["id"] }.sort
+    end
+
     def test_unreachable_related_wps_are_skipped_without_leaking
       stub_pinged("children" => [{ "href" => "/api/v3/work_packages/60" },
                                  { "href" => "/api/v3/work_packages/70" }])

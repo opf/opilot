@@ -19,13 +19,21 @@ module OPilot
         # Every work package a filter matches, across pages, up to `max`:
         # [code, elements, total]. On a failed page: [code, nil, 0].
         def all_work_packages(filters_json, sort_by: '[["id","asc"]]', max: nil, page_size: 100)
+          all_pages(max: max, page_size: page_size) do |page, size|
+            @api.work_packages(filters_json: filters_json, page: page, page_size: size, sort_by: sort_by)
+          end
+        end
+
+        # Every element of a paginated collection, as #all_work_packages. The
+        # block reads one page: it gets (page, page_size) and returns a Response.
+        def all_pages(max: nil, page_size: 100)
           elements = []
           total = 0
           (1..).each do |page|
-            res = @api.work_packages(filters_json: filters_json, page: page, page_size: page_size, sort_by: sort_by)
+            res = yield(page, page_size)
             return [res.code, nil, 0] unless res.code == 200 && res.body
             total = res.body["total"].to_i
-            batch = res.body.dig("_embedded", "elements") || []
+            batch = Resource.elements(res.body)
             elements.concat(batch)
             break if batch.empty? || elements.length >= total || (max && elements.length >= max)
           end

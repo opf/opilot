@@ -42,8 +42,9 @@ module OPilot
         # NUMERIC id — the involved filter coerces values to integers — and the
         # endpoint only returns relations whose BOTH sides are visible to the
         # token, so an unreachable related WP is filtered out server-side.
-        def work_package_relations(involved_id)
-          get("relations", filters: Query.filter("involved", "=", involved_id), pageSize: 100)
+        def work_package_relations(involved_id, page: 1, page_size: 100)
+          collection("relations", filters_json: Query.filter("involved", "=", involved_id),
+                                  page: page, page_size: page_size)
         end
 
         # PRs the GitHub integration linked to a work package. Needs
