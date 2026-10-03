@@ -663,6 +663,71 @@ module OPilot
       assert_requested listing
     end
 
+    def test_wp_list_refuses_filter_json_of_the_wrong_shape
+      never = stub_request(:get, %r{/api/v3/work_packages})
+
+      ["{}", "not-json", '[{"status":"1"}]', '[{"a":{"operator":"="},"b":{"operator":"="}}]'].each do |raw|
+        _out, err, = run_op!("wp", "list", "--filter-json", raw)
+        assert_includes err, "--filter-json must be a JSON list", raw
+      end
+      assert_not_requested never
+    end
+
+    def stub_statuses
+      stub_request(:get, "#{BASE}/api/v3/statuses").to_return(status: 200, body: JSON.generate(
+        "_embedded" => { "elements" => [{ "id" => 1, "name" => "New" }, { "id" => 7, "name" => "In progress" }] }
+      ))
+    end
+
+    def test_wp_list_resolves_a_status_name_to_its_id
+      stub_statuses
+      expected = JSON.generate([{ "status" => { "operator" => "=", "values" => ["7"] } }])
+      listing = stub_request(:get, wp_list_url(expected)).to_return(status: 200, body: "{}")
+
+      run_op("wp", "list", "--filter", "status=in progress")
+
+      assert_requested listing
+    end
+
+    def test_wp_list_names_the_statuses_when_a_name_is_unknown
+      stub_statuses
+      never = stub_request(:get, %r{/api/v3/work_packages})
+
+      _out, err, = run_op!("wp", "list", "--filter", "status=Closed")
+
+      assert_includes err, 'no status named "Closed" (it has: New, In progress)'
+      assert_not_requested never
+    end
+
+    def test_wp_list_resolves_a_principal_and_passes_me_and_ids_through
+      principals = stub_request(:get, %r{/api/v3/principals\?.*Jane}).to_return(status: 200, body: JSON.generate(
+        "_embedded" => { "elements" => [{ "id" => 5, "name" => "Jane Doe" }] }
+      ))
+      expected = JSON.generate([{ "assignee" => { "operator" => "=", "values" => ["5"] } },
+                                { "author"   => { "operator" => "=", "values" => ["me"] } },
+                                { "responsible" => { "operator" => "=", "values" => ["9"] } }])
+      listing = stub_request(:get, wp_list_url(expected)).to_return(status: 200, body: "{}")
+
+      run_op("wp", "list", "--filter", "assignee=Jane Doe", "--filter", "author=me", "--filter", "responsible=9")
+
+      assert_requested principals, times: 1
+      assert_requested listing
+    end
+
+    def test_a_capped_page_size_is_noted_on_stderr
+      listing = stub_request(:get, wp_list_url("[]", page_size: 500))
+                .to_return({ status: 200, body: '{"pageSize":200,"total":300}' },
+                           { status: 200, body: '{"pageSize":200,"total":3}' })
+
+      out, err = run_op("wp", "list", "--page-size", "500")
+      assert_includes err, "caps a page at 200, not 500"
+      assert_equal({ "pageSize" => 200, "total" => 300 }, JSON.parse(out), "stdout stays pure JSON")
+
+      _out, err = run_op("wp", "list", "--page-size", "500")
+      refute_includes err, "caps a page", "everything fit on the capped page"
+      assert_requested listing, times: 2
+    end
+
     def test_wp_list_refuses_both_filter_forms_rather_than_dropping_one
       _out, err, = run_op!("wp", "list", "--filter", "subject~x", "--filter-json", "[]")
       assert_includes err, "not both"

@@ -149,9 +149,15 @@ module OPilot
                                               attachment bytes, written to a file
 
         Flags for `wp list`, `project list` and `principal list`:
-          --filter <field>~<value>            repeatable; `~` contains, `=` equals
-          --filter-json <json>                raw filters JSON, for anything else
-          --page <n> / --page-size <n>        default 1 / 50 (100 for the other two)
+          --filter <field>~<value>            repeatable; `~` contains, `=` equals.
+                                              In `wp list`, status, priority,
+                                              assignee, author and responsible
+                                              take a name or an id (status=New)
+          --filter-json <json>                raw filters JSON, for anything else:
+                                              a list of {"<field>":{"operator",
+                                              "values"}} objects
+          --page <n> / --page-size <n>        default 1 / 50 (100 for the other two);
+                                              the instance may cap the page size
 
         Flags for `wp create` (--project, --type and --subject are required;
         `wp form` takes the same ones and needs no --subject):

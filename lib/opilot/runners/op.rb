@@ -131,7 +131,9 @@ module OPilot
       # relations". Resolve it first, as OpenProject::Pull#related_work_packages does.
       def wp_relations(id, page, page_size)
         numeric = resolve!("wp relations #{id}") { lookup.work_package_id(id) }
-        emit("wp relations #{id}") { api.work_package_relations(numeric, page: page, page_size: page_size) }
+        emit("wp relations #{id}") do
+          note_page_cap(api.work_package_relations(numeric, page: page, page_size: page_size), page_size)
+        end
       end
 
       CREATE_FLAGS = %w[project subject type description description-file parent relates
@@ -400,20 +402,33 @@ module OPilot
       end
 
       def wp_list(args)
-        list("op wp list", args, page_size: 50) { |kw| api.work_packages(**kw) }
+        list("op wp list", args, page_size: 50, names: true) { |kw| api.work_packages(**kw) }
       end
 
       LIST_SPEC = "[--filter <field>~<value>]... [--filter-json <json>] [--page <n>] [--page-size <n>]".freeze
 
-      # Every paginated, filterable collection takes the same four flags.
-      def list(command, args, page_size:)
+      # Every paginated, filterable collection takes the same four flags. `names`
+      # lets `--filter status=New` name a linked resource (see NAMED_FILTERS).
+      def list(command, args, page_size:, names: false)
         opts, rest = flags(command, args, %w[filter filter-json page page-size])
         usage!(command, LIST_SPEC) if rest.any?
+        filters = filters_json(opts, command, names: names)
+        page    = positive_int!(command, "--page", opts["page"]&.last, 1)
+        size    = positive_int!(command, "--page-size", opts["page-size"]&.last, page_size)
         emit(command.delete_prefix("op ")) do
-          yield(filters_json: filters_json(opts, command),
-                page:         positive_int!(command, "--page", opts["page"]&.last, 1),
-                page_size:    positive_int!(command, "--page-size", opts["page-size"]&.last, page_size))
+          note_page_cap(yield(filters_json: filters, page: page, page_size: size), size)
         end
+      end
+
+      # The server caps a page at its apiv3_max_page_size and says so only in the
+      # body, so a short page would read as the whole answer. Said only when the
+      # cap actually left elements out.
+      def note_page_cap(res, asked)
+        given = res.ok? && res.body.is_a?(Hash) && res.body["pageSize"]
+        if given && given.to_i < asked && res.body["total"].to_i > given.to_i
+          $stderr.puts "note: this instance caps a page at #{given}, not #{asked}; use --page for the rest."
+        end
+        res
       end
 
       # One id plus --page/--page-size, for a paginated collection that takes no
@@ -495,7 +510,7 @@ module OPilot
         when "list"
           id, page, size = paged_one!("op doc list", rest, "<project-id-or-identifier>", page_size: 100)
           numeric = resolve!("doc list #{id}") { lookup.project_id(id) }
-          emit("doc list #{id}") { api.documents(numeric, page: page, page_size: size) }
+          emit("doc list #{id}") { note_page_cap(api.documents(numeric, page: page, page_size: size), size) }
         when "get", "inspect"
           id = one!("op doc get", rest, "<document-id>")
           emit("doc get #{id}") { api.document(id) }
@@ -623,19 +638,60 @@ module OPilot
       # Giving both is named, not silently resolved. No filter sends an explicit
       # empty array: OpenProject applies its own default when `filters` is absent,
       # and an inspection command must not quietly scope its results.
-      def filters_json(opts, command)
+      def filters_json(opts, command, names: false)
         raw    = opts["filter-json"].last if opts["filter-json"].any?
         pairs  = opts["filter"]
         reject!(command, "pass --filter or --filter-json, not both") if raw && pairs.any?
-        return raw if raw
+        return checked_filter_json!(raw, command) if raw
         return "[]" if pairs.empty?
 
         clauses = pairs.map do |pair|
           m = FILTER.match(pair)
           reject!(command, "--filter must look like <field>~<value> or <field>=<value>, got #{pair.inspect}") unless m
-          JSON.parse(Clients::OpenProject::Query.filter(m[:field], m[:operator], m[:value])).first
+          value = m[:value]
+          value = filter_id!(command, m[:field], value) if names && m[:operator] == "=" && named_filter?(m[:field], value)
+          JSON.parse(Clients::OpenProject::Query.filter(m[:field], m[:operator], value)).first
         end
         JSON.generate(clauses)
+      end
+
+      # The API ignores a `filters` value of the wrong shape and filters nothing,
+      # so a typo would read as a real, unfiltered answer. Passed on untouched.
+      def checked_filter_json!(raw, command)
+        parsed = begin
+          JSON.parse(raw)
+        rescue JSON::ParserError
+          nil
+        end
+        valid = parsed.is_a?(Array) && parsed.all? do |clause|
+          clause.is_a?(Hash) && clause.size == 1 && clause.values.first.is_a?(Hash) &&
+            clause.values.first.key?("operator")
+        end
+        return raw if valid
+
+        reject!(command, "--filter-json must be a JSON list like " \
+                         '[{"status":{"operator":"=","values":["1"]}}], got ' + raw.inspect)
+      end
+
+      # Link filters take ids. A name is resolved first, so `status=New` works;
+      # a number and the API's own "me" go through as they are.
+      NAMED_FILTERS = { "status" => :status, "priority" => :priority, "assignee" => :principal,
+                        "author" => :principal, "responsible" => :principal }.freeze
+
+      def named_filter?(field, value)
+        NAMED_FILTERS.key?(field) && !value.match?(/\A\d+\z/) && value != "me"
+      end
+
+      def filter_id!(command, field, value)
+        kind  = NAMED_FILTERS[field]
+        found = resolve!("#{command} --filter #{field}=#{value}") { lookup.public_send(kind, value) }
+        return found["id"].to_s if found
+
+        known = case kind
+                when :status   then " (it has: #{lookup.statuses.map { |e| e["name"] }.join(", ")})"
+                when :priority then " (it has: #{lookup.priorities.map { |e| e["name"] }.join(", ")})"
+                end
+        reject!(command, "no #{field} named #{value.inspect}#{known}")
       end
 
       # ── failure ──────────────────────────────────────────────────────────────
