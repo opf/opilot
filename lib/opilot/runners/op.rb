@@ -25,12 +25,13 @@ module OPilot
       Href     = Clients::OpenProject::Href
       Resource = Clients::OpenProject::Resource
 
-      RESOURCES   = %w[me wp project status priority principal doc cf].freeze
-      WP_ACTIONS  = %w[get inspect list activities reactions relations assignees schema
-                       create form update-form].freeze
+      RESOURCES   = %w[me wp project status priority principal user doc attachment cf].freeze
+      WP_ACTIONS  = %w[get inspect list activities reactions relations assignees attachments prs
+                       schema create form update-form].freeze
       PRJ_ACTIONS = %w[get inspect list types versions].freeze
       DOC_ACTIONS = %w[list get inspect attachments download].freeze
       CF_ACTIONS  = %w[items].freeze
+      GET_ACTIONS = %w[get inspect].freeze
 
       # `--filter subject~login`. Only `=` and `~`; --filter-json is the escape
       # hatch, rather than growing an operator dialect here.
@@ -79,7 +80,9 @@ module OPilot
         when "status"  then status(rest)
         when "priority" then priority(rest)
         when "principal" then principal(rest)
+        when "user"    then user(rest)
         when "doc"     then doc(rest)
+        when "attachment" then attachment(rest)
         when "cf"      then cf(rest)
         else unknown!("resource", resource, RESOURCES)
         end
@@ -106,6 +109,15 @@ module OPilot
         when "assignees"
           id = one!("op wp assignees", rest, "<work-package-id>")
           emit("wp assignees #{id}") { api.work_package_available_assignees(id) }
+        # Only what is attached to the work package; a comment's picture is read
+        # by id with `op attachment get`.
+        when "attachments"
+          id = one!("op wp attachments", rest, "<work-package-id>")
+          emit("wp attachments #{id}") { api.work_package_attachments(id) }
+        # The GitHub integration's links. 403/404 when it is off for the project.
+        when "prs"
+          id = one!("op wp prs", rest, "<work-package-id>")
+          emit("wp prs #{id}") { api.work_package_github_pull_requests(id) }
         when "schema"      then wp_schema(rest)
         when "create"      then wp_create(rest)
         when "form"        then wp_form(rest)
@@ -476,6 +488,21 @@ module OPilot
         action, *rest = args
         unknown!("principal action", action, %w[list]) unless action == "list"
         list("op principal list", rest, page_size: 100) { |kw| api.principals(**kw) }
+      end
+
+      def user(args)
+        action, *rest = args
+        unknown!("user action", action, GET_ACTIONS) unless GET_ACTIONS.include?(action)
+        id = one!("op user get", rest, "<user-id>")
+        emit("user get #{id}") { api.user(id) }
+      end
+
+      # Any container's attachment, by id — the metadata, not the bytes.
+      def attachment(args)
+        action, *rest = args
+        unknown!("attachment action", action, GET_ACTIONS) unless GET_ACTIONS.include?(action)
+        id = one!("op attachment get", rest, "<attachment-id>")
+        emit("attachment get #{id}") { api.attachment(id) }
       end
 
       def doc(args)

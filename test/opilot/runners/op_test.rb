@@ -91,6 +91,12 @@ module OPilot
         %w[doc get 3]              => "#{BASE}/api/v3/documents/3",
         %w[doc attachments 3]      => "#{BASE}/api/v3/documents/3/attachments",
         %w[wp assignees 42]        => "#{BASE}/api/v3/work_packages/42/available_assignees",
+        %w[wp attachments 42]      => "#{BASE}/api/v3/work_packages/42/attachments",
+        %w[wp prs 42]              => "#{BASE}/api/v3/work_packages/42/github_pull_requests",
+        %w[user get 5]             => "#{BASE}/api/v3/users/5",
+        %w[user inspect 5]         => "#{BASE}/api/v3/users/5",
+        %w[attachment get 77]      => "#{BASE}/api/v3/attachments/77",
+        %w[attachment inspect 77]  => "#{BASE}/api/v3/attachments/77",
         %w[project versions 7]     => "#{BASE}/api/v3/projects/7/versions",
         %w[priority list]          => "#{BASE}/api/v3/priorities",
       }.each do |args, url|

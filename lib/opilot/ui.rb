@@ -111,6 +111,10 @@ module OPilot
         ./opilot op wp relations <id> [--page <n>] [--page-size <n>]
                                               relations it takes part in
         ./opilot op wp assignees <id>         who may be assigned to it
+        ./opilot op wp attachments <id>       files attached to it (not to its
+                                              comments — see `attachment get`)
+        ./opilot op wp prs <id>               pull requests the GitHub
+                                              integration linked to it
         ./opilot op wp schema --project <id> --type <name|id>
                                               every field of that pair, with the
                                               key a payload uses (customField12)
@@ -131,6 +135,9 @@ module OPilot
         ./opilot op priority list             every priority on the instance
         ./opilot op principal list [flags]    users, groups, placeholders — the
                                               `wp list` flags (name~jane)
+        ./opilot op user get <id>             one user (alias: inspect)
+        ./opilot op attachment get <id>       one attachment's metadata, from any
+                                              container (alias: inspect)
         ./opilot op cf items <id>             the values a hierarchy custom
                                               field allows
 
