@@ -229,6 +229,70 @@ module OPilot
         with_retry { @octokit.pull_request(repo, number) }
       end
 
+      # Every open PR the token's own account authored, from one GraphQL query
+      # (forks included, no search-index lag). gh-agent compares `updated_at`
+      # with its pr.json and spends a REST call only on a PR that changed.
+      OPEN_PRS_QUERY = <<~GQL.freeze
+        query($cursor: String) {
+          viewer {
+            pullRequests(states: OPEN, first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                url updatedAt headRefOid
+                commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 1) {
+                  checkRunCountsByState { state count }
+                  statusContextCountsByState { state count }
+                } } } } }
+              }
+            }
+          }
+        }
+      GQL
+      OPEN_PRS_MAX_PAGES = 10
+
+      # Check-run and status states that mean "failed" and "not done yet".
+      CI_FAILED_STATES  = %w[FAILURE TIMED_OUT ACTION_REQUIRED STARTUP_FAILURE ERROR].freeze
+      CI_RUNNING_STATES = %w[IN_PROGRESS QUEUED PENDING WAITING REQUESTED EXPECTED].freeze
+
+      # [{"url", "updated_at", "head_sha", "ci"}], or nil when the query failed.
+      # `ci` is :failed, :running, :done, or nil (no checks seen).
+      def open_prs
+        prs = []
+        cursor = nil
+        OPEN_PRS_MAX_PAGES.times do
+          page = graphql(OPEN_PRS_QUERY, "cursor" => cursor).dig(:viewer, :pullRequests)
+          prs.concat(page[:nodes].map { |n| open_pr_entry(n) })
+          break unless page.dig(:pageInfo, :hasNextPage)
+          cursor = page.dig(:pageInfo, :endCursor)
+        end
+        prs
+      rescue Octokit::Error, Faraday::Error, GraphQLError, NoMethodError => e
+        warn "  ⚠ GitHub open-PR query failed (#{e.class}) — polling each PR instead."
+        nil
+      end
+
+      class GraphQLError < StandardError; end
+
+      # A query is a read, so a retried POST is safe. String keys on purpose:
+      # Octokit takes a symbol `:query` as URL parameters, not as body.
+      def graphql(query, variables)
+        res = with_retry { @octokit.post("/graphql", "query" => query, "variables" => variables) }.to_attrs
+        raise GraphQLError, Array(res[:errors]).map { |e| e[:message] }.join("; ") unless res[:data]
+        res[:data]
+      end
+
+      def open_pr_entry(node)
+        rollup = node.dig(:commits, :nodes, 0, :commit, :statusCheckRollup, :contexts)
+        counts = Array(rollup&.dig(:checkRunCountsByState)) + Array(rollup&.dig(:statusContextCountsByState))
+        states = counts.select { |c| c[:count].to_i.positive? }.map { |c| c[:state].to_s }
+        ci = if states.empty? then nil
+             elsif states.intersect?(CI_FAILED_STATES) then :failed
+             elsif states.intersect?(CI_RUNNING_STATES) then :running
+             else :done
+             end
+        { "url" => node[:url], "updated_at" => node[:updatedAt], "head_sha" => node[:headRefOid], "ci" => ci }
+      end
+
       # Replace a PR's description (used to slot in content that needs the PR
       # number, which only exists after creation — e.g. the adopt note).
       def update_pr_body(repo, number, body)

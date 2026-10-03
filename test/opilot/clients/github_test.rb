@@ -115,6 +115,47 @@ module OPilot
         assert_equal 7, pr.number
         assert_requested(stub, times: 2)
       end
+      def gql_page(nodes, next_cursor: nil)
+        { status: 200, headers: { "Content-Type" => "application/json" },
+          body: JSON.generate("data" => { "viewer" => { "pullRequests" => {
+            "pageInfo" => { "hasNextPage" => !next_cursor.nil?, "endCursor" => next_cursor },
+            "nodes" => nodes } } }) }
+      end
+
+      def gql_node(url, runs: [], statuses: [])
+        { "url" => url, "updatedAt" => "2026-06-18T18:00:00Z", "headRefOid" => "abc",
+          "commits" => { "nodes" => [{ "commit" => { "statusCheckRollup" => { "contexts" => {
+            "checkRunCountsByState" => runs, "statusContextCountsByState" => statuses } } } }] } }
+      end
+
+      def test_open_prs_sends_the_query_in_the_body_and_follows_pages
+        stub = stub_request(:post, "https://api.github.com/graphql")
+               .with { |req| JSON.parse(req.body).key?("query") && !req.uri.query }
+               .to_return(gql_page([gql_node("https://github.com/o/r/pull/1")], next_cursor: "c1"))
+               .then.to_return(gql_page([gql_node("https://github.com/me/r/pull/2")]))
+        prs = GitHub.new("token").open_prs
+        assert_equal %w[https://github.com/o/r/pull/1 https://github.com/me/r/pull/2], prs.map { |p| p["url"] }
+        assert_equal "abc", prs.first["head_sha"]
+        assert_requested(stub, times: 2)
+      end
+
+      def test_open_prs_reduces_the_check_counts_to_one_ci_state
+        node = ->(runs) { gql_node("u", runs: runs.map { |s, n| { "state" => s, "count" => n } }) }
+        stub_request(:post, "https://api.github.com/graphql").to_return(gql_page([
+          node.({ "SUCCESS" => 3, "IN_PROGRESS" => 2 }),
+          node.({ "FAILURE" => 1, "IN_PROGRESS" => 2 }),
+          node.({ "SUCCESS" => 3, "FAILURE" => 0 }),
+          node.({})
+        ]))
+        assert_equal [:running, :failed, :done, nil], GitHub.new("token").open_prs.map { |p| p["ci"] }
+      end
+
+      def test_open_prs_is_nil_on_a_graphql_error
+        stub_request(:post, "https://api.github.com/graphql")
+          .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                     body: JSON.generate("errors" => [{ "message" => "bad" }]))
+        assert_nil GitHub.new("token").open_prs
+      end
     end
   end
 end

@@ -21,6 +21,7 @@ module OPilot
         @check_runs_calls = 0
       end
 
+      def open_prs = nil
       def pull_request(_repo, _num) = @pr
       def issue_comments(_repo, _num) = @issue
       def review_comments(_repo, _num) = []

@@ -19,14 +19,17 @@ module OPilot
 
     class FakeGitHub
       attr_reader :comment_fetches, :reacted, :ci_comments, :check_runs_calls, :pr_fetches
-      def initialize(pr:, issue: [], review: [], reviews: [],
+      attr_accessor :listed
+      def initialize(pr:, issue: [], review: [], reviews: [], listed: nil,
                      check_runs: [], annotations: [], workflow_runs: [], jobs: [], job_log: nil)
+        @listed = listed
         @pr = pr; @issue = issue; @review = review; @reviews = reviews
         @check_runs = check_runs; @annotations = annotations
         @workflow_runs = workflow_runs; @jobs = jobs; @job_log = job_log
         @comment_fetches = 0; @reacted = []; @ci_comments = []; @check_runs_calls = 0
         @pr_fetches = 0
       end
+      def open_prs = @listed
       def pull_request(_repo, _num);   @pr_fetches += 1; @pr; end
       def issue_comments(_repo, _num); @comment_fetches += 1; @issue; end
       def review_comments(_repo, _num); @review;  end
@@ -270,6 +273,67 @@ module OPilot
       intents = gh2.poll_intents("2000-01-01T00:00:00Z")
       assert_equal 1, @github.comment_fetches, "a changed updated_at must re-fetch the comment streams"
       assert_equal [2], intents.map(&:comment_id)
+    end
+
+    def listed(updated_at: "2026-06-18T18:00:00Z", head_sha: "sha123", ci: nil)
+      [{ "url" => "https://github.com/O/R/pull/7", "updated_at" => updated_at, "head_sha" => head_sha, "ci" => ci }]
+    end
+
+    def test_an_unchanged_listed_pr_costs_no_rest_call
+      pull.poll_intents("2000-01-01T00:00:00Z")   # writes pr.json
+      gh = pull(listed: listed)
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 0, @github.pr_fetches
+      assert_equal 0, @github.comment_fetches
+    end
+
+    def test_a_renamed_fork_matches_the_list_by_the_cached_url
+      pull(pr_obj: PR.new(**pr.to_h, html_url: "https://github.com/new-name/r/pull/7")).poll_intents("2000-01-01T00:00:00Z")
+      entry = listed.first.merge("url" => "https://github.com/new-name/r/pull/7")
+      pull(listed: [entry]).poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 0, @github.pr_fetches
+    end
+
+    def test_a_changed_listed_pr_is_fetched
+      pull.poll_intents("2000-01-01T00:00:00Z")
+      gh = pull(listed: listed(updated_at: "2026-06-18T18:30:00Z"),
+                issue: [issue_c(id: 2, body: "@opilot again", login: "thykel", at: "2026-06-18T18:30:00Z")],
+                pr_obj: pr(updated_at: "2026-06-18T18:30:00Z"))
+      assert_equal [2], gh.poll_intents("2000-01-01T00:00:00Z").map(&:comment_id)
+      assert_equal 1, @github.pr_fetches
+    end
+
+    def test_a_new_head_sha_is_fetched_even_at_the_same_updated_at
+      pull.poll_intents("2000-01-01T00:00:00Z")
+      gh = pull(listed: listed(head_sha: "sha999"))
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 1, @github.pr_fetches
+    end
+
+    def test_a_pr_missing_from_the_list_is_confirmed_closed_by_a_get
+      gh = pull(listed: [], pr_obj: pr(state: "closed"))
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 1, @github.pr_fetches
+      assert JSON.parse((@pr_dir / "gh_pr.json").read)["pr_done"]
+    end
+
+    def test_a_failed_list_query_falls_back_to_one_get_per_pr
+      gh = pull(listed: nil)
+      gh.poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 1, @github.pr_fetches
+    end
+
+    def test_running_ci_with_no_failure_skips_the_check_runs_call
+      pull(listed: listed(ci: :running), check_runs: [check_run(status: "in_progress", conclusion: nil)])
+        .poll_intents("2000-01-01T00:00:00Z")
+      assert_equal 0, @github.check_runs_calls
+    end
+
+    def test_a_listed_failure_still_reads_the_check_runs
+      intents = pull(listed: listed(ci: :failed), check_runs: [check_run(conclusion: "failure")])
+                .poll_intents("2000-01-01T00:00:00Z")
+      assert_equal [:ci], intents.map(&:kind)
+      assert_equal 1, @github.check_runs_calls
     end
 
     def test_mark_acted_advances_to_the_latest

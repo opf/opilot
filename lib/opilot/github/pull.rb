@@ -56,6 +56,9 @@ module OPilot
         shipped = shipped_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
         specs   = spec_pr_dirs.reject { |d| gh_state(d)["pr_done"] }
         @scanned_count = shipped.length + specs.length
+        # One query for every open PR, so a quiet PR costs no REST call. nil
+        # (the query failed) falls back to one GET per PR.
+        @open_prs = (shipped.empty? && specs.empty?) ? {} : open_prs_by_url
 
         intents = []
         shipped.each { |d| intents.concat(intents_for_dir(d)) }
@@ -121,16 +124,21 @@ module OPilot
         number = Clients::GitHub.pr_number_from_url(pr_url)
         return [] unless repo && number
 
-        pr = @github.pull_request(repo, number)
-        # Don't touch PRs that are merged or closed — and remember the closure so
-        # this dir never costs another poll (see poll_intents).
-        unless pr.state.to_s == "open"
-          mark_pr_done(item_id, repo_name, spec: spec)
-          log_script "gh-agent: #{repo}##{number} is #{pr.state} — dropping it from future polls."
-          return []
+        cached  = Helpers.safe_json_read(dir / "pr.json")
+        listed  = listed_pr(pr_url, cached)
+        content = cached if unchanged?(cached, listed)
+        unless content
+          # Changed, or missing from the list: only a GET may decide it is closed.
+          pr = @github.pull_request(repo, number)
+          # Don't touch PRs that are merged or closed — and remember the closure so
+          # this dir never costs another poll (see poll_intents).
+          unless pr.state.to_s == "open"
+            mark_pr_done(item_id, repo_name, spec: spec)
+            log_script "gh-agent: #{repo}##{number} is #{pr.state} — dropping it from future polls."
+            return []
+          end
+          content = fetch_pr_content(dir, repo, number, pr)
         end
-
-        content = fetch_pr_content(dir, repo, number, pr)
         subject = default_subject(dir, content, spec: spec)
 
         state  = gh_state(dir)
@@ -163,7 +171,8 @@ module OPilot
         # markdown, so any CI on that branch is about code the change hasn't
         # touched and chasing it would burn attempts on something unfixable here.
         if intents.empty? && !spec
-          ci = ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject)
+          ci = ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject,
+                                 ci: listed&.[]("ci"))
           intents << ci if ci
         end
         intents
@@ -178,7 +187,7 @@ module OPilot
       # cap is spent (a one-time "needs a human" notice is posted then), or CI
       # hasn't finished. Only a completed run with ≥1 failed check produces an
       # intent — and ci.json is populated (annotations + failed-job logs) first.
-      def ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject)
+      def ci_intent_for_dir(dir, repo, number, pr_url, content, item_id, repo_name, subject, ci: nil)
         head_sha = content["head_sha"].to_s
         return nil if head_sha.empty?
 
@@ -191,6 +200,10 @@ module OPilot
           announce_ci_give_up(dir, repo, number, state)
           return nil
         end
+
+        # Checks still run and none failed: nothing to act on yet. Any other
+        # answer, a missing one included, reads the check runs themselves.
+        return nil if ci == :running
 
         # Drop checks opilot can't fix (e.g. "SaaS tests" — needs fork-inaccessible
         # secrets, so it always fails) before reading status, so they never trigger
@@ -251,6 +264,24 @@ module OPilot
         update_gh_state(dir) { |s| s["ci_gave_up"] = true }
       rescue => e
         log_script "gh-agent: CI give-up notice failed on #{repo}##{number} — #{e.message}"
+      end
+
+      # The open-PR list keyed by downcased URL, or nil when the query failed.
+      def open_prs_by_url
+        @github.open_prs&.to_h { |p| [p["url"].to_s.downcase, p] }
+      end
+
+      # This PR's list entry. The cached URL is the second key: a renamed bot
+      # account leaves the old name in pr_url.txt, and GitHub lists the new one.
+      def listed_pr(pr_url, cached)
+        return nil unless @open_prs
+        @open_prs[pr_url.downcase] || @open_prs[cached&.[]("url").to_s.downcase]
+      end
+
+      # Whether the list shows the PR as it was when pr.json was written.
+      def unchanged?(cached, listed)
+        return false unless cached && listed
+        cached["updated_at"] == to_iso(listed["updated_at"]) && cached["head_sha"] == listed["head_sha"]
       end
 
       # [change_id, repo_name] for a spec PR dir. The repo is whichever one the

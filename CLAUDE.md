@@ -140,7 +140,17 @@ gated by the GitHub-login allowlist, and never merge. Shared caching and
 mention-matching live in `GitHub::PrCache`.
 
 **OPilot's own PRs** (`GitHub::Pull`, those with a `repos/<name>/pr_url.txt`) — always
-reply, code if asked, pushing to the fork. There are two command words
+reply, code if asked, pushing to the fork. **One GraphQL query a tick lists every open PR
+the bot authored** (`Clients::GitHub#open_prs`, `viewer.pullRequests`): a PR whose
+`updatedAt` and head SHA match its `pr.json` costs no REST call, so a quiet tick
+costs one request however many PRs are open. Not the search API, which lags and
+may not index a PR inside a fork. A PR missing from the list is confirmed closed
+by a `GET` before `pr_done` is set, and a failed query falls back to one `GET` per
+PR. The list also matches the cached `pr.json` URL, because a renamed bot account
+leaves the old name in `pr_url.txt`. The same query reduces the head commit's
+check counts to one CI state: while checks run and none failed, `check_runs` is
+not called; any other answer reads the check runs as before, since the counts
+include `OPILOT_CI_IGNORE_CHECKS`. There are two command words
 (`GitHub::Pull#parse_command`), and both are acted on **only here** — `!reply_only` — so
 an upstream PR's "refresh"/"close" is read as prose and answered in text.
 
