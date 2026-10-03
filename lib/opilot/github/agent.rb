@@ -74,9 +74,11 @@ module OPilot
       def handle_and_ack(intent)
         handle(intent)
         mark_acted(intent)
-      rescue => e
+      rescue StandardError, ScriptError => e
+        stop_on_code_error!(e)
         log_script "Error on #{intent.repo}##{intent.pr_number}: #{e.class}: #{e.message}"
-        post_reply(intent, "I could not handle that comment. The error is:\n\n#{e.message}") rescue nil
+        # The detail stays in the log: an exception message is not for a PR thread.
+        post_reply(intent, "I could not handle that comment. #{PING_MAINTAINER}") rescue nil
         mark_acted(intent)
       end
 

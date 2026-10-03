@@ -59,7 +59,8 @@ module OPilot
       def handle_and_ack(intent)
         handle(intent)   # sets @requester as its first step
         ack(intent)
-      rescue => e
+      rescue StandardError, ScriptError => e
+        stop_on_code_error!(e)
         log_script "Error on #{wp_label(intent.item_id)} (#{intent.command}): #{e.class}: #{e.message}"
         ack(intent)
       end

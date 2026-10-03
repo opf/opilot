@@ -90,6 +90,26 @@ module OPilot
     # retries (Clients::HTTP / Clients::GitHub) handle the common transient
     # cases; this is the backstop for anything that still escapes. Ctrl-C is
     # unaffected: it exits via SystemExit, which is not a StandardError.
+    # What a posted failure tells its reader, who cannot see opilot's log.
+    PING_MAINTAINER = "Please ping the maintainer."
+
+    # opilot's own code failed to load or name a constant: in practice a file
+    # edited under a running agent. A NoMethodError is excluded, because it is
+    # as often bad data as bad code.
+    def self.code_error?(e)
+      e.is_a?(ScriptError) || (e.is_a?(NameError) && !e.is_a?(NoMethodError))
+    end
+
+    # A code error is not the requester's problem, so it is never posted. Only
+    # a restart loads consistent code, so the agent stops; `exit` passes every
+    # `rescue => e`, the trigger stays unacked, and the next run handles it.
+    def stop_on_code_error!(e)
+      return unless Helpers.code_error?(e)
+      log_script "opilot's own code failed (#{e.class}: #{e.message}) — stopping the agent. " \
+                 "Restart it; the next run handles this trigger."
+      exit 1
+    end
+
     def guarded_tick(label = "Poll")
       yield
     rescue => e

@@ -60,11 +60,11 @@ module OPilot
         return unless drafts
 
         create_and_report(st, intent, drafts, wp, types)
-      rescue StandardError => e
+      rescue StandardError, ScriptError => e
+        stop_on_code_error!(e)
         # Not re-raised: #handle_and_ack would only log it again.
         log_script "create wp failed for #{wp_label(intent.item_id)}: #{e.class}: #{e.message}"
-        @reply.(intent.item_id,
-                "I could not create the work package. The reason is in my log: #{e.message}")
+        @reply.(intent.item_id, "I could not create the work package. #{PING_MAINTAINER}")
       end
 
       private
@@ -206,8 +206,7 @@ module OPilot
 
         if created.empty?
           subject = failed.length == 1 ? "the work package" : "any of the #{failed.length} work packages"
-          @reply.(st.item_id, "I could not create #{subject} (HTTP #{last_code}). " \
-                              "The response is in my log.")
+          @reply.(st.item_id, "I could not create #{subject} (HTTP #{last_code}). #{PING_MAINTAINER}")
           return
         end
 
@@ -379,7 +378,7 @@ module OPilot
         return note if failed.empty?
 
         subjects = failed.map { |d| d["subject"].to_s.strip.inspect }.join(", ")
-        note << "\n\nI could not create #{subjects} — the reason is in my log. Asking me again " \
+        note << "\n\nI could not create #{subjects}. #{PING_MAINTAINER} Asking me again " \
                 "here creates nothing more, so ask for #{failed.length == 1 ? "that one" : "those"} on its own."
       end
 

@@ -431,6 +431,22 @@ module OPilot
       assert_equal [["42", "openproject", "2024-02-01T00:00:00Z"]], @pull.acted, "acked despite the error → no replay"
       assert(@github.issue_posts.any? { |p| p[2].include?("could not handle that comment") },
              "the failure should be reported on the PR")
+      refute(@github.issue_posts.any? { |p| p[2].include?("harness blew up") }, "the exception message stays in the log")
+    end
+
+    def test_a_code_error_stops_the_agent_posts_nothing_and_leaves_the_trigger
+      agent = GitHub::Agent.new(@ctx, pull: @pull, harness: FakeHarness.new, github: @github)
+      def agent.handle(_intent) = raise(NameError, "uninitialized constant OPilot::Prompts::PrAuthor::PR_EDIT_CONTRACT")
+      out, = capture_io { assert_raises(SystemExit) { agent.handle_and_ack(gh_intent) } }
+      assert_empty @github.issue_posts
+      assert_empty @pull.acted
+      assert_includes out, "stopping the agent"
+    end
+
+    def test_a_no_method_error_is_a_normal_failure_not_a_code_error
+      refute Helpers.code_error?(NoMethodError.new("undefined method 'x' for nil"))
+      assert Helpers.code_error?(NameError.new("uninitialized constant X"))
+      assert Helpers.code_error?(LoadError.new("cannot load such file"))
     end
   end
 end

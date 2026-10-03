@@ -68,9 +68,10 @@ module OPilot
       def handle_and_ack(intent)
         handle(intent)
         @pull.mark_handled(intent.event_id)
-      rescue => e
+      rescue StandardError, ScriptError => e
+        stop_on_code_error!(e)
         log_script "Matrix error on #{intent.event_id} (#{intent.verb}): #{e.class}: #{e.message}"
-        reply(intent, "I could not finish this (#{e.class}). The reason is in my log.", part: "error") rescue nil
+        reply(intent, "I could not finish this. #{PING_MAINTAINER}", part: "error") rescue nil
         @pull.mark_handled(intent.event_id)
       end
 

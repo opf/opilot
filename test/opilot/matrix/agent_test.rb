@@ -216,8 +216,18 @@ module OPilot
       def op_agent.handle_elsewhere(*, **) = raise(RuntimeError, "git push failed")
       @pull.intents = [intent(:ship, ["5"])]
       capture_io { agent(FakeHealth.new { nil }, op_agent: op_agent).tick }
-      assert_includes @client.sent.last[:body], "I could not finish this (RuntimeError)"
+      assert_includes @client.sent.last[:body], "I could not finish this. Please ping the maintainer."
+      refute_includes @client.sent.last[:body], "git push failed", "an exception message stays in the log"
       assert_equal "opilot-$ev-error", @client.sent.last[:txn_id]
+    end
+
+    def test_a_code_error_stops_the_agent_and_posts_nothing
+      op_agent = FakeOpAgent.new
+      def op_agent.handle_elsewhere(*, **) = raise(NameError, "uninitialized constant X")
+      @pull.intents = [intent(:ship, ["5"])]
+      capture_io { assert_raises(SystemExit) { agent(FakeHealth.new { nil }, op_agent: op_agent).tick } }
+      assert_empty @client.sent.select { |m| m[:txn_id].to_s.end_with?("-error") }
+      assert_empty @pull.handled, "the trigger stays for the next run"
     end
 
     def test_setup_refuses_without_the_matrix_config

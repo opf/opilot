@@ -173,9 +173,10 @@ module OPilot
           log_script "Updated the #{attrs.keys.join(" and ")} of #{repo}##{number}"
         end
         with_notes(rest, notes)
-      rescue => e
-        log_script "PR edit failed on #{repo}##{number}: #{e.message}"
-        with_notes(rest, ["I could not update the PR: #{e.message}"])
+      rescue StandardError, ScriptError => e
+        stop_on_code_error!(e)
+        log_script "PR edit failed on #{repo}##{number}: #{e.class}: #{e.message}"
+        with_notes(rest, ["I could not update the PR. #{PING_MAINTAINER}"])
       end
 
       # The current title's `[label]` prefix, then the new title without one.
