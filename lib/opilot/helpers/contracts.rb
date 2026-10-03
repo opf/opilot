@@ -399,7 +399,7 @@ module OPilot
       text.to_s.split(/^REPLY:[ \t]*/, -1).last.to_s.strip
     end
 
-    # Prompts::DESCRIPTION_CONTRACT. The END line detects a cut-off answer.
+    # Prompts::PR_EDIT_CONTRACT. The END line detects a cut-off answer.
     DESCRIPTION_BLOCK = /^BEGIN DESCRIPTION[ \t]*\n(.*?)^END DESCRIPTION[ \t]*$\n?/m
     DESCRIPTION_OPEN  = /^BEGIN DESCRIPTION[ \t]*$/
 
@@ -411,6 +411,21 @@ module OPilot
       return [blocks.last.first.strip, text.gsub(DESCRIPTION_BLOCK, ""), false] if blocks.any?
       return [nil, text, false] unless text.match?(DESCRIPTION_OPEN)
       [nil, text.split(DESCRIPTION_OPEN, 2).first, true]
+    end
+
+    # GitHub's own limit on a PR title.
+    MAX_TITLE = 256
+    TITLE_LINE = /^TITLE:[ \t]*(.*)$\n?/
+
+    # [title or nil, the text without TITLE lines]. Read only before the last
+    # REPLY: line, so a reply that quotes "TITLE:" changes nothing. The last
+    # line wins.
+    def self.split_title(text)
+      text = text.to_s
+      head, marker, reply = text.rpartition(/^REPLY:/)
+      head, reply = text, "" if marker.empty?
+      title = head.scan(TITLE_LINE).flatten.last.to_s.gsub(/\s+/, " ").strip
+      [title.empty? ? nil : title[0, MAX_TITLE], "#{head.gsub(TITLE_LINE, "")}#{marker}#{reply}"]
     end
   end
 end

@@ -91,9 +91,9 @@ module OPilot
     # discarded scratch text.
     REPLY_CONTRACT = block("reply_contract")
 
-    # The one way a reply edits the PR body (GitHub::Publish#apply_description).
+    # The one way a reply edits the PR title and body (GitHub::Publish#apply_pr_edits).
     # Only on prompts for opilot's own PRs: an upstream PR is not opilot's.
-    DESCRIPTION_CONTRACT = block("description_contract")
+    PR_EDIT_CONTRACT = block("pr_edit_contract")
 
     # A diagram in a PR comment. GitHub renders a ```mermaid fence as a picture,
     # so this surface needs no gist and no machinery — only permission.

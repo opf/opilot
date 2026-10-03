@@ -198,7 +198,7 @@ module OPilot
         checkout_pr_branch(paths.repo, intent.branch)
 
         reply = llm(:pr_author, yield(paths), session_file: paths.session_file)
-        reply = publisher.apply_description(intent.repo, intent.pr_number, reply)
+        reply = publisher.apply_pr_edits(intent.repo, intent.pr_number, reply)
 
         post_reply(intent, reply)
         push_followup(intent, paths.repo) if commit_followup(intent, paths.repo)

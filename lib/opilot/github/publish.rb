@@ -145,23 +145,43 @@ module OPilot
         url
       end
 
-      # Apply a reply's DESCRIPTION block (Prompts::DESCRIPTION_CONTRACT) to
-      # opilot's own PR, and return the reply without it. A failure is logged
-      # and stated in the reply, so the reply never claims an edit that failed.
-      def apply_description(repo, number, reply)
+      # Apply a reply's TITLE line and DESCRIPTION block (Prompts::PR_EDIT_CONTRACT)
+      # to opilot's own PR, in one call, and return the reply without them. Each
+      # edit that did not happen is stated in the reply, so the reply never
+      # claims one.
+      def apply_pr_edits(repo, number, reply)
         text, rest, cut_off = Helpers.split_description(reply)
-        return "#{rest}\n\nI did not change the PR description: my answer was cut off." if cut_off
-        return rest unless text
+        title, rest = Helpers.split_title(rest)
+        notes = []
+        notes << "I did not change the PR description: my answer was cut off." if cut_off
+        return with_notes(rest, notes) unless text || title
 
-        current = @github.pull_request(repo, number).body.to_s
-        body = self.class.description_body(current, text) or
-          raise "the description has no opilot banner, so I did not replace it"
-        @github.update_pr_body(repo, number, neutralize_wp_links(body))
-        log_script "Updated the description of #{repo}##{number}"
-        rest
+        pr    = @github.pull_request(repo, number)
+        attrs = {}
+        attrs[:title] = self.class.labelled_title(pr.title.to_s, title) if title
+        if text
+          body = self.class.description_body(pr.body.to_s, text)
+          if body then attrs[:body] = neutralize_wp_links(body)
+          else notes << "I did not change the PR description: it has no opilot banner, so I did not replace it."
+          end
+        end
+        if attrs.any?
+          @github.update_pr(repo, number, **attrs)
+          log_script "Updated the #{attrs.keys.join(" and ")} of #{repo}##{number}"
+        end
+        with_notes(rest, notes)
       rescue => e
-        log_script "Description update failed on #{repo}##{number}: #{e.message}"
-        "#{rest}\n\nI could not update the PR description: #{e.message}"
+        log_script "PR edit failed on #{repo}##{number}: #{e.message}"
+        with_notes(rest, ["I could not update the PR: #{e.message}"])
+      end
+
+      # The current title's `[label]` prefix, then the new title without one.
+      LABEL = /\A\[[^\]\n]+\][ \t]*/
+
+      def self.labelled_title(current, title)
+        label = current[LABEL].to_s.strip
+        bare  = title.sub(LABEL, "").strip
+        label.empty? ? bare : "#{label} #{bare}"
       end
 
       # The current banner and plan link, then the new text. nil when the body
@@ -175,6 +195,10 @@ module OPilot
       end
 
       private
+
+      def with_notes(reply, notes)
+        notes.empty? ? reply : "#{reply}\n\n#{notes.join("\n")}"
+      end
 
       # The anchor must match the README heading's slug.
       ADOPT_DOC_URL = "https://github.com/opf/opilot#adopting-an-opilot-pr"

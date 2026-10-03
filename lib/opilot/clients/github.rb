@@ -302,7 +302,12 @@ module OPilot
       # Replace a PR's description (used to slot in content that needs the PR
       # number, which only exists after creation — e.g. the adopt note).
       def update_pr_body(repo, number, body)
-        with_retry { @octokit.update_pull_request(repo, number, body: body) }
+        update_pr(repo, number, body: body)
+      end
+
+      # Change a PR's title and/or body in one call (`attrs`: title:, body:).
+      def update_pr(repo, number, **attrs)
+        with_retry { @octokit.update_pull_request(repo, number, attrs) }
       end
 
       # Close a pull request without merging it. Needs no push access to the base

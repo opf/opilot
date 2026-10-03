@@ -64,7 +64,7 @@ module OPilot
           Ground rules:
           #{PR_WRITE_RULES}
 
-          #{DESCRIPTION_CONTRACT}
+          #{PR_EDIT_CONTRACT}
 
           #{REPLY_CONTRACT}
         PROMPT

@@ -457,7 +457,7 @@ module OPilot
           return
         end
 
-        reply = publisher.apply_description(base_repo, number, reply) if reply
+        reply = publisher.apply_pr_edits(base_repo, number, reply) if reply
         post_summary(wp_id, dir, base_repo, number, reply)
         latest = feedback.map { |c| c["created_at"].to_s }.max
         @gh_pull.mark_acted(wp_id, repo.name, latest) if latest
