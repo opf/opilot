@@ -18,6 +18,7 @@ module OPilot
 
       Lookup   = Clients::OpenProject::Lookup
       Resource = Clients::OpenProject::Resource
+      Href     = Clients::OpenProject::Href
 
       STALE_DAYS = 60
       MAX_COMMITS = 10
@@ -116,7 +117,7 @@ module OPilot
       # So the model can tell opilot's own comments from the thread.
       private def opilot_user_href
         id = @pull.own_user_id if @pull.respond_to?(:own_user_id)
-        id.to_s.empty? ? nil : "/api/v3/users/#{id}"
+        id.to_s.empty? ? nil : Href.user(id)
       rescue StandardError
         nil
       end

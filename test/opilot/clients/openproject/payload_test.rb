@@ -19,6 +19,12 @@ module OPilot
       assert_equal "", body.dig("description", "raw")
     end
 
+    def test_a_parent_is_linked_only_when_given
+      body = Payload.work_package(project: 7, type: nil, subject: "x", description: "", parent: 42)
+      assert_equal({ "href" => "/api/v3/work_packages/42" }, body.dig("_links", "parent"))
+      refute Payload.work_package(project: 7, type: nil, subject: "x", description: "")["_links"].key?("parent")
+    end
+
     def test_the_subject_is_cut_to_the_api_limit
       assert_equal 200, Payload.work_package(project: 7, type: nil, subject: "a" * 300, description: "").dig("subject").length
     end

@@ -32,7 +32,6 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 
 ## Feature ideas
 * Replace OpenSpec with a simple list of acceptance criteria
-* Matrix/Element integration for a better interface & activity tracking
 * Nextcloud integration, so that we can load relevant data during designs
 * Figma integration, to interpret designs
 * Transition the WP status & other fields when taking over implementation
