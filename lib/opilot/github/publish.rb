@@ -69,7 +69,10 @@ module OPilot
         end
         @github.push_branch(target_repo, branch: branch, worktree_path: repo.worktree_host)
 
-        title = pr_title(item_id, subject)
+        # The title written at commit time, else the subject (a branch committed
+        # before titles were generated).
+        title_file = st.pr_title_file(repo)
+        title = pr_title(item_id, Helpers.file_has_content?(title_file) ? title_file.read.strip : subject)
         url = @github.create_draft_pr(upstream, base: base, head: head, title: title, body: pr_body,
                                       maintainer_can_modify: true)
         add_adopt_note(upstream, url, pr_body, banner)

@@ -118,6 +118,8 @@ module OPilot
       end
 
       def pr_desc_file(repo); repo_dir(repo) / "pr.md"; end
+      # The fix's title without its label, written at commit time (Helpers#commit).
+      def pr_title_file(repo); repo_dir(repo) / "pr_title.txt"; end
       def pr_url_file(repo);  repo_dir(repo) / "pr_url.txt"; end
 
       # The plan gist URL, cached per-WP (not per-repo): plan.md is shared across

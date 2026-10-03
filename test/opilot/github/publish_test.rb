@@ -26,9 +26,14 @@ module OPilot
         "https://github.com/#{repo}/pull/7"
       end
       def update_pr_body(repo, number, body); @body_updates << { repo: repo, number: number, body: body }; end
-      attr_accessor :current_body
-      PrBody = Struct.new(:body)
-      def pull_request(_repo, _number) = PrBody.new(@current_body)
+      attr_accessor :current_body, :current_title
+      PrBody = Struct.new(:title, :body)
+      def pull_request(_repo, _number) = PrBody.new(@current_title, @current_body)
+      def title_updates = (@title_updates ||= [])
+      def update_pr(repo, number, title: nil, body: nil)
+        title_updates << title if title
+        update_pr_body(repo, number, body) if body
+      end
     end
 
     class FakeWorktree
@@ -153,6 +158,17 @@ module OPilot
     # The backstop on the one publishing shape opilot has: if the fork lookup
     # ever resolves to the canonical repo itself (a bot account that turns out to
     # own the upstream), the push is refused instead of landing on opf/*.
+    def test_the_pr_takes_the_title_written_at_commit_time
+      (@dir / "repos" / @repo.name / "pr_title.txt").write("Show a toast after copying a link\n")
+      capture_io { @publish.open_pr("42", "OPilot showcase: try the commands", "bug/42-x", @repo) }
+      assert_equal "[#42] Show a toast after copying a link", @github.pr_calls.last[:title]
+    end
+
+    def test_a_branch_committed_before_titles_keeps_the_subject
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-x", @repo) }
+      assert_equal "[#42] Fix the bug", @github.pr_calls.last[:title]
+    end
+
     def test_a_canonical_push_target_is_refused_and_opens_no_pr
       @github.fork_result = "opf/openproject"
       url = :unset
@@ -303,11 +319,12 @@ module OPilot
     BODY = "<!-- opilot:banner -->\n🤖 This is an AI-generated prototype.\n<!-- /opilot:banner -->\n\n" \
            "📋 **Implementation plan:** https://gist.github.com/me/abc\n\n# Ticket\n\nold text\n"
 
-    def describe(reply, body: BODY)
-      gh = FakeGitHub.new
-      gh.current_body = body
-      rest = GitHub::Publish.new(@ctx, github: gh).apply_description("opf/openproject", 7, reply)
-      [rest, gh.body_updates]
+    def describe(reply, body: BODY, title: "[TTP2-21] Old title")
+      @gh = FakeGitHub.new
+      @gh.current_body = body
+      @gh.current_title = title
+      rest = GitHub::Publish.new(@ctx, github: @gh).apply_pr_edits("opf/openproject", 7, reply)
+      [rest, @gh.body_updates]
     end
 
     def test_a_description_block_replaces_the_text_below_the_banner_and_plan_link
@@ -336,13 +353,37 @@ module OPilot
     def test_a_body_without_a_banner_is_never_replaced_and_the_reply_says_so
       rest, updates = describe("BEGIN DESCRIPTION\nnew\nEND DESCRIPTION\nREPLY:\nDone.", body: "# Ticket\n\nhuman text")
       assert_empty updates
-      assert_match(/could not update the PR description: the description has no opilot banner/, rest)
+      assert_match(/did not change the PR description: it has no opilot banner/, rest)
     end
 
     def test_a_cut_off_block_changes_nothing_and_the_reply_says_so
       rest, updates = describe("REPLY:\nDone.\nBEGIN DESCRIPTION\nhalf")
       assert_empty updates
       assert_match(/cut off/, rest)
+    end
+
+    def test_a_title_line_keeps_the_current_label
+      rest, updates = describe("TITLE: Cascade the semantic alias foreign key\nREPLY:\nRenamed it.")
+      assert_equal ["[TTP2-21] Cascade the semantic alias foreign key"], @gh.title_updates
+      assert_empty updates, "a title-only request leaves the body alone"
+      assert_equal "Renamed it.", Helpers.extract_reply(rest)
+    end
+
+    def test_a_title_with_its_own_label_does_not_get_two
+      describe("TITLE: [TTP2-21] New title\nREPLY:\nok")
+      assert_equal ["[TTP2-21] New title"], @gh.title_updates
+    end
+
+    def test_a_title_and_a_description_go_in_one_edit
+      describe("TITLE: New title\nBEGIN DESCRIPTION\nnew\nEND DESCRIPTION\nREPLY:\nok")
+      assert_equal ["[TTP2-21] New title"], @gh.title_updates
+      assert_equal 1, @gh.body_updates.length
+    end
+
+    def test_a_title_line_after_the_reply_marker_is_reply_text
+      rest, = describe("REPLY:\nTITLE: is a word I used")
+      assert_empty @gh.title_updates
+      assert_includes rest, "TITLE: is a word I used"
     end
 
     def test_a_reply_without_a_block_reads_and_writes_nothing

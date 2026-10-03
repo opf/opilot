@@ -246,6 +246,14 @@ module OPilot
       assert cut
     end
 
+    def test_split_title_takes_the_last_line_before_the_reply_and_caps_it
+      title, rest = Helpers.split_title("TITLE: draft\nTITLE:  Final   title \nREPLY:\nDone.")
+      assert_equal "Final title", title
+      assert_equal "Done.", Helpers.extract_reply(rest)
+      refute_includes rest, "TITLE:"
+      assert_equal Helpers::MAX_TITLE, Helpers.split_title("TITLE: #{"x" * 300}").first.length
+    end
+
     def test_strip_ansi_passthrough_plain_string
       assert_equal "plain text", h.strip_ansi("plain text")
     end

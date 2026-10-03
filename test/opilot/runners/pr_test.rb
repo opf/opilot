@@ -48,6 +48,7 @@ module OPilot
       end
       def body_updates = (@body_updates ||= [])
       def update_pr_body(repo, num, body) = body_updates << [repo, num, body]
+      def update_pr(repo, num, title: nil, body: nil) = (update_pr_body(repo, num, body) if body)
     end
 
     class FakePull

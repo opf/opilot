@@ -31,6 +31,7 @@ module OPilot
                                             comment: "c", author: "a", comment_id: 1 },
       [Prompts::Scribe, :pr_description] => { item: "/i", plan: "/p", diff_stat: "d", template_section: "" },
       [Prompts::Scribe, :commit_subject] => { diff: "d" },
+      [Prompts::Scribe, :pr_title] => { subject: "s", diff: "d" },
     }.freeze
 
     # Sent inside a session the role's first prompt already opened.
@@ -126,6 +127,7 @@ module OPilot
 
     def test_only_the_own_pr_reply_and_refresh_offer_a_description_edit
       assert_includes render(Prompts::PrAuthor, :gh_reply), "BEGIN DESCRIPTION"
+      assert_includes render(Prompts::PrAuthor, :gh_reply), "TITLE: <new"
       assert_includes render(Prompts::PrRefresher, :pr_refresh), "BEGIN DESCRIPTION"
       refute_includes render(Prompts::PrAuthor, :fix_ci), "BEGIN DESCRIPTION"
       refute_includes render(Prompts::PrAdvisor, :pr_review), "BEGIN DESCRIPTION", "an upstream PR is not opilot's"

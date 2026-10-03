@@ -152,11 +152,12 @@ PR. The list also matches the cached `pr.json` URL, because a renamed bot accoun
 leaves the old name in `pr_url.txt`. The same query reduces the head commit's
 check counts to one CI state: while checks run and none failed, `check_runs` is
 not called; any other answer reads the check runs as before, since the counts
-include `OPILOT_CI_IGNORE_CHECKS`. **A reply can replace the PR description.** The
-reply and refresh prompts (`Prompts::DESCRIPTION_CONTRACT`) offer a `BEGIN
-DESCRIPTION` … `END DESCRIPTION` block before `REPLY:`; `Helpers.split_description`
-reads it, and `GitHub::Publish#apply_description` keeps the current banner fence and
-plan link, then puts the new text under them. The model never writes the fence: a
+include `OPILOT_CI_IGNORE_CHECKS`. **A reply can replace the PR title and description.** The
+reply and refresh prompts (`Prompts::PR_EDIT_CONTRACT`) offer a `TITLE:` line and a `BEGIN
+DESCRIPTION` … `END DESCRIPTION` block before `REPLY:`; `Helpers.split_title` and
+`.split_description` read them, and `GitHub::Publish#apply_pr_edits` sends both in one
+edit. The title keeps the current `[label]` prefix; the body keeps the current banner
+fence and plan link, with the new text under them. The model never writes the fence: a
 body with no fence (`opilot` or the legacy `chomper`) is not replaced, and a
 block with no `END` line changes nothing. A failure is stated in the reply, so the
 reply never claims an edit that did not happen. `pr.json` carries the current
@@ -769,8 +770,13 @@ layout.
    base: a repo with no `release/*` namespace is normal.
 3. **Implement** — the LLM (Read/Write/Edit + read-only Bash) works across each chosen
    clone on `bug/<id>-<slug>` in one resumed session; the runner commits
-   `[<label>] <subject>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
-   ids, bare `STC-162` for semantic ones).
+   `[<label>] <title>` per changed repo (`Helpers.wp_label`: `#59942` for numeric
+   ids, bare `STC-162` for semantic ones). The title comes from one stateless
+   `Prompts::Scribe.pr_title` call on that repo's diff, which keeps the work package
+   subject when it names the change and writes one when it does not (a meta ticket
+   such as "OPilot showcase: try the commands here"). It is saved to
+   `repos/<name>/pr_title.txt`, and publish uses it for the PR title too; a failed
+   call or an empty answer falls back to the subject.
 
    **Cutting a NEW branch clears the clone first** (`Helpers#clear_leftovers!`,
    from `#checkout_branch`, so `pd` gets it too): `reset --hard HEAD` then
@@ -1104,6 +1110,7 @@ globally unique, so `pr_reviews/` is flat.
 │       │                        #   a match sends the short follow-up prompt instead
 │       └── repos/<repo_name>/
 │           ├── pr.md            # PR description (per-repo diff)
+│           ├── pr_title.txt     # commit + PR title, label-free (written at commit time)
 │           ├── pr_url.txt       # published PR URL
 │           ├── pr.json          # PR-content cache, keyed by updated_at
 │           ├── ci.json          # CI failure detail, keyed by head SHA

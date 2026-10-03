@@ -12,6 +12,7 @@ module OPilot
 
     class FakeHarness
       attr_reader :runs, :captures, :run_sessions, :capture_sessions
+      attr_accessor :title   # the PR-title answer; nil answers "" (the subject is kept)
       # One BEGIN/END WORK PACKAGE block, the shape Prompts::WpWriter.create_wp demands.
       # `link` is the writer's own choice per block — "child" or "related" — and
       # nil leaves the line out, which must read as "related".
@@ -41,6 +42,7 @@ module OPilot
         return draft_answer if role == :wp_writer
         return @chat if role == :advisor
         return @pr   if prompt.include?("PR description")
+        return @title.to_s if prompt.include?("title of a GitHub pull request")
         @impl
       end
 
@@ -612,16 +614,33 @@ module OPilot
       session = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "session_id"
       assert_equal [session], @harness.capture_sessions.uniq, "plan must use the per-WP session"
 
-      pr_index = @harness.runs.index { |p| p.include?("PR description") }
+      pr_index    = @harness.runs.index { |p| p.include?("PR description") }
+      title_index = @harness.runs.index { |p| p.include?("title of a GitHub pull request") }
       refute_nil pr_index, "a PR description pass should run"
-      implement_sessions = @harness.run_sessions.each_index.reject { |i| i == pr_index }.map { |i| @harness.run_sessions[i] }
+      refute_nil title_index, "a PR title pass should run"
+      implement_sessions = @harness.run_sessions.each_index.reject { |i| [pr_index, title_index].include?(i) }
+                                   .map { |i| @harness.run_sessions[i] }
       assert_equal [session], implement_sessions.uniq, "implement must resume the planning session"
       assert_nil @harness.run_sessions[pr_index],
                  "the PR description is a separate, stateless call — not part of the resumed session"
+      assert_nil @harness.run_sessions[title_index], "so is the PR title"
     end
 
     # A work package planned by an earlier run (when `plan` was its own command)
     # ships on the next trigger, with no approval step left to wait for.
+    def test_the_pr_and_its_commit_carry_the_generated_title
+      @harness.title = "Show a toast after copying a link"
+      @agent.handle(intent(:ship))
+      title_file = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "repos" / "openproject" / "pr_title.txt"
+      assert_equal "Show a toast after copying a link", title_file.read
+    end
+
+    def test_an_empty_title_answer_keeps_the_subject
+      @agent.handle(intent(:ship))
+      title_file = @ctx.state_dir / "work_packages" / "op.example.com" / "42" / "repos" / "openproject" / "pr_title.txt"
+      assert_equal "Fix the bug", title_file.read
+    end
+
     def test_ship_ships_a_plan_left_by_an_earlier_run
       plan_path.dirname.mkpath
       plan_path.write("## Plan\nDo it.\n")

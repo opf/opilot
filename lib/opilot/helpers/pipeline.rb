@@ -161,8 +161,10 @@ module OPilot
     def commit(st, repo)
       Helpers.adopt_github_author!(@publish.author_token)
       wt = worktree(repo)
-      return false unless stage_all(wt)
-      commit_and_log(wt, pr_title(st.item_id, st.subject), repo.name)
+      diff = stage_all(wt) or return false
+      title = generate_pr_title(st, diff)
+      st.pr_title_file(repo).write(title)
+      commit_and_log(wt, pr_title(st.item_id, title), repo.name)
       record_progress(st.item_id, st.branch, "committed:#{repo.name}")
       true
     end
@@ -172,16 +174,31 @@ module OPilot
     # on any failure so the caller can fall back to a generic subject. Shared by
     # gh-agent's follow-up commits and the terminal `pr` refresh.
     def generate_commit_subject(diff)
-      prompt = Prompts::Scribe.commit_subject(diff: diff.patch.to_s[0, 6000])
-      reply = llm(:scribe, prompt)
+      one_line(llm(:scribe, Prompts::Scribe.commit_subject(diff: diff.patch.to_s[0, 6000])))
+    rescue => e
+      log_script "Commit-subject generation failed: #{e.message}"
+      ""
+    end
+
+    # The title for a fix's commit and PR (Prompts::Scribe.pr_title), or the work
+    # package subject when the call fails or answers nothing.
+    def generate_pr_title(st, diff)
+      prompt = Prompts::Scribe.pr_title(subject: st.subject, diff: diff.patch.to_s[0, 6000])
+      # A kept subject can be longer than a commit subject; GitHub allows 256.
+      title  = one_line(llm(:scribe, prompt), max: Helpers::MAX_TITLE)
+      title.empty? ? st.subject : title
+    rescue => e
+      log_script "PR-title generation failed (using the subject): #{e.message}"
+      st.subject
+    end
+
+    # The first line of a scribe answer as a bare subject line.
+    def one_line(reply, max: 72)
       strip_ansi(reply.to_s).lines.map(&:strip).find { |l| !l.empty? }.to_s
         .gsub(/\A["'`]+|["'`]+\z/, "")   # strip wrapping quotes/backticks
         .sub(/\A\[[^\]]*\]\s*/, "")       # drop any "[label]" the LLM prepended anyway
         .gsub(/\s+/, " ")
-        .slice(0, 72).to_s.strip
-    rescue => e
-      log_script "Commit-subject generation failed: #{e.message}"
-      ""
+        .slice(0, max).to_s.strip
     end
 
     # Stateless — a fresh, cheap-model call rather than a resumed session, since
