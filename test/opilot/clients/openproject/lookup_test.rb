@@ -111,5 +111,45 @@ module OPilot
       stub_request(:get, %r{/api/v3/work_packages\?}).to_return(status: 403, body: "{}")
       assert_equal [403, nil, 0], @lookup.all_work_packages("[]")
     end
+
+    # --- schemas ---
+
+    def test_schema_is_read_once_per_href_and_nil_for_an_href_that_names_none
+      schema = stub_request(:get, "#{BASE}/api/v3/work_packages/schemas/7-5")
+               .to_return(status: 200, body: '{"customField1":{"name":"Area"}}')
+
+      2.times { assert_equal "Area", @lookup.schema("/api/v3/work_packages/schemas/7-5").dig("customField1", "name") }
+      assert_requested schema, times: 1
+      assert_nil @lookup.schema(nil)
+    end
+
+    def test_an_unreadable_schema_raises
+      stub_request(:get, "#{BASE}/api/v3/work_packages/schemas/7-5").to_return(status: 403, body: "{}")
+      assert_raises(Clients::OpenProject::Forbidden) { @lookup.schema("/api/v3/work_packages/schemas/7-5") }
+    end
+
+    def test_allowed_values_inline_are_returned_as_they_are
+      inline = [{ "href" => "/api/v3/types/7", "title" => "Bug" }]
+      assert_equal inline, @lookup.allowed_values("_links" => { "allowedValues" => inline })
+    end
+
+    def test_allowed_values_behind_an_items_link_are_read_without_the_root
+      items = stub_request(:get, "#{BASE}/api/v3/custom_fields/223/items").to_return(collection(
+        { "label" => nil, "_links" => { "self" => { "href" => "/api/v3/custom_field_items/1" } } },
+        { "label" => "Web", "_links" => { "self" => { "href" => "/api/v3/custom_field_items/2" } } }
+      ))
+      node = { "_links" => { "allowedValues" => { "href" => "/api/v3/custom_fields/223/items" } } }
+
+      2.times do
+        assert_equal [{ "href" => "/api/v3/custom_field_items/2", "title" => "Web" }], @lookup.allowed_values(node)
+      end
+      assert_requested items, times: 1
+    end
+
+    def test_allowed_values_are_nil_for_a_link_it_does_not_follow
+      node = { "_links" => { "allowedValues" => { "href" => "/api/v3/work_packages/9/available_assignees" } } }
+      assert_nil @lookup.allowed_values(node)
+      assert_nil @lookup.allowed_values("type" => "String")
+    end
   end
 end

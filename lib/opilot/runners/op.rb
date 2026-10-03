@@ -210,23 +210,7 @@ module OPilot
       # the answer to "where are the values": an array means they are right here
       # (a list field), an object with one href means they must be fetched (a
       # hierarchy, user or version field — `op cf items <id>` for the first kind).
-      def required_summary(form)
-        schema = form.dig("_embedded", "schema") || {}
-        errors = form.dig("_embedded", "validationErrors") || {}
-
-        fields = schema.filter_map do |name, node|
-          # The schema object also holds _type, _links and _dependencies, so a
-          # non-Hash value here is not a field.
-          next unless node.is_a?(Hash) && node["required"] && node["writable"] != false
-          { "field"         => name,
-            "name"          => node["name"],
-            "type"          => node["type"],
-            "hasDefault"    => node["hasDefault"],
-            "allowedValues" => node.dig("_links", "allowedValues"),
-            "error"         => errors.dig(name, "message") }.compact
-        end
-        { "requiredFields" => fields }
-      end
+      def required_summary(form) = { "requiredFields" => Resource.required_fields(form) }
 
       # `wp schema` — every field of a (project, type) pair, with its key. The
       # route takes numeric ids only, so both are resolved here first.

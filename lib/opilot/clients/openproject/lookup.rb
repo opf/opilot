@@ -75,6 +75,32 @@ module OPilot
           end
         end
 
+        # The schema a work package's `_links.schema` names; nil for an href that
+        # names none. It renders no allowed values — only a form's schema does.
+        def schema(href)
+          project_id, type_id = Resource.schema_ids(href)
+          return nil unless project_id
+          memo([:schema, href.to_s]) { read("schema #{href}") { @api.work_package_schema(project_id, type_id) } }
+        end
+
+        # The values a FORM schema field allows, as [{ "href", "title" }]. Two
+        # shapes: a list or version field carries them inline; a hierarchy field
+        # carries a link to its items, which is read here (the synthetic root has
+        # no label, so it is left out). nil for a field with neither, or with a
+        # link this does not follow (a user field's available_assignees).
+        def allowed_values(node)
+          allowed = (node || {}).dig("_links", "allowedValues")
+          return allowed if allowed.is_a?(Array)
+          id = Resource.items_field_id(allowed.is_a?(Hash) && allowed["href"])
+          return nil unless id
+
+          memo([:items, id]) do
+            elements("the items of custom field #{id}") { @api.custom_field_items(id) }
+              .select { |item| item["label"] }
+              .map { |item| { "href" => item.dig("_links", "self", "href"), "title" => item["label"] } }
+          end
+        end
+
         # The NUMERIC id of a work package or a project, given either spelling
         # ("PROJ-12", "my-project"). Routes typed Integer, filters that coerce
         # to Integer and payload links all need it; a semantic id there matches

@@ -317,7 +317,7 @@ module OPilot
       # Fill the recognized fields, then re-check the form: a wrong link shape would
       # be permanent. Returns the remaining errors, or nil.
       def hack_required_custom_fields!(payload, form, errors)
-        schema = form.dig("_embedded", "schema") || {}
+        schema = Resource.schema_fields(form.dig("_embedded", "schema"))
         filled = []
 
         errors.each_key do |field|
@@ -337,15 +337,12 @@ module OPilot
         @api.create_work_package_form(payload).validation_errors
       end
 
-      # `allowedValues` is inline (list/version) or a link (hierarchy/user); see
-      # API::V3::Utilities::CustomFieldInjector in openproject.
       def hacked_custom_field_href(node, strategy)
-        allowed = node.dig("_links", "allowedValues")
-        candidates =
-          case allowed
-          when Array then allowed
-          when Hash  then hierarchy_item_candidates(allowed["href"])
-          end
+        candidates = begin
+          Clients::OpenProject::Lookup.new(@api).allowed_values(node)
+        rescue Clients::OpenProject::Error
+          nil
+        end
         return nil if candidates.to_a.empty?
 
         case strategy
@@ -353,17 +350,6 @@ module OPilot
         when :highest then candidates.max_by { |c| c["href"].to_s[/\d+\z/].to_i }["href"]
         when :random  then candidates.sample["href"]
         end
-      end
-
-      # Selectable hierarchy items. The synthetic root has no label, so it drops out.
-      def hierarchy_item_candidates(items_href)
-        id = items_href.to_s[%r{/custom_fields/(\d+)/items\z}, 1]
-        return [] unless id
-        res = @api.custom_field_items(id)
-        return [] unless res.ok?
-        ((res.body["_embedded"] || {})["elements"] || [])
-          .select { |item| item["label"] }
-          .map { |item| { "href" => item.dig("_links", "self", "href") } }
       end
 
       def project_types

@@ -44,5 +44,51 @@ module OPilot
       assert_equal({ "href" => "/api/v3/statuses/3" }, Href.link(Href.status(3)))
       assert_equal "/api/v3/work_packages/42", Href.work_package(42)
     end
+
+    # --- schemas ---
+
+    FORM = {
+      "_embedded" => {
+        "schema" => {
+          "_type" => "Schema", "_dependencies" => [], "_links" => {}, "_attributeGroups" => [],
+          "subject"        => { "type" => "String", "name" => "Subject", "required" => true, "writable" => true },
+          "id"             => { "type" => "Integer", "name" => "ID", "required" => true, "writable" => false },
+          "description"    => { "type" => "Formattable", "name" => "Description", "required" => false },
+          "customField223" => { "type" => "CustomField::Hierarchy::Item", "name" => "Area", "required" => true,
+                                "writable" => true,
+                                "_links" => { "allowedValues" => { "href" => "/api/v3/custom_fields/223/items" } } }
+        },
+        "validationErrors" => { "customField223" => { "message" => "Area can't be blank." } }
+      }
+    }.freeze
+
+    def test_schema_fields_leave_out_the_keys_that_are_not_fields
+      assert_equal %w[subject id description customField223], Resource.schema_fields(FORM.dig("_embedded", "schema")).keys
+      assert_equal({}, Resource.schema_fields(nil))
+    end
+
+    def test_required_fields_are_the_writable_ones_with_their_error
+      fields = Resource.required_fields(FORM)
+      assert_equal %w[subject customField223], fields.map { |f| f["field"] }, "id is required but not writable"
+      assert_equal "Area can't be blank.", fields.last["error"]
+      assert_equal({ "href" => "/api/v3/custom_fields/223/items" }, fields.last["allowedValues"])
+      refute fields.first.key?("error")
+    end
+
+    def test_schema_and_items_hrefs_give_their_ids
+      assert_equal %w[7 5], Resource.schema_ids("/api/v3/work_packages/schemas/7-5")
+      assert_nil Resource.schema_ids("/api/v3/work_packages/7")
+      assert_equal "223", Resource.items_field_id("/api/v3/custom_fields/223/items")
+      assert_nil Resource.items_field_id("/api/v3/work_packages/9/available_assignees")
+    end
+
+    def test_custom_field_values_read_attributes_and_links_and_drop_empty_ones
+      wp = { "customField1" => { "raw" => " text " }, "customField2" => "", "customField3" => 4,
+             "_links" => { "customField5" => { "title" => "Gold" },
+                           "customField6" => [{ "title" => "a" }, { "title" => "b" }],
+                           "customField7" => [], "status" => { "title" => "New" } } }
+      assert_equal({ "customField1" => "text", "customField3" => 4, "customField5" => "Gold",
+                     "customField6" => %w[a b] }, Resource.custom_field_values(wp))
+    end
   end
 end

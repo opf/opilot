@@ -421,10 +421,7 @@ module OPilot
 
       # Values by display name, read from the schema. nil when the schema read failed.
       def custom_fields(wp)
-        values = wp.select { |k, _| k.start_with?("customField") }
-          .merge((wp["_links"] || {}).select { |k, _| k.start_with?("customField") })
-          .transform_values { |v| custom_field_value(v) }
-          .reject { |_, v| v.nil? || v == "" || v == [] }
+        values = Resource.custom_field_values(wp)
         return {} if values.empty?
 
         schema = work_package_schema(wp.dig("_links", "schema", "href"))
@@ -432,22 +429,12 @@ module OPilot
         values.to_h { |key, v| [schema.dig(key, "name") || key, v] }
       end
 
-      def custom_field_value(value)
-        case value
-        when Array then value.map { |v| custom_field_value(v) }.compact
-        when Hash  then value.key?("raw") ? value["raw"].to_s.strip : value["title"]
-        else value
-        end
-      end
-
-      # Schemas are few and rarely change, so one read per href per process.
+      # Schemas are few and rarely change, so one Lookup caches them for the
+      # whole process. A failed read is not cached.
       def work_package_schema(href)
-        @schemas ||= {}
-        return @schemas[href] if @schemas.key?(href)
-        project_id, type_id = href.to_s[%r{/schemas/(\d+-\d+)\z}, 1]&.split("-")
-        return nil unless project_id
-        res = @api.work_package_schema(project_id, type_id)
-        res.ok? ? @schemas[href] = res.body : nil
+        (@schemas ||= Lookup.new(@api)).schema(href)
+      rescue Clients::OpenProject::Error
+        nil
       end
 
       def parse_scan_from_input(input)
