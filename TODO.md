@@ -17,7 +17,8 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 
 ## Architecture & AI
 * Abandon the auth-less "god mode" and switch to granular authorization
-  * OpenProject OAuth or Keycloak 
+  * OpenProject OAuth or Keycloak
+* Respect multi-tenant isolation in SaaS environments
 * Switch to a proper event loop so that agent work doesn't block polling
 * Set up token limits & cleanly handle threshold breaches
 * Centralize our skill and agent definitions into another OP repo, so that OPilot may leverage them
