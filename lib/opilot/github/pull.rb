@@ -268,7 +268,9 @@ module OPilot
 
       # The open-PR list keyed by downcased URL, or nil when the query failed.
       def open_prs_by_url
-        @github.open_prs&.to_h { |p| [p["url"].to_s.downcase, p] }
+        prs = @github.open_prs
+        warn "  gh-agent: polling each PR instead." unless prs
+        prs&.to_h { |p| [p["url"].to_s.downcase, p] }
       end
 
       # This PR's list entry. The cached URL is the second key: a renamed bot

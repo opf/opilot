@@ -267,7 +267,7 @@ module OPilot
         end
         prs
       rescue Octokit::Error, Faraday::Error, GraphQLError, NoMethodError => e
-        warn "  ⚠ GitHub open-PR query failed (#{e.class}) — polling each PR instead."
+        warn "  ⚠ GitHub open-PR query failed (#{e.class}: #{e.message})"
         nil
       end
 

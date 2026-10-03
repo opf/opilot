@@ -23,9 +23,9 @@ dc() { docker compose -f "$SCRIPT_DIR/compose.yml" "$@"; }
 
 # True when the wizard should prompt for KEY (not yet in .env). Teardown
 # commands like `reset` never prompt — the wizard would ask for config (and
-# tokens) reset is about to discard. Nor does `op`: its stdout is JSON for a
+# tokens) reset is about to discard. Nor do `op` and `gh`: their stdout is JSON for a
 # pipe, and a prompt behind one hangs with no visible question.
-_need() { ! _is reset op && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
+_need() { ! _is reset op gh && ! grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 
 # ── Cleanup ───────────────────────────────────────────────────────────────
 # One trap for the whole run. Each step that acquires something records it
@@ -379,10 +379,10 @@ if _needs_inference_gw; then
     STOP_SERVICES="inference-gw"
   fi
 fi
-# `op` prints JSON for a pipe, so it must never run under a pty: compose.yml
+# `op` and `gh` print JSON for a pipe, so they must never run under a pty: compose.yml
 # sets `tty: true`, and a pty merges stderr into stdout, turns "\n" into "\r\n"
 # and re-enables Rainbow. Compose auto-detects too, but the contract must not
 # depend on that. A scalar, not an array — an empty array expansion under
 # `set -u` is a bash 3.2 trap on macOS.
-RUN_TTY=""; _is op && RUN_TTY="-T"
+RUN_TTY=""; _is op gh && RUN_TTY="-T"
 dc --progress quiet run $RUN_TTY --no-deps --rm --remove-orphans runner ruby "$SCRIPT_DIR/bin/opilot" "$@"

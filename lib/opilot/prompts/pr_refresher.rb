@@ -13,7 +13,7 @@ module OPilot
       # fix what CI is failing on, and address review feedback that has gone
       # unanswered. The runner commits and pushes; the LLM never runs git.
       def self.pr_refresh(worktree:, repo:, pr_number:, title:, base:, item:, plan:, pr_thread:,
-                          ci: nil, conflicts: [], feedback_count: 0)
+                          ci: nil, conflicts: [], feedback_count: 0, merged: false)
         tasks = []
         if conflicts.any?
           tasks << <<~TEXT.strip
@@ -42,12 +42,19 @@ module OPilot
           TEXT
         end
         sync_note = conflicts.any? ? ", with a merge of origin/#{base} in progress" : ""
+        # A resumed session remembers files as they were before the merge.
+        merge_note = if merged
+                       "\nThe merge of origin/#{base} changed files after earlier turns of this session.\n" \
+                         "Do not rely on what you read before it: read each file again.\n"
+                     else
+                       ""
+                     end
         tagged(<<~PROMPT)
           The operator asked you to refresh
           GitHub pull request ##{pr_number} ("#{title}") in #{repo} — a stale PR you
           opened. Its branch is checked out in the product worktree at #{worktree},
           already synced to the PR head#{sync_note}.
-
+          #{merge_note}
           #{pr_context(item: item, plan: plan, pr_thread: pr_thread)}
 
           Work through each item below in the worktree (#{worktree}):
@@ -56,6 +63,8 @@ module OPilot
 
           Ground rules:
           #{PR_WRITE_RULES}
+
+          #{DESCRIPTION_CONTRACT}
 
           #{REPLY_CONTRACT}
         PROMPT

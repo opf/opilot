@@ -127,6 +127,12 @@ module OPilot
       assert_includes out, "./opilot op wp get <id>"
     end
 
+    def test_a_bare_gh_is_a_help_request
+      out, = capture_io { CLI.new(ctx_double).run(["gh"]) }
+      assert_includes out, "Usage: ./opilot gh <resource> <action>"
+      assert_includes out, "./opilot gh pr list"
+    end
+
     def test_op_help_answers_for_its_own_group
       out, = capture_io { CLI.new(ctx_double).run(["op", "wp", "get", "--help"]) }
       assert_includes out, "Usage: ./opilot op <resource> <action>"

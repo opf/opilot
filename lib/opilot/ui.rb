@@ -301,6 +301,25 @@ module OPilot
       USAGE
     end
 
+    def gh_usage_text
+      <<~USAGE.strip
+        Usage: ./opilot gh <resource> <action>
+
+        Read GitHub as the contributor bot. Output is JSON on stdout.
+
+          ./opilot gh pr list                   the bot's open PRs — what gh-agent
+                                                polls — each with the state dir
+                                                that tracks it ("tracked": null if
+                                                none)
+      USAGE
+    end
+
+    def gh_usage
+      puts ""
+      puts gh_usage_text
+      puts ""
+    end
+
     def appsignal_usage
       puts ""
       puts appsignal_usage_text
@@ -320,7 +339,7 @@ module OPilot
         Terminal:
           ./opilot dev <command>    software development: plan, commit, build, health, refresh, status
           ./opilot pd <command>     product development: the spec-driven pipeline
-          ./opilot op <command>     read the OpenProject API directly (JSON out)
+          ./opilot op|gh <command>  read the OpenProject or GitHub API directly (JSON out)
           ./opilot appsignal <cmd>  read production errors, or turn one into a work package and a PR
           ./opilot chat [message]   read-only chat about your local mirrors
           ./opilot usage            Inference spend (OpenRouter), else the configured upstream

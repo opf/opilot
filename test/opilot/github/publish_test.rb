@@ -26,6 +26,9 @@ module OPilot
         "https://github.com/#{repo}/pull/7"
       end
       def update_pr_body(repo, number, body); @body_updates << { repo: repo, number: number, body: body }; end
+      attr_accessor :current_body
+      PrBody = Struct.new(:body)
+      def pull_request(_repo, _number) = PrBody.new(@current_body)
     end
 
     class FakeWorktree
@@ -295,6 +298,57 @@ module OPilot
                    capture_io { publish.open_spec_pr(state, @repo, body: "why") }.then { state.pr_url_file.read.strip }
       assert_empty github.pr_calls
       assert_empty github.pushed, "an open PR means the branch is already there"
+    end
+
+    BODY = "<!-- opilot:banner -->\n🤖 This is an AI-generated prototype.\n<!-- /opilot:banner -->\n\n" \
+           "📋 **Implementation plan:** https://gist.github.com/me/abc\n\n# Ticket\n\nold text\n"
+
+    def describe(reply, body: BODY)
+      gh = FakeGitHub.new
+      gh.current_body = body
+      rest = GitHub::Publish.new(@ctx, github: gh).apply_description("opf/openproject", 7, reply)
+      [rest, gh.body_updates]
+    end
+
+    def test_a_description_block_replaces_the_text_below_the_banner_and_plan_link
+      rest, updates = describe("BEGIN DESCRIPTION\n# Ticket\n\nnew text\nEND DESCRIPTION\nREPLY:\nDone.")
+      body = updates.first[:body]
+      assert body.start_with?("<!-- opilot:banner -->"), "the banner stays first"
+      assert_includes body, "📋 **Implementation plan:** https://gist.github.com/me/abc\n\n# Ticket\n\nnew text"
+      refute_includes body, "old text"
+      assert_equal "Done.", Helpers.extract_reply(rest)
+    end
+
+    def test_a_copied_banner_is_not_duplicated
+      _, updates = describe("BEGIN DESCRIPTION\n#{BODY}\nEND DESCRIPTION\nREPLY:\nDone.")
+      assert_equal 1, updates.first[:body].scan("<!-- opilot:banner -->").length,
+                   "one banner, the kept one"
+      assert_equal 1, updates.first[:body].scan("Implementation plan").length
+    end
+
+    def test_the_legacy_chomper_fence_is_kept_too
+      legacy = BODY.gsub("opilot:banner", "chomper:banner")
+      _, updates = describe("BEGIN DESCRIPTION\nnew\nEND DESCRIPTION\nREPLY:\nDone.", body: legacy)
+      assert updates.first[:body].start_with?("<!-- chomper:banner -->")
+      assert updates.first[:body].end_with?("\n\nnew\n")
+    end
+
+    def test_a_body_without_a_banner_is_never_replaced_and_the_reply_says_so
+      rest, updates = describe("BEGIN DESCRIPTION\nnew\nEND DESCRIPTION\nREPLY:\nDone.", body: "# Ticket\n\nhuman text")
+      assert_empty updates
+      assert_match(/could not update the PR description: the description has no opilot banner/, rest)
+    end
+
+    def test_a_cut_off_block_changes_nothing_and_the_reply_says_so
+      rest, updates = describe("REPLY:\nDone.\nBEGIN DESCRIPTION\nhalf")
+      assert_empty updates
+      assert_match(/cut off/, rest)
+    end
+
+    def test_a_reply_without_a_block_reads_and_writes_nothing
+      rest, updates = describe("REPLY:\nJust an answer.")
+      assert_empty updates
+      assert_equal "REPLY:\nJust an answer.", rest
     end
 
     private

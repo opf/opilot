@@ -53,7 +53,9 @@ module OPilot
           # Where the branch lives — the fork for a cross-repo PR (nil only if the
           # head fork was deleted, which would have closed the PR anyway).
           "head_repo"  => pr.head.repo&.full_name,
-          "comments"   => comments,       "reviews"    => reviews
+          "comments"   => comments,       "reviews"    => reviews,
+          # The current description, for a reply asked to change it.
+          "body"       => pr.body.to_s
         }
         Helpers.write_json_atomic(cache_path, data, "pr")
         data

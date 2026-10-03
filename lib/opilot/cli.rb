@@ -29,6 +29,7 @@ module OPilot
       when "dev"      then dev(rest)
       when "pd"       then pd(rest)
       when "op"       then op(rest)
+      when "gh"       then gh(rest)
       when "appsignal" then appsignal(rest)
       else
         $stderr.puts "Unknown argument: #{cmd}"
@@ -51,6 +52,7 @@ module OPilot
       when "dev" then @ui.dev_usage
       when "pd" then @ui.pd_usage
       when "op" then @ui.op_usage
+      when "gh" then @ui.gh_usage
       when "appsignal" then @ui.appsignal_usage
       else @ui.usage
       end
@@ -142,6 +144,12 @@ module OPilot
     def op(args)
       return @ui.op_usage if args.empty?
       Runners::Op.new(@ctx).run(args)
+    end
+
+    # `gh` reads GitHub as the contributor bot, with `op`'s contract.
+    def gh(args)
+      return @ui.gh_usage if args.empty?
+      Runners::Gh.new(@ctx).run(args)
     end
 
     # `appsignal` is an integration — the system it reads — so it sits beside

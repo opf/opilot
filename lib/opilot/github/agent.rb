@@ -198,6 +198,7 @@ module OPilot
         checkout_pr_branch(paths.repo, intent.branch)
 
         reply = llm(:pr_author, yield(paths), session_file: paths.session_file)
+        reply = publisher.apply_description(intent.repo, intent.pr_number, reply)
 
         post_reply(intent, reply)
         push_followup(intent, paths.repo) if commit_followup(intent, paths.repo)
@@ -224,6 +225,10 @@ module OPilot
             pr_thread: container_path(p.pr_file), ci: container_path(p.ci_file)
           )
         end
+      end
+
+      def publisher
+        @publisher ||= GitHub::Publish.new(@ctx, github: @github)
       end
 
       # The base merge is forced: the trigger comment just bumped updated_at, so

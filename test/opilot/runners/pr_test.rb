@@ -46,6 +46,8 @@ module OPilot
       def add_issue_comment(repo, num, body)
         @issue_posts << [repo, num, body]; PostedComment.new(id: 1000)
       end
+      def body_updates = (@body_updates ||= [])
+      def update_pr_body(repo, num, body) = body_updates << [repo, num, body]
     end
 
     class FakePull
@@ -323,6 +325,26 @@ module OPilot
                    "the cutoff advances so gh-agent doesn't re-handle the same feedback"
       assert_equal 1, @github.issue_posts.length, "the LLM's summary is posted on the PR"
       assert_empty @github.pushed, "an answer without code changes pushes nothing"
+    end
+
+    def test_a_refresh_reply_can_replace_the_description
+      @github.pr = open_pr(body: "<!-- opilot:banner -->\nb\n<!-- /opilot:banner -->\n\nold")
+      @harness = FakeHarness.new(reply: "BEGIN DESCRIPTION\nnew\nEND DESCRIPTION\nREPLY:\nUpdated it.")
+      @runner  = Runners::Pr.new(@ctx, harness: @harness, github: @github, gh_pull: @pull, op_pull: @op_pull)
+      inject_worktree(@runner, @worktree)
+      seed_pr_cache(comments: [feedback_comment])
+      capture_io { @runner.run("42") }
+
+      assert_equal [["opf/openproject", 7, "<!-- opilot:banner -->\nb\n<!-- /opilot:banner -->\n\nnew\n"]],
+                   @github.body_updates
+      assert_equal "🤖 Updated it.", @github.issue_posts.last[2], "the block is not posted"
+    end
+
+    def test_a_base_merge_tells_the_refresh_to_read_files_again
+      @worktree.behind = true
+      seed_pr_cache(comments: [feedback_comment])
+      capture_io { @runner.run("42") }
+      assert_includes @harness.runs.first[:prompt], "read each file again"
     end
 
     def test_bot_and_acted_comments_are_not_feedback

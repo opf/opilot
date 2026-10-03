@@ -150,7 +150,19 @@ PR. The list also matches the cached `pr.json` URL, because a renamed bot accoun
 leaves the old name in `pr_url.txt`. The same query reduces the head commit's
 check counts to one CI state: while checks run and none failed, `check_runs` is
 not called; any other answer reads the check runs as before, since the counts
-include `OPILOT_CI_IGNORE_CHECKS`. There are two command words
+include `OPILOT_CI_IGNORE_CHECKS`. **A reply can replace the PR description.** The
+reply and refresh prompts (`Prompts::DESCRIPTION_CONTRACT`) offer a `BEGIN
+DESCRIPTION` … `END DESCRIPTION` block before `REPLY:`; `Helpers.split_description`
+reads it, and `GitHub::Publish#apply_description` keeps the current banner fence and
+plan link, then puts the new text under them. The model never writes the fence: a
+body with no fence (`opilot` or the legacy `chomper`) is not replaced, and a
+block with no `END` line changes nothing. A failure is stated in the reply, so the
+reply never claims an edit that did not happen. `pr.json` carries the current
+`body` for the model to edit. An upstream PR's prompt has no such block. A refresh
+that merged the base tells the model to read files again, because the session
+resumes with what it read before the merge.
+
+There are two command words
 (`GitHub::Pull#parse_command`), and both are acted on **only here** — `!reply_only` — so
 an upstream PR's "refresh"/"close" is read as prose and answered in text.
 
@@ -447,6 +459,10 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot op wp form --project <id> --type <name> --required   # what it demands; creates nothing
 ./opilot op cf items <id>            # a hierarchy custom field's allowed values
 
+# Read GitHub as the contributor bot — JSON on stdout, reads only.
+./opilot gh pr list                  # the bot's open PRs (what gh-agent polls), each with
+                                     #   the state dir that tracks it ("tracked": null if none)
+
 # Production errors → a work package and a draft PR. REFUSES a public inference
 # endpoint. A bare number is `fix`.
 ./opilot appsignal fix <incident-number> [--project <id>] [--type <name>] [--app <id-or-name>]
@@ -659,6 +675,7 @@ in CI.
 | `runners/pr.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `runners/health.rb` | Terminal `dev health` — prints `OpenProject::HealthCheck`'s report, posts nothing |
 | `runners/op.rb` | Terminal `op` — one command per `Clients::OpenProject::Client` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
+| `runners/gh.rb` | Terminal `gh` — GitHub read as the contributor bot, with `runners/op.rb`'s contract (JSON on stdout, reads only). `pr list` joins `Clients::GitHub#open_prs` with the local PR dirs, so an open PR nothing tracks shows `"tracked": null` |
 | `runners/appsignal.rb` | Terminal `appsignal` — incident → work package, then hands off to `Runners::Fix#ship_ids`. Owns the local-model guard, and every preflight runs before the create. Also the read commands `apps` and `incident list\|get` |
 | `runners/status.rb`, `runners/reset.rb` | Terminal `dev status` (reads `.opilot/` only) and `reset` (deletes it, after a confirmation) |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |

@@ -91,6 +91,10 @@ module OPilot
     # discarded scratch text.
     REPLY_CONTRACT = block("reply_contract")
 
+    # The one way a reply edits the PR body (GitHub::Publish#apply_description).
+    # Only on prompts for opilot's own PRs: an upstream PR is not opilot's.
+    DESCRIPTION_CONTRACT = block("description_contract")
+
     # A diagram in a PR comment. GitHub renders a ```mermaid fence as a picture,
     # so this surface needs no gist and no machinery — only permission.
     #
@@ -235,7 +239,9 @@ module OPilot
           ORIGINAL ISSUE: #{item}  #{item_fields}
           PR PLAN:        #{plan}
           PR THREAD:      #{pr_thread}  #{THREAD_NOTE}
-          (issue and plan are likely already in your session context — read a file only if it isn't)
+          (issue and plan are likely already in your session context — read them only if they aren't)
+          The worktree can change between turns of this session (a push, a base merge), so read a
+          repository file again before you state what it contains.
         TEXT
       end
 

@@ -31,6 +31,8 @@ module OPilot
 
           #{MERMAID_NOTE}
 
+          #{DESCRIPTION_CONTRACT}
+
           #{REPLY_CONTRACT}
         PROMPT
       end

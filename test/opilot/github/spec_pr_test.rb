@@ -8,7 +8,7 @@ module OPilot
     User    = Struct.new(:login)
     RepoRef = Struct.new(:full_name)
     Head    = Struct.new(:ref, :sha, :repo)
-    PR      = Struct.new(:state, :updated_at, :html_url, :title, :head, keyword_init: true)
+    PR      = Struct.new(:state, :updated_at, :html_url, :title, :head, :body, keyword_init: true)
     IssueC  = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
 
     class FakeGitHub

@@ -227,6 +227,25 @@ module OPilot
       assert_equal "", Helpers.extract_reply(nil)
     end
 
+    def test_split_description_takes_the_last_block_and_removes_every_block
+      raw = "BEGIN DESCRIPTION\ndraft\nEND DESCRIPTION\nBEGIN DESCRIPTION\n# Ticket\n\nfinal\nEND DESCRIPTION\nREPLY:\nUpdated."
+      text, rest, cut = Helpers.split_description(raw)
+      assert_equal "# Ticket\n\nfinal", text
+      assert_equal "Updated.", Helpers.extract_reply(rest)
+      refute cut
+    end
+
+    def test_split_description_without_a_block_changes_nothing
+      assert_equal [nil, "REPLY:\nok", false], Helpers.split_description("REPLY:\nok")
+    end
+
+    def test_split_description_reports_a_block_with_no_end_line
+      text, rest, cut = Helpers.split_description("thinking\nBEGIN DESCRIPTION\n# Ticket\nhalf")
+      assert_nil text
+      assert_equal "thinking\n", rest
+      assert cut
+    end
+
     def test_strip_ansi_passthrough_plain_string
       assert_equal "plain text", h.strip_ansi("plain text")
     end

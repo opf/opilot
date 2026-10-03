@@ -4,9 +4,9 @@ module OPilot
       include Helpers
 
       # Publishes as the contributor bot, to its fork only. See CLAUDE.md, step 4 "Publish".
-      def initialize(ctx)
+      def initialize(ctx, github: nil)
         @ctx    = ctx
-        @github = Clients::GitHub.new(author_token)
+        @github = github || Clients::GitHub.new(author_token)
       end
 
       # Also the commit author, so a PR's commits match its opener.
@@ -143,6 +143,35 @@ module OPilot
         state.pr_url_file.write(url)
         record_progress(state.change_id, branch, "proposal-pr")
         url
+      end
+
+      # Apply a reply's DESCRIPTION block (Prompts::DESCRIPTION_CONTRACT) to
+      # opilot's own PR, and return the reply without it. A failure is logged
+      # and stated in the reply, so the reply never claims an edit that failed.
+      def apply_description(repo, number, reply)
+        text, rest, cut_off = Helpers.split_description(reply)
+        return "#{rest}\n\nI did not change the PR description: my answer was cut off." if cut_off
+        return rest unless text
+
+        current = @github.pull_request(repo, number).body.to_s
+        body = self.class.description_body(current, text) or
+          raise "the description has no opilot banner, so I did not replace it"
+        @github.update_pr_body(repo, number, neutralize_wp_links(body))
+        log_script "Updated the description of #{repo}##{number}"
+        rest
+      rescue => e
+        log_script "Description update failed on #{repo}##{number}: #{e.message}"
+        "#{rest}\n\nI could not update the PR description: #{e.message}"
+      end
+
+      # The current banner and plan link, then the new text. nil when the body
+      # has no banner fence. `chomper` is the fence of PRs opened before the rename.
+      BANNER_HEAD = %r{\A.*?<!-- /(?:opilot|chomper):banner -->[ \t]*\n(?:\s*📋 \*\*Implementation plan:\*\*[^\n]*\n)?}m
+      COPIED_HEAD = %r{<!-- (opilot|chomper):banner -->.*?<!-- /\1:banner -->\s*|^📋 \*\*Implementation plan:\*\*[^\n]*\n?}m
+
+      def self.description_body(current, text)
+        head = current[BANNER_HEAD] or return nil
+        "#{head.rstrip}\n\n#{text.gsub(COPIED_HEAD, "").strip}\n"
       end
 
       private

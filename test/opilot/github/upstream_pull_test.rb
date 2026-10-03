@@ -5,7 +5,7 @@ module OPilot
     User      = Struct.new(:login)
     RepoRef   = Struct.new(:full_name)
     Head      = Struct.new(:ref, :sha, :repo)
-    PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, :user, keyword_init: true)
+    PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, :user, :body, keyword_init: true)
     IssueC    = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
     SearchHit = Struct.new(:number)
     Check     = Struct.new(:id, :name, :status, :conclusion, :output, keyword_init: true)

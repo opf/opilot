@@ -252,6 +252,7 @@ module OPilot
         original_head = wt.revparse("HEAD")
 
         conflicts  = (force_base_merge || stale_pr?(wt)) ? merge_base(wt, repo, branch, base_ref) : []
+        merged     = conflicts.any? || wt.revparse("HEAD") != original_head
         ci_ref     = ci_failure_ref(dir, base_repo, content["head_sha"].to_s)
         ci_expired = ci_ref == :ci_detail_expired
         ci_ref     = nil if ci_expired
@@ -274,7 +275,7 @@ module OPilot
         end
 
         reply = refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref,
-                                    ci: ci_ref, conflicts: conflicts, feedback: feedback)
+                                    ci: ci_ref, conflicts: conflicts, feedback: feedback, merged: merged)
         commit_refresh(wp_id, wt, repo, branch, base_ref, conflicts)
         deliver(wp_id, dir, repo, branch, head_repo, base_repo, number, original_head,
                 reply: reply, feedback: feedback)
@@ -390,14 +391,15 @@ module OPilot
           .sort_by { |c| c["created_at"].to_s }
       end
 
-      def refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:)
+      def refresh_with_harness(wp_id, dir, repo, base_repo, number, content, base_ref, ci:, conflicts:, feedback:,
+                               merged: false)
         item_ref, plan_ref = item_refs(wp_id)
         prompt = Prompts::PrRefresher.pr_refresh(
           worktree: repo.worktree_container, repo: base_repo, pr_number: number,
           title: content["title"].to_s, base: base_ref,
           item: item_ref, plan: plan_ref,
           pr_thread: container_path(dir / "pr.json"),
-          ci: ci, conflicts: conflicts, feedback_count: feedback.length
+          ci: ci, conflicts: conflicts, feedback_count: feedback.length, merged: merged
         )
         # Shares gh-agent's per-PR session so prior PR conversations carry over.
         llm(:pr_refresher, prompt, session_file: dir / "gh_session_id")
@@ -455,6 +457,7 @@ module OPilot
           return
         end
 
+        reply = publisher.apply_description(base_repo, number, reply) if reply
         post_summary(wp_id, dir, base_repo, number, reply)
         latest = feedback.map { |c| c["created_at"].to_s }.max
         @gh_pull.mark_acted(wp_id, repo.name, latest) if latest
@@ -475,6 +478,10 @@ module OPilot
           else puts "  Please enter y or d."
           end
         end
+      end
+
+      def publisher
+        @publisher ||= GitHub::Publish.new(@ctx, github: @github)
       end
 
       # Post the LLM's summary as a PR comment (labelled automated, like gh-agent's

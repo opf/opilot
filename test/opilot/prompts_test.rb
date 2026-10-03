@@ -123,5 +123,18 @@ module OPilot
       refute_includes Prompts.charter(:auditor), Prompts::SEARCH_STOP_RULE
       BUILDERS.each_key { |mod, name| refute_includes render(mod, name), Prompts::SEARCH_STOP_RULE, "#{mod}.#{name}" }
     end
+
+    def test_only_the_own_pr_reply_and_refresh_offer_a_description_edit
+      assert_includes render(Prompts::PrAuthor, :gh_reply), "BEGIN DESCRIPTION"
+      assert_includes render(Prompts::PrRefresher, :pr_refresh), "BEGIN DESCRIPTION"
+      refute_includes render(Prompts::PrAuthor, :fix_ci), "BEGIN DESCRIPTION"
+      refute_includes render(Prompts::PrAdvisor, :pr_review), "BEGIN DESCRIPTION", "an upstream PR is not opilot's"
+    end
+
+    def test_a_refresh_after_a_base_merge_says_to_read_files_again
+      args = BUILDERS.fetch([Prompts::PrRefresher, :pr_refresh])
+      assert_includes Prompts::PrRefresher.pr_refresh(**args, merged: true), "read each file again"
+      refute_includes Prompts::PrRefresher.pr_refresh(**args), "read each file again"
+    end
   end
 end

@@ -398,5 +398,19 @@ module OPilot
     def self.extract_reply(text)
       text.to_s.split(/^REPLY:[ \t]*/, -1).last.to_s.strip
     end
+
+    # Prompts::DESCRIPTION_CONTRACT. The END line detects a cut-off answer.
+    DESCRIPTION_BLOCK = /^BEGIN DESCRIPTION[ \t]*\n(.*?)^END DESCRIPTION[ \t]*$\n?/m
+    DESCRIPTION_OPEN  = /^BEGIN DESCRIPTION[ \t]*$/
+
+    # [description or nil, the text without the block, whether it was cut off].
+    # The last block wins.
+    def self.split_description(text)
+      text   = text.to_s
+      blocks = text.scan(DESCRIPTION_BLOCK)
+      return [blocks.last.first.strip, text.gsub(DESCRIPTION_BLOCK, ""), false] if blocks.any?
+      return [nil, text, false] unless text.match?(DESCRIPTION_OPEN)
+      [nil, text.split(DESCRIPTION_OPEN, 2).first, true]
+    end
   end
 end
