@@ -107,7 +107,7 @@ module OPilot
       # and only the caller can tell them apart.
       def collection(api, wp_id)
         res = api.work_package_attachments(wp_id)
-        return [res.code, {}] unless res.code == 200
+        return [res.code, {}] unless res.ok?
         elements = Clients::OpenProject::Resource.elements(res.body)
         [res.code, elements.to_h { |a| [a["id"].to_s, a] }]
       end
@@ -195,7 +195,7 @@ module OPilot
       # a picture pasted into the description belongs to the work package.
       def attachment_meta(api, id)
         res = api.attachment(id)
-        [res.code == 200 ? res.body : nil, res.code]
+        [res.ok? ? res.body : nil, res.code]
       end
 
       # [bytes, nil, code] or [nil, reason, code].
@@ -206,7 +206,7 @@ module OPilot
         return [nil, "no download location", 200] if url.to_s.empty?
 
         res = api.download_attachment(url)
-        return [nil, "download failed with HTTP #{res.code}", res.code] unless res.code == 200 && res.body
+        return [nil, "download failed with HTTP #{res.code}", res.code] unless res.ok?
         [res.body, nil, res.code]
       end
 

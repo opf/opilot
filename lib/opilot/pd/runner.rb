@@ -602,7 +602,7 @@ module OPilot
         end
 
         res = @op.create_work_package(feature_payload(state, project_id, type_id))
-        unless res.code == 201 && res.body
+        unless res.ok?
           puts "  ⚠ Could not create the FEATURE work package (HTTP #{res.code})."
           return nil
         end
@@ -634,7 +634,7 @@ module OPilot
           next if section.wp_id
 
           res = @op.create_work_package(child_payload(state, section, ids, parent_wp))
-          if res.code == 201 && res.body
+          if res.ok?
             tasks.write(TasksFile.bind_id(tasks.read, section.title, res.body["id"]))
             created << { "id" => res.body["id"], "title" => section.title }
             puts "  ✓ #{Helpers.wp_label(res.body["id"])}  #{section.title}"
@@ -771,7 +771,7 @@ module OPilot
         res = @op.update_work_package(
           wp_id, { "_links" => { "status" => Href.link(Href.status(status["id"])) } }
         )
-        if (200..299).cover?(res.code)
+        if res.ok?
           item["status"] = status["name"]   # so a later transition in the same run compares correctly
           puts "  → status: #{status["name"]}"
         else

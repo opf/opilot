@@ -99,7 +99,7 @@ module OPilot
 
       def fetch_one(id)
         res = @op.document(id)
-        res.code == 200 ? res.body : nil
+        res.ok? ? res.body : nil
       end
 
       def document_error(code, project_id)
@@ -193,7 +193,7 @@ module OPilot
 
       def write_attachments(doc, dir, ordinal)
         res = @op.document_attachments(doc["id"])
-        return [] unless res.code == 200
+        return [] unless res.ok?
         elements = Clients::OpenProject::Resource.elements(res.body)
         return [] if elements.empty?
 
@@ -215,7 +215,7 @@ module OPilot
         return Converter.unconvertible(name, Converter.oversize_reason(size), dir: dest) if size > Converter::MAX_BYTES
 
         res = @op.download_attachment(url)
-        return Converter.unconvertible(name, "download failed with HTTP #{res.code}", dir: dest) unless res.code == 200
+        return Converter.unconvertible(name, "download failed with HTTP #{res.code}", dir: dest) unless res.ok?
 
         source = File.join(tmp, "attachment-#{attachment["id"]}")
         File.binwrite(source, res.body.to_s)

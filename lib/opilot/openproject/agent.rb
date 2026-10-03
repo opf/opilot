@@ -420,7 +420,7 @@ module OPilot
         internal = @reply_internal.nil? ? true : @reply_internal
         # No id is recorded: OpenProject::Pull#own_comment? matches on the author.
         res = @api.add_comment(item_id, comment: raw, internal: internal)
-        if res.code == 201
+        if res.ok?
           log_script "Note posted to WP #{wp_label(item_id)}"
         else
           log_script "Note failed for WP #{wp_label(item_id)} (HTTP #{res.code})"

@@ -184,7 +184,7 @@ module OPilot
       def emit_form(payload, required_only: false)
         emit("wp form") do
           res = api.create_work_package_form(payload)
-          next res unless required_only && res.code == 200 && res.body.is_a?(Hash)
+          next res unless required_only && res.form_answered?
           Clients::OpenProject::Response.new(res.code, required_summary(res.body), res.request)
         end
       end
@@ -273,7 +273,7 @@ module OPilot
       # is the relation's `from`, since the route work package becomes `from`.
       def relate_created(created, to_id)
         res = api.create_relation(created["id"], to_id)
-        return if [200, 201].include?(res.code)
+        return if res.ok?
 
         $stdout.puts JSON.pretty_generate(res.body) if res.body
         $stderr.puts "HTTP #{res.code} — wp create --relates #{to_id}: " \
@@ -390,7 +390,7 @@ module OPilot
         return given if given.match?(/\A\d+\z/)
 
         res = api.project_types(project)
-        unless res.code == 200 && res.body
+        unless res.ok?
           $stderr.puts "HTTP #{res.code} — #{command.delete_prefix("op ")}: could not list the types of project #{project}"
           raise OPilot::FatalError
         end

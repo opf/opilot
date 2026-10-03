@@ -71,7 +71,7 @@ module OPilot
 
       def fetch_project(project_id, problems)
         res = @op.project(project_id)
-        unless res.code == 200
+        unless res.ok?
           problems << "project #{project_id} is not readable (HTTP #{res.code})"
           return {}
         end
@@ -92,7 +92,7 @@ module OPilot
 
       def fetch_types(project_id, problems)
         res = @op.project_types(project_id)
-        unless res.code == 200
+        unless res.ok?
           problems << "could not list types for project #{project_id} (HTTP #{res.code})"
           return []
         end
@@ -103,7 +103,7 @@ module OPilot
         # The rescue covers a network failure; a non-200 is reported here, or an
         # empty list would read as "this instance has none of those statuses".
         res = @op.statuses
-        unless res.code == 200 && res.body
+        unless res.ok?
           problems << "could not list statuses (HTTP #{res.code})"
           return []
         end

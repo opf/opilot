@@ -47,7 +47,7 @@ module OPilot
                "opilot's allowlist can trigger me. Ask one of them to comment, or ask an " \
                "administrator to add you.".strip
         res = @api.add_comment(wp_id, comment: body, internal: trigger["internal"] == true)
-        return unless res.code == 201
+        return unless res.ok?
 
         data["refusal_noted_at"] = Time.now.utc.iso8601
         Helpers.write_item(item_path, data)
@@ -77,7 +77,7 @@ module OPilot
       # Refreshes item.json and returns it, or nil.
       def fetch_single_item(wp_id)
         res = @api.work_package(wp_id)
-        return nil unless res.code == 200 && res.body
+        return nil unless res.ok?
 
         fetch_work_package_item(res.body)
         path = Helpers.item_dir(@ctx, wp_display_id(res.body)) / "item.json"
@@ -91,7 +91,7 @@ module OPilot
 
       def related_work_packages(wp_id, mirror: true)
         res = @api.work_package(wp_id)
-        return [] unless res.code == 200 && res.body
+        return [] unless res.ok?
         numeric_id = res.body["id"].to_s
 
         pairs = relation_pairs(numeric_id) + hierarchy_pairs(res.body)
@@ -297,10 +297,10 @@ module OPilot
         return [true, cached["comments"] || []] if cached && item_current?(cached, wp)
 
         acts_res = @api.work_package_activities(wp_id)
-        acts = acts_res.code == 200 ? acts_res.body : { "_embedded" => { "elements" => [] } }
+        acts = acts_res.ok? ? acts_res.body : { "_embedded" => { "elements" => [] } }
 
         rxns_res = @api.work_package_emoji_reactions(wp_id)
-        rxns = rxns_res.code == 200 ? rxns_res.body : { "_embedded" => { "elements" => [] } }
+        rxns = rxns_res.ok? ? rxns_res.body : { "_embedded" => { "elements" => [] } }
 
         activities = Resource.elements(acts)
         comments = build_comments(activities, Resource.elements(rxns))
@@ -308,8 +308,8 @@ module OPilot
         full = build_full_item(wp, comments)
         full["custom_fields"] = custom_fields(wp)
         # nil, not empty, when the read failed: "no changes" would be a false fact.
-        full["history"] = acts_res.code == 200 ? build_history(activities) : nil
-        full["description_changed_at"] = acts_res.code == 200 ? description_changed_at(activities, wp) : nil
+        full["history"] = acts_res.ok? ? build_history(activities) : nil
+        full["description_changed_at"] = acts_res.ok? ? description_changed_at(activities, wp) : nil
         if item_path.exist?
           prev = cached || {}
           (CARRIED_KEYS + PICTURE_KEYS).each { |key| full[key] = prev[key] if prev.key?(key) }
@@ -372,7 +372,7 @@ module OPilot
 
       def read_user_name(id)
         res = @api.user(id)
-        res.code == 200 ? res.body["name"] : nil
+        res.ok? ? res.body["name"] : nil
       rescue Clients::OpenProject::NetworkError
         :failed
       end
@@ -447,7 +447,7 @@ module OPilot
         project_id, type_id = href.to_s[%r{/schemas/(\d+-\d+)\z}, 1]&.split("-")
         return nil unless project_id
         res = @api.work_package_schema(project_id, type_id)
-        res.code == 200 ? @schemas[href] = res.body : nil
+        res.ok? ? @schemas[href] = res.body : nil
       end
 
       def parse_scan_from_input(input)

@@ -90,7 +90,7 @@ module OPilot
       # { id, parent, depth, subject, type, status, updated_at }, ids as displayed.
       def descendants(item_id)
         res = @api.work_package(item_id)
-        return { "nodes" => nil, "truncated" => false, "code" => res.code } unless res.code == 200 && res.body
+        return { "nodes" => nil, "truncated" => false, "code" => res.code } unless res.ok?
         root = res.body["id"].to_s
         filter = Clients::OpenProject::Query.filter("ancestor", "=", root)
         code, raw, total = Lookup.new(@api).all_work_packages(filter, max: MAX_DESCENDANTS)
@@ -125,7 +125,7 @@ module OPilot
       # [prs, code]. The GitHub integration answers 403/404 when it is off.
       def linked_prs(item_id)
         res = @api.work_package_github_pull_requests(item_id)
-        return [nil, res.code] unless res.code == 200
+        return [nil, res.code] unless res.ok?
         prs = Resource.elements(res.body).map do |pr|
           { "url" => pr["htmlUrl"], "repository" => pr["repository"], "number" => pr["number"],
             "title" => pr["title"], "state" => pr["state"], "merged" => pr["merged"] == true,

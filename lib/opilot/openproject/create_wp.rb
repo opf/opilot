@@ -85,7 +85,7 @@ module OPilot
       # the relation route takes only numeric ids. nil (answered) on failure.
       def fetch_source_wp(st)
         res = @api.work_package(st.item_id)
-        unless res.code == 200 && res.body
+        unless res.ok?
           @reply.(st.item_id, "I could not read this work package from the API (HTTP #{res.code}), " \
                               "so I created nothing.")
           return nil
@@ -103,7 +103,7 @@ module OPilot
       # Checked before the LLM call, so a missing permission costs no draft.
       def fetch_project_for_create(st, project_id)
         res = @api.project(project_id)
-        unless res.code == 200 && res.body
+        unless res.ok?
           @reply.(st.item_id, "I could not read project #{project_id} (HTTP #{res.code}), " \
                               "so I created nothing.")
           return nil
@@ -121,7 +121,7 @@ module OPilot
       # Best-effort: an empty list lets OpenProject pick the default type.
       def project_type_names(project_id)
         res = @api.project_types(project_id)
-        return [] unless res.code == 200 && res.body
+        return [] unless res.ok?
         Resource.type_list(res.body)
       rescue StandardError => e
         log_script "Warning: could not list types for project #{project_id} (#{e.message})."
@@ -193,7 +193,7 @@ module OPilot
         payloads.each do |draft, payload|
           res = @api.create_work_package(payload)
           last_code = res.code
-          unless res.code == 201 && res.body
+          unless res.ok?
             log_script "create wp failed for #{wp_label(st.item_id)} — HTTP #{res.code} on #{payload["subject"].inspect}"
             failed << draft
             next
@@ -351,7 +351,7 @@ module OPilot
         source = record["source_numeric_id"]
         res = @api.link_work_package(record["numeric_id"], source, as: shape.to_sym)
         log_script "#{wp_label(record["id"])} — #{shape} link to #{wp_label(source)} answered HTTP #{res.code}." \
-          unless [200, 201].include?(res.code)
+          unless res.ok?
         res.code
       rescue StandardError => e
         log_script "#{wp_label(record["id"])} — could not set the #{shape} link to #{wp_label(source)} " \
