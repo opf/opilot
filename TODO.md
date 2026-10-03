@@ -17,6 +17,8 @@ OPilot's roadmap. See [README.md](README.md) for what the project already does.
 * Replace inference-gw with a configurable tiny proxy
 
 ## Architecture & AI
+* Switch to a stateless execution design
+  * Workflow gets triggered by an OpenProject background job, passing required context and short-lived MCP token 
 * Abandon the auth-less "god mode" and switch to granular authorization
   * OpenProject OAuth or Keycloak
 * Respect multi-tenant isolation in SaaS environments
