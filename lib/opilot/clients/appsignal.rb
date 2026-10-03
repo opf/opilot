@@ -16,6 +16,17 @@ module OPilot
       # How far back to look for the most recent trace of this digest.
       TRACE_WINDOW_DAYS = 30
 
+      # The fields of one exception incident, for both the list and the single read.
+      INCIDENT_FIELDS = <<~GQL.freeze
+        number state severity namespace count
+        exceptionName exceptionMessage firstBacktraceLine
+        actionNames digests
+        createdAt lastOccurredAt lastSampleOccurredAt
+      GQL
+
+      STATES = %w[OPEN CLOSED WIP].freeze
+      ORDERS = %w[LAST TOTAL ID].freeze
+
       def initialize(token)
         @token = token
       end
@@ -41,6 +52,29 @@ module OPilot
         ).compact
       end
 
+      # One page of exception incidents: { "total", "incidents" }. A nil state
+      # means every state. `offset` counts incidents, not pages. The API also
+      # takes a timeframe, but it ignores it alone and returns nothing with
+      # `exceptionQuery: TIMEFRAME`, so it is not offered.
+      def exception_incidents(app_id, state: nil, order: "LAST", query: nil, namespace: nil, limit: 25, offset: 0)
+        vars = { "appId" => app_id, "state" => state, "order" => order, "query" => query,
+                 "namespaces" => namespace && [namespace], "limit" => limit, "offset" => offset }
+        data = graphql(<<~GQL, vars)
+          query L($appId: String!, $state: IncidentStateEnum, $order: IncidentOrderEnum, $query: String,
+                  $namespaces: [String], $limit: Int, $offset: Int) {
+            app(id: $appId) {
+              paginatedExceptionIncidents(state: $state, order: $order, query: $query,
+                                          namespaces: $namespaces, limit: $limit, offset: $offset) {
+                total
+                rows { #{INCIDENT_FIELDS} }
+              }
+            }
+          }
+        GQL
+        page = data.dig("app", "paginatedExceptionIncidents") || {}
+        { "total" => page["total"].to_i, "incidents" => page["rows"] || [] }
+      end
+
       private
 
       # Step 1. `incident` is a union: an anomaly number returns an empty node, not an error.
@@ -49,12 +83,7 @@ module OPilot
           query I($appId: String!, $number: Int!) {
             app(id: $appId) {
               incident(incidentNumber: $number) {
-                ... on ExceptionIncident {
-                  number state severity namespace count
-                  exceptionName exceptionMessage firstBacktraceLine
-                  actionNames digests
-                  createdAt lastOccurredAt lastSampleOccurredAt
-                }
+                ... on ExceptionIncident { #{INCIDENT_FIELDS} }
               }
             }
           }

@@ -166,6 +166,22 @@ module OPilot
         } }))
         assert_equal %w[a1 a2], @client.applications.map { |a| a["id"] }
       end
+
+      def test_exception_incidents_sends_the_filters_as_variables
+        stub_request(:post, %r{\A#{Regexp.escape(GQL)}}).to_return(gql("data" => { "app" => {
+          "paginatedExceptionIncidents" => { "total" => 15, "rows" => [{ "number" => 692 }] }
+        } }))
+
+        page = @client.exception_incidents(APP, state: "OPEN", query: "Timeout", namespace: "web",
+                                                 limit: 10, offset: 20)
+
+        assert_equal({ "total" => 15, "incidents" => [{ "number" => 692 }] }, page)
+        assert_requested(:post, %r{\A#{Regexp.escape(GQL)}}) do |req|
+          vars = JSON.parse(req.body)["variables"]
+          vars.values_at("appId", "state", "order", "query", "limit", "offset") ==
+            [APP, "OPEN", "LAST", "Timeout", 10, 20] && vars["namespaces"] == ["web"]
+        end
+      end
     end
   end
 end

@@ -49,6 +49,12 @@ module OPilot
         @fetched << [app, number]
         @incident
       end
+
+      attr_reader :listed
+      def exception_incidents(app, **filters)
+        @listed = [app, filters]
+        { "total" => 1, "incidents" => [{ "number" => 4711 }] }
+      end
     end
 
     class FakeFixRunner
@@ -553,6 +559,61 @@ module OPilot
 
     def test_an_unknown_subcommand_is_rejected
       assert_raises(OPilot::FatalError) { capture_io { runner.run(%w[explode]) } }
+    end
+
+    # ── the read commands ───────────────────────────────────────────────────
+    #
+    # They call no model, so they run where `fix` refuses, and stdout is JSON.
+
+    def local_refused_ctx
+      build_ctx(@tmpdir, inference_private: false, inference_url: "https://openrouter.ai/api/v1")
+    end
+
+    def test_incident_list_runs_without_a_local_model_and_prints_json
+      appsignal = FakeAppSignal.new
+      out, = capture_io { runner(ctx: local_refused_ctx, appsignal: appsignal).run(%w[incident list]) }
+
+      assert_equal({ "total" => 1, "incidents" => [{ "number" => 4711 }] }, JSON.parse(out))
+      assert_equal [APP, { state: "OPEN", order: "LAST", query: nil, namespace: nil, limit: 25, offset: 0 }],
+                   appsignal.listed
+    end
+
+    def test_incident_list_maps_its_flags
+      appsignal = FakeAppSignal.new
+      capture_io do
+        runner(appsignal: appsignal).run(%W[incident list --app #{APP} --state all --sort total
+                                            --search Timeout --namespace web --limit 10 --page 3])
+      end
+      assert_equal({ state: nil, order: "TOTAL", query: "Timeout", namespace: "web", limit: 10, offset: 20 },
+                   appsignal.listed.last)
+    end
+
+    def test_incident_list_refuses_an_unknown_state
+      _out, err = capture_io do
+        assert_raises(OPilot::FatalError) { runner.run(%W[incident list --app #{APP} --state resolved]) }
+      end
+      assert_includes err, "--state takes open, closed, wip, all"
+    end
+
+    def test_a_name_resolution_note_stays_off_stdout
+      ctx = build_ctx(@tmpdir, appsignal_app_id: "op")
+      out, err = capture_io { runner(ctx: ctx).run(%w[incident list]) }
+
+      JSON.parse(out)
+      assert_includes err, "AppSignal app op is #{APP}"
+    end
+
+    def test_incident_get_prints_the_assembled_incident
+      appsignal = FakeAppSignal.new
+      out, = capture_io { runner(ctx: local_refused_ctx, appsignal: appsignal).run(%w[incident get #4711]) }
+
+      assert_equal FakeAppSignal::REPORT, JSON.parse(out)
+      assert_equal [[APP, "4711"]], appsignal.fetched
+    end
+
+    def test_apps_prints_the_list
+      out, = capture_io { runner.run(%w[apps]) }
+      assert_equal [{ "id" => APP, "name" => "op", "environment" => "production" }], JSON.parse(out)
     end
   end
 end

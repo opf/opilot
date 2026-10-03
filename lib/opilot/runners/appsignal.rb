@@ -3,14 +3,24 @@ require "json"
 module OPilot
   module Runners
     # `./opilot appsignal`: a production error becomes a work package and a draft PR.
-    # It sends incident data to the model, so #require_local_inference! fails closed.
-    # See CLAUDE.md, appsignal.
+    # `fix` sends incident data to the model, so #require_local_inference! fails
+    # closed. See CLAUDE.md, appsignal.
+    #
+    # `apps` and `incident list|get` only read, as `op` does: JSON on stdout,
+    # messages on stderr. They call no model, so the guard does not apply.
     class AppSignal
       Resource = Clients::OpenProject::Resource
 
       include Helpers
 
-      FIX_FLAGS = %w[project type app].freeze
+      FIX_FLAGS  = %w[project type app].freeze
+      LIST_FLAGS = %w[app state sort search namespace limit page].freeze
+
+      # The verbs that only read. CLI runs them without a session.
+      READ_COMMANDS = %w[apps incident].freeze
+
+      STATES = { "open" => "OPEN", "closed" => "CLOSED", "wip" => "WIP", "all" => nil }.freeze
+      SORTS  = { "last" => "LAST", "total" => "TOTAL", "id" => "ID" }.freeze
 
       def initialize(ctx, harness: Harness.new(ctx), api: nil, appsignal: nil, fix_runner: nil)
         @ctx       = ctx
@@ -23,6 +33,8 @@ module OPilot
       # `fix` is the only verb, so a bare incident number is accepted too.
       def run(args)
         sub, *rest = args
+        return apps(rest) if sub == "apps"
+        return incident(rest) if sub == "incident"
         return fix(rest) if sub == "fix"
         return fix(args) if sub.to_s.match?(/\A#?\d+\z/)
 
@@ -35,6 +47,59 @@ module OPilot
       end
 
       private
+
+      def apps(args)
+        reject!("appsignal apps", "takes no arguments") if args.any?
+        emit(appsignal.applications)
+      end
+
+      def incident(args)
+        action, *rest = args
+        case action
+        when "list" then list_incidents(rest)
+        when "get"  then get_incident(rest)
+        else reject!("appsignal incident", "unknown action #{action.inspect}. It takes: list, get.")
+        end
+      end
+
+      def list_incidents(args)
+        command = "appsignal incident list"
+        opts, rest = flags(command, args, LIST_FLAGS)
+        reject!(command, "takes no arguments, only flags") if rest.any?
+        state = choice!(command, "state", opts["state"] || "open", STATES)
+        order = choice!(command, "sort", opts["sort"] || "last", SORTS)
+        limit = positive!(command, "limit", opts["limit"] || "25")
+        page  = positive!(command, "page", opts["page"] || "1")
+        resolve_app!(opts["app"], quiet: true)
+
+        emit(appsignal.exception_incidents(@app, state: state, order: order, query: opts["search"],
+                                                 namespace: opts["namespace"], limit: limit,
+                                                 offset: (page - 1) * limit))
+      end
+
+      def get_incident(args)
+        command = "appsignal incident get"
+        opts, rest = flags(command, args, %w[app])
+        number = rest.first.to_s.strip.delete_prefix("#")
+        reject!(command, "needs one incident number, e.g. 4711") unless rest.length == 1 && number.match?(/\A\d+\z/)
+        resolve_app!(opts["app"], quiet: true)
+
+        emit(appsignal.incident(@app, number))
+      end
+
+      # stdout is data, as in Runners::Op.
+      def emit(data) = $stdout.puts(JSON.pretty_generate(data))
+
+      def choice!(command, flag, value, allowed)
+        key = value.downcase
+        return allowed[key] if allowed.key?(key)
+        reject!(command, "--#{flag} takes #{allowed.keys.join(", ")}, not #{value.inspect}")
+      end
+
+      def positive!(command, flag, value)
+        reject!(command, "--#{flag} takes a positive number, not #{value.inspect}") unless value.match?(/\A[1-9]\d*\z/)
+        value.to_i
+      end
 
       def fix(args)
         opts, rest = flags("appsignal fix", args, FIX_FLAGS)
@@ -322,7 +387,8 @@ module OPilot
       # Resolves a name to an id; the API answers a name with `Object not found`.
       # A name that matches several apps is refused: staging and production must
       # never be confused.
-      def resolve_app!(flag)
+      # `quiet` sends the note to stderr, so a read command keeps stdout for data.
+      def resolve_app!(flag, quiet: false)
         given = flag || @ctx.appsignal_app_id
         raise OPilot::FatalError, no_app_message("Name the AppSignal app") unless given
         return @app = given if given.match?(APP_ID)
@@ -335,7 +401,8 @@ module OPilot
         end
 
         @app = matches.first["id"]
-        log_script "AppSignal app #{given} is #{@app} (#{matches.first["environment"]})"
+        note = "AppSignal app #{given} is #{@app} (#{matches.first["environment"]})"
+        quiet ? $stderr.puts(note) : log_script(note)
       end
 
       def no_app_message(opening)

@@ -252,7 +252,7 @@ export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EM
 # The grouped commands (`dev`, `pd`) carry the verb in $2, so both are matched on
 # the subcommand. `dev` verbs are listed one by one rather than matched as a
 # group so a bare `./opilot dev`, which only prints help, starts no container.
-# `op` needs nothing at all.
+# `op` needs nothing at all, nor do `appsignal apps` and `appsignal incident`.
 
 _needs_harness() {
   _is agent chat && return 0
@@ -262,11 +262,12 @@ _needs_harness() {
     # `fix` is appsignal's only verb, so a bare incident number reads as one
     # (`./opilot appsignal 2025`). Matched by EXCLUSION for that reason: a list
     # of verbs would have to repeat the shorthand rule Ruby already owns, and
-    # the copy that did dropped it. Only the two spellings that print help and
-    # exit are left out. It also needs inference-gw for a second reason the others do
-    # not: Context#inference_privacy asks it which address it pinned, and a
+    # the copy that did dropped it. Left out: the spellings that print help, and
+    # the read verbs (Runners::AppSignal::READ_COMMANDS), which call no model. It
+    # also needs inference-gw for a second reason the others do not:
+    # Context#inference_privacy asks it which address it pinned, and a
     # not-running inference-gw is (correctly) a refusal.
-    appsignal) case "$SUB" in ""|--help|-h) ;; *) return 0 ;; esac ;;
+    appsignal) case "$SUB" in ""|--help|-h|apps|incident) ;; *) return 0 ;; esac ;;
   esac
   return 1
 }

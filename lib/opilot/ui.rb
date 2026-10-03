@@ -249,9 +249,10 @@ module OPilot
     # `./opilot appsignal` with no (or a bad) subcommand, and `appsignal --help`.
     def appsignal_usage_text
       <<~USAGE.strip
-        Usage: ./opilot appsignal fix <incident-number> [flags]
+        Usage: ./opilot appsignal <command> [flags]
 
-        Turn a production error into a work package and a draft PR.
+        Turn a production error into a work package and a draft PR, or read
+        AppSignal directly.
 
           ./opilot appsignal fix <incident-number> [--project <id>] [--type <name>] [--app <id-or-name>]
               Read the incident — message, backtrace, and the request payload
@@ -260,12 +261,24 @@ module OPilot
               --type names the work-package type and overrides the one opilot
               picks from the incident.
 
-        `fix` is the only command, so the number alone works too:
-        `./opilot appsignal 2025`.
+        A bare number is `fix`: `./opilot appsignal 2025`.
 
-        It sends production error data to the model, so it RUNS ONLY against a
-        private inference endpoint and refuses otherwise. See OPILOT_INFERENCE_URL
-        in .env.example.
+        `fix` sends production error data to the model, so it RUNS ONLY against
+        a private inference endpoint and refuses otherwise. See
+        OPILOT_INFERENCE_URL in .env.example.
+
+        The read commands print JSON on stdout, call no model, and change nothing:
+
+          ./opilot appsignal apps
+              The apps your token can see: id, name, environment.
+          ./opilot appsignal incident list [--state open|closed|wip|all] [--sort last|total|id]
+                                           [--search <text>] [--namespace <name>]
+                                           [--limit <n>] [--page <n>] [--app <id-or-name>]
+              One page of exception incidents, with the total. Defaults: open,
+              most recent first, 25 a page.
+          ./opilot appsignal incident get <incident-number> [--app <id-or-name>]
+              The incident as `fix` reads it — metadata, request payload and
+              backtrace. The payload can hold user data.
 
         Set APPSIGNAL_API_TOKEN (a personal API token, from your AppSignal
         personal settings) and APPSIGNAL_APP_ID — an app id or its name. With no
@@ -293,7 +306,7 @@ module OPilot
           ./opilot dev <command>    software development: plan, commit, build, health, refresh, status
           ./opilot pd <command>     product development: the spec-driven pipeline
           ./opilot op <command>     read the OpenProject API directly (JSON out)
-          ./opilot appsignal <cmd>  turn a production error into a work package and a PR
+          ./opilot appsignal <cmd>  read production errors, or turn one into a work package and a PR
           ./opilot chat [message]   read-only chat about your local mirrors
           ./opilot usage            Inference spend (OpenRouter), else the configured upstream
           ./opilot reset            delete .opilot/, clones included

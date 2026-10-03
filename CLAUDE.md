@@ -324,6 +324,13 @@ a draft PR (`Runners::AppSignal`). It is an **integration** — the system it re
 so it sits beside `op` rather than under `dev`, per `cli.rb`'s own rule; unlike
 `op` it goes through `CLI#session`, because `fix` calls the LLM and publishes.
 
+**`apps` and `incident list|get` only read** (`Runners::AppSignal::READ_COMMANDS`),
+with `op`'s contract: JSON on stdout, notes on stderr. They call no model, so they
+skip the guard, `CLI#session`, and — in `./opilot`'s `_needs_harness` — every
+container. `incident list` reads `paginatedExceptionIncidents`; its `timeframe`
+argument is not offered, because live it was ignored alone and matched nothing
+with `exceptionQuery: TIMEFRAME`. `namespaces` is `[String]` there, not `String`.
+
 **The command exists because of its guard, not in spite of it.** `TODO.md` carried
 an AppSignal integration for a long time and blocked it on one thing: opilot must
 not hand user data to a third-party model. `fix` therefore **refuses to run unless
@@ -431,8 +438,12 @@ before touching anything under `lib/opilot/pd/`.
 ./opilot op cf items <id>            # a hierarchy custom field's allowed values
 
 # Production errors → a work package and a draft PR. REFUSES a public inference
-# endpoint. `fix` is the only verb, so a bare number works too.
+# endpoint. A bare number is `fix`.
 ./opilot appsignal fix <incident-number> [--project <id>] [--type <name>] [--app <id-or-name>]
+# Read-only, JSON out, no model and no containers.
+./opilot appsignal apps
+./opilot appsignal incident list [--state open|closed|wip|all] [--sort last|total|id] [--search <text>] [--limit <n>] [--page <n>]
+./opilot appsignal incident get <incident-number>
 
 # Product development (spec-driven)
 ./opilot pd init <project-id> [--repo <name>]
@@ -638,7 +649,7 @@ in CI.
 | `runners/pr.rb` | Terminal `dev refresh`, and gh-agent's `@opilot refresh` via `#refresh_one` |
 | `runners/health.rb` | Terminal `dev health` — prints `OpenProject::HealthCheck`'s report, posts nothing |
 | `runners/op.rb` | Terminal `op` — one command per `Clients::OpenProject::Client` method it exposes. Three rules hold: **stdout is data** (JSON only, diagnostics to stderr, never `log_script`), every action **reads except `wp create`**, and **`--type` is required of every payload**. `wp form --required` is how you learn what else a project demands. The file header argues all three — read it there rather than re-deriving them |
-| `runners/appsignal.rb` | Terminal `appsignal` — incident → work package, then hands off to `Runners::Fix#ship_ids`. Owns the local-model guard, and every preflight runs before the create |
+| `runners/appsignal.rb` | Terminal `appsignal` — incident → work package, then hands off to `Runners::Fix#ship_ids`. Owns the local-model guard, and every preflight runs before the create. Also the read commands `apps` and `incident list\|get` |
 | `runners/status.rb`, `runners/reset.rb` | Terminal `dev status` (reads `.opilot/` only) and `reset` (deletes it, after a confirmation) |
 | `clients/appsignal.rb` | AppSignal's GraphQL + V2 tracing APIs, assembled into one incident: metadata, the request payload, and the backtrace. The runner's client, never a tool for the model |
 | `clients/matrix.rb` | Matrix Client-Server API: whoami, display name, `/sync`, `m.notice` replies, reactions, typing. Over `Clients::HTTP` with a Bearer header |

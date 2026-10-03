@@ -145,10 +145,12 @@ module OPilot
     end
 
     # `appsignal` is an integration — the system it reads — so it sits beside
-    # `op` rather than under `dev`. Unlike `op` it goes through #session: `fix`
-    # calls the LLM and opens a PR, so it wants the full config and a log header.
+    # `op` rather than under `dev`. `fix` goes through #session: it calls the LLM
+    # and opens a PR, so it wants the full config and a log header. The read
+    # commands need neither, as `op` does not.
     def appsignal(args)
       return @ui.appsignal_usage if args.empty?
+      return Runners::AppSignal.new(@ctx).run(args) if Runners::AppSignal::READ_COMMANDS.include?(args.first)
       session("appsignal", args.first(2)) { Runners::AppSignal.new(@ctx).run(args) }
     end
 
