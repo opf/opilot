@@ -3,11 +3,15 @@ FROM node:24-slim
 # ripgrep backs pi's `grep` tool.
 RUN apt-get update && apt-get install -y bash git ripgrep && rm -rf /var/lib/apt/lists/*
 
-# Pinned: unpinned installs let each machine's image bake a different CLI
-# version. Bump deliberately after verifying the gateway path still works
-# headless. server.js reads pi-ai's OpenRouter catalog from inside this install
+# Pinned with its whole dependency tree: pi stopped shipping npm-shrinkwrap.json
+# in 1.0.1, so a plain `npm install -g` would resolve every transitive
+# dependency afresh on each build. Bump in harness/pi (`npm install
+# --package-lock-only`) after verifying the gateway path still works headless.
+# server.js reads pi-ai's OpenRouter catalog from inside this install
 # (OPENROUTER_CATALOG), so a bump must keep that path.
-RUN npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.99.2
+COPY harness/pi/package.json harness/pi/package-lock.json /opt/pi/
+RUN cd /opt/pi && npm ci --ignore-scripts --omit=dev
+ENV PATH=/opt/pi/node_modules/.bin:$PATH
 
 RUN git config --system --add safe.directory '*' \
  && git config --system core.crossFS true

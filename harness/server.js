@@ -217,9 +217,10 @@ function providerPrefix(slug) {
   return i === -1 ? '' : slug.slice(0, i);
 }
 
-// pi's own OpenRouter catalog, inside the pinned global install.
-const OPENROUTER_CATALOG = '/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/' +
-  'node_modules/@earendil-works/pi-ai/dist/providers/data/openrouter.json';
+// pi's own OpenRouter catalog, inside the pinned install (harness/pi). The
+// lockfile hoists pi-ai to the top of node_modules.
+const OPENROUTER_CATALOG = '/opt/pi/node_modules/@earendil-works/pi-ai/' +
+  'dist/providers/data/openrouter.json';
 
 // Since pi-ai 0.86 the catalog lists OpenRouter's Claude models as
 // anthropic-messages, which sends the key as x-api-key; inference-gw takes
