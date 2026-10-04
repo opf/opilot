@@ -10,6 +10,7 @@ module OPilot
         include Instance
         include Attachments
         include Documents
+        include Notifications
       end
     end
   end

@@ -99,6 +99,8 @@ module OPilot
         %w[attachment inspect 77]  => "#{BASE}/api/v3/attachments/77",
         %w[project versions 7]     => "#{BASE}/api/v3/projects/7/versions",
         %w[priority list]          => "#{BASE}/api/v3/priorities",
+        %w[notification get 9]     => "#{BASE}/api/v3/notifications/9",
+        %w[notification inspect 9] => "#{BASE}/api/v3/notifications/9",
       }.each do |args, url|
         endpoint = stub_request(:get, url).to_return(status: 200, body: "{}")
         out, err = run_op(*args)
@@ -208,6 +210,19 @@ module OPilot
 
       assert_requested principals
       assert_requested projects
+    end
+
+    def test_notification_list_takes_the_wp_list_flags_and_writes_nothing
+      filter = HTTP_FILTER.("readIAN", "=", "f")
+      inbox = stub_request(:get, "#{BASE}/api/v3/notifications?pageSize=100&offset=1&filters=#{filter}")
+              .to_return(status: 200, body: "{}")
+
+      run_op("notification", "list", "--filter", "readIAN=f")
+      _out, err, = run_op!("notification", "read", "9")
+
+      assert_requested inbox
+      assert_includes err, "notification action"
+      assert_not_requested :post, %r{/api/v3/notifications}
     end
 
     def test_a_bad_list_flag_names_the_command_it_was_given_to

@@ -25,12 +25,13 @@ module OPilot
       Href     = Clients::OpenProject::Href
       Resource = Clients::OpenProject::Resource
 
-      RESOURCES   = %w[me wp project status priority principal user doc attachment cf].freeze
+      RESOURCES   = %w[me wp project status priority principal user doc attachment cf notification].freeze
       WP_ACTIONS  = %w[get inspect list activities reactions relations assignees attachments prs
                        schema create form update-form].freeze
       PRJ_ACTIONS = %w[get inspect list types versions].freeze
       DOC_ACTIONS = %w[list get inspect attachments download].freeze
       CF_ACTIONS  = %w[items].freeze
+      NTF_ACTIONS = %w[list get inspect].freeze
       GET_ACTIONS = %w[get inspect].freeze
 
       # `--filter subject~login`. Only `=` and `~`; --filter-json is the escape
@@ -84,6 +85,7 @@ module OPilot
         when "doc"     then doc(rest)
         when "attachment" then attachment(rest)
         when "cf"      then cf(rest)
+        when "notification" then notification(rest)
         else unknown!("resource", resource, RESOURCES)
         end
       end
@@ -494,6 +496,19 @@ module OPilot
         unknown!("user action", action, GET_ACTIONS) unless GET_ACTIONS.include?(action)
         id = one!("op user get", rest, "<user-id>")
         emit("user get #{id}") { api.user(id) }
+      end
+
+      # The token user's own notifications. Reads only: marking one read is a
+      # write, and this command writes nothing but `wp create`.
+      def notification(args)
+        action, *rest = args
+        case action
+        when "list" then list("op notification list", rest, page_size: 100) { |kw| api.notifications(**kw) }
+        when "get", "inspect"
+          id = one!("op notification get", rest, "<notification-id>")
+          emit("notification get #{id}") { api.notification(id) }
+        else unknown!("notification action", action, NTF_ACTIONS)
+        end
       end
 
       # Any container's attachment, by id — the metadata, not the bytes.

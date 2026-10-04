@@ -140,6 +140,10 @@ module OPilot
                                               container (alias: inspect)
         ./opilot op cf items <id>             the values a hierarchy custom
                                               field allows
+        ./opilot op notification list [flags] the token user's own notifications
+                                              — the `wp list` flags (reason=mentioned;
+                                              readIAN=f for unread, never `false`)
+        ./opilot op notification get <id>     one notification (alias: inspect)
 
         ./opilot op doc list <project-id> [--page <n>] [--page-size <n>]
                                               documents in a project
@@ -148,7 +152,7 @@ module OPilot
         ./opilot op doc download <url> --out <path>
                                               attachment bytes, written to a file
 
-        Flags for `wp list`, `project list` and `principal list`:
+        Flags for `wp list`, `project list`, `principal list` and `notification list`:
           --filter <field>~<value>            repeatable; `~` contains, `=` equals.
                                               In `wp list`, status, priority,
                                               assignee, author and responsible
@@ -156,7 +160,7 @@ module OPilot
           --filter-json <json>                raw filters JSON, for anything else:
                                               a list of {"<field>":{"operator",
                                               "values"}} objects
-          --page <n> / --page-size <n>        default 1 / 50 (100 for the other two);
+          --page <n> / --page-size <n>        default 1 / 50 (100 for the others);
                                               the instance may cap the page size
 
         Flags for `wp create` (--project, --type and --subject are required;

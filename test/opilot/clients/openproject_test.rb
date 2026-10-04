@@ -33,6 +33,37 @@ module OPilot
         assert_equal false, posted["internal"], "visibility is untouched"
       end
 
+      def test_notifications_lists_the_inbox_with_the_unread_filter_the_server_keeps
+        filters = HTTP.encode_filters(%Q([{"readIAN":{"operator":"=","values":["f"]}}]))
+        listing = stub_request(:get, "#{BASE}/api/v3/notifications?pageSize=100&offset=1&filters=#{filters}")
+                  .to_return(status: 200, body: '{"_embedded":{"elements":[]}}')
+
+        assert_equal 200, @op.notifications(filters_json: OpenProject::Notifications::UNREAD).code
+        assert_requested listing
+      end
+
+      def test_marking_a_notification_read_sends_a_json_post_and_takes_the_204
+        mark = stub_request(:post, "#{BASE}/api/v3/notifications/9/read_ian")
+               .with(headers: { "Content-Type" => "application/json" })
+               .to_return(status: 204, body: "")
+
+        res = @op.mark_notification_read(9)
+
+        assert_requested mark
+        assert res.ok?, "a 204 has no body by design"
+      end
+
+      def test_bulk_mark_read_sends_its_filters_and_demands_them
+        filters = OpenProject::Query.filter("reason", "=", "mentioned")
+        mark = stub_request(:post, "#{BASE}/api/v3/notifications/read_ian?filters=#{HTTP.encode_filters(filters)}")
+               .to_return(status: 204, body: "")
+
+        @op.mark_notifications_read(filters_json: filters)
+
+        assert_requested mark
+        assert_raises(ArgumentError, "no filter would mark the whole inbox") { @op.mark_notifications_read }
+      end
+
       def test_documents_filters_on_a_numeric_id_directly
         listing = stub_documents(42)
         res = @op.documents("42")
