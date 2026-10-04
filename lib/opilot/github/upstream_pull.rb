@@ -42,13 +42,12 @@ module OPilot
         @scanned_count = 0
         return [] unless enabled?
 
-        intents = []
-        @ctx.repos.all.each do |repo|
-          refs = discover(repo.upstream)
-          @scanned_count += refs.length
-          refs.each { |ref| intents.concat(intents_for_pr(repo, ref.number)) }
+        hits = discover(@ctx.repos.all.map(&:upstream).uniq)
+        @scanned_count = hits.length
+        hits.flat_map do |hit|
+          repo = registry_repo_for(hit)
+          repo ? intents_for_pr(repo, hit.number) : []
         end
-        intents
       end
 
       # The per-PR state dir .opilot/pr_reviews/<owner>-<repo>/<number>/.
@@ -75,10 +74,38 @@ module OPilot
       # are excluded (`-author:`): they are GitHub::Pull's territory — it can push there
       # and parses commands like refresh — and this scanner's separate act-state
       # would otherwise re-handle their comments a second time, reply-only.
-      def discover(upstream)
+      #
+      # Several `repo:` qualifiers OR together, so one search covers many
+      # upstreams. The search API allows 30 calls a minute, and one call per
+      # upstream per tick used most of that. Chunked to stay under the 256-char
+      # query limit.
+      def discover(upstreams)
         date = @scan_from_at.to_s[0, 10]   # YYYY-MM-DD for the search qualifier
         ping = bot_login.empty? ? %("@opilot") : "mentions:#{bot_login} -author:#{bot_login}"
-        @github.search_prs(%(repo:#{upstream} is:pr is:open #{ping} updated:>=#{date}))
+        tail = "is:pr is:open #{ping} updated:>=#{date}"
+        repo_chunks(upstreams, MAX_QUERY - tail.length - 1)
+          .flat_map { |repos| @github.search_prs("#{repos} #{tail}", per_page: 100) }
+      end
+
+      MAX_QUERY = 256
+
+      def repo_chunks(upstreams, budget)
+        upstreams.each_with_object([]) do |upstream, chunks|
+          term = "repo:#{upstream}"
+          if chunks.last && chunks.last.length + 1 + term.length <= budget
+            chunks.last << " " << term
+          else
+            chunks << term.dup
+          end
+        end
+      end
+
+      # The registry repo a search hit belongs to, from its `repository_url`
+      # (".../repos/<owner>/<repo>"). Exact match only: Registry#by_upstream
+      # falls back to the default repo.
+      def registry_repo_for(hit)
+        owner_repo = hit.repository_url.to_s.split("/repos/", 2).last
+        @ctx.repos.all.find { |r| r.upstream.casecmp?(owner_repo.to_s) }
       end
 
       # The bot account's GitHub login, memoized (falls back to "" if unavailable,

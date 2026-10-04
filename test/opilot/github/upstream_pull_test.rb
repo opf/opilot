@@ -7,7 +7,7 @@ module OPilot
     Head      = Struct.new(:ref, :sha, :repo)
     PR        = Struct.new(:state, :updated_at, :html_url, :title, :head, :user, :body, keyword_init: true)
     IssueC    = Struct.new(:id, :body, :user, :created_at, keyword_init: true)
-    SearchHit = Struct.new(:number)
+    SearchHit = Struct.new(:number, :repository_url)
     Check     = Struct.new(:id, :name, :status, :conclusion, :output, keyword_init: true)
     Output    = Struct.new(:title, :summary, :text, :annotations_count, keyword_init: true)
 
@@ -48,7 +48,7 @@ module OPilot
       IssueC.new(id: id, body: body, user: User.new(login), created_at: Time.parse(at))
     end
 
-    def pull(hits: [SearchHit.new(7)], issue: [], pr_author: "contributor", checks: [])
+    def pull(hits: [SearchHit.new(7, "https://api.github.com/repos/opf/openproject")], issue: [], pr_author: "contributor", checks: [])
       @github = FakeGitHub.new(hits: hits, issue: issue, pr_author: pr_author, checks: checks)
       GitHub::UpstreamPull.new(@ctx, github: @github)
     end
@@ -118,6 +118,28 @@ module OPilot
       assert_includes q, "is:pr is:open"
       assert_includes q, "updated:>=2026-06-01"
       assert_includes q, "mentions:opilot-bot", "search uses the bot's GitHub login, resolved programmatically"
+    end
+
+    def test_one_search_covers_every_upstream
+      @ctx = build_ctx(@tmpdir, host: "test.host", allowed_gh_users: ["thykel"],
+                       contributor_token: "ghtok", track_upstream: true,
+                       repos: [{ "name" => "openproject", "upstream" => "opf/openproject", "base" => "dev" },
+                               { "name" => "octicons", "upstream" => "opf/openproject-octicons", "base" => "dev" }])
+      gh = pull
+      gh.poll_intents("2026-06-01T00:00:00Z")
+      assert_equal 1, @github.searches.length, "one search per tick, not one per upstream"
+      assert_includes @github.searches.first, "repo:opf/openproject repo:opf/openproject-octicons"
+    end
+
+    def test_long_repo_lists_are_split_under_the_query_limit
+      gh = pull
+      chunks = gh.send(:repo_chunks, %w[a/aaaaaaaaaa b/bbbbbbbbbb c/cccccccccc], 40)
+      assert_equal ["repo:a/aaaaaaaaaa repo:b/bbbbbbbbbb", "repo:c/cccccccccc"], chunks
+    end
+
+    def test_a_hit_outside_the_registry_is_ignored
+      gh = pull(hits: [SearchHit.new(7, "https://api.github.com/repos/someone/else")])
+      assert_empty gh.poll_intents("2026-06-01T00:00:00Z")
     end
 
     def test_search_excludes_the_bots_own_prs
