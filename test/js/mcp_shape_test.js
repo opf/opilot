@@ -35,6 +35,13 @@ test('structuredContent is preferred over the text, whichever format the instanc
   assert.deepStrictEqual(JSON.parse(textOf(content)), { items: [{ id: 1 }] });
 });
 
+test('a null structuredContent falls back to the text', () => {
+  const pr = { number: 5, title: 'Fix' };
+  const content = shapeCallResult('github', 'pull_request_read', {
+    content: [{ type: 'text', text: JSON.stringify(pr) }], structuredContent: null });
+  assert.deepStrictEqual(JSON.parse(textOf(content)), pr);
+});
+
 test('a GitHub answer keeps the fields a question reads, and a user is its login', () => {
   const pr = { number: 5, title: 'Fix', node_id: 'N', user: { login: 'octo', avatar_url: 'a' }, url: 'u' };
   const content = shapeCallResult('github', 'pull_request_read', {

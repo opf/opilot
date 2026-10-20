@@ -5,9 +5,9 @@
 
 // An administrator picks OpenProject's answer format instance-wide (full,
 // structured-only, content-only), so prefer structuredContent, else the JSON in
-// content[0].text, else the raw text.
+// content[0].text, else the raw text. Since pi-mcp 1.2.0 structuredContent may be null.
 function payloadOf(result) {
-  if (result.structuredContent !== undefined) return result.structuredContent;
+  if (result.structuredContent != null) return result.structuredContent;
   const text = Array.isArray(result.content) && result.content[0] && result.content[0].text;
   if (typeof text !== 'string') return result.content;
   try { return JSON.parse(text); } catch { return text; }
