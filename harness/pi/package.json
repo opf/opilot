@@ -3,6 +3,6 @@
   "private": true,
   "description": "pi, pinned with its whole dependency tree by package-lock.json. Installed by Dockerfile.harness with npm ci.",
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.0.2"
+    "@earendil-works/pi-coding-agent": "1.3.0"
   }
 }

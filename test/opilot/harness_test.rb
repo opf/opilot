@@ -5,8 +5,9 @@ module OPilot
   class HarnessTest < Minitest::Test
     def setup
       @tmpdir = Dir.mktmpdir
-      ctx = Struct.new(:harness_url, :log_file)
-              .new("http://harness.test:47291", Pathname(@tmpdir) / "chomp.log")
+      ctx = Struct.new(:harness_url, :log_file, :usage_file, :state_dir)
+              .new("http://harness.test:47291", Pathname(@tmpdir) / "chomp.log",
+                   Pathname(@tmpdir) / "usage.jsonl", Pathname(@tmpdir))
       @harness = Harness.new(ctx)
       @session_file = Pathname(@tmpdir) / "session_id"
     end
@@ -58,6 +59,23 @@ module OPilot
       id = @session_file.read
       assert_match(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/, id, "the runner mints the session id")
       assert_requested(:post, "http://harness.test:47291", headers: { "X-Harness-Session" => id })
+    end
+
+    def test_run_records_usage_and_prints_notices
+      usage = { input: 1200, output: 80, cache_read: 1000, cache_write: 0, cost: 0.0042 }
+      stub_harness(ndjson(
+        { type: "notice", text: "provider error, retry 1/3 in 2s: 529 overloaded" },
+        assistant_text("done"),
+        { type: "result", subtype: "success", is_error: false, result: "done", usage: usage }
+      ))
+
+      out, = capture_io { @harness.run("prompt", role: :scribe) }
+
+      assert_match(/retry 1\/3/, out)
+      assert_match(/1200 in \(1000 cache read, 0 cache write\), 80 out, \$0\.0042/, out)
+      record = JSON.parse((Pathname(@tmpdir) / "usage.jsonl").read)
+      assert_equal %w[scribe true 1200 0.0042], [record["role"], record["ok"].to_s, record["input"].to_s, record["cost"].to_s]
+      assert_match(/thinking: off/, (Pathname(@tmpdir) / "chomp.log").read)
     end
 
     def test_run_raises_on_error_result

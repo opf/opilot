@@ -6,7 +6,7 @@ require "ipaddr"
 module OPilot
   class Context
     attr_reader :script_dir, :state_dir, :progress_file,
-                :log_file, :harness_url, :contributor_token,
+                :log_file, :usage_file, :harness_url, :contributor_token,
                 :state_container, :op_url, :token,
                 :inference_gw_url, :gw_token, :inference_url, :mcp_gw_url
     attr_reader   :allowed_op_user_ids, :allowed_gh_users
@@ -23,6 +23,7 @@ module OPilot
       @state_dir          = @script_dir / ".opilot"
       @progress_file      = @state_dir / "progress.txt"
       @log_file           = @state_dir / "chomp.log"
+      @usage_file         = @state_dir / "usage.jsonl"
       # opilot's one GitHub identity: the CONTRIBUTOR, a dedicated bot account
       # with no access to the canonical repos. It forks, pushes to its fork, and
       # opens cross-repo draft PRs — every mode publishes this way, so a
