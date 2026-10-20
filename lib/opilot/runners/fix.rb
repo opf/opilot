@@ -236,7 +236,7 @@ module OPilot
               # `build`/`ship` picks it up.
               log_script "#{wp_label(id)} — plan approved; build or ship it later with " \
                          "`dev commit #{id}` / `dev build #{id}`."
-            when :commit then commit(st)
+            when :commit then commit_only(st)
             when :ship   then ship(st)
             end
             break
@@ -361,7 +361,7 @@ module OPilot
       # `commit`: implement and commit, then stop — nothing is pushed and no PR is
       # opened. The committed branch sits in the local clone for review; a later
       # `dev build <id>` finds it via branch_has_commits? and goes straight to publish.
-      def commit(st)
+      def commit_only(st)
         implement(st).each do |repo|
           record_progress(st.item_id, st.branch, "built:#{repo.name}")
           puts "  ✓ Committed #{st.branch} (#{repo.name}) — review it in the clone, then ship it with `./opilot dev build #{st.item_id}`"
