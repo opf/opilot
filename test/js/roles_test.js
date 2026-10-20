@@ -75,6 +75,14 @@ test('a malformed role file fails to parse', () => {
   }
 });
 
+test('a thinking level is optional, only for a stateless role, and read from the role file', () => {
+  assert.strictEqual(roles.get('scribe').thinking, 'off');
+  assert.deepStrictEqual(parseRole(good.replace('memory: none', 'memory: none\nthinking: high'), 'x'),
+    { base: READ, mcp: false, thinking: 'high' });
+  assert.throws(() => parseRole(good.replace('memory: none', 'memory: none\nthinking: deep'), 'x'), /thinking/);
+  assert.throws(() => parseRole(good.replace('memory: none', 'memory: session\nthinking: low'), 'x'), /memory: none/);
+});
+
 test('an empty roles directory fails to load', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-'));
   assert.throws(() => loadRoles(dir), /no role files/);

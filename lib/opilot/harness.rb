@@ -5,6 +5,7 @@ require "rainbow"
 require "tty-markdown"
 require "pathname"
 require "securerandom"
+require "time"
 
 module OPilot
   class Harness
@@ -86,7 +87,9 @@ module OPilot
       puts Rainbow(system).gray
       log_append(Rainbow(system).gray)
 
-      header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}, session: #{known_id.empty? ? "fresh" : known_id})").bold
+      thinking = Harness.role(role).thinking
+      header = Rainbow("#{log_prefix} PI PROMPT (model: #{model}#{", thinking: #{thinking}" if thinking}, " \
+                       "session: #{known_id.empty? ? "fresh" : known_id})").bold
       puts header
       log_append(header)
       puts Rainbow(prompt.strip).cyan
@@ -96,7 +99,8 @@ module OPilot
       puts resp_header
       log_append(resp_header)
 
-      text, started, error = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id, system: system)
+      text, started, error, usage = http_stream(prompt, role: role, tools: tools, model: model, session_id: session_id, system: system)
+      record_usage(usage, role: role, model: model, session_id: session_id, session_file: session_file, ok: !error) if usage
 
       # Saved once pi has started, even on error, so a retry resumes with context.
       # Not before: session_resumable? reads the file as "the session holds the plan".
@@ -135,6 +139,7 @@ module OPilot
         error               = nil
         error_subtype       = nil
         exit_info           = nil
+        usage               = nil
 
         req = Net::HTTP::Post.new(@uri)
         req["X-Harness-Role"]    = role.to_s
@@ -164,7 +169,14 @@ module OPilot
                 when "exit"
                   # server.js's final diagnostic: exit code/signal + stderr tail.
                   exit_info = parsed
+                when "notice"
+                  # pi's own retries and compaction, which can take a minute.
+                  $stdout.puts "" unless at_line_start
+                  $stdout.puts Rainbow("  ⚠ #{parsed["text"]}").yellow
+                  log_append("notice: #{parsed["text"]}")
+                  at_line_start = true
                 when "result"
+                  usage = parsed["usage"]
                   # An error here means the run died mid-way; the text is partial.
                   if parsed["is_error"] || parsed["subtype"].to_s.start_with?("error")
                     error_subtype = parsed["subtype"].to_s
@@ -234,7 +246,22 @@ module OPilot
       # For `error_during_execution`, stderr holds the only real cause.
       error = decorate_error(error, error_subtype, exit_info) if error
 
-      [text, started, error]
+      [text, started, error, usage]
+    end
+
+    # One line on the terminal and in the log, and one JSON record in usage.jsonl.
+    # The cost is pi's catalog price, so a self-hosted model reports 0.
+    def record_usage(usage, role:, model:, session_id:, session_file:, ok:)
+      line = format("usage: %<in>d in (%<cr>d cache read, %<cw>d cache write), %<out>d out, $%<cost>.4f",
+                    in: usage["input"].to_i, cr: usage["cache_read"].to_i, cw: usage["cache_write"].to_i,
+                    out: usage["output"].to_i, cost: usage["cost"].to_f)
+      $stdout.puts "\n#{Rainbow("  #{line}").gray}"
+      log_append(line)
+      record = { at: Time.now.utc.iso8601, role: role, model: model, ok: ok, session: session_id,
+                 dir: session_file && Pathname(session_file).dirname.relative_path_from(@ctx.state_dir).to_s }
+      @ctx.usage_file.open("a") { |f| f.puts(JSON.generate(record.compact.merge(usage))) }
+    rescue StandardError => e
+      log_append("usage not recorded: #{e.message}")
     end
 
     # Adds the subtype, exit code/signal and stderr tail to the error message.

@@ -1075,6 +1075,7 @@ globally unique, so `pr_reviews/` is flat.
 ├── agent.lock/pid           # the running agent's HOST pid; present = an agent holds it
 ├── progress.txt             # pipe-delimited audit log
 ├── chomp.log                # full prompt/response log
+├── usage.jsonl              # one record per LLM call: role, model, tokens, cost (pi's catalog price)
 ├── chat_session_id          # LLM session for the current `chat` REPL (reset each run)
 ├── work_packages/<op_host>/
 │   ├── op_agent_scan.json      # op-agent's saved scan-window watermark
@@ -1162,7 +1163,9 @@ Runner POSTs to `http://harness:47291` with headers:
 - **Every call names a role** (`Helpers#llm`). A role is a YAML file,
   `lib/opilot/prompts/<name>.yml`: `tools` (`read`/`write`), `mcp` (whether the
   MCP tools join the grant), `model` (`heavy`/`light`) and `memory`
-  (`session`/`none`), and the role's **charter** as a `charter: |` block. `lib/opilot/roles.rb` loads them strictly —
+  (`session`/`none`), plus an optional `thinking` level that `server.js` passes as
+  `--thinking` — only on a `memory: none` role, since a level change inside a
+  session can drop the prompt cache, and the role's **charter** as a `charter: |` block. `lib/opilot/roles.rb` loads them strictly —
   an unknown key or value fails at boot — and a `memory: none` role given a
   `session_file` raises, so health's independence from chat is structural.
 
@@ -1262,5 +1265,5 @@ of it, and a runner that gives up first turns a named timeout into a bare
 | `OPILOT_APPSIGNAL_PROJECT` | Optional; where `appsignal fix` creates the work package (identifier or numeric id). `--project` overrides it per run |
 | `OPILOT_CI_MAX_ATTEMPTS` | Optional; how many times `gh-agent` chases one PR's CI before posting a "needs a human" note (default `5`) |
 | `OPILOT_CI_IGNORE_CHECKS` | Optional; check names ignored when reading CI status (default `SaaS tests` — it needs secrets a fork PR can't access, so it always fails) |
-| `OPILOT_PI_IDLE_TIMEOUT_MIN` | Optional; minutes one LLM run may produce **no output** before `server.js` kills it (default `5`) |
+| `OPILOT_PI_IDLE_TIMEOUT_MIN` | Optional; minutes one LLM run may produce **no output** before `server.js` kills it (default `5`). pi's own `httpIdleTimeoutMs` is set to 40% of it (at least a minute), so pi retries a stalled provider stream first |
 | `OPILOT_PI_MAX_RUN_MIN` | Optional; absolute ceiling in minutes on one LLM run (default `45`). Raise for very large fixes — but the harness runs one call at a time, so this is also how long one run may block every other poll. Both values are read by the runner too (`Harness::READ_TIMEOUT`), so its socket timeout follows on its own |

@@ -120,6 +120,10 @@ const ROLE_KEYS = ['mcp', 'memory', 'model', 'tools'];
 const ROLE_VALUES = {
   tools: ['read', 'write'], mcp: ['true', 'false'], model: ['heavy', 'light'], memory: ['session', 'none'],
 };
+// pi's thinking levels. Optional, and only for a `memory: none` role: a level
+// change inside a session can drop the provider's prompt cache. pi clamps a
+// level the model does not offer to the nearest one it does.
+const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 // Strict, like the runner's loader: a typo fails at boot, not at a request.
 // Node has no YAML parser, so this reads exactly the subset a role file uses:
@@ -146,15 +150,23 @@ function parseRole(text, where) {
   }
   if (!charterLines) throw new Error(`${where}: charter must be a \`charter: |\` block with text`);
   delete meta.charter;
+  const { thinking } = meta;
+  delete meta.thinking;
   if (Object.keys(meta).sort().join() !== ROLE_KEYS.join()) {
-    throw new Error(`${where}: keys must be ${ROLE_KEYS.join(', ')}`);
+    throw new Error(`${where}: keys must be ${ROLE_KEYS.join(', ')}, and optionally thinking`);
   }
   for (const key of ROLE_KEYS) {
     if (!ROLE_VALUES[key].includes(meta[key])) {
       throw new Error(`${where}: ${key}: ${meta[key]} is not one of ${ROLE_VALUES[key].join(', ')}`);
     }
   }
-  return { base: ROLE_BASES[meta.tools], mcp: meta.mcp === 'true' };
+  if (thinking !== undefined) {
+    if (!THINKING_LEVELS.includes(thinking)) {
+      throw new Error(`${where}: thinking: ${thinking} is not one of ${THINKING_LEVELS.join(', ')}`);
+    }
+    if (meta.memory !== 'none') throw new Error(`${where}: thinking needs memory: none`);
+  }
+  return { base: ROLE_BASES[meta.tools], mcp: meta.mcp === 'true', ...(thinking && { thinking }) };
 }
 
 function loadRoles(dir = ROLES_DIR) {
@@ -295,6 +307,18 @@ function buildModelsJson(env = process.env) {
   return { providers: { [provider]: config } };
 }
 
+// pi's own HTTP idle timeout, below PROC_IDLE_TIMEOUT_MS: pi aborts a stalled
+// provider stream and retries it, which it cannot do once this server has
+// killed it. It also bounds the wait for response headers, hence the floor.
+function piHttpIdleTimeoutMs(procIdleMs = PROC_IDLE_TIMEOUT_MS) {
+  return Math.max(60 * 1000, Math.round(procIdleMs * 0.4));
+}
+
+function buildSettings(procIdleMs = PROC_IDLE_TIMEOUT_MS) {
+  const settings = JSON.parse(fs.readFileSync(path.join(__dirname, 'pi-settings.json'), 'utf8'));
+  return { ...settings, httpIdleTimeoutMs: piHttpIdleTimeoutMs(procIdleMs) };
+}
+
 // Copies the image's baked-in config into the writable agent dir on every
 // boot, so pi-settings.json/pi-models.json stay in version control and the
 // first-run wizard needs no change. Unconditional, not "if missing": these
@@ -310,7 +334,7 @@ function buildModelsJson(env = process.env) {
 // For openrouter, pi-models.json gains the pinned models (buildOpenRouterModels).
 function seedAgentDir(env = process.env) {
   fs.mkdirSync(PI_AGENT_DIR, { recursive: true });
-  fs.copyFileSync(path.join(__dirname, 'pi-settings.json'), path.join(PI_AGENT_DIR, 'settings.json'));
+  fs.writeFileSync(path.join(PI_AGENT_DIR, 'settings.json'), JSON.stringify(buildSettings(), null, 2) + '\n');
 
   const modelsPath = path.join(PI_AGENT_DIR, 'models.json');
   if (providerPrefix(env.OPILOT_MODEL_HEAVY || 'openrouter/') === 'openrouter') {
@@ -330,18 +354,31 @@ let busy = false;
 function drain() {
   if (queue.length === 0) { busy = false; return; }
   busy = true;
-  const { body, tools, model, sessionId, system, res } = queue.shift();
-  runPi(body, tools, model, sessionId, system, res, drain);
+  const { job, res } = queue.shift();
+  runPi(job, res, drain);
 }
 
-function enqueue(body, tools, model, sessionId, system, res) {
-  queue.push({ body, tools, model, sessionId, system, res });
+function enqueue(job, res) {
+  queue.push({ job, res });
   if (!busy) drain();
 }
 
 function extractText(message) {
   if (!message || !Array.isArray(message.content)) return '';
   return message.content.filter(p => p.type === 'text').map(p => p.text).join('');
+}
+
+// Token use and cost over every assistant message of a run, failed attempts
+// included: a retried request is billed too. The cost is pi's catalog price.
+function addUsage(total, usage) {
+  if (!usage) return total;
+  const t = total || { input: 0, output: 0, cache_read: 0, cache_write: 0, cost: 0 };
+  t.input += usage.input || 0;
+  t.output += usage.output || 0;
+  t.cache_read += usage.cacheRead || 0;
+  t.cache_write += usage.cacheWrite || 0;
+  t.cost += (usage.cost && usage.cost.total) || 0;
+  return t;
 }
 
 function lastAssistantOf(messages) {
@@ -377,8 +414,10 @@ function settleResult(msg) {
 //   {"type":"tool_execution_start","toolName":...,"args":{...}}
 //   {"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":...}}
 //   {"type":"message_update","assistantMessageEvent":{"type":"text_end","content":...}}
+//   {"type":"message_end","message":{"role":"assistant","usage":{...}}}  — usage (pi 1.3.0)
 //   {"type":"agent_end","messages":[...],"willRetry":bool}
 //   {"type":"agent_settled"}
+//   {"type":"auto_retry_start"|"compaction_start", ...}  — `notice` frames (pi 1.3.0)
 //
 // text_delta/thinking_delta are forwarded raw, printed as they arrive with no
 // Markdown parsing — pi's deltas are token/word fragments, and running each
@@ -436,8 +475,29 @@ function translate(parsed, state) {
       if (msg) state.lastAssistantMessage = msg;
       break;
     }
-    case 'agent_settled':
-      frames.push(settleResult(state.lastAssistantMessage));
+    case 'message_end':
+      if (parsed.message && parsed.message.role === 'assistant') {
+        state.usage = addUsage(state.usage, parsed.message.usage);
+      }
+      break;
+    case 'agent_settled': {
+      const result = settleResult(state.lastAssistantMessage);
+      if (state.usage) result.usage = state.usage;
+      frames.push(result);
+      break;
+    }
+    case 'auto_retry_start':
+      frames.push({ type: 'notice', text: `provider error, retry ${parsed.attempt}/${parsed.maxAttempts} ` +
+        `in ${Math.round((parsed.delayMs || 0) / 1000)}s: ${parsed.errorMessage}` });
+      break;
+    case 'auto_retry_end':
+      if (!parsed.success) frames.push({ type: 'notice', text: `retries failed: ${parsed.finalError}` });
+      break;
+    case 'compaction_start':
+      frames.push({ type: 'notice', text: `compacting the context (${parsed.reason})` });
+      break;
+    case 'compaction_end':
+      if (parsed.errorMessage) frames.push({ type: 'notice', text: `compaction failed: ${parsed.errorMessage}` });
       break;
     default:
       break;
@@ -445,7 +505,7 @@ function translate(parsed, state) {
   return frames;
 }
 
-function runPi(body, tools, model, sessionId, system, res, done) {
+function runPi({ body, tools, model, sessionId, system, thinking }, res, done) {
   const args = [
     '--mode', 'json',
     '--no-extensions', '-e', path.join(__dirname, 'pi-guards.ts'),
@@ -470,6 +530,7 @@ function runPi(body, tools, model, sessionId, system, res, done) {
     args.push('-e', 'builtin:mcp', '-e', path.join(__dirname, 'pi-mcp.ts'));
   }
   if (model) args.push('--model', model);
+  if (thinking) args.push('--thinking', thinking);
   // Opens the session, or creates it when absent; the runner owns the id.
   if (sessionId) args.push('--session-id', sessionId);
   args.push('--append-system-prompt', system);
@@ -635,7 +696,9 @@ function startServer() {
 
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => enqueue(Buffer.concat(chunks), tools, model, sessionId, system, res));
+    // The thinking level comes from the role file this server read, not from a header.
+    const job = { body: null, tools, model, sessionId, system, thinking: roles.get(role).thinking };
+    req.on('end', () => enqueue({ ...job, body: Buffer.concat(chunks) }, res));
   });
 
   server.listen(PORT, '0.0.0.0', () => {
@@ -646,7 +709,7 @@ function startServer() {
 if (require.main === module) startServer();
 
 module.exports = {
-  translate, settleResult, extractText, lastAssistantOf,
-  buildModelsJson, buildOpenRouterModels, expandGrant, mcpServerConfigs, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
+  translate, settleResult, extractText, lastAssistantOf, addUsage,
+  buildModelsJson, buildSettings, piHttpIdleTimeoutMs, buildOpenRouterModels, expandGrant, mcpServerConfigs, providerPrefix, MODEL_RE, SESSION_ID_RE, ALLOWED_TOOL_GRANTS,
   parseRole, loadRoles, grantsFor, checkRole,
 };

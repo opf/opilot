@@ -10,7 +10,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { translate, settleResult } = require('../../harness/server.js');
+const { translate, settleResult, buildSettings, piHttpIdleTimeoutMs } = require('../../harness/server.js');
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'pi');
 
@@ -130,6 +130,47 @@ test('an agent_end with no assistant message does not clobber a prior good one',
   const [frame] = translate({ type: 'agent_settled' }, state);
   assert.strictEqual(frame.is_error, false);
   assert.strictEqual(frame.result, 'done.');
+});
+
+test('usage adds up over every assistant message, a failed attempt included', () => {
+  const state = {};
+  const usage = (input, output, total) => ({ input, output, cacheRead: 10, cacheWrite: 0, cost: { total } });
+  translate({ type: 'message_end', message: { role: 'user', usage: usage(999, 999, 9) } }, state);
+  translate({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', usage: usage(100, 0, 0.01) } }, state);
+  translate({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop', usage: usage(200, 50, 0.02) } }, state);
+  translate({ type: 'agent_end', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'ok' }], stopReason: 'stop' }] }, state);
+  const [frame] = translate({ type: 'agent_settled' }, state);
+  assert.deepStrictEqual({ ...frame.usage, cost: Math.round(frame.usage.cost * 100) / 100 },
+    { input: 300, output: 50, cache_read: 20, cache_write: 0, cost: 0.03 });
+});
+
+test('a run with no usage reported has no usage field', () => {
+  const state = { lastAssistantMessage: { stopReason: 'stop', content: [] } };
+  assert.strictEqual(translate({ type: 'agent_settled' }, state)[0].usage, undefined);
+});
+
+test('retries and compaction become notice frames', () => {
+  const state = {};
+  const texts = [
+    { type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 2000, errorMessage: '529 overloaded' },
+    { type: 'auto_retry_end', success: true, attempt: 2 },
+    { type: 'auto_retry_end', success: false, finalError: 'gave up' },
+    { type: 'compaction_start', reason: 'overflow' },
+    { type: 'compaction_end', reason: 'overflow', aborted: false, errorMessage: 'too big' },
+  ].flatMap(e => translate(e, state)).map(f => { assert.strictEqual(f.type, 'notice'); return f.text; });
+  assert.deepStrictEqual(texts, [
+    'provider error, retry 1/3 in 2s: 529 overloaded',
+    'retries failed: gave up',
+    'compacting the context (overflow)',
+    'compaction failed: too big',
+  ]);
+});
+
+test("pi's HTTP idle timeout sits below the server's idle bound, with a floor", () => {
+  assert.strictEqual(piHttpIdleTimeoutMs(5 * 60 * 1000), 2 * 60 * 1000);
+  assert.strictEqual(piHttpIdleTimeoutMs(60 * 1000), 60 * 1000);
+  assert.strictEqual(buildSettings(10 * 60 * 1000).httpIdleTimeoutMs, 4 * 60 * 1000);
+  assert.strictEqual(buildSettings().defaultProjectTrust, 'never', 'pi-settings.json is kept');
 });
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);

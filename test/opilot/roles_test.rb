@@ -106,10 +106,22 @@ module OPilot
          good.sub("memory: none", "memory: none\nextra: 1"),  # unknown key
          good.sub("charter: |\n  Does x.\n", ""),           # no charter
          good.sub("  Does x.", ""),                          # empty charter
-         "just text\n"].each do |bad|
+         "just text\n",
+         good.sub("memory: none", "memory: none\nthinking: deep"),                      # unknown level
+         good.sub("memory: none", "memory: session\nthinking: low")].each do |bad|     # level in a session
           assert_raises(ArgumentError, bad) { Harness.load_role(write_role(dir, bad)) }
         end
       end
+    end
+
+    def test_a_thinking_level_is_optional_and_off_survives_yaml
+      Dir.mktmpdir do |dir|
+        good = "tools: read\nmcp: false\nmodel: heavy\nmemory: none\ncharter: |\n  Does x.\n"
+        assert_nil Harness.load_role(write_role(dir, good)).thinking
+        assert_equal "off", Harness.load_role(write_role(dir, good.sub("memory: none", "memory: none\nthinking: off"))).thinking
+        assert_equal "high", Harness.load_role(write_role(dir, good.sub("memory: none", "memory: none\nthinking: high"))).thinking
+      end
+      assert_equal "off", Harness.role(:scribe).thinking
     end
 
     def role_modules
