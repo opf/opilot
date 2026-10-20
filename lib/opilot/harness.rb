@@ -33,7 +33,7 @@ module OPilot
     # MODEL_HEAVY serves every session-bound phase, because a model switch mid-session
     # discards its context. MODEL_LIGHT is for stateless one-shots.
     MODEL_HEAVY  = ENV.fetch("OPILOT_MODEL_HEAVY", "openrouter/anthropic/claude-sonnet-5.5")
-    MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-4.5")
+    MODEL_LIGHT  = ENV.fetch("OPILOT_MODEL_LIGHT", "openrouter/anthropic/claude-haiku-5.5")
 
     # Must stay the outer bound (ceiling + one idle window), or server.js's named
     # timeout becomes a bare Net::ReadTimeout. See CLAUDE.md, Harness container communication.
