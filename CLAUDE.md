@@ -804,10 +804,12 @@ layout.
    the follow-up body edit). Both are fenced between
    `GitHub::Publish::BANNER_OPEN`/`BANNER_CLOSE` (`<!-- opilot:banner -->` …
    `<!-- /opilot:banner -->`), because neither is true of an adopted PR:
-   `opilot-adopt` deletes exactly that range and prepends `Adapted from #<bot-pr>`.
+   `opilot-adopt` deletes exactly that range and prepends `Adopted from #<bot-pr>`.
    **The fence is a published interface** — changing a marker orphans every PR
-   opened before the change. The plan gist link sits *outside* the fence and
-   survives adoption.
+   opened before the change. The plan gist link sits *outside* the fence, where
+   a description edit keeps it, and `opilot-adopt` deletes its line separately.
+   The Ticket link is written by the scribe and then checked in Ruby
+   (`Helpers.ensure_ticket_link`), since `op_ticket_id` and adoption need the URL.
 
    Adoption itself is **`tools/opilot-adopt`, one standalone script**. It is the
    only file here aimed at someone who does not run opilot — a maintainer needs

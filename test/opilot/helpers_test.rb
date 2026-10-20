@@ -19,6 +19,22 @@ module OPilot
       assert_equal "red text", h.strip_ansi("\e[31mred text\e[0m")
     end
 
+    URL = "https://op.test/work_packages/COMMS-454"
+
+    def test_ensure_ticket_link_keeps_a_body_that_has_the_url
+      body = "# Ticket\n#{URL}\n\n# What\nx\n"
+      assert_equal body, Helpers.ensure_ticket_link(body, URL)
+    end
+
+    def test_ensure_ticket_link_replaces_a_bare_id
+      body = "# Ticket\nCOMMS-454\n\n<!-- guide -->\n\n# What\nx\n"
+      assert_equal "# Ticket\n#{URL}\n\n# What\nx\n", Helpers.ensure_ticket_link(body, URL)
+    end
+
+    def test_ensure_ticket_link_adds_a_missing_section
+      assert_equal "# Ticket\n#{URL}\n\n# What\nx\n", Helpers.ensure_ticket_link("# What\nx\n", URL)
+    end
+
     def test_guarded_tick_swallows_errors_so_the_loop_survives
       ran = false
       # An uncaught error in a poll must not propagate out of the loop.

@@ -213,13 +213,24 @@ module OPilot
       diff_stat = wt.diff("HEAD~1", "HEAD").stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
+      wp_url = Helpers.wp_url(@ctx, st.item_id)
       prompt = Prompts::Scribe.pr_description(
         item: container_path(st.item_file), plan: container_path(st.plan_file),
-        diff_stat: diff_stat, template_section: template_section
+        wp_url: wp_url, diff_stat: diff_stat, template_section: template_section
       )
       pr_text = llm(:scribe, prompt)
       pr_body = pr_text[/^#.*/m] || pr_text
-      pr_desc_file.write(strip_ansi(pr_body))
+      pr_desc_file.write(Helpers.ensure_ticket_link(strip_ansi(pr_body), wp_url))
+    end
+
+    # The model sometimes writes only the id, or no Ticket section at all, and
+    # `Runners::Pr#op_ticket_id` and `opilot-adopt` need the full link.
+    TICKET_SECTION = /^#+[ \t]*Ticket[ \t]*\n(?:(?!#).*\n?)*/
+
+    def self.ensure_ticket_link(body, url)
+      return body if body.include?(url)
+      section = "# Ticket\n#{url}\n\n"
+      body.match?(TICKET_SECTION) ? body.sub(TICKET_SECTION, section) : section + body
     end
   end
 end

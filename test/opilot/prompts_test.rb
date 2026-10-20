@@ -29,7 +29,7 @@ module OPilot
       [Prompts::PrRefresher, :pr_refresh] => PR.merge(base: "dev", ci: "/ci", conflicts: ["a.rb"], feedback_count: 1),
       [Prompts::PrAdvisor, :pr_review] => { repo: "o/r", pr_number: 5, title: "T", worktree: "/w", base: "dev", pr_thread: "/t",
                                             comment: "c", author: "a", comment_id: 1 },
-      [Prompts::Scribe, :pr_description] => { item: "/i", plan: "/p", diff_stat: "d", template_section: "" },
+      [Prompts::Scribe, :pr_description] => { item: "/i", plan: "/p", wp_url: "u", diff_stat: "d", template_section: "" },
       [Prompts::Scribe, :commit_subject] => { diff: "d" },
       [Prompts::Scribe, :pr_title] => { subject: "s", diff: "d" },
     }.freeze

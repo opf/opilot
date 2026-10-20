@@ -107,12 +107,14 @@ git --no-pager log --oneline --no-decorate "origin/$base..HEAD" | sed 's/^/    /
 
 # Build the description before the prompt, so it is on screen while you decide.
 # Lift out the bot-only banner — neither the AI disclaimer nor the adopt note is
-# true of an adopted PR — and re-fang the defanged work-package link.
+# true of an adopted PR — and the plan link, and re-fang the defanged
+# work-package link.
 body_file="$(mktemp "${TMPDIR:-/tmp}/opilot-adopt.XXXXXX")"
 trap 'rm -f "$body_file"' EXIT
 {
-  printf 'Adapted from #%s.\n' "$num"
+  printf 'Adopted from #%s.\n' "$num"
   v body | sed -e '/<!-- opilot:banner -->/,/<!-- \/opilot:banner -->/d' \
+               -e '/\*\*Implementation plan:\*\*/d' \
                -e 's#hxxp://#http://#g' -e 's#hxxps://#https://#g'
 } > "$body_file"
 

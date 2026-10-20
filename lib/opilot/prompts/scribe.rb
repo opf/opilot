@@ -4,19 +4,20 @@ module OPilot
       extend Sections
 
       # Generate a GitHub PR description for a committed fix.
-      def self.pr_description(item:, plan:, diff_stat:, template_section:)
+      def self.pr_description(item:, plan:, wp_url:, diff_stat:, template_section:)
         tagged(<<~PROMPT)
           Write a GitHub PR description for this change.
 
-          The issue and plan are already in this session's context — do NOT re-read them.
-          Base the description on the diff below. (The paths are only a fallback for the rare
-          case where they are genuinely missing from your context.)
+          Read the issue and the plan, then base the description on the diff below.
 
           ISSUE: #{item}
           PLAN:  #{plan}
+          WORK PACKAGE URL: #{wp_url}
           DIFF:
           #{diff_stat}
           #{template_section}
+          Where the template asks for the ticket or work package, write the full
+          WORK PACKAGE URL above, not only the id.
           Always include a ## Screenshots section immediately after the "## What approach did you choose and why?" section,
           even if empty (write "N/A" or "No visual changes").
           Keep it tight — a sentence or two per section; don't restate the issue or
