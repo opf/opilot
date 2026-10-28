@@ -53,11 +53,13 @@ module OPilot
 
         # `opilot-adopt` deletes the fenced banner and the plan link. The link is
         # outside the fence so a description edit keeps it. See CLAUDE.md, step 4 "Publish".
-        banner    = "🤖 This is an AI-generated prototype.\n\n" \
-                    "* To ask for a change, write a comment to @#{@github.login} on this PR."
+        # Collapsed, so the description is what a reviewer sees first. GitHub
+        # renders markdown inside <details> only between blank lines.
+        banner    = "* To ask for a change, write a comment to @#{@github.login} on this PR."
         gist_url  = plan_gist_url(st)
         plan_line = gist_url ? "📋 **Implementation plan:** #{gist_url}\n\n" : ""
-        pr_body   = "#{BANNER_OPEN}\n#{banner}\n#{BANNER_CLOSE}\n\n#{plan_line}#{pr_desc_file.read}"
+        pr_body   = "#{BANNER_OPEN}\n<details>\n<summary>🤖 This is an AI-generated prototype.</summary>\n\n" \
+                    "#{banner}\n\n</details>\n#{BANNER_CLOSE}\n\n#{plan_line}#{pr_desc_file.read}"
 
         # Defanged (http→hxxp) to keep the PR off the WP's activity tab.
         pr_body = neutralize_wp_links(pr_body)
@@ -218,7 +220,8 @@ module OPilot
         number = Clients::GitHub.pr_number_from_url(url)
         return unless number
         note = "* To ship the PR, first make it yours: run `opilot-adopt #{number}` " \
-               "([setup guide](#{ADOPT_DOC_URL}))."
+               "([setup guide](#{ADOPT_DOC_URL})).\n" \
+               "* To check out the branch: `gh pr checkout #{number}`."
         @github.update_pr_body(upstream, number, pr_body.sub(banner, "#{banner}\n#{note}"))
       rescue => e
         log_script "Could not add the adopt note to #{url}: #{e.message}"

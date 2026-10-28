@@ -99,7 +99,19 @@ module OPilot
       # buried after the description.
       assert_match(/^\* To ask for a change, write a comment to @\S+ .*\n\* To ship the PR, first make it yours: run `opilot-adopt 7`/,
                    update[:body], "the note is the banner's second bullet")
+      assert_includes update[:body], "* To check out the branch: `gh pr checkout 7`.",
+                      "the note names the checkout command with this PR's number"
       assert_includes update[:body], "PR body here", "the rest of the description is untouched"
+    end
+
+    def test_banner_is_collapsed_with_the_disclaimer_as_summary
+      capture_io { @publish.open_pr("42", "Fix the bug", "bug/42-fix-the-bug", @repo) }
+
+      body = @github.body_updates.first[:body]
+      assert_match(%r{\A<!-- opilot:banner -->\n<details>\n<summary>🤖 This is an AI-generated prototype\.</summary>\n\n\* },
+                   body, "the disclaimer is the summary, with a blank line before the list")
+      assert_match(%r{gh pr checkout 7`\.\n\n</details>\n<!-- /opilot:banner -->}, body,
+                   "<details> closes after a blank line, inside the fence")
     end
 
     # The fence is what `opilot-adopt` deletes, so both the disclaimer and the adopt
