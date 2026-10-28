@@ -209,7 +209,8 @@ module OPilot
       return if Helpers.file_has_content?(pr_desc_file)
       wt               = worktree(repo)
       template_file    = repo.worktree_host / ".github" / "pull_request_template.md"
-      template_section = template_file.exist? ? "Fill in this PR template exactly: #{container_path_for(repo, template_file)}" : ""
+      template         = template_file.exist? ? template_file.read : ""
+      template_section = template.empty? ? "" : "Fill in this PR template exactly: #{container_path_for(repo, template_file)}"
       diff_stat = wt.diff("HEAD~1", "HEAD").stats[:files]
         .map { |f, s| "  #{f} | +#{s[:insertions]} -#{s[:deletions]}" }
         .join("\n")
@@ -220,7 +221,19 @@ module OPilot
       )
       pr_text = llm(:scribe, prompt)
       pr_body = pr_text[/^#.*/m] || pr_text
-      pr_desc_file.write(Helpers.ensure_ticket_link(strip_ansi(pr_body), wp_url))
+      pr_body = Helpers.ensure_ticket_link(strip_ansi(pr_body), wp_url)
+      pr_desc_file.write(Helpers.declare_ai_involvement(pr_body, template))
+    end
+
+    # The template's AI involvement options are HTML comments to uncomment, and
+    # the scribe copies them as they are. The answer for opilot is always the
+    # same, so Ruby writes it, in the template's own words.
+    AI_SECTION = /^(#+[ \t]*AI involvement[ \t]*\n)(?:(?!#).*\n?)*/
+
+    def self.declare_ai_involvement(body, template)
+      line = template.to_s[/<!--\s*(Autonomous\b.*?)\s*-->/, 1]
+      return body unless line
+      body.sub(AI_SECTION) { "#{Regexp.last_match(1)}#{line}\n\n" }
     end
 
     # The model sometimes writes only the id, or no Ticket section at all, and

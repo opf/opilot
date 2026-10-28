@@ -35,6 +35,33 @@ module OPilot
       assert_equal "# Ticket\n#{URL}\n\n# What\nx\n", Helpers.ensure_ticket_link("# What\nx\n", URL)
     end
 
+    AI_TEMPLATE = <<~MD
+      ## AI involvement
+      <!-- Uncomment the one line below that fits. -->
+      <!-- None/Assisted – No AI assistance used. -->
+      <!-- Autonomous – AI worked with little supervision; no human was involved at all. -->
+    MD
+
+    def test_declare_ai_involvement_replaces_the_commented_options
+      body = "## What\nx\n\n#{AI_TEMPLATE}\n## Merge checklist\n- [ ] tests\n"
+      assert_equal "## What\nx\n\n## AI involvement\n" \
+                   "Autonomous – AI worked with little supervision; no human was involved at all.\n\n" \
+                   "## Merge checklist\n- [ ] tests\n",
+                   Helpers.declare_ai_involvement(body, AI_TEMPLATE)
+    end
+
+    def test_declare_ai_involvement_replaces_a_wrong_choice
+      body = "# AI involvement\n\nNone/Assisted – No AI assistance used.\n\n# Merge checklist\n"
+      assert_match(/\A# AI involvement\nAutonomous – .*\n\n# Merge checklist\n\z/,
+                   Helpers.declare_ai_involvement(body, AI_TEMPLATE))
+    end
+
+    def test_declare_ai_involvement_leaves_a_repo_without_the_section
+      body = "## What\nx\n"
+      assert_equal body, Helpers.declare_ai_involvement(body, "")
+      assert_equal body, Helpers.declare_ai_involvement(body, AI_TEMPLATE)
+    end
+
     def test_guarded_tick_swallows_errors_so_the_loop_survives
       ran = false
       # An uncaught error in a poll must not propagate out of the loop.
