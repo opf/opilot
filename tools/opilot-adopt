@@ -106,10 +106,7 @@ printf '%sAdopt #%s: %s%s\n' "$bold" "$num" "$title" "$off"
 printf '  from  %-*s  %s\n' "$width" "$fork" "$branch"
 printf '  into  %-*s  %s\n' "$width" "$origin_repo" "$base"
 
-if previous="$(git rev-parse --verify --quiet "refs/heads/$branch")"; then
-  printf '%s  Your local branch is reset. To undo: git branch -f %s %s%s\n' \
-         "$dim" "$branch" "${previous:0:12}" "$off"
-fi
+previous="$(git rev-parse --verify --quiet "refs/heads/$branch" || true)"
 
 git fetch --quiet origin "$base"
 git fetch --quiet "https://github.com/$fork.git" "$branch"
@@ -135,6 +132,19 @@ if ! rebase_out="$(git -C "$wt" rebase "origin/$base" -x "git commit --amend --n
   keep_wt=1
   die "the rebase stopped on a conflict. Finish it in $wt and publish by hand,
 or drop it with: git worktree remove --force $wt"
+fi
+
+# A local branch of the same name was just reset. It is worth a word only if it
+# held commits the new branch lacks — a `gh pr checkout` or an aborted run holds
+# the same patches, which --cherry-pick matches across the rebase.
+if [ -n "$previous" ]; then
+  dropped="$(git --no-pager log --cherry-pick --right-only --format='  %h %s' \
+             "refs/heads/$branch...$previous")"
+  if [ -n "$dropped" ]; then
+    heading "Your local $branch had commits that are not in this PR:"
+    printf '%s\n' "$dropped"
+    printf '%s  To restore it: git branch -f %s %s%s\n' "$dim" "$branch" "${previous:0:12}" "$off"
+  fi
 fi
 
 heading "Commits, rebased and authored by you:"
