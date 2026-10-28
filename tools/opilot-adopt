@@ -37,17 +37,36 @@ done
 
 die()  { printf 'opilot-adopt: %s\n' "$*" >&2; exit 1; }
 
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  bold=$'\e[1m' dim=$'\e[2m' off=$'\e[0m'
+else
+  bold="" dim="" off=""
+fi
+heading() { printf '\n%s%s%s\n' "$bold" "$*" "$off"; }
+
+quote() {
+  case "$1" in
+    ""|*[!A-Za-z0-9_.,/:@=+-]*) printf '"%s"' "$1" ;;
+    *)                          printf '%s' "$1" ;;
+  esac
+}
+
 # Print a command the way you would type it. Only for display — every command is
 # run from its array, so a quoting edge case here cannot change what executes.
+# With --wrap, each --option that takes a value starts a new line.
 show() {
-  local out="" arg
-  for arg in "$@"; do
-    case "$arg" in
-      ""|*[!A-Za-z0-9_.,/:@=+-]*) arg="\"$arg\"" ;;
-    esac
-    out="${out:+$out }$arg"
+  local wrap=0 out="" i
+  [ "$1" != "--wrap" ] || { wrap=1; shift; }
+  local args=("$@")
+  for i in "${!args[@]}"; do
+    if [ "$wrap" -eq 1 ] && [ "${args[i]#--}" != "${args[i]}" ] &&
+       [ $((i + 1)) -lt ${#args[@]} ] && [ "${args[i+1]#--}" = "${args[i+1]}" ]; then
+      out="$out \\"$'\n'"      ${args[i]}"
+    else
+      out="${out:+$out }$(quote "${args[i]}")"
+    fi
   done
-  printf '    %s\n' "$out"
+  printf '\n  %s\n' "$out"
 }
 
 # Ask on the terminal, not on stdin: the documented no-install form pipes this
@@ -56,8 +75,8 @@ confirm() {
   [ "$assume_yes" -eq 0 ] || return 0
   [ -r /dev/tty ] || die "nothing to prompt on — re-run with --yes to accept these steps"
   local answer
-  printf '%s [y/N] ' "$1"
-  read -r answer < /dev/tty || answer=""
+  printf '\n%s [y/N] ' "$1"
+  { read -r answer < /dev/tty; } 2>/dev/null || answer=""
   case "$answer" in
     [yY]|[yY][eE][sS]) ;;
     *) printf 'Aborted — nothing pushed. The rebased commits stay on local branch %s.\n' "$branch"
@@ -74,16 +93,22 @@ base="$(v baseRefName)"
 fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository \
   --template '{{.headRepositoryOwner.login}}/{{.headRepository.name}}')"
 origin="$(git remote get-url origin)"
-
-printf '#%s %s\n    %s:%s → %s (%s)\n' "$num" "$title" "$fork" "$branch" "$origin" "$base"
+origin_repo="${origin%.git}"
+origin_repo="${origin_repo#*github.com[:/]}"
 
 # git refuses to check out one branch in two worktrees.
 if git worktree list --porcelain | grep -qxF "branch refs/heads/$branch"; then
   die "$branch is checked out in a worktree (see git worktree list) — switch it away first"
 fi
 
+width=$(( ${#fork} > ${#origin_repo} ? ${#fork} : ${#origin_repo} ))
+printf '%sAdopt #%s: %s%s\n' "$bold" "$num" "$title" "$off"
+printf '  from  %-*s  %s\n' "$width" "$fork" "$branch"
+printf '  into  %-*s  %s\n' "$width" "$origin_repo" "$base"
+
 if previous="$(git rev-parse --verify --quiet "refs/heads/$branch")"; then
-  echo "Resetting local $branch (was ${previous:0:12}; undo: git branch -f $branch $previous)"
+  printf '%s  Your local branch is reset. To undo: git branch -f %s %s%s\n' \
+         "$dim" "$branch" "${previous:0:12}" "$off"
 fi
 
 git fetch --quiet origin "$base"
@@ -92,8 +117,9 @@ head_sha="$(git rev-parse FETCH_HEAD)"
 
 # The worktree goes away on every exit except a stopped rebase, which is left
 # for you to finish. The branch stays either way.
-wt="$(mktemp -d "${TMPDIR:-/tmp}/opilot-adopt-wt.XXXXXX")"
-body_file="$(mktemp "${TMPDIR:-/tmp}/opilot-adopt.XXXXXX")"
+tmp="${TMPDIR:-/tmp}"
+wt="$(mktemp -d "${tmp%/}/opilot-adopt-wt.XXXXXX")"
+body_file="$(mktemp "${tmp%/}/opilot-adopt.XXXXXX")"
 keep_wt=0
 cleanup() {
   rm -f "$body_file"
@@ -111,12 +137,13 @@ if ! rebase_out="$(git -C "$wt" rebase "origin/$base" -x "git commit --amend --n
 or drop it with: git worktree remove --force $wt"
 fi
 
-git --no-pager log --oneline --no-decorate "origin/$base..refs/heads/$branch" | sed 's/^/    /'
+heading "Commits, rebased and authored by you:"
+git --no-pager log --format="  $dim%h$off %s" "origin/$base..refs/heads/$branch"
 
-# Build the description before the prompt, so you can read the file while you
-# decide. Lift out the bot-only banner — neither the AI disclaimer nor the adopt
-# note is true of an adopted PR — and the plan link, and re-fang the defanged
-# work-package link.
+# The description goes to `gh pr create` on stdin, so the command shows no temp
+# path. You can edit it on the new PR. Lift out the bot-only banner — neither the
+# AI disclaimer nor the adopt note is true of an adopted PR — and the plan link,
+# and re-fang the defanged work-package link.
 {
   printf 'Adopted from #%s.\n' "$num"
   v body | sed -e '/<!-- opilot:banner -->/,/<!-- \/opilot:banner -->/d' \
@@ -125,19 +152,17 @@ git --no-pager log --oneline --no-decorate "origin/$base..refs/heads/$branch" | 
 } > "$body_file"
 
 # Every command below runs from its array, and `show` prints that same array, so
-# what you approve is what runs. --body-file rather than --body keeps the printed
-# command short enough to read.
+# what you approve is what runs.
 push_cmd=(git push --quiet origin "$branch")
-create_cmd=(gh pr create --draft --head "$branch" --base "$base"
-            --title "$title" --body-file "$body_file")
+create_cmd=(gh pr create --draft --head "$branch" --base "$base" --title "$title" --body-file -)
 
-echo "Nothing is pushed yet. Next, in order:"
+heading "Commands to run:"
 show "${push_cmd[@]}"
-show "${create_cmd[@]}"
+show --wrap "${create_cmd[@]}"
 show gh pr close "$pr" --comment "Adopted in <url of the new PR>."
-confirm "Run them?"
+confirm "Run these 3 commands?"
 
 "${push_cmd[@]}"
-url="$("${create_cmd[@]}")"
+url="$("${create_cmd[@]}" < "$body_file")"
 gh pr close "$pr" --comment "Adopted in $url."
 echo "$url"

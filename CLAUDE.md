@@ -829,9 +829,9 @@ layout.
    the whole publish in one answer. What it shows there is the **three concrete
    commands**, not a prose summary — and each is held in an array that `show`
    prints and the script then executes, so the approved text cannot drift from the
-   action. That is also why the description goes to a temp file and the command
-   reads `--body-file`: an inline `--body` is 25 unreadable lines, and the file
-   can be read while the prompt waits. Before the prompt it also lists the commits to
+   action. That is also why the description goes to `gh pr create` on stdin
+   (`--body-file -`): an inline `--body` is 25 unreadable lines, and the author
+   can edit the description on the new PR. Before the prompt it also lists the commits to
    push, refuses a tree with uncommitted **tracked** changes (untracked files
    survive a checkout, so they are no reason to stop), and names the old SHA of a
    local branch it is about to reset. Declining prints the way back to the branch
