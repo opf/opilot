@@ -35,7 +35,6 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$pr" ] || { usage >&2; exit 1; }
 
-say()  { printf '\n==> %s\n' "$*"; }
 die()  { printf 'opilot-adopt: %s\n' "$*" >&2; exit 1; }
 
 # Print a command the way you would type it. Only for display — every command is
@@ -57,19 +56,17 @@ confirm() {
   [ "$assume_yes" -eq 0 ] || return 0
   [ -r /dev/tty ] || die "nothing to prompt on — re-run with --yes to accept these steps"
   local answer
-  printf '\n%s [y/N] ' "$1"
+  printf '%s [y/N] ' "$1"
   read -r answer < /dev/tty || answer=""
   case "$answer" in
     [yY]|[yY][eE][sS]) ;;
-    *) printf 'Aborted — nothing left this machine. The rebased commits stay on\nyour local branch %s.\n' \
-              "$branch"
+    *) printf 'Aborted — nothing pushed. The rebased commits stay on local branch %s.\n' "$branch"
        exit 1 ;;
   esac
 }
 
 v() { gh pr view "$pr" --json "$1" -q ".$1"; }
 
-say "Reading PR $pr"
 num="$(v number)"
 title="$(v title)"
 branch="$(v headRefName)"
@@ -78,9 +75,7 @@ fork="$(gh pr view "$pr" --json headRepositoryOwner,headRepository \
   --template '{{.headRepositoryOwner.login}}/{{.headRepository.name}}')"
 origin="$(git remote get-url origin)"
 
-printf '    PR      #%s — %s\n'  "$num" "$title"
-printf '    from    %s (%s)\n'   "$fork" "$branch"
-printf '    onto    %s (%s)\n'   "$origin" "$base"
+printf '#%s %s\n    %s:%s → %s (%s)\n' "$num" "$title" "$fork" "$branch" "$origin" "$base"
 
 # git refuses to check out one branch in two worktrees.
 if git worktree list --porcelain | grep -qxF "branch refs/heads/$branch"; then
@@ -88,13 +83,11 @@ if git worktree list --porcelain | grep -qxF "branch refs/heads/$branch"; then
 fi
 
 if previous="$(git rev-parse --verify --quiet "refs/heads/$branch")"; then
-  say "Local branch $branch already exists at ${previous:0:12}"
-  echo "    it is about to be reset; recover it with: git branch -f $branch $previous"
+  echo "Resetting local $branch (was ${previous:0:12}; undo: git branch -f $branch $previous)"
 fi
 
-say "Fetching $base from origin and $branch from the fork"
-git fetch origin "$base"
-git fetch "https://github.com/$fork.git" "$branch"
+git fetch --quiet origin "$base"
+git fetch --quiet "https://github.com/$fork.git" "$branch"
 head_sha="$(git rev-parse FETCH_HEAD)"
 
 # The worktree goes away on every exit except a stopped rebase, which is left
@@ -108,20 +101,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-say "Rebasing onto origin/$base in a temporary worktree, re-authoring every commit as you"
+# Rebase onto the base and re-author every commit as you. The output is shown
+# only when the rebase stops.
 git worktree add --quiet -B "$branch" "$wt" "$head_sha"
-if ! git -C "$wt" rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"; then
+if ! rebase_out="$(git -C "$wt" rebase "origin/$base" -x "git commit --amend --no-edit --reset-author" 2>&1)"; then
+  printf '%s\n' "$rebase_out" >&2
   keep_wt=1
   die "the rebase stopped on a conflict. Finish it in $wt and publish by hand,
 or drop it with: git worktree remove --force $wt"
 fi
 
-say "Commits to publish"
 git --no-pager log --oneline --no-decorate "origin/$base..refs/heads/$branch" | sed 's/^/    /'
 
-# Build the description before the prompt, so it is on screen while you decide.
-# Lift out the bot-only banner — neither the AI disclaimer nor the adopt note is
-# true of an adopted PR — and the plan link, and re-fang the defanged
+# Build the description before the prompt, so you can read the file while you
+# decide. Lift out the bot-only banner — neither the AI disclaimer nor the adopt
+# note is true of an adopted PR — and the plan link, and re-fang the defanged
 # work-package link.
 {
   printf 'Adopted from #%s.\n' "$num"
@@ -130,30 +124,20 @@ git --no-pager log --oneline --no-decorate "origin/$base..refs/heads/$branch" | 
                -e 's#hxxp://#http://#g' -e 's#hxxps://#https://#g'
 } > "$body_file"
 
-say "Description of your new PR"
-sed 's/^/    /' "$body_file"
-
 # Every command below runs from its array, and `show` prints that same array, so
 # what you approve is what runs. --body-file rather than --body keeps the printed
 # command short enough to read.
-push_cmd=(git push origin "$branch")
+push_cmd=(git push --quiet origin "$branch")
 create_cmd=(gh pr create --draft --head "$branch" --base "$base"
             --title "$title" --body-file "$body_file")
 
-say "Nothing has left this machine yet. These commands run next, in order"
+echo "Nothing is pushed yet. Next, in order:"
 show "${push_cmd[@]}"
 show "${create_cmd[@]}"
 show gh pr close "$pr" --comment "Adopted in <url of the new PR>."
-printf '\n    origin is %s\n' "$origin"
 confirm "Run them?"
 
-say "Pushing $branch to origin"
 "${push_cmd[@]}"
-
-say "Opening your draft PR"
 url="$("${create_cmd[@]}")"
-
-say "Closing #$num"
 gh pr close "$pr" --comment "Adopted in $url."
-
-say "Done — new PR (yours): $url"
+echo "$url"

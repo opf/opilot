@@ -823,15 +823,15 @@ layout.
    cannot fix drift by itself — a downloaded copy still goes stale — but the
    README's no-install `curl … | bash -s <n>` form always runs the current one.
 
-   It **narrates each step and stops for approval before the first irreversible
+   It **stays quiet and stops for approval before the first irreversible
    one**. Everything up to the push is local and recoverable (fetch, `checkout -B`,
    the re-authoring rebase), so the prompt sits directly before the push and covers
    the whole publish in one answer. What it shows there is the **three concrete
    commands**, not a prose summary — and each is held in an array that `show`
    prints and the script then executes, so the approved text cannot drift from the
    action. That is also why the description goes to a temp file and the command
-   reads `--body-file`: an inline `--body` is 25 unreadable lines, so the body is
-   printed as its own block instead. Before the prompt it also lists the commits to
+   reads `--body-file`: an inline `--body` is 25 unreadable lines, and the file
+   can be read while the prompt waits. Before the prompt it also lists the commits to
    push, refuses a tree with uncommitted **tracked** changes (untracked files
    survive a checkout, so they are no reason to stop), and names the old SHA of a
    local branch it is about to reset. Declining prints the way back to the branch
