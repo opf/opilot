@@ -185,7 +185,7 @@ opilot-adopt 42        # or paste the PR URL
 ```
 
 It does the following (with human approval steps):
-* Refreshes the code branch from upstream
+* Refreshes the code branch from upstream, in a temporary worktree, so your own checkout stays as it is
 * Rewrites commit ownership to **you**
 * Pushes a new branch to the upstream repo
 * Opens a draft PR for the new branch, without opilot's bot-only banner

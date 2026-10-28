@@ -4,7 +4,8 @@
 #
 # Standalone: you need this one file, `git` and an authenticated `gh` — not a
 # checkout of opilot. Run it from inside the product repo, whose `origin` must be
-# the canonical repo the PR targets.
+# the canonical repo the PR targets. The rebase runs in a temporary worktree, so
+# your own checkout never moves and may have uncommitted changes.
 set -euo pipefail
 
 usage() {
@@ -60,8 +61,8 @@ confirm() {
   read -r answer < /dev/tty || answer=""
   case "$answer" in
     [yY]|[yY][eE][sS]) ;;
-    *) printf 'Aborted — nothing left this machine. Back to where you were:\n    git checkout %s\n' \
-              "$started_on"
+    *) printf 'Aborted — nothing left this machine. The rebased commits stay on\nyour local branch %s.\n' \
+              "$branch"
        exit 1 ;;
   esac
 }
@@ -81,10 +82,10 @@ printf '    PR      #%s — %s\n'  "$num" "$title"
 printf '    from    %s (%s)\n'   "$fork" "$branch"
 printf '    onto    %s (%s)\n'   "$origin" "$base"
 
-# Tracked changes only: the checkout and rebase below leave untracked files
-# alone, so stray ones are no reason to refuse.
-[ -z "$(git status --porcelain --untracked-files=no)" ] ||
-  die "you have uncommitted changes to tracked files — commit or stash them first"
+# git refuses to check out one branch in two worktrees.
+if git worktree list --porcelain | grep -qxF "branch refs/heads/$branch"; then
+  die "$branch is checked out in a worktree (see git worktree list) — switch it away first"
+fi
 
 if previous="$(git rev-parse --verify --quiet "refs/heads/$branch")"; then
   say "Local branch $branch already exists at ${previous:0:12}"
@@ -94,23 +95,34 @@ fi
 say "Fetching $base from origin and $branch from the fork"
 git fetch origin "$base"
 git fetch "https://github.com/$fork.git" "$branch"
+head_sha="$(git rev-parse FETCH_HEAD)"
 
-say "Rebasing onto origin/$base, re-authoring every commit as you"
-# Remember where the maintainer was: the checkout below moves them onto $branch,
-# and an abort at the prompt has to be able to say how to get back.
-started_on="$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)"
-git checkout -B "$branch" FETCH_HEAD
-git rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"
+# The worktree goes away on every exit except a stopped rebase, which is left
+# for you to finish. The branch stays either way.
+wt="$(mktemp -d "${TMPDIR:-/tmp}/opilot-adopt-wt.XXXXXX")"
+body_file="$(mktemp "${TMPDIR:-/tmp}/opilot-adopt.XXXXXX")"
+keep_wt=0
+cleanup() {
+  rm -f "$body_file"
+  [ "$keep_wt" -eq 1 ] || git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
+}
+trap cleanup EXIT
+
+say "Rebasing onto origin/$base in a temporary worktree, re-authoring every commit as you"
+git worktree add --quiet -B "$branch" "$wt" "$head_sha"
+if ! git -C "$wt" rebase "origin/$base" -x "git commit --amend --no-edit --reset-author"; then
+  keep_wt=1
+  die "the rebase stopped on a conflict. Finish it in $wt and publish by hand,
+or drop it with: git worktree remove --force $wt"
+fi
 
 say "Commits to publish"
-git --no-pager log --oneline --no-decorate "origin/$base..HEAD" | sed 's/^/    /'
+git --no-pager log --oneline --no-decorate "origin/$base..refs/heads/$branch" | sed 's/^/    /'
 
 # Build the description before the prompt, so it is on screen while you decide.
 # Lift out the bot-only banner — neither the AI disclaimer nor the adopt note is
 # true of an adopted PR — and the plan link, and re-fang the defanged
 # work-package link.
-body_file="$(mktemp "${TMPDIR:-/tmp}/opilot-adopt.XXXXXX")"
-trap 'rm -f "$body_file"' EXIT
 {
   printf 'Adopted from #%s.\n' "$num"
   v body | sed -e '/<!-- opilot:banner -->/,/<!-- \/opilot:banner -->/d' \
